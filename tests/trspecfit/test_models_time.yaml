@@ -1,0 +1,44 @@
+#
+# use this model to add time-dependence to a parameter in a 2D model
+# (available functions info: /src/trspecfit/functions/time.py)
+#
+
+#model_name:
+#    function1:
+#        parameter1: [initial guess, vary?, lower boundary, upper boundary]
+#        parameter2: [initial guess, vary?, lower boundary, upper boundary]
+#        parameter3: ["expression"] # if parameter depends on other parameters
+#        ...
+#    function2:
+#        ...
+
+IRF:
+    # define Gauss to convolve everything with 
+    # (instrumental response function)
+    gaussCONV:
+        sigma: [5.0E-2, True, 0, 1]
+             
+MonoExpPos:
+    # expFun(t, A, tau, t0, y0)
+    expFun:
+        A: [1, True, 0, 5]
+        tau: [2.5, True, 1, 10]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]
+
+MonoExpNeg:
+    # expFun(t, A, tau, t0, y0)
+    expFun:
+        A: [-1, True, -5, 0]
+        tau: [2.5, True, 1, 10]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]
+
+MonoExpPosIRF:
+    gaussCONV:
+        sigma: [5.0E-2, True, 0, 1]
+    expFun:
+        A: [1, True, 0, 5]
+        tau: [2.5, True, 1, 10]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]

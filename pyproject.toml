@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trspecfit"
+version = "0.0.1"
+authors = [
+    {name = "Johannes Mahl", email = "johannes.a.mahl@gmail.com"},
+]
+description = "Fit 2D time- and energy-resolved spectroscopy data"
+keywords = ["fit", "fitting", "spectroscopy", "2D", "multi-dimensional", "time-resolved", "global fit"]
+readme = "README.md"
+requires-python = ">=3.8"
+
+dependencies = [
+	"lmfit",
+	"emcee",
+	"corner",
+	"numpy",
+	"pandas",
+	"scipy",
+	"pathlib",
+	"ruamel.yaml",
+]
+
+# this is currently only optional if "show_info=0" everywhere
+[project.optional-dependencies]
+notebooks = [
+	"IPython",
+	"matplotlib",
+    "seaborn",
+]
+dev = [
+    "pytest"
+]
+
+[project.urls]
+Repository = "https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/"
