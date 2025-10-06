@@ -1,5 +1,8 @@
 # trspecfit — 2D Time- and Energy-resolved Spectroscopy Fitting
-trspecfit (trspecfit) is a Python library to define and fit multi-component spectral models for 1D energy-resolved and 2D time-and-energy-resolved spectroscopy data. The package extends lmfit-based workflows to support component-based models, time-dynamics, convolution kernels and helpers for generating simulated data.
+
+**A Python library for fitting multi-component spectral models to time-resolved spectroscopy data.**
+
+trspecfit is a Python library to define and fit multi-component spectral models for 1D energy-resolved and 2D time-and-energy-resolved spectroscopy data. The package extends lmfit-based workflows to support component-based models, time-dynamics, convolution kernels and helpers for generating simulated data.
 
 ## Key capabilities
 - Define modular spectral components (Gaussian, Voigt/GLP/GLS, Doniach–Sunjic,
@@ -17,10 +20,15 @@ trspecfit (trspecfit) is a Python library to define and fit multi-component spec
 
 ## Installation
 
-Create and activate a virtual environment, then install in editable mode.
+### Install from GitHub
+```bash
+pip install git+https://github.com/InfinityMonkeyAtWork/trspecfit.git
+```
 
+### Install for development
+For local development, clone the repository and install in editable mode:
+<br>
 Windows PowerShell example:
-
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate
@@ -29,7 +37,6 @@ pip install -e .
 ```
 
 macOS / Linux example:
-
 ```bash
 python -m venv .venv
 source .venv/bin/activate
@@ -78,7 +85,7 @@ pip install pytest
 pytest -q
 ```
 
-# Copyright NOTICE
+# Copyright Notice
 
 time-resolved spectroscopy fit (trspecfit) Copyright (c) 2025, The Regents of the University of California, through Lawrence Berkeley National Laboratory (subject to receipt of any required approvals from the U.S. Dept. of Energy). All rights reserved.
 
