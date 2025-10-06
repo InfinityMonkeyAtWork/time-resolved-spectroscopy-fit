@@ -22,7 +22,7 @@ trspecfit is a Python library to define and fit multi-component spectral models 
 
 ### Install from GitHub
 ```bash
-pip install git+https://github.com/InfinityMonkeyAtWork/trspecfit.git
+pip install git+https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit.git
 ```
 
 ### Install for development

@@ -20,17 +20,13 @@ dependencies = [
 	"numpy",
 	"pandas",
 	"scipy",
-	"pathlib",
 	"ruamel.yaml",
-]
-
-# this is currently only optional if "show_info=0" everywhere
-[project.optional-dependencies]
-notebooks = [
 	"IPython",
 	"matplotlib",
-    "seaborn",
+	"seaborn",
 ]
+
+[project.optional-dependencies]
 dev = [
     "pytest"
 ]
