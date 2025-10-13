@@ -27,7 +27,7 @@ MonoExpPosIRF:
     gaussCONV:
         sigma: [3, True, 0, 10]
     expFun:
-        A: [5, True, 0, 5]
-        tau: [25, True, 10, 50]
+        A: [5, True, 0, 15]
+        tau: [50, True, 1, 100]
         t0: [0, False, 0, 1]
         y0: [0, False, 0, 1]

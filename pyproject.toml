@@ -21,6 +21,7 @@ dependencies = [
 	"pandas",
 	"scipy",
 	"ruamel.yaml",
+	"h5py",
 	"IPython",
 	"matplotlib",
 	"seaborn",

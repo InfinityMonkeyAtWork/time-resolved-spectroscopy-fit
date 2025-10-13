@@ -401,6 +401,9 @@ class Model:
         t_ind=[] -> process entire time axis
         t_ind = [t_start, t_stop] -> process self.time[t_start:t_stop]
         """
+        #$% improve and test this parallelization
+        #$% is it better to spin up multiple workers during fitting?
+
         if len(t_ind) == 0: # process entire time axis
             n_times = len(self.time)
             self.value2D = np.empty((n_times, len(self.energy)))
@@ -956,7 +959,11 @@ class Par:
         # Evaluate expression using asteval (safe, same as lmfit uses)
         try:
             aeval = Interpreter()
-            return aeval(self.expr_string, namespace)
+            # populate the interpreter symbol table with current parameter values
+            # (Interpreter.__call__ doesn't accept a namespace argument)
+            for k, v in namespace.items():
+                aeval.symtable[k] = v
+            return aeval(self.expr_string)
         except Exception as e:
             raise ValueError(f"Error evaluating expression '{self.expr_string}': {e}")
     

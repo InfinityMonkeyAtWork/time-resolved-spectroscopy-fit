@@ -123,7 +123,8 @@ class Project:
         self.path_results = pathlib.Path(f'{path}_fits')
         self.run = name
         self.path_run = self.path_results / name
-        # settings
+        # settings (could be loaded from a .yaml file)
+        # change according to your spectroscopy method
         self.show_info = 1 # 0: no output, 1: important, 2: all, 3+: debugging
         self.e_label = 'Binding energy (eV)'
         self.t_label = 'Time (s)'

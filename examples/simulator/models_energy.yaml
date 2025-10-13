@@ -1,8 +1,15 @@
-single_peak: 
+single_peak_Offset_Shirley: 
     Offset:
       y0: [2, True, 0, 5]
     Shirley:
       p_Shirley: [400, True, 1.0E-6, 1.0E+3] 
+    GLP:
+      A: [10, True, 5, 15]
+      x0: [10, True, 5, 15]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+
+single_peak: 
     GLP:
       A: [10, True, 5, 15]
       x0: [10, True, 5, 15]
