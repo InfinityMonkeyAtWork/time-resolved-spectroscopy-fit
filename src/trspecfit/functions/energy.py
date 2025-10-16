@@ -30,7 +30,7 @@ from scipy.special import wofz
 #
 def Offset(x, y0, spectrum):
     """
-    Create offset for input spectrum [x axis unused sofar]
+    Create offset for input spectrum [x axis is not used]
     """
     return y0* np.ones(np.shape(spectrum)[0])
 
@@ -43,12 +43,12 @@ def Shirley(x, pShirley, spectrum):
     
     <pShirley> is the factor used to convert area under the <spectrum>
     to intensity of Shirley spectrum that is returned (type np.array)
-    <pShirley> is internally (in here) multiplied by 1E-6 as fittings 
+    <pShirley> is internally (in here) multiplied by 1E-6 as fitting
     functions may have problems dealing with small values
     
     """
-    # serial 
-    # #return 1E-6 *pShirley *np.asarray([np.sum(spectrum[i:]) for \
+    # serial (slow)
+    #return 1E-6 *pShirley *np.asarray([np.sum(spectrum[i:]) for \
     #                                   i in range(np.shape(spectrum)[0])])
     # vectorized
     return 1E-6 * pShirley * np.cumsum(spectrum[::-1])[::-1]
@@ -63,12 +63,18 @@ def Shirley(x, pShirley, spectrum):
 def LinBack(x, pLinear, spectrum):
     """
     Create linear background for an input <spectrum>, both 1D np.array
-    input spectrum should have increasing kinetic energy (or decreasing
-    binding energy) as an independent variable
-    cut the spectrum to start at the wings of the outermost peaks for 
-    this function to work
+    Background starts at first point of spectrum, increases, ends at last
+    """  
+    background = np.arange(0, np.shape(spectrum)[0], 1)
+    return pLinear*background + spectrum[0]
+
+#
+def LinBackRev(x, pLinear, spectrum):
+    """
+    Create linear background for an input <spectrum>, both 1D np.array
+    Background starts at last point of spectrum, decreases, ends at first
     
-    Note: implement option for start/ stop selector (in energy)
+    Note: implement option for start/ stop selector (in energy)?
     """  
     background = np.arange(0, np.shape(spectrum)[0], 1)
     return pLinear*background[::-1] + spectrum[-1]
