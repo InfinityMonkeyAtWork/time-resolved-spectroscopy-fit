@@ -1,9 +1,9 @@
 # use these models to add time-dependence to a parameter in a 2D model
-# (available functions info: /src/trspecfit/functions/time.py)
+# (available functions: /src/trspecfit/functions/time.py)
 
 IRF:
     # define Gauss to convolve everything with 
-    # (instrumental response function)
+    # (instrument response function)
     gaussCONV:
         sigma: [5.0E-2, True, 0, 1]
              

@@ -1,17 +1,33 @@
-single_peak_Offset_Shirley: 
+single_peak: 
     Offset:
       y0: [2, True, 0, 5]
-    Shirley:
-      p_Shirley: [400, True, 1.0E-6, 1.0E+3] 
+    LinBack:
+      p_Linear: [4E-3, True, 0, 1] 
     GLP:
       A: [10, True, 5, 15]
       x0: [10, True, 5, 15]
       F: [1.0, True, 0.75, 2.5]
       m: [0.3, True, 0, 1]
 
-single_peak: 
+single_peak_only:
     GLP:
       A: [10, True, 5, 15]
       x0: [10, True, 5, 15]
       F: [1.0, True, 0.75, 2.5]
       m: [0.3, True, 0, 1]
+
+dependent_peaks:
+    Offset:
+      y0: [2, True, 0, 5]
+    Shirley:
+      p_Shirley: [400, True, 1.0E-6, 1.0E+3] 
+    GLP:
+      A: [10, True, 5, 15]
+      x0: [8, True, 3, 12]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+    GLP:
+      A: ["GLP_01_A*3/4"]
+      x0: ["GLP_01_x0+3.6"]
+      F: ["GLP_01_F"]
+      m: ["GLP_01_m"]
