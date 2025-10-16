@@ -1,0 +1,33 @@
+# ground state (most parameters should be able to vary)
+base: 
+    Offset:
+      y0: [200, True, 0, 500]
+    Shirley:
+        p_Shirley: [400, True, 1.0E-6, 1.0E+3]
+    GLP:
+      A: [200, True, 0, 1000]
+      x0: [84.5, True, 82, 88]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+    GLP:
+      A: ["3/4*GLP_01_A"]
+      x0: ["GLP_01_x0 +3.6"]
+      F: ["GLP_01_F"]
+      m: ["GLP_01_m"]
+
+# 2D model fit (pinned parameters will be set to "base" Model fit result values)
+2D:
+    Offset:
+      y0: [50, False, 0, 1000]
+    Shirley:
+        p_Shirley: [800, False, 1.0E-6, 1.0E+3]
+    GLP:
+      A: [300, False, 0, 1000]
+      x0: [84.5, True, 82, 88]
+      F: [1.0, False, 0.75, 2.5]
+      m: [0.3, False, 0, 1]
+    GLP:
+      A: ["3/4*GLP_01_A"]
+      x0: ["GLP_01_x0 +3.6"]
+      F: ["GLP_01_F"]
+      m: ["GLP_01_m"]

@@ -1,0 +1,10 @@
+# use these models to add time-dependence to a parameter in a 2D model
+# (available functions info: /src/trspecfit/functions/time.py)
+
+sine_wave:
+    sinFun:
+        A: [-1, True, -5, 5]
+        f: [2.5E-4, True, 1E-6, 10]
+        phi: [0, True, -0.75,0.75]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]
