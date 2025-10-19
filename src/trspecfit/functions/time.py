@@ -8,6 +8,20 @@ from scipy.special import wofz
 from scipy.signal import square
 
 #
+def none(t):
+    """
+    Placeholder function
+    Use to define an empty subcycle in a multi-cycle mcp.Dynamics instance
+    This function should never actually be called:
+    It is caught in mcp.Model.combine() and skipped entirely.
+    
+    Example usage in a yaml file:
+    model_sub2:
+      none: {}
+    """
+    return np.zeros_like(t)  # Should never be evaluated
+
+#
 def linFun(t, m, t0, y0):
     """
     Define linear function for every value in the 1D array t,

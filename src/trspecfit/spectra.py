@@ -354,7 +354,3 @@ def f_norm(time, f, N):
 #         spectrum += gauss_fun_amp1(x, np.exp(-z_i /IMFP), BB* np.exp(-z_i /d_SCL), SD_G)
 #     #
 #     return spectrum
-
-#
-#
-#

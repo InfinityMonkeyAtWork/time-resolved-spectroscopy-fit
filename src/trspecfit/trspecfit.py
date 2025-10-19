@@ -60,7 +60,7 @@ def construct_yaml_map(self, node):
     """
     Enable multiple components of the same type with automatic numbering.
     All components get numbered starting from _01: GLP -> GLP_01, GLP_02, etc.
-    Exceptions: background functions and offset don't get numbered
+    Exceptions(functions that don't get numbered): background, convolutions, offset.
     """
     data = []
     yield data
@@ -272,7 +272,176 @@ class File:
         a model is specified as input to the respective function (via <model_info>)
         """
         self.model_active = self.select_model(model_info)
+
+    #
+    def _load_and_number_yaml_components(self, model_yaml, model_info, par_name='', DEBUG=False):
+        """
+        Load YAML file and apply appropriate component numbering strategy.
+        For energy models: use component numbering from construct_yaml_map
+        For dynamics models with subcycles: number components globally 
+        """
+        if DEBUG:
+            print(f'"model.yaml" file: {model_yaml}')
+        model_yaml_path = self.p.path / model_yaml
         
+        try:
+            with open(model_yaml_path) as f_yaml:
+                model_info_ALL = yaml.load(f_yaml)
+                
+                # Convert YAML structure to dictionary format
+                if isinstance(model_info_ALL, list):
+                    model_info_dict = {}
+                    for model_entry in model_info_ALL:
+                        if not (isinstance(model_entry, tuple) and len(model_entry) == 2):
+                            raise ValueError(f"Malformed model entry: {model_entry}")
+                        model_name, components = model_entry
+                        if model_name in model_info_dict:
+                            raise ValueError(f"Duplicate model name found: '{model_name}'")
+                        # Convert components to dict format
+                        model_info_dict[model_name] = dict(components) if isinstance(components, list) else components
+                        # Convert parameters to dict format
+                        for comp_name, params in model_info_dict[model_name].items():
+                            if isinstance(params, list):
+                                model_info_dict[model_name][comp_name] = dict(params)
+                else:
+                    if not isinstance(model_info_ALL, dict):
+                        raise ValueError("YAML root must be a dictionary or a list of (name, components) tuples.")
+                    model_info_dict = model_info_ALL
+                    if len(model_info_dict) != len(set(model_info_dict.keys())):
+                        raise ValueError("Duplicate model names found in YAML dictionary.")
+                
+                if DEBUG:
+                    print('model_info_ALL:')
+                    print(model_info_ALL)
+                    print('model_info_dict:')
+                    print(model_info_dict)
+                
+                # Apply appropriate numbering strategy
+                if par_name != '':
+                    # This is a dynamics model - resolve numbering conflicts across subcycles
+                    model_info_dict = self._resolve_dynamics_numbering_conflicts(model_info_dict, model_info, DEBUG)
+                # For energy models, numbering is already complete from construct_yaml_map
+                return model_info_dict
+                
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"FileNotFound: <model_yaml> file input\n"
+                f"File should be located in: {self.p.path}\n"
+                f"Check file name for typos: {model_yaml_path}"
+            )
+        except yaml.YAMLError as exc:
+            raise RuntimeError(f"YAML error while loading {model_yaml}: {exc}")
+
+    #
+    def _resolve_dynamics_numbering_conflicts(self, model_info_dict, model_info, DEBUG=False):
+        """
+        Resolve numbering conflicts for dynamics models by tracking used numbers globally
+        and reassigning conflicting numbers to the next available number.
+        
+        This preserves the existing YAML numbering where possible and only changes
+        numbers when there are conflicts across subcycles.
+        """
+        if DEBUG:
+            print("=== STARTING CONFLICT RESOLUTION ===")
+            print(f"model_info: {model_info}")
+            print(f"\nmodel_info_dict BEFORE resolution:")
+            for submodel, comps in model_info_dict.items():
+                if submodel in model_info:
+                    print(f"  {submodel}: {list(comps.keys())}")
+
+        # Get all available function names and exceptions
+        available_functions = get_available_function_names()
+        exceptions = prefix_exceptions()
+        
+        # Track the next available number for each function type globally
+        global_next_available = {}
+        # Track all used numbers for each function type
+        used_numbers = {}
+        
+
+        # First pass: collect all existing numbers and find conflicts
+        for submodel in model_info:
+            if submodel not in model_info_dict:
+                continue
+                
+            for comp_name, comp_params in model_info_dict[submodel].items():
+                base_name, number = mcp.parse_component_name(comp_name)
+                
+                if base_name in available_functions and base_name not in exceptions:
+                    if number == -1:
+                        number = 1  # Default numbering
+                        
+                    # Track used numbers
+                    if base_name not in used_numbers:
+                        used_numbers[base_name] = set()
+                        global_next_available[base_name] = 1
+                    
+                    used_numbers[base_name].add(number)
+                    global_next_available[base_name] = max(global_next_available[base_name], number + 1)
+        
+        if DEBUG:
+            print(f"\nAfter first pass - used_numbers: {used_numbers}")
+            print(f"global_next_available: {global_next_available}")
+
+        # Second pass: resolve conflicts by reassigning duplicate numbers
+        processed_dict = {}
+        assigned_numbers = {}  # Track what we've already assigned in this pass
+        
+        for submodel in model_info:
+            if submodel not in model_info_dict:
+                continue
+                
+            processed_dict[submodel] = {}
+            
+
+            for comp_name, comp_params in model_info_dict[submodel].items():
+                base_name, current_number = mcp.parse_component_name(comp_name)
+                
+                if base_name in available_functions and base_name not in exceptions:
+                    if current_number == -1:
+                        current_number = 1  # Default numbering
+                
+                    # Initialize tracking for this base name
+                    if base_name not in assigned_numbers:
+                        assigned_numbers[base_name] = set()
+                    
+                    # Check if this number is already assigned in this dynamics model
+                    if current_number in assigned_numbers[base_name]:
+                        # Conflict! Find next available number
+                        while global_next_available[base_name] in assigned_numbers[base_name]:
+                            global_next_available[base_name] += 1
+                        new_number = global_next_available[base_name]
+                        global_next_available[base_name] += 1
+                        
+                        if DEBUG:
+                            print(f"Conflict resolved: {comp_name} -> {base_name}_{new_number:02d} in {submodel}")
+                    else:
+                        # No conflict, use current number
+                        new_number = current_number
+                    
+                    # Mark this number as assigned
+                    assigned_numbers[base_name].add(new_number)
+                    
+                    # Create the final component name
+                    final_name = f"{base_name}_{new_number:02d}"
+                    processed_dict[submodel][final_name] = comp_params
+                    
+                else:
+                    # Not a component function, keep as-is
+                    processed_dict[submodel][comp_name] = comp_params
+
+            if DEBUG:
+                print(f"\nProcessed submodel: {submodel}")
+                print(f"  {submodel}: {list(processed_dict[submodel].keys())}")
+        
+        if DEBUG:
+            print(f"\nFINAL processed_dict:")
+            for submodel in model_info:
+                if submodel in processed_dict:
+                    print(f"  {submodel}: {list(processed_dict[submodel].keys())}")
+        #
+        return processed_dict
+
     #
     def load_model(self, model_yaml, model_info, par_name='', DEBUG=False):
         """
@@ -306,52 +475,8 @@ class File:
                 'Delete the existing model or change the name of the new model.'
             )
 
-        # load model_yaml file
-        if DEBUG:
-            print(f'"model.yaml" file: {model_yaml}')
-        model_yaml_path = self.p.path / model_yaml
-        try:
-            with open(model_yaml_path) as f_yaml:
-                model_info_ALL = yaml.load(f_yaml)  # ruamel.yaml
-                # if needed,convert list of tuples to dict of key=model, value=components
-                if isinstance(model_info_ALL, list):
-                    model_info_dict = {} # holds all models defined in model.yaml
-                    model_names_seen = set()
-                    for model_entry in model_info_ALL:
-                        if not (isinstance(model_entry, tuple) and len(model_entry) == 2):
-                            raise ValueError(f"Malformed model entry: {model_entry}")
-                        model_name, components = model_entry
-                        if model_name in model_info_dict:
-                            raise ValueError(f"Duplicate model name found: '{model_name}'")
-                        # components are all functions in any one given model
-                        # if needed, convert components to dict of key=function_name, value=parameter_info
-                        model_info_dict[model_name] = dict(components) if isinstance(components, list) else components
-                        # parameters are inputs to component functions
-                        for comp_name, params in model_info_dict[model_name].items():
-                            # if needed, convert list of tuples to dict of key=par_name, value=par_info
-                            if isinstance(params, list):
-                                model_info_dict[model_name][comp_name] = dict(params)
-                        model_names_seen.add(model_name)
-                else:
-                    if not isinstance(model_info_ALL, dict):
-                        raise ValueError("YAML root must be a dictionary or a list of (name, components) tuples.")
-                    model_info_dict = model_info_ALL
-                    # check for duplicate keys (shouldn't happen in a dict, but for completeness)
-                    if len(model_info_dict) != len(set(model_info_dict.keys())):
-                        raise ValueError("Duplicate model names found in YAML dictionary.")              
-                if DEBUG:
-                    print('model_info_ALL:')
-                    print(model_info_ALL)
-                    print('model_info_dict:')
-                    print(model_info_dict)
-        except FileNotFoundError:
-            raise FileNotFoundError(
-                f"FileNotFound: <model_yaml> file input\n"
-                f"File should be located in: {self.p.path}\n"
-                f"Check file name for typos: {model_yaml_path}"
-            )
-        except yaml.YAMLError as exc:
-            raise RuntimeError(f"YAML error while loading {model_yaml}: {exc}")
+        # Load and process YAML file with appropriate numbering strategy
+        model_info_dict = self._load_and_number_yaml_components(model_yaml, model_info, par_name, DEBUG)
 
         # initialize model
         if par_name == '':
@@ -373,7 +498,6 @@ class File:
         
         # inherit necessary model attributes from function input, file, and project
         loaded_model.yaml_f_name = model_yaml.split(".")[0] # yaml file name
-        #loaded_model.data = self.data
         loaded_model.dim = 1 # start with 1, +1 when adding dynamics
         loaded_model.subcycles = len(model_info)-1
         loaded_model.energy = self.energy
@@ -383,7 +507,7 @@ class File:
         loaded_model.t_label = self.p.t_label # y axis -> time
         loaded_model.z_label = self.p.z_label # z axis -> intensity
         
-        comps = [] # initialize component list
+        all_comps = [] # initialize component list
         
         # go through (sub)model(s)
         # (for mcp.Dynamics model instances length model_info could be larger than 1)
@@ -395,18 +519,14 @@ class File:
                 print(f'Model "{submodel}" not found in {model_yaml}')
                 return None
             
-            if DEBUG == True: print(submodel_info)
-            # go through all components defined in this model of the model.yaml file ...
-            #for [c_name, c_info] in submodel_info[1]:
+            # Create components for this submodel using existing mcp.Component logic
             for c_name, c_info in submodel_info.items():
-                if 'CONV' in c_name: comp_type = 'conv'
-                else: comp_type = 'add'
-                c_temp = mcp.Component(c_name, fcts_package, comp_type, subcycle)
+                c_temp = mcp.Component(c_name, fcts_package, subcycle)
                 c_temp.add_pars(c_info)
-                comps.append(c_temp)
+                all_comps.append(c_temp)
                 
         # add all components (and their parameters) to model
-        loaded_model.add_components(comps)
+        loaded_model.add_components(all_comps)
         
         # add model to file
         if not isinstance(loaded_model, mcp.Dynamics):
@@ -415,7 +535,7 @@ class File:
             return None
         else:
             return loaded_model
-    
+            
     #
     def describe_model(self, model_info=None, detail=0):
         """
@@ -600,7 +720,7 @@ class File:
     def fit_baseline(self, model_name, fit, **lmfit_wrapper_kwargs):
         """
         Fit the baseline/ground state/pre-trigger or similar reference spectrum
-        <model_name> is the name of a loaded model (use file.load_model)
+        <model_name> is the name of a loaded model (use File.load_model)
         """
         t_base = time.time() # start timing for baseline fit
         
@@ -795,7 +915,8 @@ class File:
         Load "Dynamics"-type model defined by <model_info> in <model_yaml> .yaml file
         The time-dependent behaviour repeats either not at all (default, -1) or with <frequency>
         """
-        t_mod = self.load_model(model_yaml, model_info, par_name) # load
+        t_mod = self.load_model(model_yaml, model_info, par_name, 
+                                DEBUG=False if self.p.show_info<2 else True) # load
         self.model_active.add_dynamics(t_mod, frequency) # add
         self.model_active.dim = 2 # increase dimension of model to 2
         #
@@ -837,14 +958,14 @@ class File:
                                                   par_names = self.model_2D.par_names, 
                                                   par = self.model_2D.lmfit_pars,
                                                   fit_type = fit,
-                                                  show_info = 3, #self.p.show_info,
+                                                  show_info = 1 if self.p.show_info>=2 else 0,
                                                   save_output = 1,
                                                   save_path = path_2D_results / model_name,
                                                   **fit_wrapper_kwargs)
         if fit >= 1:
             self.save_2Dmodel_fit(save_path=path_2D_results)
             fitlib.time_display(t_start=t_2D, print_str='Time elapsed for 2D model fit: ')
-
+            display(self.model_2D.result[1].params) # display the final parameters below figure
         #
         return None
     
@@ -874,7 +995,3 @@ class File:
         """
         #
         return None
-    
-#
-#
-#

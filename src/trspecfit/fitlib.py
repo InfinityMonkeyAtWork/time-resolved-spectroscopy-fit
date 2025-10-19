@@ -217,7 +217,7 @@ def fit_wrapper(const, args, par_names, par, fit_type, sigmas=[1,2,3],
     conf_interval if possible
     <MCsettings.use_emcee>=0: don't use lmfit.emcee(); =1: always use;
     =2: use if conf_interval does not work. see "MCsettings" class
-    defined in helpers.infinitymonkey_lmfit.py for more details
+    defined in utils.lmfit.py for more details
     <sigmas> is a list of sigma values (int or float) that defines the
     computed confidence intervals for both the conf_interval() and the
     lmfit.emcee() methods
@@ -779,7 +779,3 @@ def plt_fit_res_pars(df, x=[], xlabel='', save_img=0, save_path=''):
                        save_path=os.path.join(save_path, col))
     #
     return None
-
-#
-#
-#

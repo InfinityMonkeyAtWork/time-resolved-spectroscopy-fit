@@ -29,6 +29,35 @@ import concurrent.futures
 # - parallelize 2D map generation or somehow speed it up
 
 #
+def parse_component_name(comp_name):
+    """
+    Parse a component name into base function name and number.
+    
+    Returns:
+        tuple: (base_name, number)
+        - base_name: function name without number (e.g., 'expFun', 'GLP')
+        - number: component number (e.g., 1, 2) or -1 if unnumbered
+    
+    Examples:
+        'expFun_01' -> ('expFun', 1)
+        'GLP_02' -> ('GLP', 2)
+        'Offset' -> ('Offset', -1)
+    """
+    if '_' in comp_name and comp_name.split('_')[-1].isdigit():
+        parts = comp_name.split('_')
+        if len(parts) >= 2 and parts[-1].isdigit():
+            base_name = '_'.join(parts[:-1])
+            number = int(parts[-1])
+        else:
+            base_name = comp_name
+            number = -1
+    else:
+        base_name = comp_name
+        number = -1
+    
+    return base_name, number
+
+#
 #
 class Model:
     """
@@ -292,6 +321,9 @@ class Model:
         <value> is typically the current spectrum in the process of model evaluation
         Note: component subcycle (only defined in time) is handled in Component.value()
         """
+        # skip 'none' type components entirely (no-op)
+        if comp.comp_type == 'none':
+            return value
         # add a component to existing spectrum
         if comp.comp_type == 'add':
             return value +comp.value(t_ind)
@@ -538,24 +570,22 @@ class Component:
     a temporal dynamics component (functions in fcts_time) of the fit
     """
     #
-    def __init__(self, comp_name, package=fcts_energy, comp_type='add', comp_subcycle=0):
+    def __init__(self, comp_name, package=fcts_energy, comp_subcycle=0):
         # package containing component (either fcts_energy or fcts_time)
         self.package = package
         # name of the component (str)
         self.comp_name = comp_name
-        # retrieve function_str and component number from component name if necessary
-        if '_' in comp_name and comp_name.split('_')[-1].isdigit():
-            # this is a numbered component name (e.g., "GLP_01")
-            name_parts = comp_name.split('_')
-            self.fct_str = name_parts[0]
-            self.N = int(name_parts[-1])
+        # parse the component name into function string and component number
+        self.fct_str, self.N = parse_component_name(comp_name)       
+        # determine component type: 'add', 'conv', 'back', or 'none'
+        if self.fct_str in background_functions():
+            self.comp_type = 'back'
+        elif self.fct_str == 'none': # placeholder function (see src/functions/time.py)
+            self.comp_type = 'none'
+        elif 'CONV' in self.fct_str or self.fct_str.endswith('CONV'):
+            self.comp_type = 'conv'
         else:
-            # This is a base function name (e.g., "Offset", "Shirley")
-            self.fct_str = comp_name
-            self.N = -1  # Background functions don't get numbered
-        
-        # add (or convolute) this component to (or with) other components ['add'/ 'conv']
-        self.comp_type = 'back' if self.fct_str in background_functions() else comp_type 
+            self.comp_type = 'add'
         # dict of par_name: par_info from yaml file passed by user
         self.par_dict = {}
         # (for self.package=fcts_time) which subcycle is this component part of 
@@ -678,16 +708,20 @@ class Component:
         if detail >= 1:
             # addition or convolution?
             if self.comp_type == 'add':
-                addORconv = 'added to other components'
+                comp_type_str = 'added to other components'
             elif self.comp_type == 'conv':
-                addORconv = 'convoluted with other components'
+                comp_type_str = 'convoluted with other components'
+            elif self.comp_type == 'back':
+                comp_type_str = 'added as background to other components'
+            elif self.comp_type == 'none':
+                comp_type_str = 'skipped (no operation)'
             # subcycle info
             if self.subcycle == 0:
                 subcycle_str = 'for all times t'
             else:
                 subcycle_str = f'within subcycle {self.subcycle}'
             # print info
-            print(f'function will be {addORconv} [{subcycle_str}]')
+            print(f'function will be {comp_type_str} [{subcycle_str}]')
 
             # print info on passed parameters
             if hasattr(self, 'par_dict') and self.par_dict:
@@ -888,7 +922,7 @@ class Par:
             
         else:
             value = -1
-            print(f't_vary attribute of par "{self.name}" is not valid')
+            print(f't_vary attribute of Par "{self.name}" is not valid')
         #
         return value
     
@@ -926,6 +960,7 @@ class Par:
         # This catches parameter names like GLP_01_A, GLP_02_x0, etc.
         parameter_refs = []
         for match in matches:
+            #$% if a mcp.Dynamics Par references another mcp.Dynamics Par this doesn't work yet!
             for func_name in set(energy_functions()):
                 if match.startswith(func_name + '_'):
                     parameter_refs.append(match)
@@ -1074,7 +1109,3 @@ class Dynamics(Model):
                          ytype = 'log', legend = legends)
         #
         return None
-
-#
-#
-#
