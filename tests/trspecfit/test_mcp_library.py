@@ -226,7 +226,7 @@ class TestMCPDynamics:
         t_mod.time = np.linspace(-10, 100, 111)
         
         # Define instrument response function
-        c_IRF = Component('gaussCONV', fcts_time, 'conv')
+        c_IRF = Component('gaussCONV', fcts_time)
         c_IRF.add_pars({'sigma': [80, True, 0, 1E4]})
         
         # Define decay components
@@ -307,7 +307,7 @@ class TestMCPIntegration:
         t_mod = Model('GLP_01_x0')
         t_mod.time = mod2D.time
         
-        c_IRF = Component('gaussCONV', fcts_time, 'conv')
+        c_IRF = Component('gaussCONV', fcts_time)
         c_IRF.add_pars({'SD': [80, True, 0, 1E4]})  # Use SD parameter name
         
         c_exp = Component('expFun', fcts_time)
