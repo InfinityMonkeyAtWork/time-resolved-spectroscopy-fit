@@ -3,7 +3,7 @@
 #
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import time as fcts_time
-#from trspecfit.functions import depth as fcts_depth
+#from trspecfit.functions import distribution as fcts_dist
 
 #
 def prefix_exceptions():

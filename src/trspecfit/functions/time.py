@@ -1,6 +1,6 @@
 #
 # temporal dynamics/ kinetics functions
-# all functions are f(t) = 0 (for t<t0)
+# all functions must be f(t) = 0 (for t<t0)
 #
 import numpy as np
 from scipy.special import erf

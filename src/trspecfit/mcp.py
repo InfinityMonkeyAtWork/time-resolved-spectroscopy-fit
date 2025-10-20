@@ -11,22 +11,15 @@ import re
 import inspect
 import copy
 from IPython.display import display
-from asteval import Interpreter # asteval is used for expressions referencing time-dependent parameters
-# function library for energy, time, and depth components
+# asteval is used for expressions referencing time-dependent parameters
+from asteval import Interpreter
+# function library for energy, time, and distribution components
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import time as fcts_time
-#from trspecfit.functions import depth as fcts_depth
+#from trspecfit.functions import distribution as fcts_dist
 # configuration functions
 from trspecfit.config import prefix_exceptions, background_functions, energy_functions
 import concurrent.futures
-
-# To Do:
-# - implement depth dependence (or general implicit variables)
-# - modify "create_value1D" to include subcycles! be smart about it
-#   (N=0 applies to all of t or E, N>0 applies to the Nth subcycle only
-#   use "normalize_time" to get the applicable N (N_sub)
-# - delete attributes and methods that you don't actually end up using
-# - parallelize 2D map generation or somehow speed it up
 
 #
 def parse_component_name(comp_name):

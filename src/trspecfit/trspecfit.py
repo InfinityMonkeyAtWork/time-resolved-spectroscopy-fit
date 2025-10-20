@@ -15,10 +15,10 @@ from trspecfit.utils import plot as uplt
 import copy
 import time
 from IPython.display import display
-# function library for energy, time, and depth components
+# function library for energy, time, and distribution components
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import time as fcts_time
-from trspecfit.functions import depth as fcts_depth
+from trspecfit.functions import distribution as fcts_dist
 #import yaml
 #ruaml.yaml mod:
 import sys
@@ -45,7 +45,7 @@ def get_available_function_names():
     function_names = set()
     
     # Get all function names from each module
-    for module in [fcts_energy, fcts_time, fcts_depth]:
+    for module in [fcts_energy, fcts_time, fcts_dist]:
         for name in dir(module):
             # Only include callable functions (not constants or classes)
             if callable(getattr(module, name)) and not name.startswith('_'):
@@ -137,10 +137,10 @@ class Project:
         self.delim = ',' # define delimiter between data points
         self.DA_fmt = '%04d' # define format of data_analysis file numbering
         self.DA_slices_fmt = "%06d" # format for time slice numbering (SbS only)
-        self.lib_spec = spectra # library used to generate spectra
-        self.mcp_fun_str = 'fit_model_mcp'
-        self.mcp_fun = getattr(self.lib_spec, self.mcp_fun_str)
-        # keep these around? (useful for debugging SbS methods)
+        self.spec_lib = spectra # library used to generate spectra
+        self.spec_fun_str = 'fit_model_mcp'
+        self.spec_fun = getattr(self.spec_lib, self.spec_fun_str)
+        # keep these around? (useful for debugging SbS fit method)
         self.skip_first_N_spec = -1
         self.first_N_spec_only = -1
         #
@@ -563,7 +563,7 @@ class File:
                         f'Model: "{model_info}" (from "{mod.yaml_f_name}.yaml")' +\
                         f': initial guess'
             fitlib.plt_fit_res_1D(x = self.energy, y = self.data_base,
-                                  fit_fun_str = self.p.mcp_fun_str, package = self.p.lib_spec,
+                                  fit_fun_str = self.p.spec_fun_str, package = self.p.spec_lib,
                                   par_init = [], par_fin = mod.lmfit_pars, 
                                   args = (mod, 1), plot_ind = 1, show_init = 0,
                                   xlabel = self.p.e_label, ylabel = self.p.z_label,
@@ -733,7 +733,7 @@ class File:
         path_base_results = self.create_model_path(model_name)
         
         # const = (x, data, package, function string, unpack, energy limits, time limits)
-        self.model_base.const = (self.energy, self.data_base, self.p.lib_spec, self.p.mcp_fun_str, 0, self.e_lim, [])
+        self.model_base.const = (self.energy, self.data_base, self.p.spec_lib, self.p.spec_fun_str, 0, self.e_lim, [])
         # args [for fit function called in residual function]
         # model, dimension (dim =1 for baseline and SbS, =2 for 2D (global) fit), debug
         self.model_base.args = (self.model_base, 1, False)
@@ -753,7 +753,7 @@ class File:
         title_base = f'File: {self.path}, ' +\
                      f'Model: "{model_name}" (from "{self.model_base.yaml_f_name}.yaml")'
         fitlib.plt_fit_res_1D(x = self.energy, y = self.data_base,
-                              fit_fun_str = self.p.mcp_fun_str, package = self.p.lib_spec,
+                              fit_fun_str = self.p.spec_fun_str, package = self.p.spec_lib,
                               par_init = initial_guess, par_fin = self.model_base.result[1],
                               args = self.model_base.args, plot_ind = 1, show_init = 1,
                               xlabel = self.p.e_label, ylabel = self.p.z_label,
@@ -833,7 +833,7 @@ class File:
             initial_guess = ulmfit.par_extract(self.model_SbS.lmfit_pars, return_type='list')
         
             # const = (x, data, package, function string, unpack, energy limits, time limits)
-            self.model_SbS.const = (self.energy, s, self.p.lib_spec, self.p.mcp_fun_str, 0, self.e_lim, [])
+            self.model_SbS.const = (self.energy, s, self.p.spec_lib, self.p.spec_fun_str, 0, self.e_lim, [])
             # args (lmfit2D.Model, dimension, debug) [for fit function called in residual function]
             self.model_SbS.args = (self.model_SbS, 1, False)
 
@@ -853,7 +853,7 @@ class File:
 
             # (optionally) plot and (always) save fit summary for this slice
             fitlib.plt_fit_res_1D(x = self.model_SbS.const[0], y = self.model_SbS.const[1],
-                                  fit_fun_str = self.p.mcp_fun_str, package = self.p.lib_spec,
+                                  fit_fun_str = self.p.spec_fun_str, package = self.p.spec_lib,
                                   par_init = initial_guess, par_fin = result_SbS[1],
                                   args = self.model_SbS.args, plot_ind = 1, show_init = 1,
                                   xlabel = self.p.e_label, xdir = self.p.xdir,
@@ -947,7 +947,7 @@ class File:
         self.model_2D.update_value(new_par_values = list(base_df['value']),
                                    par_select = list(base_df['name']))
         # const [x, data, package, function string, unpack, energy limits, time limits]
-        self.model_2D.const = (self.energy, self.data, self.p.lib_spec, self.p.mcp_fun_str, 0, \
+        self.model_2D.const = (self.energy, self.data, self.p.spec_lib, self.p.spec_fun_str, 0, \
                                self.e_lim, self.t_lim)
         # args [for fit function called in residual function]
         self.model_2D.args = (self.model_2D, 2, False) # model, dimension, debug

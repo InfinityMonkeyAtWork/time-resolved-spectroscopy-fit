@@ -1,23 +1,16 @@
 # 
 # individual peak shapes/ spectral components 
 # and background functions to generate spectra
-# IF YOU ADD A BACKGROUND FUNCTION, ADD IT TO THE CONFIG.PY FILE!
 #
 import numpy as np
 from scipy.special import wofz
 #
 # INFORMATION (readme)
 # - do not use underscores in function or parameter names
-# - the combination of these components into a spectrum is handled in
-#   the package "spectra.py"
-# - individual components should have the form function(x, par) 
-#   or <par> can be explicitly written out, i.e. *par
-# - the parameters <par> of an individual peak function should be
-#   structured like this: <x> (x axis), <A> (amplitude/Area/etc.),
-#   <x0> center, <SD> or <F> or <W> representing the peak width,
-#   followed by optional other parameters
-# - background functions have the structure function(spectrum, par)
-#   where spectrum is the sum of all peaks/components
+# - the combination of these components into a model is handled in mcp.py
+# - individual components should have the form function(x, par1, par2, ...)
+# - background functions have the structure function(x, spectrum, par)
+#   where spectrum is the sum of all peaks/components (before "Offset")
 #
 # currently uses amplitude in all function definitions in this package!
 # [should swap to area for all functions at some point?]
@@ -25,6 +18,7 @@ from scipy.special import wofz
 
 #
 # background function definitions
+# IF YOU ADD A BACKGROUND FUNCTION, ADD IT TO THE CONFIG.PY FILE!
 #
 
 #
@@ -194,7 +188,7 @@ def DSGLS(x, A, x0, F, alpha, m):
     controls the Gauss vs Lorentz
     casaXPS also mentions extra convolution with Gaussian
     
-    READ MORE
+    READ MORE (double check this one)
     """
     return A* (m /(F**2 +(x-x0)**2 )**((1-alpha)/2) + \
            (1-m) *GLS(x, A=1, x0=x0, F=F, m=0.3))
@@ -212,7 +206,7 @@ def DSGLP(x, A, x0, F, alpha, m):
     controls the Gauss vs Lorentz
     casaXPS also mentions extra convolution with Gaussian
     
-    READ MORE
+    READ MORE (double check this one)
     """
     return A* (m /(F**2 +(x-x0)**2 )**((1-alpha)/2) + \
            (1-m) *GLP(x, A=1, x0=x0, F=F, m=0.3))
