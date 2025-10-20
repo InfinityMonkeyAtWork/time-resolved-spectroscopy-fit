@@ -521,7 +521,7 @@ class Simulator:
             
             # Clean data
             im1 = axes[0].pcolormesh(self.model.energy, self.model.time, 
-                                    self.data_clean, shading='nearest')
+                                    self.data_clean, shading='nearest', cmap=self.model.zColorMap)
             axes[0].set_title('Clean Data')
             axes[0].set_xlabel(self.model.e_label)
             axes[0].set_ylabel(self.model.t_label)
@@ -531,7 +531,7 @@ class Simulator:
             
             # Noisy data
             im2 = axes[1].pcolormesh(self.model.energy, self.model.time, 
-                                    self.data_noisy, shading='nearest')
+                                    self.data_noisy, shading='nearest', cmap=self.model.zColorMap)
             axes[1].set_title(plt_title)
             axes[1].set_xlabel(self.model.e_label)
             axes[1].set_ylabel(self.model.t_label)
@@ -541,7 +541,7 @@ class Simulator:
             
             # Noise
             im3 = axes[2].pcolormesh(self.model.energy, self.model.time, 
-                                    self.noise, shading='nearest', cmap='RdBu')
+                                    self.noise, shading='nearest', cmap=self.model.zColorMap)
             axes[2].set_title('Noise')
             axes[2].set_xlabel(self.model.e_label)
             axes[2].set_ylabel(self.model.t_label)

@@ -93,6 +93,13 @@ class Model:
         self.energy = None
         self.time = None
         self.xdir = 'def'
+        self.xtype = 'lin'
+        self.ydir = 'def'
+        self.ytype = 'lin'
+        self.zColorMap = 'viridis'
+        self.ztype = 'lin'
+        self.dpi_plt = 100
+        self.dpi_save = 300
         self.e_label = 'Energy'
         self.t_label = 'Time'
         self.z_label = 'Intensity'
@@ -453,17 +460,14 @@ class Model:
         return None
 
     #
-    def plot_1D(self, t_ind=0, plt_ind=0, dpi_plt=100,
-                xlim=[], xtype='lin', ylim=[], ydir='', ytype='lin',
-                save_img=0, save_path=[], dpi_save=300):
+    def plot_1D(self, t_ind=0, plt_ind=0, xlim=[], ylim=[], save_img=0, save_path=[]):
         """
-        plot model value result as a function of <x_axis> (plt_ind=0 [default], set plt_ind
-        to 1 if you want to plot the individual components making up the model)
-        x axis (all optional): xlim=[lo, hi], xtype='lin'/'log'
-        y axis (all optional): see "x axis" with addition of ydir direction ("rev"/"default")
+        plot model value result as a function of <x_axis> (plt_ind=0 [default], 
+        set plt_ind to 1 if you want to plot the individual components of the model)
+        x/y axis limits (optional): xlim=[lo, hi], ylim=[lo, hi]
         <save_img>= 0(no), 1(yes), <save_path> full image path (including extension)
         """
-        # the model calling this method is describing temporal dynamics of a par
+        # the model calling this method is describing temporal dynamics of a Par
         if isinstance(self, Dynamics): xdir = 'default'
         else: xdir = self.xdir
                 
@@ -483,29 +487,27 @@ class Model:
         # plot
         uplt.plot_1D(data = self.component_spectra if plt_ind==1 else [self.value1D,],
                      title = f'model "{self.name}" {info}',
-                     x = x_axis,
-                     xlabel = x_name, ylabel = self.z_label,
-                     xlim = xlim, xdir = xdir, xtype = xtype,
-                     ylim = ylim, ydir = ydir, ytype = ytype,
+                     x = x_axis, xlabel = x_name, ylabel = self.z_label,
+                     xlim = xlim, xdir = xdir, xtype = self.xtype,
+                     ylim = ylim, ydir = self.ydir, ytype = self.ytype,
                      legend = [c.name for c in self.components] if plt_ind==1 else ['sum',],
-                     save_img = save_img, save_path = save_path, dpi_save = dpi_save,
-                     dpi_plot = dpi_plt)
+                     save_img = save_img, save_path = save_path, 
+                     dpi_save = self.dpi_save, dpi_plot = self.dpi_plt)
         #
         return None
     
     #
-    def plot_2D(self, dpi_plt=100, save_img=0, save_path='', dpi_save=300, 
-                zlim=[], xlim=[], xtype='lin', ylim=[], ydir='', ytype='lin'):
+    def plot_2D(self, save_img=0, save_path='', xlim=[], ylim=[], zlim=[]):
         """
         Plot model attribute value2D, i.e. time- and energy-dependent spectrum
         """
         #
         uplt.plot_2D(data = self.value2D, x = self.energy, y = self.time, 
                      title = f'model "{self.name}"', ranges = [xlim, ylim, zlim],
-                     xlabel = self.e_label, ylabel = self.t_label,
-                     xdir = self.xdir, xtype = xtype, ydir = ydir, ytype = ytype,
+                     xlabel = self.e_label, ylabel = self.t_label, colormap = self.zColorMap,
+                     xdir = self.xdir, xtype = self.xtype, ydir = self.ydir, ytype = self.ytype,
                      save_img = save_img, save_path = save_path,
-                     dpi_save = dpi_save, dpi_plot = dpi_plt)
+                     dpi_save = self.dpi_save, dpi_plot = self.dpi_plt)
         #
         return None
     

@@ -7,7 +7,7 @@ from trspecfit import spectra
 from trspecfit.utils import lmfit as ulmfit
 import numpy as np
 from trspecfit.utils import arrays as uarr
-import os # replace os.join with "pathlib path / "subfolder" / "file name"
+import os # replace os.join with "pathlib path /"subfolder" /"file name"
 import pathlib
 #from trspecfit.utils import os as uos
 from trspecfit.utils import regex as ure
@@ -19,20 +19,14 @@ from IPython.display import display
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import time as fcts_time
 from trspecfit.functions import distribution as fcts_dist
-#import yaml
-#ruaml.yaml mod:
-import sys
+#ruaml.yaml mod (instead of "import yaml"):
 from ruamel.yaml import YAML
 from ruamel.yaml.constructor import SafeConstructor
 # yaml parser needs to know which components to number
 from trspecfit.config import prefix_exceptions
 
-# to do:
-# - pull load_model from File to Project to enable global fitting across files
-# - dimension: add =3 for slicing larger dimensional data?
-#
 # what does show_info mean? convert to binary debug by True if show_info >=3 else False
-#
+
 # multi-subcycle models allow for convolution only in the "0th subcycle" i.e. first model_info element
 # which affects all times t. "conv" functions in individual subcycles are currently ignored
 
@@ -103,57 +97,98 @@ yaml = YAML(typ='safe')
 #
 class Project:
     """
-    copy the bare minimum from TRAPXPS to here
-    
-    then make TRAPXPS project and files each a class with the project
-    and file from here as a superclass! this way you can add 
-    functionality like a user would (e.g. energy calibration, detector
-    calibration, other fit methods, etc.)
-    
-    enable different configurations for different methods/users [how?]
-    move the current defaults to a yaml file and load them from there?
-    
-    general framework for global i.e. project-wide fits:
-    define_global_variable() -> set vary=False on the file level and make a project-level
-    fit including all global variables (?) and a "for file in files" loop that does the
-    file level fits sequentially (there must be a better way to do this, but start with that)
+    Project configuration and management.
     """
-    def __init__(self, path, name='test'):
+    def __init__(self, path, name='test', config_file='project.yaml'):
         self.path = pathlib.Path(path) if path is not None else pathlib.Path('test')
         self.path_results = pathlib.Path(f'{path}_fits')
         self.run = name
         self.path_run = self.path_results / name
-        # settings (could be loaded from a .yaml file)
-        # change according to your spectroscopy method
-        self.show_info = 1 # 0: no output, 1: important, 2: all, 3+: debugging
-        self.e_label = 'Binding energy (eV)'
-        self.t_label = 'Time (s)'
-        self.z_label = 'Intensity (arb. units)'
-        self.xdir = 'rev' # default ('def') or reverse ('rev')
-        self.dpiplt = 100 # standard plot size for all plots
-        self.res_mult = 5 # multiply residuals with this scaling factor
-        self.ext = '.dat' # define file extension/ format
-        self.fmt = '%.6e' # define format of saved data
-        self.delim = ',' # define delimiter between data points
-        self.DA_fmt = '%04d' # define format of data_analysis file numbering
-        self.DA_slices_fmt = "%06d" # format for time slice numbering (SbS only)
-        self.spec_lib = spectra # library used to generate spectra
-        self.spec_fun_str = 'fit_model_mcp'
-        self.spec_fun = getattr(self.spec_lib, self.spec_fun_str)
-        # keep these around? (useful for debugging SbS fit method)
-        self.skip_first_N_spec = -1
-        self.first_N_spec_only = -1
-        #
-        return None
+        
+        # Set defaults first
+        self._set_defaults()
+        
+        # Override with YAML config if provided
+        if config_file is not None:
+            self._load_config(config_file)
     
     #
-    def load_configuration(self, project_yaml):
+    def _set_defaults(self):
+        """Set default project configuration."""
+        self.show_info = 1
+        # Plot settings
+        self.e_label = 'Energy'
+        self.t_label = 'Time'
+        self.z_label = 'Intensity'
+        self.xdir = 'def'
+        self.xtype = 'lin'
+        self.ydir = 'def'
+        self.ytype = 'lin'
+        self.zColorMap = 'viridis'
+        self.ztype = 'lin'
+        self.dpi_plt = 100
+        self.dpi_save = 300
+        self.res_mult = 5
+        # File I/O settings
+        self.ext = '.dat'
+        self.fmt = '%.6e'
+        self.delim = ','
+        self.DA_fmt = '%04d'
+        self.DA_slices_fmt = "%06d"
+        # Advanced settings
+        self.spec_lib = spectra
+        self.spec_fun_str = 'fit_model_mcp'
+        self.skip_first_N_spec = -1
+        self.first_N_spec_only = -1
+    
+    @property
+    def spec_fun(self):
         """
-        To do: create .yaml files for different users/ spectroscopy templates?
-        and load them, basically just re-defining (a subset of) project attributes
+        Dynamically get the spectrum fitting function.
         """
-        #
-        return None
+        return getattr(self.spec_lib, self.spec_fun_str)
+    
+    #
+    def _load_config(self, config_file):
+        """
+        Load project configuration from YAML file.
+        Allow different users or types of spectroscopy to overwrite (a subset of) project attributes
+        
+        Parameters
+        ----------
+        config_file : str or Path
+            Name or path of config file (looks in self.path)
+        """
+        from ruamel.yaml import YAML
+        
+        yaml = YAML()  # Standard YAML loading
+        config_path = self.path / config_file
+        
+        try:
+            with open(config_path, 'r') as f:
+                config = yaml.load(f)
+            
+            if config is None:
+                if self.show_info >= 1:
+                    print(f"Warning: {config_file} is empty, using defaults")
+                return
+            
+            # Update attributes from config
+            for key, value in config.items():
+                if hasattr(self, key):
+                    setattr(self, key, value)
+                    if self.show_info >= 2:
+                        print(f"Set {key} = {value}")
+                else:
+                    if self.show_info >= 1:
+                        print(f"Warning: Unknown config key '{key}' ignored")
+                        
+        except FileNotFoundError:
+            if self.show_info >= 1:
+                print(f"Config file {config_path} not found, using defaults")
+        except Exception as e:
+            print(f"Error loading config: {e}")
+            print("Using default settings")
     
 #
 #
@@ -204,13 +239,14 @@ class File:
         if self.dim == 1:
             uplt.plot_1D(data = [self.data,], x = self.energy,
                          xlabel = self.p.e_label, ylabel = self.p.z_label,
-                         xdir = self.p.xdir, dpi_plot = self.p.dpiplt,
+                         xdir = self.p.xdir, dpi_plot = self.p.dpi_plt,
                          vlines = self.e_lim_abs)
             
         elif self.dim == 2:
             uplt.plot_2D(data = self.data, x = self.energy, y = self.time,
                          xlabel = self.p.e_label, ylabel = self.p.t_label,
-                         xdir = self.p.xdir, dpi_plot = self.p.dpiplt,
+                         xdir = self.p.xdir, ydir = self.p.ydir, 
+                         colormap = self.p.zColorMap, dpi_plot = self.p.dpi_plt,
                          vlines = self.e_lim_abs, hlines = self.t_lim_abs)
         #
         return None
@@ -503,6 +539,11 @@ class File:
         loaded_model.energy = self.energy
         loaded_model.time = self.time
         loaded_model.xdir = self.p.xdir # file.p is the parent project
+        loaded_model.xtype = self.p.xtype
+        loaded_model.ydir = self.p.ydir
+        loaded_model.ytype = self.p.ytype
+        loaded_model.zColorMap = self.p.zColorMap
+        loaded_model.ztype = self.p.ztype
         loaded_model.e_label = self.p.e_label # x axis -> energy
         loaded_model.t_label = self.p.t_label # y axis -> time
         loaded_model.z_label = self.p.z_label # z axis -> intensity
@@ -567,7 +608,7 @@ class File:
                                   par_init = [], par_fin = mod.lmfit_pars, 
                                   args = (mod, 1), plot_ind = 1, show_init = 0,
                                   xlabel = self.p.e_label, ylabel = self.p.z_label,
-                                  xdir = self.p.xdir, title = title_mod, dpi_plt = self.p.dpiplt,
+                                  xdir = self.p.xdir, title = title_mod, dpi_plt = self.p.dpi_plt,
                                   fit_lim = self.e_lim, res_mult = self.p.res_mult,
                                   legend = [comp.name for comp in mod.components])
             
@@ -577,7 +618,7 @@ class File:
             fitlib.plt_fit_res_2D(data = self.data, x = self.energy, y = self.time,
                                   fit = mod.value2D, xdir = self.p.xdir,
                                   xlabel = self.p.e_label, ylabel = self.p.t_label,
-                                  xlim = self.e_lim, ylim = self.t_lim)
+                                  xlim = self.e_lim, ylim = self.t_lim, colormap = self.p.zColorMap)
         #
         return None
     
@@ -666,7 +707,7 @@ class File:
         
         # plot
         if show_plot == True:
-            uplt.plot_1D(data = [self.data_base,], x = self.energy, dpi_plot = self.p.dpiplt,
+            uplt.plot_1D(data = [self.data_base,], x = self.energy, dpi_plot = self.p.dpi_plt,
                          xdir = self.p.xdir, xlabel = self.p.e_label, ylabel = self.p.z_label,
                          title = f"Baseline data: t in {self.base_t_abs} (index: {self.base_t_ind})")
         #
@@ -707,11 +748,11 @@ class File:
                              waterfall = (np.max(abs(y_cut))-np.min(abs(y_cut)))/8,
                              xlabel = self.p.e_label, ylabel = self.p.z_label,
                              xdir = self.p.xdir, legend = ['all', 'cut'], 
-                             vlines = self.e_lim_abs, dpi_plot = self.p.dpiplt)
+                             vlines = self.e_lim_abs, dpi_plot = self.p.dpi_plt)
             elif self.dim == 2:
                 uplt.plot_2D(data = self.data, x = self.energy, y = self.time,
                              xlabel = self.p.e_label, ylabel = self.p.t_label,
-                             xdir = self.p.xdir, dpi_plot = self.p.dpiplt,
+                             xdir = self.p.xdir, dpi_plot = self.p.dpi_plt,
                              vlines = self.e_lim_abs, hlines = self.t_lim_abs)
         #
         return None
@@ -757,7 +798,7 @@ class File:
                               par_init = initial_guess, par_fin = self.model_base.result[1],
                               args = self.model_base.args, plot_ind = 1, show_init = 1,
                               xlabel = self.p.e_label, ylabel = self.p.z_label,
-                              xdir = self.p.xdir, title = title_base, dpi_plt = self.p.dpiplt,
+                              xdir = self.p.xdir, title = title_base, dpi_plt = self.p.dpi_plt,
                               fit_lim = self.e_lim, res_mult = self.p.res_mult,
                               legend = [comp.name for comp in self.model_base.components],
                               save_fig = -1 if self.p.show_info<1 else 1,
@@ -857,7 +898,7 @@ class File:
                                   par_init = initial_guess, par_fin = result_SbS[1],
                                   args = self.model_SbS.args, plot_ind = 1, show_init = 1,
                                   xlabel = self.p.e_label, xdir = self.p.xdir,
-                                  ylabel = self.p.z_label, dpi_plt = self.p.dpiplt,
+                                  ylabel = self.p.z_label, dpi_plt = self.p.dpi_plt,
                                   fit_lim = self.e_lim, res_mult = self.p.res_mult,
                                   save_fig = -1 if self.p.show_info<3 else 1,
                                   save_fig_path = path_slice +'.png')
@@ -904,7 +945,7 @@ class File:
                                   xlabel = self.p.e_label, ylabel = self.p.t_label,
                                   xlim = self.e_lim, ylim = self.t_lim,
                                   save_img = -1 if self.p.show_info==0 else 1,
-                                  save_path = save_path)
+                                  save_path = save_path, colormap = self.p.zColorMap)
         #
         return None
     
@@ -981,8 +1022,8 @@ class File:
                               xlabel = self.p.e_label, ylabel = self.p.t_label,
                               xlim = self.e_lim, ylim = self.t_lim,
                               save_img = -1 if self.p.show_info==0 else 1,
-                              save_path = save_path)
-        # dpi_plot = round(1.5 *self.p.dpiplt), NOT AVAILABLE YET (fig_size)
+                              save_path = save_path, colormap = self.p.zColorMap)
+        # dpi_plot = round(1.5 *self.p.dpi_plt), NOT AVAILABLE YET (fig_size)
         #
         return None
     
