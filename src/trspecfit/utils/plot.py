@@ -3,10 +3,9 @@
 #
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
-#import seaborn as sns
 import math
 import numpy as np
-#import os
+
 #
 # replace empty list defaults in plot_1D and plot_2D (?)
 #

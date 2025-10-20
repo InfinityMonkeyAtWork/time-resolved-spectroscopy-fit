@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trspecfit"
-version = "0.0.3"
+version = "0.0.4"
 authors = [
     {name = "Johannes Mahl", email = "johannes.a.mahl@gmail.com"},
 ]
@@ -24,7 +24,6 @@ dependencies = [
 	"h5py",
 	"IPython",
 	"matplotlib",
-	"seaborn",
 ]
 
 [project.optional-dependencies]
