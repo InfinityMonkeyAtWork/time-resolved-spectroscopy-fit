@@ -467,7 +467,7 @@ class Model:
         plot model value result as a function of <x_axis> (plt_ind=0 [default], set plt_ind
         to 1 if you want to plot the individual components making up the model)
         x axis (all optional): xlim=[lo, hi], xtype='lin'/'log'
-        y axis (all optional): see "x axis" with addition of ydir direction ("rev"/"standard")
+        y axis (all optional): see "x axis" with addition of ydir direction ("rev"/"default")
         <save_img>= 0(no), 1(yes), <save_path> full image path (including extension)
         """
         # the model calling this method is describing temporal dynamics of a par
@@ -519,7 +519,7 @@ class Model:
     #
     def combine_models(name, model1, model2, DEBUG=False):
         """
-        Combine two models [haven't tied this yet!]
+        Combine two models [haven't tried this yet!]
         """
         # initialize new model object 
         new_model = Model(name)
