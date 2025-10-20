@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import json
 import h5py
 import pandas as pd
-from trspecfit.utils import util_plot as uplt
+from trspecfit.utils import plot as uplt
 
 
 class Simulator:

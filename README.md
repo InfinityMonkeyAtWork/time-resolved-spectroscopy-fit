@@ -13,7 +13,7 @@ trspecfit is a Python library to define and fit multi-component spectral models 
 	MCMC sampling (lmfit.emcee).
 
 ## Repository layout
-- `src/trspecfit/` — library source code (core engine, helpers and functions)
+- `src/trspecfit/` — library source code (core engine, functions, and utils)
 - `examples/` — Jupyter notebooks and YAML model files that demonstrate usage
 - `tests/` — pytest unit tests for core functionality
 - `pyproject.toml` — project metadata and dependency declaration
@@ -44,37 +44,18 @@ pip install -U pip
 pip install -e .
 ```
 
-## Quickstart (minimal example)
+## Example Jupyter notebooks and YAML files
 
-The `Project` / `File` classes provide a convenient high-level API. The
-following shows a simple workflow – see the example notebooks for full
-workflows and model YAML files.
-
-```python
-from trspecfit import Project, File
-
-# create a project and file wrapper
-p = Project(path='examples/simulator', name='local-test')
-f = File(parent_project=p, path='simulated_dataset')
-
-# load an energy model (YAML should exist under p.path)
-f.load_model('models_energy.yaml', ['ModelName'])
-
-# create a 2D spectrum from the active model
-f.model_active.create_value2D()
-```
+Open the notebooks in `examples/` for runnable examples:
+- `examples/simulator/example.ipynb` — simulate noisy datasets based on your model input
+- `examples/dependent_parameters/example.ipynb` — parameters of one peak depend on another peak
+- `examples/subcycles/example.ipynb` — multiple subcycles inside one pump-probe cycle
 
 ## Fitting
 
 Use `trspecfit.fitlib.residual_fun` together with `fitlib.fit_wrapper` to run
 fits using lmfit. The wrapper supports sequential optimization, `lmfit.conf_interval`
 and optional MCMC sampling with `lmfit.emcee` for robust uncertainty estimates.
-
-Examples and notebooks
-
-Open the notebooks in `examples/` for runnable examples:
-- `examples/simulator/sim example.ipynb` — simulated datasets and model YAMLs
-- `examples/XPS_Au4f/XPS example Au4f.ipynb` — example using XPS-like data
 
 ## Testing
 

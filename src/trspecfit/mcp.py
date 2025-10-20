@@ -2,9 +2,9 @@
 # package to extend lmfit library to multi-dimensional data
 #
 import lmfit
-from trspecfit.utils import util_lmfit as ulmfit
-from trspecfit.utils import util_arrays as uarr
-from trspecfit.utils import util_plot as uplt
+from trspecfit.utils import lmfit as ulmfit
+from trspecfit.utils import arrays as uarr
+from trspecfit.utils import plot as uplt
 import math
 import numpy as np
 import re

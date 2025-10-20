@@ -4,14 +4,14 @@
 from trspecfit import mcp
 from trspecfit import fitlib
 from trspecfit import spectra
-from trspecfit.utils import util_lmfit as ulmfit
+from trspecfit.utils import lmfit as ulmfit
 import numpy as np
-from trspecfit.utils import util_arrays as uarr
+from trspecfit.utils import arrays as uarr
 import os # replace os.join with "pathlib path / "subfolder" / "file name"
 import pathlib
-#from trspecfit.utils import util_os as uos
-from trspecfit.utils import util_regex as ure
-from trspecfit.utils import util_plot as uplt
+#from trspecfit.utils import os as uos
+from trspecfit.utils import regex as ure
+from trspecfit.utils import plot as uplt
 import copy
 import time
 from IPython.display import display

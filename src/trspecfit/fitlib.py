@@ -2,7 +2,7 @@
 # 1D and 2D peak fitting functions
 #
 import lmfit
-from trspecfit.utils import util_lmfit as ulmfit
+from trspecfit.utils import lmfit as ulmfit
 #import emcee
 import corner
 import math
@@ -14,7 +14,7 @@ import time
 from IPython.display import display, display_pretty
 import matplotlib.pyplot as plt
 from matplotlib.cm import get_cmap
-from trspecfit.utils import util_plot as uplt
+from trspecfit.utils import plot as uplt
 
 # Changes:
 # - residual_fun: pass function instead of package + function 
