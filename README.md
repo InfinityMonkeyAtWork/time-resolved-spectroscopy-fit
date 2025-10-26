@@ -66,6 +66,51 @@ pip install pytest
 pytest -q
 ```
 
+## Plotting with PlotConfig
+
+trspecfit uses `PlotConfig` to manage plot settings consistently across your project.
+
+### Basic Usage
+```python
+from trspecfit import PlotConfig
+from trspecfit.utils import plot as uplt
+
+# Create config with custom settings
+config = PlotConfig(x_label='Energy (eV)', x_dir='rev', dpi_plot=150)
+uplt.plot_1D(data, x, config=config)
+```
+
+### Using Project Settings
+
+Load settings from your `project.yaml` file:
+```python
+from trspecfit import Project, PlotConfig
+
+project = Project(path='my_project', config_file='project.yaml')
+config = PlotConfig.from_project(project)
+
+# All plots use project settings
+uplt.plot_1D(data, x, config=config)
+uplt.plot_2D(data, x, y, config=config)
+```
+
+### Quick Overrides
+
+Override specific settings without creating a new config:
+```python
+config = PlotConfig.from_project(project)
+uplt.plot_1D(data, x, config=config, x_dir='rev', colors=['red', 'blue'])
+```
+
+### Multiple Configurations
+
+Create different configs for different purposes:
+```python
+default_config = PlotConfig.from_project(project)
+pub_config = PlotConfig.from_project(project, dpi_save=600, dpi_plot=150)
+talk_config = PlotConfig.from_project(project, ticksize=14)
+```
+
 # Copyright Notice
 
 time-resolved spectroscopy fit (trspecfit) Copyright (c) 2025, The Regents of the University of California, through Lawrence Berkeley National Laboratory (subject to receipt of any required approvals from the U.S. Dept. of Energy). All rights reserved.

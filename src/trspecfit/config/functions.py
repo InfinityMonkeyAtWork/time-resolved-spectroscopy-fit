@@ -1,6 +1,6 @@
-#
-# Configuration and constants for trspecfit
-#
+"""
+Configuration of trspecfit/functions energy, time, distribution
+"""
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import time as fcts_time
 #from trspecfit.functions import distribution as fcts_dist

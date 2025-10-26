@@ -15,6 +15,7 @@ from IPython.display import display, display_pretty
 import matplotlib.pyplot as plt
 from matplotlib.cm import get_cmap
 from trspecfit.utils import plot as uplt
+from trspecfit.config.plot import PlotConfig
 
 # Changes:
 # - residual_fun: pass function instead of package + function 
@@ -65,7 +66,7 @@ def residual_fun(par, x, data, package, fit_fun_str, unpack=0, e_lim=[],
     # or if list of [value, vary/fix, min, max] transition to val list
     par = ulmfit.par_extract(par, return_type='list')
     
-    # compute the fit curve [plt_ind has to be hardcoded as zero here!(?)]
+    # compute the fit curve [plot_ind has to be hardcoded as False here!(?)]
     if unpack == 1: fit = fit_fun(x, *par, 0, *args)
     elif unpack == 0: fit = fit_fun(x, par, 0, *args)
     
@@ -453,8 +454,9 @@ def results_select(data, skip=-1, N=-1, dim=1):
     return out
 
 #
-def results2df(results, x=[], xlabel='x', index=[], first_N_spec_only=-1,
-               skip_first_N_spec=-1, save_df=0, save_path=''):
+def results2df(results, x=None, index=None, config=None,
+               first_N_spec_only=-1, skip_first_N_spec=-1, 
+               save_df=0, save_path=''):
     """
     Convert Slice-by-Slice fit <results> list of lmfit_wrapper()
     elements into a pandas dataframe
@@ -471,18 +473,22 @@ def results2df(results, x=[], xlabel='x', index=[], first_N_spec_only=-1,
     returns a pandas dataframe of the fit results with <index> and <x>
     as rows and parameters (retrieved from <results>) as columns.
     """
+    # Use default config if none provided
+    if config is None:
+        config = PlotConfig()
+    
     # transform lmfit_wrapper results to dataframe
     df = ulmfit.list_of_par2df(results)
     # get columns names for plot before adding x/index
     cols_plt = df.columns
     
-    # select <x> and <index> data if passed
-    if len(x) != 0:
+    # select <x> (time) and <index> data if passed
+    if x is not None:
         x_save = results_select(data=x,
                                 skip=skip_first_N_spec,
                                 N=first_N_spec_only)
-        df.insert(0, xlabel, x_save) # and insert into dataframe
-    if len(index) != 0:
+        df.insert(0, config.y_label, x_save) # and insert into dataframe
+    if index is not None:
         ind_save = results_select(data=index,
                                   skip=skip_first_N_spec,
                                   N=first_N_spec_only)
@@ -498,8 +504,8 @@ def results2df(results, x=[], xlabel='x', index=[], first_N_spec_only=-1,
         # save the dataframe (index, x axis, parameter1, parameter2, ...
         df.to_csv(os.path.join(save_path, 'fit_pars.csv'))
         # plot individual parameters as a function of time (s)
-        plt_fit_res_pars(df=df[cols_plt], x=x_save, xlabel=xlabel,
-                         save_img=save_array, save_path=save_path)
+        plt_fit_res_pars(df=df[cols_plt], x=x_save if x is not None else None,
+                         config=config, save_img=save_array, save_path=save_path)
     #
     return df
 
@@ -544,238 +550,366 @@ def results2fit2D(results, const, args, num_fmt='%.6e', delim=',',
 #
 # Plot fit results 1D and 2D functions
 #
-def plt_fit_res_1D(x, y, fit_fun_str, package, par_init, par_fin, args=[0], 
-                   plot_ind=0, show_init=1, title='', fit_lim=[], res_mult=5, 
-                   xlim=[], xtype='lin', ytype='lin', xdir='rev', ydir='',
-                   xlabel='x_axis', ylabel='y_axis', legend=[],
-                   dpi_plt=125, save_fig=0, save_fig_path=''):
+def plt_fit_res_1D(x, y, fit_fun_str, package, par_init, par_fin, args=None, 
+                   plot_ind=True, show_init=True, title='', fit_lim=None, 
+                   config=None, legend=None, **kwargs):
     """
-    Input data: <x> (np.array) axis, <y> (np.array) y axis,
-    <fit_fun_str> (string) is the name of the function contained in the
-    module <package> that will be used to generate a spectrum to fit 
-    the data (y)
-    <args> will be passed in an unpacked form (*args) to the fit
-    function <package>.<fit_fun_str>
-    <dpi_plt> defines the dpi (dots per inch) for the plot produced by
-    this function
-    Use <show_init> (either 0 or 1) to show the initial guess for the
-    fit in the output plot. If the initial guess is shown, <par_init>
-    defines the parameter set with which this initial guess will be
-    produced (pass empty list if show_init==0). The final fit is always
-    plotted. The individual components of the fit can either be shown
-    in the fit or not, <plt_ind>=1 or =0, respectively
-    <res_mult> is the multiplier used on the residual between data (y)
-    and final fit
+    Plot 1D fit results: data, initial guess, final fit, components, and residual
     
-    The output figure can be saved (<save_fig>=1) by passing either the
-    full path, a folder, or an empty string (which will save a png with
-    no file name in said folder or the current directory, respectively)
-    via the <save_path> input (string)
-    <save_fig> =0: plot only, =1: save & plot, =-1: save only
+    Parameters
+    ----------
+    x : array
+        X-axis data
+    y : array
+        Y-axis data (to be fitted)
+    fit_fun_str : str
+        Name of fitting function in package
+    package : module
+        Python module containing fit_fun_str
+    par_init : list or lmfit.Parameters
+        Initial parameter guess
+    par_fin : lmfit.MinimizerResult or lmfit.Parameters or list
+        Final fit parameters (empty list for initial guess only)
+    args : tuple, optional
+        Additional arguments for fit function
+    plot_ind : bool
+        False: plot sum only, True: plot individual components
+    show_init : bool
+        False: don't show initial guess, True: show initial guess
+    title : str
+        Plot title
+    fit_lim : list, optional
+        Fit limit indices [left, right] to show as vertical lines
+    config : PlotConfig, optional
+        Configuration object with plot settings
+    legend : list of str, optional
+        Legend labels for components (only used if plot_ind is True)
+    **kwargs : dict
+        Override config attributes: x_label, y_label, x_lim, y_lim, 
+        x_dir, y_dir, res_mult, save_img, save_path (directory), 
+        dpi_plot, dpi_save
+    
+    Notes
+    -----
+    save_path should be a directory path. The file will be saved as
+    '1D_data_fit_res.png' in that directory.
     """
-    # function = getattr(package, function name as string)
+    if config is None:
+        config = PlotConfig()
+    
+    if args is None:
+        args = []
+    
+    # Extract settings from config
+    x_label = kwargs.get('x_label', config.x_label)
+    y_label = kwargs.get('z_label', config.z_label) # y is Intensity in 1D plot
+    x_dir = kwargs.get('x_dir', config.x_dir)
+    x_type = kwargs.get('x_type', config.x_type)
+    y_type = kwargs.get('y_type', config.y_type)
+    x_lim = kwargs.get('x_lim', config.x_lim)
+    y_lim = kwargs.get('y_lim', config.y_lim)
+    dpi_plot = kwargs.get('dpi_plot', config.dpi_plot)
+    dpi_save = kwargs.get('dpi_save', config.dpi_save)
+    res_mult = kwargs.get('res_mult', 5)
+    save_img = kwargs.get('save_img', 0)
+    save_path = kwargs.get('save_path', '')
+    
+    # Get fit function
     fit_fun = getattr(package, fit_fun_str)
-    # get standard colors that matplotlib cycles through as a list
+    
+    # Get standard colors
     colors = get_cmap('tab10').colors
-    # define figure 
-    fig, ax = plt.subplots(1, 1, dpi=dpi_plt)
-    # plot data input (x and y axis)
+    
+    # Create figure
+    fig, ax = plt.subplots(1, 1, dpi=dpi_plot)
+    
+    # Plot data
     plt.plot(x, y, color=colors[0], linewidth=2, label='data')
     
-    # plot fit resulting from the initial guess parameters (gold)
-    if show_init == 1: 
+    # Plot initial guess if requested
+    if show_init: 
         par_ini = ulmfit.par_extract(par_init, return_type='list')
         plt.plot(x, fit_fun(x, par_ini, 0, *args), color='#FFD700',
-                            linestyle=':', linewidth=2, label='initial guess')
+                linestyle=':', linewidth=2, label='initial guess')
     
-    # plot final fit components if they exist
-    # or don't if no fit performed (init only)
-    if isinstance(par_fin, (lmfit.minimizer.MinimizerResult,
-                            lmfit.parameter.Parameters)):
+    # Plot final fit (components and/or sum)
+    if isinstance(par_fin, (lmfit.minimizer.MinimizerResult, lmfit.parameter.Parameters)):
         par_fin_vals = ulmfit.par_extract(par_fin, return_type='list')
-        # plot individual components if option selected
-        if plot_ind == 1:
-            # get individual components of the fit
-            peaks = fit_fun(x, par_fin_vals, 1, *args)            
-            # plot individual components of the fit
+        
+        # Plot individual components if requested
+        if plot_ind:
+            peaks = fit_fun(x, par_fin_vals, 1, *args)
             for p, peak in enumerate(peaks):
-                plt.plot(x, peak, color=colors[p+1], linestyle='-', linewidth=2,
-                         label=f'component {p}' if len(legend)==0 else legend[p])
+                label = legend[p] if legend and p < len(legend) else f'component {p}'
+                plt.plot(x, peak, color=colors[p+1], linestyle='-', 
+                        linewidth=2, label=label)
                 ax.fill_between(x, 0, peak, facecolor=colors[p+1], alpha=0.5)
-        # plot the final fit
+        
+        # Plot final fit sum
         plt.plot(x, fit_fun(x, par_fin_vals, 0, *args), color='#000000',
-                 linestyle='-', linewidth=1, label='final fit')
-        # plot the scaled (for better visibility) residual, i.e. data - fit
-        res = y -fit_fun(x, par_fin_vals, 0, *args)
-    else: # initial guess only
-        # 'fit result is not of type "lmfit.minimizer.MinimizerResult"'
-        res = y -fit_fun(x, par_ini, 0, *args)
+                linestyle='-', linewidth=1, label='final fit')
+        
+        # Calculate residual
+        res = y - fit_fun(x, par_fin_vals, 0, *args)
+    else:
+        # Initial guess only
+        par_ini = ulmfit.par_extract(par_init, return_type='list')
+        res = y - fit_fun(x, par_ini, 0, *args)
     
-    # plot residual
-    plt.plot(x, res*res_mult, color='#808080',
-             linestyle='-', linewidth=2, label=str(res_mult)+'*residual')
+    # Plot residual (scaled for visibility)
+    plt.plot(x, res * res_mult, color='#808080',
+            linestyle='-', linewidth=2, label=f'{res_mult}*residual')
     
-    # set axis labels
-    ax.set_xlabel(xlabel); ax.set_ylabel(ylabel)
-    # define x and y direction, log/linear, or limits (if passed)
-    if xtype == 'log': ax.set_xscale('log')
-    if len(xlim)!=0: ax.set_xlim(xlim[0], xlim[1])
-    if xdir == 'rev': plt.gca().invert_xaxis()
-    if ytype == 'log': ax.set_yscale('log')
-    #if len(ylim)!=0: ax.set_ylim(ylim[0], ylim[1])
-    if ydir == 'rev': plt.gca().invert_yaxis()
-    # horizontal line (zero line) and xlim vertical lines defining fit boundaries
-    if xlim: 
-        ax.hlines(y=0, xmin=np.min(xlim), xmax=np.max(xlim),
-                  color='#A9A9A9', linestyle=':')
+    # Set axis labels and title
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    plt.title(title, loc='left', fontsize=10)
+    
+    # Apply axis limits, direction, and scale
+    if x_type == 'log':
+        ax.set_xscale('log')
+    if x_lim is not None:
+        ax.set_xlim(x_lim[0], x_lim[1])
+    if x_dir == 'rev':
+        plt.gca().invert_xaxis()
+    if y_type == 'log':
+        ax.set_yscale('log')
+    if y_lim is not None:
+        ax.set_ylim(y_lim[0], y_lim[1])
+    
+    # Draw zero line
+    if x_lim is not None:
+        ax.hlines(y=0, xmin=x_lim[0], xmax=x_lim[1],
+                 color='#A9A9A9', linestyle=':')
     else:
         ax.hlines(y=0, xmin=np.min(x), xmax=np.max(x),
-                  color='#A9A9A9', linestyle=':')
-    # vertical lines showing fit limits
-    if fit_lim: 
-        ax.vlines(x=[x[fit_lim[0]], x[-fit_lim[1]]],
-                  ymin=np.min(res), ymax=np.max(y),
-                  colors='#A9A9A9', linestyle='--')
-    # title
-    plt.title(title, loc='left', fontsize=10)
-    # legend
-    plt.legend(bbox_to_anchor = (1.35,1))
+                 color='#A9A9A9', linestyle=':')
     
-    # save
-    if abs(save_fig) == 1:
-        plt.savefig(save_fig_path, dpi=300, bbox_inches = 'tight',
-                    pad_inches=0.05, facecolor='white', edgecolor='auto')
-    # display
-    if save_fig >=0 : plt.show()
-    else: plt.close()
-    #
+    # Draw vertical lines showing fit limits
+    if fit_lim is not None and len(fit_lim) == 2:
+        ax.vlines(x=[x[fit_lim[0]], x[-fit_lim[1]] if fit_lim[1] > 0 else x[-1]],
+                 ymin=np.min(res), ymax=np.max(y),
+                 colors='#A9A9A9', linestyle='--')
+    
+    # Legend
+    plt.legend(bbox_to_anchor=(1.35, 1))
+    
+    # Save with predetermined filename
+    if abs(save_img) == 1:
+        plt.savefig(save_path, dpi=dpi_save, bbox_inches='tight',
+                   pad_inches=0.05, facecolor='white', edgecolor='auto')
+    
+    # Display or close
+    if save_img >= 0:
+        plt.show()
+    else:
+        plt.close()
+    
     return None
 
 #
-def plt_fit_res_2D(data, fit, x=[], y=[], xlabel='x', ylabel='y',
-                   xlim=[], ylim=[], xdir='', ydir='',
-                   xtype='lin', ytype='lin', colormap='RdBu', 
-                   range_dat=[], range_res=[], save_img=0, save_path=''):
+def plt_fit_res_2D(data, fit, x=None, y=None, config=None, **kwargs):
     """
-    <data> and <fit> 2D numpy arrays
-    <x> and <y> are the horizontal and vertical axis (1D numpy array)
+    Plot data, fit, and residual 2D maps
     
-    total residual will be computed from xlim[0] to -xlim[1], and from
-    ylim[0] to ylim[1] (and printed in the title of the residual map)
+    Parameters
+    ----------
+    data : 2D array
+        Measured data
+    fit : 2D array
+        Fitted data
+    x : array-like, optional
+        X-axis (energy) coordinates. If None, uses indices.
+    y : array-like, optional
+        Y-axis (time) coordinates. If None, uses indices.
+    config : PlotConfig, optional
+        Configuration object with plot settings. If None, uses defaults.
+    **kwargs : dict
+        Override config attributes. Common options:
+        x_label, y_label, z_colormap, x_dir, y_dir, x_lim, y_lim,
+        z_lim_top (for data and fit - synchronized),
+        z_lim_res (for residual - independent),
+        save_img, save_path
     
-    <colormap> is the "cmap" attribute of matplotlib.pyplot.pcolormesh 
-    <range_dat> and <range_res> are the z (color coded) axis ranges
-    (i.e. [min, max])
+    Notes
+    -----
+    Data and fit panels share the same color scale (min/max across both)
+    to enable direct comparison. Residual has independent color scale.
     
-    <save_img> =0: don't save, =1 [show fig] (or -1 [do not show fig]): save
-    if abs(save_img)==1: figure is saved to <save_path>/'2D_data_fit_res.png'
+    x_lim and y_lim are INDEX-based limits: x_lim=[left, right], y_lim=[start, stop]
+    Used both for slicing residual calculation and for drawing limit lines.
+
+    save_path should be a directory path. The file will be saved as
+    '2D_data_fit_res.png' in that directory.
     """
-    # define residual
-    res = data -fit
-    # cut residual according to xlim and ylim
-    if len(xlim)!=0 and len(ylim)!=0:
-        res_cut = res[ylim[0]:ylim[1], xlim[0]:-xlim[1]]
-    elif len(xlim)!=0:
-        res_cut = res[:, xlim[0]:-xlim[1]]
-    elif len(ylim)!=0:
-        res_cut = res[ylim[0]:ylim[1], :]
-    else: res_cut = res
-    res_sum = np.sum(np.abs(res_cut)) # sum of abs(residual)
-    res_dim = np.shape(res_cut) # dimensions of cut residual
+    if config is None:
+        config = PlotConfig()
     
-    # if no x and/or y axis is passed, create one
-    if len(x)==0: x = np.arange(0, np.shape(data)[1], 1)
-    if len(y)==0: y = np.arange(0, np.shape(data)[0], 1)
+    # Extract settings from config
+    x_label = kwargs.get('x_label', config.x_label)
+    y_label = kwargs.get('y_label', config.y_label)
+    z_colormap = kwargs.get('z_colormap', config.z_colormap)
+    x_dir = kwargs.get('x_dir', config.x_dir)
+    x_type = kwargs.get('x_type', config.x_type)
+    y_dir = kwargs.get('y_dir', config.y_dir)
+    y_type = kwargs.get('y_type', config.y_type)
+    save_img = kwargs.get('save_img', 0)
+    save_path = kwargs.get('save_path', '')
     
-    # plot ranges
-    if len(range_dat) == 0:
-        range_dat = [np.min(data), np.max(data)]
-    if len(range_res) == 0:
+    # Fit limit indices
+    x_lim = kwargs.get('x_lim', None)
+    y_lim = kwargs.get('y_lim', None)
+    
+    # Color scale limits
+    z_lim_top = kwargs.get('z_lim_top', None)  # Shared for data and fit
+    z_lim_res = kwargs.get('z_lim_res', None)  # Independent for residual
+    
+    # Calculate residual
+    res = data - fit
+    
+    # Cut residual according to x_lim and y_lim for statistics
+    if x_lim is not None and y_lim is not None:
+        res_cut = res[y_lim[0]:y_lim[1], x_lim[0]:-x_lim[1]]
+    elif x_lim is not None:
+        res_cut = res[:, x_lim[0]:-x_lim[1]]
+    elif y_lim is not None:
+        res_cut = res[y_lim[0]:y_lim[1], :]
+    else:
+        res_cut = res
+    
+    res_sum = np.sum(np.abs(res_cut))
+    res_dim = np.shape(res_cut)
+    
+    # Create default axes if not provided
+    if x is None:
+        x = np.arange(0, np.shape(data)[1], 1)
+    if y is None:
+        y = np.arange(0, np.shape(data)[0], 1)
+    
+    # Determine color scale ranges
+    # Data and fit share the same scale for comparison
+    if z_lim_top is None:
+        range_dat_fit = [min(np.min(data), np.min(fit)), 
+                         max(np.max(data), np.max(fit))]
+    else:
+        range_dat_fit = z_lim_top
+    
+    # Residual has independent scale
+    if z_lim_res is None:
         range_res = [np.min(res_cut), np.max(res_cut)]
+    else:
+        range_res = z_lim_res
     
-    # plot layout
+    # Create figure layout
     fig, axs = plt.subplot_mosaic([['left', 'right'],
                                    ['bottom', 'bottom'],
                                    ['bottom', 'bottom']],
-                                  constrained_layout=True, figsize=(9,12))
-    # data
-    pc_dat = axs['left'].pcolormesh(x, y, data, cmap=colormap,
-                                    vmin=range_dat[0], vmax=range_dat[1])
-    axs['left'].set_title('Data [min: ' +str('{0:.3E}'.format(np.min(data))) +\
-                          ', max: ' +str('{0:.3E}'.format(np.max(data))) +']') 
-    # fit
-    pc_fit = axs['right'].pcolormesh(x, y, fit, cmap=colormap,
-                                     vmin=range_dat[0], vmax=range_dat[1])
-    axs['right'].set_title('Fit [min: ' +str('{0:.3E}'.format(np.min(fit))) +\
-                           ', max: ' +str('{0:.3E}'.format(np.max(fit))) +']') 
-    # residual
-    pc_res = axs['bottom'].pcolormesh(x, y, res, cmap=colormap,
-                                      vmin=range_res[0], vmax=range_res[1])
-    # fix #$% how to make nice multi-line strings?
-    axs['bottom'].set_title('Residual (Data-Fit) [min: ' +\
-                            str('{0:.3E}'.format(np.min(res_cut))) +\
-                            ', max: ' +str('{0:.3E}'.format(np.max(res_cut))) +\
-                            ']' +'\n' +'total residual (sum within black dotted lines): ' +\
-                            str('{0:.3E}'.format(res_sum)) +'\n' +str('per spectrum: ') +\
-                            str('{0:.3E}'.format(res_sum/res_dim[0])) +str(', per pixel: ') +\
+                                  constrained_layout=True, figsize=(9, 12))
+    
+    # Data panel (uses shared scale)
+    pc_dat = axs['left'].pcolormesh(x, y, data, cmap=z_colormap,
+                                    vmin=range_dat_fit[0], vmax=range_dat_fit[1],
+                                    shading='nearest')
+    axs['left'].set_title('Data [min: ' + str('{0:.3E}'.format(np.min(data))) +
+                          ', max: ' + str('{0:.3E}'.format(np.max(data))) + ']')
+    
+    # Fit panel (uses shared scale)
+    pc_fit = axs['right'].pcolormesh(x, y, fit, cmap=z_colormap,
+                                     vmin=range_dat_fit[0], vmax=range_dat_fit[1],
+                                     shading='nearest')
+    axs['right'].set_title('Fit [min: ' + str('{0:.3E}'.format(np.min(fit))) +
+                           ', max: ' + str('{0:.3E}'.format(np.max(fit))) + ']')
+    
+    # Residual panel (independent scale)
+    pc_res = axs['bottom'].pcolormesh(x, y, res, cmap=z_colormap,
+                                      vmin=range_res[0], vmax=range_res[1],
+                                      shading='nearest')
+    axs['bottom'].set_title('Residual (Data-Fit) [min: ' +
+                            str('{0:.3E}'.format(np.min(res_cut))) +
+                            ', max: ' + str('{0:.3E}'.format(np.max(res_cut))) +
+                            ']' + '\n' + 'total residual (sum within black dotted lines): ' +
+                            str('{0:.3E}'.format(res_sum)) + '\n' + str('per spectrum: ') +
+                            str('{0:.3E}'.format(res_sum/res_dim[0])) + str(', per pixel: ') +
                             str('{0:.3E}'.format(res_sum/res_dim[0]/res_dim[1])))
-    # show colorbar only on the large, residual map
-    fig.colorbar(pc_res, orientation = 'vertical')
-    # lables also only on res map
-    axs['bottom'].set_ylabel(ylabel); axs['bottom'].set_xlabel(xlabel)
-    # draw horizontal and vertical lines around x and y limits
-    if len(ylim) != 0:
-        plt.axhline(y=y[ylim[0]], xmin=0, xmax=1,
-                    color='#000000', linestyle=':')
-        plt.axhline(y=y[ylim[1]], xmin=0, xmax=1,
-                    color='#000000', linestyle=':')
-    if len(xlim) != 0:
-        plt.axvline(x=x[xlim[0]], ymin=0, ymax=1,
-                    color='#000000', linestyle=':')
-        plt.axvline(x=x[np.shape(res)[1]-xlim[1]], ymin=0, ymax=1,
-                    color='#000000', linestyle=':')
-    # x and y direction and type (lin/log) for all three plots
-    if xtype == 'log':
+    
+    # Colorbar only on residual map
+    fig.colorbar(pc_res, orientation='vertical')
+    
+    # Labels only on residual map
+    axs['bottom'].set_ylabel(y_label)
+    axs['bottom'].set_xlabel(x_label)
+    
+    # Draw horizontal and vertical lines showing fit limits
+    if y_lim is not None:
+        axs['bottom'].axhline(y=y[y_lim[0]], xmin=0, xmax=1,
+                             color='#000000', linestyle=':')
+        axs['bottom'].axhline(y=y[y_lim[1]], xmin=0, xmax=1,
+                             color='#000000', linestyle=':')
+    if x_lim is not None:
+        axs['bottom'].axvline(x=x[x_lim[0]], ymin=0, ymax=1,
+                             color='#000000', linestyle=':')
+        axs['bottom'].axvline(x=x[np.shape(res)[1]-x_lim[1]], ymin=0, ymax=1,
+                             color='#000000', linestyle=':')
+    
+    # Apply axis settings to all three plots
+    if x_type == 'log':
         axs['left'].set_xscale('log')
         axs['right'].set_xscale('log')
         axs['bottom'].set_xscale('log')
-    if xdir == 'rev':
+    if x_dir == 'rev':
         axs['left'].invert_xaxis()
         axs['right'].invert_xaxis()
         axs['bottom'].invert_xaxis()
-    if ytype == 'log':
+    if y_type == 'log':
         axs['left'].set_yscale('log')
         axs['right'].set_yscale('log')
         axs['bottom'].set_yscale('log')
-    if ydir == 'rev':
+    if y_dir == 'rev':
         axs['left'].invert_yaxis()
         axs['right'].invert_yaxis()
         axs['bottom'].invert_yaxis()
     
-    # save
+    # Save
     if abs(save_img) == 1:
         uplt.img_save(os.path.join(save_path, '2D_data_fit_res.png'))
-    #
-    if save_img >=0 : plt.show()
-    else: plt.close()
-    #
+    
+    # Show or close
+    if save_img >= 0:
+        plt.show()
+    else:
+        plt.close()
+    
     return None
 
 #
-def plt_fit_res_pars(df, x=[], xlabel='', save_img=0, save_path=''):
+def plt_fit_res_pars(df, x=None, config=None, save_img=0, save_path=''):
     """
     Plot fit result parameters individually and optionally save figures
     <save_img> =1 plot and save, =0 plot only, =-1 save only
     <save_img> type is list: one element per row of <df>
                        int: apply this setting to all parameters
     """
+    # Use default config if none provided
+    if config is None:
+        config = PlotConfig()
+    
     # if save_img is passed as int, make array of length = rows in df
     if isinstance(save_img, int):
         save_img = np.shape(df)[0]*[save_img]
+    
     # plot all parameters as function of time
     for c, col in enumerate(df.columns):
-        uplt.plot_1D([df[col]], x, title=col, xlabel=xlabel, ylabel=col,
-                       save_img=save_img[c],
-                       save_path=os.path.join(save_path, col))
+        uplt.plot_1D(
+            data=[df[col]],
+            x=x,
+            config=config,
+            title=col,
+            x_dir='def',
+            x_type=config.y_type,
+            x_label=config.y_label,
+            y_label=col,
+            save_img=save_img[c],
+            save_path=os.path.join(save_path, col)
+        )
     #
     return None

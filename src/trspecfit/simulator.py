@@ -6,8 +6,10 @@ import json
 import h5py
 import pandas as pd
 from trspecfit.utils import plot as uplt
+from trspecfit.config.plot import PlotConfig
 
-
+#
+#
 class Simulator:
     """
     Simulate 2D time- and energy-resolved spectroscopy data with noise
@@ -26,7 +28,7 @@ class Simulator:
         cycle_time: Duration of one pump-probe cycle in seconds (photon counting)
         seed: Random seed for reproducibility
     """
-    
+    #
     def __init__(self, model, 
                  detection='analog',
                  noise_level=0.05, 
@@ -78,6 +80,7 @@ class Simulator:
         self.data_noisy = None  # With noise
         self.noise = None       # Just the noise component
     
+    #
     def _resolve_photon_counting_params(self):
         """
         Resolve photon counting parameters. User can specify either:
@@ -122,7 +125,8 @@ class Simulator:
                 f"counts_per_cycle must be positive, got {self.counts_per_cycle}.\n"
                 f"Model may have negative or zero signal. Check your model or specify counts_per_cycle manually."
             )
-        
+    
+    #
     def generate_clean_data(self, dim=2, t_ind=0):
         """
         Generate clean data from model (no noise)
@@ -145,6 +149,7 @@ class Simulator:
         
         return self.data_clean
     
+    #
     def add_noise(self, clean_data, dim=2):
         """
         Add noise to clean data based on detection technique
@@ -180,6 +185,7 @@ class Simulator:
         
         return noisy_data, noise
     
+    #
     def simulate_1D(self, t_ind=0):
         """
         Simulate 1D spectrum (energy-resolved) at a specific time point
@@ -203,6 +209,7 @@ class Simulator:
         
         return clean_data, noisy_data, noise
     
+    #
     def simulate_2D(self):
         """
         Simulate 2D spectrum (time- and energy-resolved)
@@ -223,6 +230,7 @@ class Simulator:
         
         return clean_data, noisy_data, noise
     
+    #
     def simulate_N(self, N, dim=2, t_ind=0, show_progress=True):
         """
         Generate N simulated datasets with independent noise realizations
@@ -268,6 +276,7 @@ class Simulator:
         
         return clean_data, noisy_data_list, noise_list
     
+    #
     def _generate_noise_analog_1D(self, signal):
         """
         Generate 1D noise array for analog detectors
@@ -309,6 +318,7 @@ class Simulator:
             raise ValueError(f"Unknown noise type: {self.noise_type}. "
                            "Use 'poisson', 'gaussian', or 'none'")
     
+    #
     def _generate_noise_analog_2D(self, signal):
         """
         Generate 2D noise array for analog detectors
@@ -349,6 +359,7 @@ class Simulator:
             raise ValueError(f"Unknown noise type: {self.noise_type}. "
                            "Use 'poisson', 'gaussian', or 'none'")
     
+    #
     def _sample_photons_1D(self, signal):
         """
         Sample photons for 1D photon counting detection
@@ -379,6 +390,7 @@ class Simulator:
         
         return noisy_data
     
+    #
     def _sample_photons_2D(self, signal):
         """
         Sample photons for 2D photon counting detection
@@ -415,24 +427,28 @@ class Simulator:
         
         return noisy_data
     
+    #
     def set_noise_level(self, noise_level):
         """Update noise level (analog detectors only)"""
         if self.detection != 'analog':
             print("Warning: noise_level only applies to analog detection")
         self.noise_level = noise_level
     
+    #
     def set_noise_type(self, noise_type):
         """Update noise type (analog detectors only)"""
         if self.detection != 'analog':
             print("Warning: noise_type only applies to analog detection")
         self.noise_type = noise_type.lower()
     
+    #
     def set_counts_per_cycle(self, counts_per_cycle):
         """Update counts per cycle (photon counting only)"""
         if self.detection != 'photon_counting':
             print("Warning: counts_per_cycle only applies to photon_counting detection")
         self.counts_per_cycle = counts_per_cycle
     
+    #
     def set_count_rate(self, count_rate, cycle_time=None):
         """
         Update count rate (photon counting only)
@@ -454,12 +470,14 @@ class Simulator:
         else:
             raise ValueError("cycle_time must be set to calculate counts_per_cycle from count_rate")
     
+    #
     def set_seed(self, seed):
         """Update random seed"""
         self.seed = seed
         if seed is not None:
             np.random.seed(seed)
     
+    #
     def get_SNR(self, scale='linear'):
         """
         Calculate Signal-to-Noise Ratio (SNR)
@@ -482,14 +500,19 @@ class Simulator:
         elif scale == 'dB':
             return 10 * np.log10(signal_power / noise_power)
     
+    #
     def plot_comparison(self, t_ind=0, dim=1, SNR_scale='linear'):
         """
         Plot comparison of clean vs noisy data
         
-        Parameters:
-            t_ind: Time index for 1D plots (ignored for 2D)
-            dim: Dimension (1 for 1D plot, 2 for 2D plot)
-            SNR_scale: 'linear' or 'dB' for SNR display in title
+        Parameters
+        ----------
+        t_ind : int
+            Time index for 1D plots (ignored for 2D)
+        dim : int
+            Dimension (1 for 1D plot, 2 for 2D plot)
+        SNR_scale : str
+            'linear' or 'dB' for SNR display in title
         """
         detection_str = f' [{self.detection}]'
         plt_title = f'Simulated Data (SNR: {self.get_SNR(scale=SNR_scale):.1f} {SNR_scale}){detection_str}'
@@ -498,15 +521,16 @@ class Simulator:
             if self.data_clean is None:
                 self.simulate_1D(t_ind)
             
+            # Get config from model
+            config = self.model.plot_config
+            
             # Plot with noisy data as scatter
             uplt.plot_1D(
                 data=[self.data_clean, self.data_noisy, self.noise],
                 x=self.model.energy,
-                xlabel=self.model.e_label,
-                ylabel=self.model.z_label,
-                legend=['Clean', 'Noisy', 'Noise'],
+                config=config,
                 title=plt_title,
-                xdir=self.model.xdir,
+                legend=['Clean', 'Noisy', 'Noise'],
                 linestyles=['-', '', '-'],  # Empty string = no line for noisy data
                 markers=[None, 'o', None],  # Scatter points for noisy data
                 markersizes=[6, 3, 6]  # Smaller markers for noisy data
@@ -516,42 +540,61 @@ class Simulator:
             if self.data_clean is None:
                 self.simulate_2D()
             
+            # Get config from model
+            config = self.model.plot_config
+            
             # Create 3-panel plot
             fig, axes = plt.subplots(1, 3, figsize=(15, 4))
             
+            # Determine axis direction
+            x_dir_reversed = (config.x_dir == 'rev')
+            
             # Clean data
-            im1 = axes[0].pcolormesh(self.model.energy, self.model.time, 
-                                    self.data_clean, shading='nearest', cmap=self.model.zColorMap)
-            axes[0].set_title('Clean Data')
-            axes[0].set_xlabel(self.model.e_label)
-            axes[0].set_ylabel(self.model.t_label)
-            if self.model.xdir == 'rev':
+            im1 = axes[0].pcolormesh(self.model.energy,
+                                     self.model.time, 
+                                     self.data_clean,
+                                     shading='nearest',
+                                     cmap=config.z_colormap
+                                     )
+            axes[0].set_title('Clean Model Data')
+            axes[0].set_xlabel(config.x_label)
+            axes[0].set_ylabel(config.y_label)
+            if x_dir_reversed:
                 axes[0].invert_xaxis()
             plt.colorbar(im1, ax=axes[0])
             
             # Noisy data
-            im2 = axes[1].pcolormesh(self.model.energy, self.model.time, 
-                                    self.data_noisy, shading='nearest', cmap=self.model.zColorMap)
+            im2 = axes[1].pcolormesh(self.model.energy,
+                                     self.model.time, 
+                                     self.data_noisy,
+                                     shading='nearest',
+                                     cmap=config.z_colormap
+                                     )
             axes[1].set_title(plt_title)
-            axes[1].set_xlabel(self.model.e_label)
-            axes[1].set_ylabel(self.model.t_label)
-            if self.model.xdir == 'rev':
+            axes[1].set_xlabel(config.x_label)
+            axes[1].set_ylabel(config.y_label)
+            if x_dir_reversed:
                 axes[1].invert_xaxis()
             plt.colorbar(im2, ax=axes[1])
             
             # Noise
-            im3 = axes[2].pcolormesh(self.model.energy, self.model.time, 
-                                    self.noise, shading='nearest', cmap=self.model.zColorMap)
-            axes[2].set_title('Noise')
-            axes[2].set_xlabel(self.model.e_label)
-            axes[2].set_ylabel(self.model.t_label)
-            if self.model.xdir == 'rev':
+            im3 = axes[2].pcolormesh(self.model.energy,
+                                     self.model.time, 
+                                     self.noise,
+                                     shading='nearest',
+                                     cmap=config.z_colormap
+                                     )
+            axes[2].set_title('Noise (Simulated - Clean)')
+            axes[2].set_xlabel(config.x_label)
+            axes[2].set_ylabel(config.y_label)
+            if x_dir_reversed:
                 axes[2].invert_xaxis()
             plt.colorbar(im3, ax=axes[2])
             
             plt.tight_layout()
             plt.show()
     
+    #
     def save_data(self, filepath=None, save_format='hdf5', N_data=None, overwrite=True):
         """
         Save simulated data to file
@@ -598,6 +641,7 @@ class Simulator:
         
         print(f"Data saved to: {filepath}")
 
+    #
     def _save_hdf5(self, filepath, N_data=None):
         """
         Save data to HDF5 format with proper structure

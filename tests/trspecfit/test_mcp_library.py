@@ -35,7 +35,6 @@ class TestMCPModel:
         mod2D = Model('Au4f_test')
         mod2D.energy = np.arange(75, 95, 0.1)[::-1]
         mod2D.time = np.arange(-500, 2500, 10)
-        mod2D.xdir = 'rev'
         
         # Define Shirley background
         c_Shirley = Component('Shirley')
@@ -429,24 +428,22 @@ class TestMCPNormalization:
     def test_time_normalization(self):
         """Test time normalization for multi-cycle dynamics"""
         # Create a dynamics model with frequency
-        t_mod = Model('test_normalization')
+        from trspecfit.mcp import Dynamics
+        t_mod = Dynamics('test_normalization')
         t_mod.time = np.linspace(0, 100, 1000)
+        t_mod.subcycles = 3
         
-        # Test that we can set frequency (if method exists)
-        if hasattr(t_mod, 'set_frequency'):
-            t_mod.set_frequency(frequency=0.1, time_unit=0)
-            # Test that normalization attributes are created
-            assert hasattr(t_mod, 'time_norm')
-            assert hasattr(t_mod, 'N_sub')
-            assert hasattr(t_mod, 'N_counter')
-            
-            # Test that normalized time is calculated
-            if hasattr(t_mod, 'time_norm'):
-                assert len(t_mod.time_norm) == len(t_mod.time)
-        else:
-            # Skip this test if set_frequency method doesn't exist
-            pytest.skip("set_frequency method not available")
-    
+        # Test that we can set frequency
+        t_mod.set_frequency(frequency=0.1, time_unit=0)
+        # Test that normalization attributes are created
+        assert hasattr(t_mod, 'time_norm')
+        assert hasattr(t_mod, 'N_sub')
+        assert hasattr(t_mod, 'N_counter')
+        
+        # Test that normalized time is calculated
+        if hasattr(t_mod, 'time_norm'):
+            assert len(t_mod.time_norm) == len(t_mod.time)
+        
     def test_subcycle_handling(self):
         """Test subcycle handling in components"""
         # Create a component with subcycle

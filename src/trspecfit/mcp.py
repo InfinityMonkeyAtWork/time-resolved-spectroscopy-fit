@@ -1,6 +1,6 @@
-#
-# package to extend lmfit library to multi-dimensional data
-#
+"""
+Package to extend lmfit library to 2D data
+"""
 import lmfit
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import arrays as uarr
@@ -11,15 +11,18 @@ import re
 import inspect
 import copy
 from IPython.display import display
+import concurrent.futures
 # asteval is used for expressions referencing time-dependent parameters
 from asteval import Interpreter
 # function library for energy, time, and distribution components
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import time as fcts_time
 #from trspecfit.functions import distribution as fcts_dist
-# configuration functions
-from trspecfit.config import prefix_exceptions, background_functions, energy_functions
-import concurrent.futures
+# function configurations
+from trspecfit.config.functions import prefix_exceptions, background_functions, energy_functions
+# plot configuration
+from trspecfit.config.plot import PlotConfig
+
 
 #
 def parse_component_name(comp_name):
@@ -88,24 +91,28 @@ class Model:
         self.args = None
         self.result = []
         # ATTRIBUTES THAT SHOULD BE INHERITED FROM A PARENT ENTITY WHEN LOADING MODEL
+        self.parent_file = None  # parent reference (set by File when loading model)
         #self.data = None # (currently) not necessary
         self.dim = None
-        self.energy = None
-        self.time = None
-        self.xdir = 'def'
-        self.xtype = 'lin'
-        self.ydir = 'def'
-        self.ytype = 'lin'
-        self.zColorMap = 'viridis'
-        self.ztype = 'lin'
-        self.dpi_plt = 100
-        self.dpi_save = 300
-        self.e_label = 'Energy'
-        self.t_label = 'Time'
-        self.z_label = 'Intensity'
+        self.energy = None # necessarry or should just point to file?
+        self.time = None # necessarry or should just point to file?
         #
         return None
     
+    @property
+    def plot_config(self):
+        """
+        Get plot config from parent File.
+        
+        Models inherit plot settings from their parent File, ensuring
+        consistent plotting across all models for the same dataset.
+        """
+        if hasattr(self, 'parent_file') and self.parent_file is not None:
+            return self.parent_file.plot_config
+        
+        # Fallback to defaults if no parent
+        return PlotConfig()
+
     #  
     def describe(self, detail=0):
         """
@@ -180,7 +187,7 @@ class Model:
         
         # update model lmfit_par_list (+par_names) and components
         self.update(DEBUG=DEBUG)
-        if DEBUG == True: self.lmfit_pars.pretty_print()          
+        if DEBUG: self.lmfit_pars.pretty_print()          
         #
         return None
     
@@ -233,7 +240,7 @@ class Model:
             
         # create lmfit.Parameters object from the lmfit_par_list
         self.lmfit_pars.add_many(*self.lmfit_par_list)
-        if DEBUG == True: self.lmfit_pars.pretty_print()
+        if DEBUG: self.lmfit_pars.pretty_print()
         
         # update list of all parameter names
         self.par_names = [par.name for par in self.lmfit_par_list]
@@ -360,7 +367,7 @@ class Model:
         
         # combine the components into a spectrum/ time dynamics curve
         for N in range(len(self.components)):
-            if DEBUG == True: print(N+1); print(self.components[-(N+1)].fct_str)
+            if DEBUG: print(N+1); print(self.components[-(N+1)].fct_str)
             if store1D == 1: current_spec = copy.deepcopy(self.value1D)
             #
             self.value1D = Model.combine(self.value1D, 
@@ -368,7 +375,7 @@ class Model:
                                          t_ind)
             # check on last component value added to model
             if store1D == 1: self.component_spectra.append(self.value1D -current_spec)
-            if DEBUG == True: uplt.plot_1D([self.component_spectra[-1],])
+            if DEBUG: uplt.plot_1D([self.component_spectra[-1],])
             
         # flip component spectra list as components are combined LIFO in this function
         if store1D == 1: self.component_spectra = self.component_spectra[::-1]
@@ -392,7 +399,7 @@ class Model:
         
         # combine the components into a spectrum/ time dynamics curve
         for N in range(len(self.components) -1):
-            if DEBUG == True: print(N+2); print(self.components[-(N+2)].fct_str)
+            if DEBUG: print(N+2); print(self.components[-(N+2)].fct_str)
             if store1D == 1: current_spec = copy.deepcopy(self.value1D)
             #
             self.value1D = Model.combine(self.value1D, 
@@ -400,7 +407,7 @@ class Model:
                                          t_ind)
             # check on last component value added to model
             if store1D == 1: self.component_spectra.append(self.value1D -current_spec)
-            if DEBUG == True: uplt.plot_1D([self.component_spectra[-1], ])
+            if DEBUG: uplt.plot_1D([self.component_spectra[-1],])
             
         # flip component spectra list as components are combined LIFO in this function
         if store1D == 1: self.component_spectra = self.component_spectra[::-1]
@@ -460,54 +467,66 @@ class Model:
         return None
 
     #
-    def plot_1D(self, t_ind=0, plt_ind=0, xlim=[], ylim=[], save_img=0, save_path=[]):
+    def plot_1D(self, t_ind=0, plot_ind=False, x_lim=None, y_lim=None, save_img=0, save_path=''):
         """
-        plot model value result as a function of <x_axis> (plt_ind=0 [default], 
-        set plt_ind to 1 if you want to plot the individual components of the model)
-        x/y axis limits (optional): xlim=[lo, hi], ylim=[lo, hi]
+        plot model value result as a function of <x_axis> (plot_ind=False [default], 
+        set plot_ind to True if you want to plot the individual components of the model)
+        x/y axis limits (optional): x_lim=[lo, hi], y_lim=[lo, hi]
         <save_img>= 0(no), 1(yes), <save_path> full image path (including extension)
         """
-        # the model calling this method is describing temporal dynamics of a Par
-        if isinstance(self, Dynamics): xdir = 'default'
-        else: xdir = self.xdir
-                
-        # get x axis and its label (all comps should have the same package)
-        if self.components[0].package == fcts_energy:
-            x_axis = self.energy
-            x_name = self.e_label
-            info = f'[{self.t_label}={round(self.time[t_ind],3)} (index={t_ind})]'
-        elif self.components[0].package == fcts_time: 
-            x_axis = self.time
-            x_name = self.t_label
+        # Get model config for plotting
+        config = self.plot_config
+        
+        # Model calling this method is a ...
+        # ... time-resolved model (mcp.Dynamics)
+        if isinstance(self, Dynamics):
+            x_dir = 'def'  # Always default for Dynamics
+            x = self.time
+            x_label = config.y_label  # t_label from project
             info = ''
+        # ... energy-resolved model
+        else:
+            x_dir = self.x_dir
+            x = self.energy
+            x_label = config.x_label  # e_label from project
+            info = f'[{config.y_label}={round(self.time[t_ind],3)} (index={t_ind})]'
             
-        # populate <component_spectra> argument of the model
+        # Populate <component_spectra> argument of the model
         self.create_value1D(t_ind, store1D=1)
         
-        # plot
-        uplt.plot_1D(data = self.component_spectra if plt_ind==1 else [self.value1D,],
-                     title = f'model "{self.name}" {info}',
-                     x = x_axis, xlabel = x_name, ylabel = self.z_label,
-                     xlim = xlim, xdir = xdir, xtype = self.xtype,
-                     ylim = ylim, ydir = self.ydir, ytype = self.ytype,
-                     legend = [c.name for c in self.components] if plt_ind==1 else ['sum',],
-                     save_img = save_img, save_path = save_path, 
-                     dpi_save = self.dpi_save, dpi_plot = self.dpi_plt)
+        # Plot
+        uplt.plot_1D(
+            data=self.component_spectra if plot_ind else [self.value1D,],
+            x=x,
+            config=config,
+            title=f'Model "{self.name}" {info}',
+            x_label=x_label,
+            y_label=config.z_label,
+            x_dir=x_dir,
+            x_lim=x_lim, y_lim=y_lim,
+            legend=[c.name for c in self.components] if plot_ind else ['sum',],
+            save_img=save_img,
+            save_path=save_path
+        )
         #
         return None
-    
+
     #
-    def plot_2D(self, save_img=0, save_path='', xlim=[], ylim=[], zlim=[]):
+    def plot_2D(self, save_img=0, save_path='', x_lim=None, y_lim=None, z_lim=None):
         """
         Plot model attribute value2D, i.e. time- and energy-dependent spectrum
         """
-        #
-        uplt.plot_2D(data = self.value2D, x = self.energy, y = self.time, 
-                     title = f'model "{self.name}"', ranges = [xlim, ylim, zlim],
-                     xlabel = self.e_label, ylabel = self.t_label, colormap = self.zColorMap,
-                     xdir = self.xdir, xtype = self.xtype, ydir = self.ydir, ytype = self.ytype,
-                     save_img = save_img, save_path = save_path,
-                     dpi_save = self.dpi_save, dpi_plot = self.dpi_plt)
+        # Plot using the utility plot_2D
+        uplt.plot_2D(
+            data=self.value2D,
+            x=self.energy,
+            y=self.time,
+            config=self.plot_config,
+            title=f'model "{self.name}"',
+            x_lim=x_lim, y_lim=y_lim, z_lim=z_lim,
+            save_img=save_img,
+            save_path=save_path
+        )
         #
         return None
     
@@ -736,14 +755,14 @@ class Component:
         """
         # get kernel parameters i.e. component parameters
         parK = ulmfit.par_extract(self.par_dict, return_type='list')
-        if DEBUG == True: print(f'component/kernel parameters as list: {parK}')
+        if DEBUG: print(f'component/kernel parameters as list: {parK}')
         # define kernel time axis
         kernel_width = getattr(fcts_time, self.fct_str +'_kernel_width')()
-        if DEBUG == True: print(f'kernel width loaded from fcts_time: {kernel_width}')
+        if DEBUG: print(f'kernel width loaded from fcts_time: {kernel_width}')
         t_range = parK[0] *kernel_width
         try: t_step = self.time[1] -self.time[0]
         except: print(f'time axis of component {self.fct_str} not defined')
-        if DEBUG == True: print(f'delta time (from self.time): {t_step}')
+        if DEBUG: print(f'delta time (from self.time): {t_step}')
         t_kernel = np.arange(-t_range, t_range+t_step, t_step)
         #
         return t_kernel
@@ -791,8 +810,7 @@ class Component:
         #
         uplt.plot_1D(data = [self.value(t_ind, **kwargs), ],
                      title = f'function: {self.fct_str} from {self.package}]',
-                     x = x_axis,
-                     xlabel = x_name, ylabel = 'Amplitude')
+                     x = x_axis, x_label = x_name, y_label = 'Amplitude')
         #
         return None
 
@@ -1064,43 +1082,62 @@ class Dynamics(Model):
         for every time step, and a cummulative subcycle counter 
         (N_counter) for every time step (numpy arrays each).
         """
-        # sanity check
-        if self.subcycles == 1 or not isinstance(self.subcycles, int): 
-            print('Subcycle (N) must either be zero or a >= 2 integer')
-            self.time_norm = None; self.N_sub = None; self.N_counter = None
+        # Sanity checks
+        if self.subcycles == 1 or not isinstance(self.subcycles, int):
+            raise ValueError(
+                'Subcycle (N) must either be zero or a >= 2 integer. '
+                f'Got: {self.subcycles} (type: {type(self.subcycles).__name__})'
+            )
+        
         if self.frequency < 0 and self.frequency != -1:
-            print('Frequency (f) must be >0 (or "-1" i.e. no repetition)')
-            self.time_norm = None; self.N_sub = None; self.N_counter = None
+            raise ValueError(
+                f'Frequency (f) must be >0 (or "-1" for no repetition). '
+                f'Got: {self.frequency}'
+            )
 
-        # no repetition within data/ time window
+        # No repetition within data/time window
         if self.frequency == -1:
-            if self.subcycles > 1: print('Define a (>0) frequency to use subcycles (N)')
+            if self.subcycles > 1:
+                raise ValueError(
+                    'Cannot use subcycles (N > 1) without a positive frequency. '
+                    f'Got subcycles={self.subcycles} with frequency=-1'
+                )
             self.time_norm = np.asarray(self.time)
             self.N_sub = np.zeros(len(self.time))
             self.N_counter = np.zeros(len(self.time))
 
-        # frequency >0 is passed
+        # Frequency >0 is passed
         else:
-            # compute repetition/normalization number
-            norm = 10**(-time_unit) /self.frequency /self.subcycles 
-            t_norm = []; N_sub = []; N_counter = [] # initialize
-            # go through time axis and perform normalization
+            # Compute repetition/normalization number
+            norm = 10**(-time_unit) / self.frequency / self.subcycles 
+            t_norm = []
+            N_sub = []
+            N_counter = []
+            
+            # Go through time axis and perform normalization
             for i, t_i in enumerate(self.time):
-                N_temp = math.floor(t_i /norm)
-                if t_i >=0: # subcycles start at t=0
-                    N_sub.append(math.floor(N_temp%self.subcycles) +1) # which subcycle is active
-                    N_counter.append(N_temp +1) # increments by 1 each subcycle
-                    t_norm.append(t_i -N_temp*norm) # each subcycle starts with t=0
-                else: # times t<0 are baseline/pre-trigger/ground state spectra
-                    N_sub.append(0); N_counter.append(0); t_norm.append(0)
+                N_temp = math.floor(t_i / norm)
+                if t_i >= 0:  # Subcycles start at t=0
+                    N_sub.append(math.floor(N_temp % self.subcycles) + 1)  # Which subcycle is active
+                    N_counter.append(N_temp + 1)  # Increments by 1 each subcycle
+                    t_norm.append(t_i - N_temp * norm)  # Each subcycle starts with t=0
+                else:  # Times t<0 are baseline/pre-trigger/ground state spectra
+                    N_sub.append(0)
+                    N_counter.append(0)
+                    t_norm.append(0)
+            
             self.time_norm = np.asarray(t_norm)
             self.N_sub = np.asarray(N_sub)
             self.N_counter = np.asarray(N_counter)
             
-        if DEBUG == True:
+        if DEBUG:
             legends = ['normalized time', 'subcycle counter', 'cummulative counter']
-            uplt.plot_1D(data = [self.time_norm, self.N_sub, self.N_counter], 
-                         x = self.time, xlabel = f'Time (1E{time_unit}s)',
-                         ytype = 'log', legend = legends)
+            uplt.plot_1D(
+                data=[self.time_norm, self.N_sub, self.N_counter], 
+                x=self.time,
+                x_label=f'Time (1E{time_unit}s)',
+                y_type='log',
+                legend=legends
+            )
         #
         return None

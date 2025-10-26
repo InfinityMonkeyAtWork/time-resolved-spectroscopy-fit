@@ -233,7 +233,3 @@ class par_dummy:
         self.x = None
         #
         return None
-
-#
-#
-#

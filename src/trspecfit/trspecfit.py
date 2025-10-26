@@ -22,8 +22,11 @@ from trspecfit.functions import distribution as fcts_dist
 #ruaml.yaml mod (instead of "import yaml"):
 from ruamel.yaml import YAML
 from ruamel.yaml.constructor import SafeConstructor
+from ruamel.yaml.error import YAMLError
 # yaml parser needs to know which components to number
-from trspecfit.config import prefix_exceptions
+from trspecfit.config.functions import prefix_exceptions
+# standardized plotting configuration
+from trspecfit.config.plot import PlotConfig
 
 # what does show_info mean? convert to binary debug by True if show_info >=3 else False
 
@@ -120,12 +123,13 @@ class Project:
         self.e_label = 'Energy'
         self.t_label = 'Time'
         self.z_label = 'Intensity'
-        self.xdir = 'def'
-        self.xtype = 'lin'
-        self.ydir = 'def'
-        self.ytype = 'lin'
-        self.zColorMap = 'viridis'
-        self.ztype = 'lin'
+        self.x_dir = 'def'
+        self.x_type = 'lin'
+        self.y_dir = 'def'
+        self.y_type = 'lin'
+        self.z_colormap = 'viridis'
+        self.z_colorbar = 'ver'
+        self.z_type = 'lin'
         self.dpi_plt = 100
         self.dpi_save = 300
         self.res_mult = 5
@@ -204,6 +208,7 @@ class File:
         self.p = parent_project if parent_project is not None else Project(path=None)
         self.path = path # path to load/save [?] data from
         self.path_DA = self.p.path_run / path # path to save fit results to
+        self._plot_config = None # create plot config from project (but File can customize it)
         #
         self.data = data # (time-[optional] and) energy-dependent data to fit
         self.dim = len(np.shape(data)) # 1 for energy (1D) # 2 for energy+time (2D)
@@ -229,28 +234,53 @@ class File:
         #
         return None
     
+    @property
+    def plot_config(self):
+        """
+        Get plot config for this File.
+        
+        Created from parent Project on first access. File can then customize
+        persistently (e.g., for different time axes across files).
+        """
+        if self._plot_config is None:
+            self._plot_config = PlotConfig.from_project(self.p)
+        #
+        return self._plot_config
+    
+    @plot_config.setter
+    def plot_config(self, config):
+        """Allow setting a custom config for this File"""
+        self._plot_config = config
+
     #
     def describe(self):
         """
-        
+        Display info about file
         """
         print(f"File # x [path: {self.path}]")
         
+        config = self.plot_config
+        
         if self.dim == 1:
-            uplt.plot_1D(data = [self.data,], x = self.energy,
-                         xlabel = self.p.e_label, ylabel = self.p.z_label,
-                         xdir = self.p.xdir, dpi_plot = self.p.dpi_plt,
-                         vlines = self.e_lim_abs)
+            uplt.plot_1D(
+                data=[self.data,],
+                x=self.energy,
+                config=config,
+                vlines=self.e_lim_abs
+            )
             
         elif self.dim == 2:
-            uplt.plot_2D(data = self.data, x = self.energy, y = self.time,
-                         xlabel = self.p.e_label, ylabel = self.p.t_label,
-                         xdir = self.p.xdir, ydir = self.p.ydir, 
-                         colormap = self.p.zColorMap, dpi_plot = self.p.dpi_plt,
-                         vlines = self.e_lim_abs, hlines = self.t_lim_abs)
+            uplt.plot_2D(
+                data=self.data,
+                x=self.energy,
+                y=self.time,
+                config=config,
+                vlines=self.e_lim_abs,
+                hlines=self.t_lim_abs
+            )
         #
         return None
-    
+   
     #
     def model_list_to_name(self, model_list):
         """
@@ -536,17 +566,8 @@ class File:
         loaded_model.yaml_f_name = model_yaml.split(".")[0] # yaml file name
         loaded_model.dim = 1 # start with 1, +1 when adding dynamics
         loaded_model.subcycles = len(model_info)-1
-        loaded_model.energy = self.energy
-        loaded_model.time = self.time
-        loaded_model.xdir = self.p.xdir # file.p is the parent project
-        loaded_model.xtype = self.p.xtype
-        loaded_model.ydir = self.p.ydir
-        loaded_model.ytype = self.p.ytype
-        loaded_model.zColorMap = self.p.zColorMap
-        loaded_model.ztype = self.p.ztype
-        loaded_model.e_label = self.p.e_label # x axis -> energy
-        loaded_model.t_label = self.p.t_label # y axis -> time
-        loaded_model.z_label = self.p.z_label # z axis -> intensity
+        loaded_model.energy = self.energy #$% remove redundancy?
+        loaded_model.time = self.time #$% remove redundancy?
         
         all_comps = [] # initialize component list
         
@@ -595,7 +616,7 @@ class File:
             
         if detail == 1 and isinstance(mod, mcp.Dynamics):
             mod.create_value1D(store1D=1) # update individual component spectra
-            mod.plot_1D(plt_ind=1) # plot guess only (individual components)
+            mod.plot_1D(plot_ind=True) # plot guess only (individual components)
         
         if detail == 1 and mod.dim == 1:
             mod.create_value1D(store1D=1) # update individual component spectra
@@ -603,22 +624,34 @@ class File:
             title_mod = f'File: {self.path}, ' +\
                         f'Model: "{model_info}" (from "{mod.yaml_f_name}.yaml")' +\
                         f': initial guess'
-            fitlib.plt_fit_res_1D(x = self.energy, y = self.data_base,
-                                  fit_fun_str = self.p.spec_fun_str, package = self.p.spec_lib,
-                                  par_init = [], par_fin = mod.lmfit_pars, 
-                                  args = (mod, 1), plot_ind = 1, show_init = 0,
-                                  xlabel = self.p.e_label, ylabel = self.p.z_label,
-                                  xdir = self.p.xdir, title = title_mod, dpi_plt = self.p.dpi_plt,
-                                  fit_lim = self.e_lim, res_mult = self.p.res_mult,
-                                  legend = [comp.name for comp in mod.components])
+            fitlib.plt_fit_res_1D(
+                x=self.energy,
+                y=self.data_base,
+                fit_fun_str=self.p.spec_fun_str,
+                package=self.p.spec_lib,
+                par_init=[],
+                par_fin=mod.lmfit_pars, 
+                args=(mod, 1),
+                plot_ind=True,
+                show_init=False,
+                title=title_mod,
+                fit_lim=self.e_lim,
+                config=self.plot_config,
+                legend=[comp.name for comp in mod.components]
+                )
             
         if detail == 1 and mod.dim == 2:
             mod.create_value2D() # update spectrum
             # plot data, fit, and residual 2D maps
-            fitlib.plt_fit_res_2D(data = self.data, x = self.energy, y = self.time,
-                                  fit = mod.value2D, xdir = self.p.xdir,
-                                  xlabel = self.p.e_label, ylabel = self.p.t_label,
-                                  xlim = self.e_lim, ylim = self.t_lim, colormap = self.p.zColorMap)
+            fitlib.plt_fit_res_2D(
+                data=self.data,
+                fit=mod.value2D,
+                x=self.energy,
+                y=self.time,
+                config=self.plot_config,
+                x_lim=self.e_lim,
+                y_lim=self.t_lim
+                )
         #
         return None
     
@@ -692,13 +725,14 @@ class File:
         """
         if self.dim == 1:
             print("ERROR. Can not define baseline for 1D data")
+            return None
             
         if time_type == 'abs':
             t_ind_start = np.searchsorted(self.time, time_start)
             t_ind_stop = np.searchsorted(self.time, time_stop)
         elif time_type == 'ind':
             t_ind_start = time_start
-            t_ind_stop = time_stop    
+            t_ind_stop = time_stop
         self.base_t_ind = [t_ind_start, t_ind_stop]
         self.base_t_abs = [self.time[t_ind_start], self.time[t_ind_stop]]
         
@@ -706,10 +740,13 @@ class File:
         self.data_base = np.mean(self.data[self.base_t_ind[0] : self.base_t_ind[1], :], axis=0)
         
         # plot
-        if show_plot == True:
-            uplt.plot_1D(data = [self.data_base,], x = self.energy, dpi_plot = self.p.dpi_plt,
-                         xdir = self.p.xdir, xlabel = self.p.e_label, ylabel = self.p.z_label,
-                         title = f"Baseline data: t in {self.base_t_abs} (index: {self.base_t_ind})")
+        if show_plot:
+            uplt.plot_1D(
+                data=[self.data_base,],
+                x=self.energy,
+                config=self.plot_config,
+                title=f"Baseline data: t in {self.base_t_abs} (index: {self.base_t_ind})"
+            )
         #
         return None
     
@@ -725,7 +762,7 @@ class File:
         self.e_lim_abs = [np.min(energy_limits), np.max(energy_limits)]
         
         # convert energy and time limits to index values
-        if self.p.xdir == 'rev':
+        if self.p.x_dir == 'rev':
             E_ind_min = np.searchsorted(self.energy[::-1], np.min(energy_limits))
             E_ind_max = np.searchsorted(self.energy[::-1], np.max(energy_limits))
         else:
@@ -743,20 +780,26 @@ class File:
             if self.dim == 1:
                 x_cut = self.energy[self.e_lim[0]:-self.e_lim[1]]              
                 y_cut = self.data[self.e_lim[0]:-self.e_lim[1]]
-                uplt.plot_1D(data = [self.data, y_cut], 
-                             x = [self.energy, x_cut],
-                             waterfall = (np.max(abs(y_cut))-np.min(abs(y_cut)))/8,
-                             xlabel = self.p.e_label, ylabel = self.p.z_label,
-                             xdir = self.p.xdir, legend = ['all', 'cut'], 
-                             vlines = self.e_lim_abs, dpi_plot = self.p.dpi_plt)
+                uplt.plot_1D(
+                    data=[self.data, y_cut],
+                    x=[self.energy, x_cut],
+                    config=self.plot_config,
+                    waterfall=(np.max(abs(y_cut))-np.min(abs(y_cut)))/8,
+                    legend=['all', 'cut'],
+                    vlines=self.e_lim_abs
+                )
             elif self.dim == 2:
-                uplt.plot_2D(data = self.data, x = self.energy, y = self.time,
-                             xlabel = self.p.e_label, ylabel = self.p.t_label,
-                             xdir = self.p.xdir, dpi_plot = self.p.dpi_plt,
-                             vlines = self.e_lim_abs, hlines = self.t_lim_abs)
+                uplt.plot_2D(
+                    data=self.data,
+                    x=self.energy,
+                    y=self.time,
+                    config=self.plot_config,
+                    vlines=self.e_lim_abs,
+                    hlines=self.t_lim_abs
+                )
         #
         return None
-    
+
     #
     def fit_baseline(self, model_name, fit, **lmfit_wrapper_kwargs):
         """
@@ -779,30 +822,39 @@ class File:
         # model, dimension (dim =1 for baseline and SbS, =2 for 2D (global) fit), debug
         self.model_base.args = (self.model_base, 1, False)
         # fit (optionally) with confidence intervals
-        self.model_base.result = fitlib.fit_wrapper(const = self.model_base.const,
-                                                    args = self.model_base.args,
-                                                    par_names = self.model_base.par_names,
-                                                    par = self.model_base.lmfit_pars,
-                                                    fit_type = fit,
-                                                    show_info = 1 if self.p.show_info>=2 else 0,
-                                                    save_output = 1,
-                                                    save_path = path_base_results / model_name,
+        self.model_base.result = fitlib.fit_wrapper(const=self.model_base.const,
+                                                    args=self.model_base.args,
+                                                    par_names=self.model_base.par_names,
+                                                    par=self.model_base.lmfit_pars,
+                                                    fit_type=fit,
+                                                    show_info=1 if self.p.show_info>=2 else 0,
+                                                    save_output=1,
+                                                    save_path=path_base_results / model_name,
                                                     **lmfit_wrapper_kwargs)
         
         # display/plot and save baseline fit summary
         #self.model_base.create_value1D(store1D=1) # update individual component spectra
         title_base = f'File: {self.path}, ' +\
                      f'Model: "{model_name}" (from "{self.model_base.yaml_f_name}.yaml")'
-        fitlib.plt_fit_res_1D(x = self.energy, y = self.data_base,
-                              fit_fun_str = self.p.spec_fun_str, package = self.p.spec_lib,
-                              par_init = initial_guess, par_fin = self.model_base.result[1],
-                              args = self.model_base.args, plot_ind = 1, show_init = 1,
-                              xlabel = self.p.e_label, ylabel = self.p.z_label,
-                              xdir = self.p.xdir, title = title_base, dpi_plt = self.p.dpi_plt,
-                              fit_lim = self.e_lim, res_mult = self.p.res_mult,
-                              legend = [comp.name for comp in self.model_base.components],
-                              save_fig = -1 if self.p.show_info<1 else 1,
-                              save_fig_path = path_base_results / 'base_fit.png')
+        
+        fitlib.plt_fit_res_1D(
+            x=self.energy,
+            y=self.data_base,
+            fit_fun_str=self.p.spec_fun_str,
+            package=self.p.spec_lib,
+            par_init=initial_guess,
+            par_fin=self.model_base.result[1],
+            args=self.model_base.args,
+            plot_ind=True,
+            show_init=True,
+            title=title_base,
+            fit_lim=self.e_lim,
+            config=self.plot_config,
+            legend=[comp.name for comp in self.model_base.components],
+            save_img=-1 if self.p.show_info<1 else 1,
+            save_path=path_base_results / 'base_fit.png'
+        )
+
         if fit >= 1:
             fitlib.time_display(t_start=t_base, print_str='Time elapsed for baseline fit: ')
             display(self.model_base.result[1].params) # display the final parameters below figure
@@ -879,29 +931,35 @@ class File:
             self.model_SbS.args = (self.model_SbS, 1, False)
 
             # fit with confidence intervals
-            result_SbS = fitlib.fit_wrapper(const = self.model_SbS.const,
-                                            args = self.model_SbS.args,
-                                            par_names = self.model_SbS.par_names,
-                                            par = self.model_SbS.lmfit_pars,
-                                            fit_type = fit,
-                                            show_info = 1 if self.p.show_info>=3 else 0,
-                                            save_output = 1,
-                                            save_path = path_slice,
+            result_SbS = fitlib.fit_wrapper(const=self.model_SbS.const,
+                                            args=self.model_SbS.args,
+                                            par_names=self.model_SbS.par_names,
+                                            par=self.model_SbS.lmfit_pars,
+                                            fit_type=fit,
+                                            show_info=1 if self.p.show_info>=3 else 0,
+                                            save_output=1,
+                                            save_path=path_slice,
                                             **fit_wrapper_kwargs)
 
             # add final fit parameters to list of fit parameters of all spectra
             self.results_SbS.append(result_SbS)
 
             # (optionally) plot and (always) save fit summary for this slice
-            fitlib.plt_fit_res_1D(x = self.model_SbS.const[0], y = self.model_SbS.const[1],
-                                  fit_fun_str = self.p.spec_fun_str, package = self.p.spec_lib,
-                                  par_init = initial_guess, par_fin = result_SbS[1],
-                                  args = self.model_SbS.args, plot_ind = 1, show_init = 1,
-                                  xlabel = self.p.e_label, xdir = self.p.xdir,
-                                  ylabel = self.p.z_label, dpi_plt = self.p.dpi_plt,
-                                  fit_lim = self.e_lim, res_mult = self.p.res_mult,
-                                  save_fig = -1 if self.p.show_info<3 else 1,
-                                  save_fig_path = path_slice +'.png')
+            fitlib.plt_fit_res_1D(
+                x=self.model_SbS.const[0],
+                y=self.model_SbS.const[1],
+                fit_fun_str=self.p.spec_fun_str,
+                package=self.p.spec_lib,
+                par_init=initial_guess,
+                par_fin=result_SbS[1],
+                args=self.model_SbS.args,
+                plot_ind=True,
+                show_init=True,
+                fit_lim=self.e_lim,
+                config=self.plot_config,
+                save_img=-1 if self.p.show_info<3 else 1,
+                save_path=path_slice+'.png'
+            )
             #
             if s_i == self.p.first_N_spec_only: break
         
@@ -920,32 +978,46 @@ class File:
         """
         # convert results, specifically par_fin to dataframe and save
         # this also plots all parameters as a function of time
-        df_SbS = fitlib.results2df(results = self.results_SbS, 
-                                   x = self.time, 
-                                   xlabel = self.p.t_label, 
-                                   index = np.arange(0, len(self.time)),
-                                   skip_first_N_spec = self.p.skip_first_N_spec, 
-                                   first_N_spec_only = self.p.first_N_spec_only,
-                                   save_df = -1 if self.p.show_info==0 else 1,
-                                   save_path = save_path)
-        if self.p.show_info >= 3: display(df_SbS)
+        df_SbS = fitlib.results2df(
+            results=self.results_SbS, 
+            x=self.time,
+            index=np.arange(0, len(self.time)),
+            config=self.plot_config,
+            skip_first_N_spec=self.p.skip_first_N_spec, 
+            first_N_spec_only=self.p.first_N_spec_only,
+            save_df=-1 if self.p.show_info==0 else 1,
+            save_path=save_path
+        )
+        
+        if self.p.show_info >= 3: 
+            display(df_SbS)
         
         # get slice-by-slice fit spectra as a 2D map
-        fit2D_SbS = fitlib.results2fit2D(results = df_SbS[self.model_SbS.par_names],
-                                         const = self.model_SbS.const, 
-                                         args = self.model_SbS.args,
-                                         save_2D = -1 if self.p.show_info==0 else 1,
-                                         save_path = save_path)
-        if self.p.show_info >= 3: print(f'size SbS 2D map: {np.shape(fit2D_SbS)}')
+        fit2D_SbS = fitlib.results2fit2D(
+            results=df_SbS[self.model_SbS.par_names],
+            const=self.model_SbS.const, 
+            args=self.model_SbS.args,
+            save_2D=-1 if self.p.show_info==0 else 1,
+            save_path=save_path
+        )
+        
+        if self.p.show_info >= 3: 
+            print(f'size SbS 2D map: {np.shape(fit2D_SbS)}')
         
         # plot data, fit, and residual 2D maps (works if full 2D map is fitted/ no slices skipped)
         if self.p.first_N_spec_only == -1 and self.p.skip_first_N_spec == -1:
-            fitlib.plt_fit_res_2D(data = self.data, x = self.energy, y = self.time,
-                                  fit = fit2D_SbS, xdir = self.p.xdir,
-                                  xlabel = self.p.e_label, ylabel = self.p.t_label,
-                                  xlim = self.e_lim, ylim = self.t_lim,
-                                  save_img = -1 if self.p.show_info==0 else 1,
-                                  save_path = save_path, colormap = self.p.zColorMap)
+
+            fitlib.plt_fit_res_2D(
+                data=self.data,
+                fit=fit2D_SbS,
+                x=self.energy,
+                y=self.time,
+                config=self.plot_config,
+                x_lim=self.e_lim,
+                y_lim=self.t_lim,
+                save_img=-1 if self.p.show_info==0 else 1,
+                save_path=save_path
+            )
         #
         return None
     
@@ -994,14 +1066,14 @@ class File:
         self.model_2D.args = (self.model_2D, 2, False) # model, dimension, debug
         
         # fit (with confidence intervals)
-        self.model_2D.result = fitlib.fit_wrapper(const = self.model_2D.const,
-                                                  args = self.model_2D.args,
-                                                  par_names = self.model_2D.par_names, 
-                                                  par = self.model_2D.lmfit_pars,
-                                                  fit_type = fit,
-                                                  show_info = 1 if self.p.show_info>=2 else 0,
-                                                  save_output = 1,
-                                                  save_path = path_2D_results / model_name,
+        self.model_2D.result = fitlib.fit_wrapper(const=self.model_2D.const,
+                                                  args=self.model_2D.args,
+                                                  par_names=self.model_2D.par_names, 
+                                                  par=self.model_2D.lmfit_pars,
+                                                  fit_type=fit,
+                                                  show_info=1 if self.p.show_info>=2 else 0,
+                                                  save_output=1,
+                                                  save_path=path_2D_results / model_name,
                                                   **fit_wrapper_kwargs)
         if fit >= 1:
             self.save_2Dmodel_fit(save_path=path_2D_results)
@@ -1017,12 +1089,17 @@ class File:
         """
         self.model_2D.create_value2D() # update 2D spectrum to final fit result
         # plot data, fit, and residual 2D maps
-        fitlib.plt_fit_res_2D(data = self.data, x = self.energy, y = self.time,
-                              fit = self.model_2D.value2D, xdir = self.p.xdir,
-                              xlabel = self.p.e_label, ylabel = self.p.t_label,
-                              xlim = self.e_lim, ylim = self.t_lim,
-                              save_img = -1 if self.p.show_info==0 else 1,
-                              save_path = save_path, colormap = self.p.zColorMap)
+        fitlib.plt_fit_res_2D(
+            data=self.data,
+            fit=self.model_2D.value2D,
+            x=self.energy,
+            y=self.time,
+            config=self.plot_config,
+            xlim=self.e_lim,
+            ylim=self.t_lim,
+            save_img=-1 if self.p.show_info==0 else 1,
+            save_path=save_path
+        )
         # dpi_plot = round(1.5 *self.p.dpi_plt), NOT AVAILABLE YET (fig_size)
         #
         return None
