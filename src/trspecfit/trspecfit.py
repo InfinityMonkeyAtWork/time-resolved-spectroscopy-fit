@@ -1,17 +1,15 @@
-#
-# 1D/2D Spectroscopy Fitting Module
-#
+"""
+1D/2D Spectroscopy Fitting Module
+"""
 from trspecfit import mcp
 from trspecfit import fitlib
 from trspecfit import spectra
 from trspecfit.utils import lmfit as ulmfit
-import numpy as np
 from trspecfit.utils import arrays as uarr
+from trspecfit.utils import plot as uplt
+import numpy as np
 import os # replace os.join with "pathlib path /"subfolder" /"file name"
 import pathlib
-#from trspecfit.utils import os as uos
-from trspecfit.utils import regex as ure
-from trspecfit.utils import plot as uplt
 import copy
 import time
 from IPython.display import display
@@ -395,7 +393,7 @@ class File:
                 f"File should be located in: {self.p.path}\n"
                 f"Check file name for typos: {model_yaml_path}"
             )
-        except yaml.YAMLError as exc:
+        except YAMLError as exc:
             raise RuntimeError(f"YAML error while loading {model_yaml}: {exc}")
 
     #
@@ -881,9 +879,6 @@ class File:
         Currently the energy position guesses (x0) are shifted on a per slice basis according to
         the position in energy (x) of the maximum value of the spectrum (NOT always a good idea!)
         """
-        # in the past the energy limits were shifted as well (commented now) because
-        # comparing SbS with 2D method requires same limits! search for [*lim]
-        
         t_SbS = time.time() # start timing for SbS fit
         
         # find model with matching name from list
@@ -897,12 +892,9 @@ class File:
         self.model_SbS.update_value(new_par_values=list(base_df['value']), par_select='all')
         
         # find all parameters with names ending in "x0" so they can be updated for every slice
-        e_pos_pars = ure.search_line_by_line(lines = self.model_SbS.par_names,
-                                             str_search = '_x0', location = 'end',
-                                             include_str_search = True, print_info = 0)
+        e_pos_pars = [name for name in self.model_SbS.par_names if name.endswith('_x0')]
         # find their corresponding values
         e_pos_vals = uarr.get_item(base_df, row=['name', e_pos_pars], col='value', astype='series')
-        #[*lim]e_lim_OG = copy.deepcopy(self.e_lim) # make a copy of original energy limits
         
         # cycle through all spectra and fit them
         self.results_SbS = [] # (re-)initialize placeholder for results
@@ -919,9 +911,6 @@ class File:
             # update all guesses for parameters with names ending in "x0"
             new_e_vals = list(e_pos_vals.add(deltaMAX))
             self.model_SbS.update_value(new_par_values=new_e_vals, par_select=e_pos_pars)
-            #[*lim] update energy limits and index
-            #self.set_fit_limits(energy_limits=[lim +deltaMAX for lim in e_lim_OG], show_plot=False)
-            #if self.p.show_info >= 3: print(f'Updated energy limits: {self.e_lim}')
             # get initial guess
             initial_guess = ulmfit.par_extract(self.model_SbS.lmfit_pars, return_type='list')
         
@@ -961,9 +950,7 @@ class File:
                 save_path=path_slice+'.png'
             )
             #
-            if s_i == self.p.first_N_spec_only: break
-        
-        #[*lim]]self.e_lim = e_lim_OG # set energy limits back to original value
+            if s_i == self.p.first_N_spec_only: break # for debugging: only fit first N spectra
         
         if fit >= 1:
             self.save_SliceBySlice_fit(save_path=path_SbS_results)

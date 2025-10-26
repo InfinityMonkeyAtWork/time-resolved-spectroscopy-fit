@@ -1,1 +1,1 @@
-__all__ = ["arrays", "lmfit", "misc", "os", "plot", "regex"]
+__all__ = ["arrays", "lmfit", "plot"]
