@@ -319,23 +319,25 @@ def fit_wrapper(const, args, par_names, par, fit_type, sigmas=[1,2,3],
     if MCsettings.use_emcee == 1:
         t_emcee0 = time.time()
         # make optional for user to pass value and min/max
+        #$% rely on defaults here instead?
         par_fin.params.add('__lnsigma', value=np.log(0.1),
                            min=np.log(0.001), max=np.log(2))
-        if show_info >= 1:
-            print()
-            print('Progress of lmfit.emcee confidence interval determination')
-            print('(based on Markov chain Monte Carlo parameter space sampling):')
+        # always print progress bar
+        print()
+        print('Progress of lmfit.emcee confidence interval determination')
+        print('(based on Markov chain Monte Carlo parameter space sampling):')
         # burn necessary if starting point not close to max(probability distribution)
         # i.e. not close to the optimized parameter set, so burn=0 is ok here!
-        emcee_fin = mini.emcee(params = par_fin.params, 
-                               steps = MCsettings.steps,
-                               nwalkers = MCsettings.nwalkers, 
-                               burn = MCsettings.burn,
-                               thin = MCsettings.thin, 
-                               ntemps = MCsettings.ntemps, 
-                               workers = MCsettings.workers, 
-                               is_weighted = MCsettings.is_weighted, 
-                               progress = bool(show_info))
+        emcee_fin = mini.emcee(params=par_fin.params, 
+                               steps=MCsettings.steps,
+                               nwalkers=MCsettings.nwalkers, 
+                               burn=MCsettings.burn,
+                               thin=MCsettings.thin, 
+                               ntemps=MCsettings.ntemps, 
+                               workers=MCsettings.workers, 
+                               is_weighted=MCsettings.is_weighted, 
+                               progress=True
+                               )
         # lmfit.emcee() results
         if show_info >= 1:
             print()
@@ -357,9 +359,9 @@ def fit_wrapper(const, args, par_names, par, fit_type, sigmas=[1,2,3],
                         for par_name in emcee_fin.var_names]
         fig_emcee_corner = plt.figure(figsize=(10,10))
         emcee_corner = corner.corner(emcee_fin.flatchain, 
-                                     labels = emcee_fin.var_names,
-                                     truths = emcee_truths,
-                                     fig = fig_emcee_corner)
+                                     labels=emcee_fin.var_names,
+                                     truths=emcee_truths,
+                                     fig=fig_emcee_corner)
         if abs(save_output) == 1:
             uplt.img_save(f'{save_path}_emcee_corner_plot.png')
         if show_info >= 1: plt.show()
