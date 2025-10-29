@@ -5,7 +5,7 @@ IRF:
     # define Gauss to convolve everything with 
     # (instrument response function)
     gaussCONV:
-        sigma: [5.0E-2, True, 0, 1]
+        SD: [5.0E-2, True, 0, 1]
              
 MonoExpPos:
     # expFun(t, A, tau, t0, y0)
@@ -25,7 +25,7 @@ MonoExpNeg:
 
 MonoExpPosIRF:
     gaussCONV:
-        sigma: [3, True, 0, 10]
+        SD: [3, True, 0, 10]
     expFun:
         A: [5, True, 0, 15]
         tau: [50, True, 1, 100]

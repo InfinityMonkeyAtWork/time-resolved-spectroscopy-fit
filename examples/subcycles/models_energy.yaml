@@ -3,7 +3,7 @@ base:
     Offset:
       y0: [4, True, 0, 5]
     Shirley:
-        p_Shirley: [400, True, 1.0E-6, 1.0E+3]
+        pShirley: [400, True, 1.0E-6, 1.0E+3]
     GLP:
       A: [20, True, 5, 25]
       x0: [83, True, 80, 90]
@@ -15,12 +15,29 @@ base:
       F: ["GLP_01_F"]
       m: ["GLP_01_m"]
 
+# Slice-by-Slice model fit (pinned parameters will be set to "base" Model fit result values)
+SbS:
+    Offset:
+      y0: [2, False, 0, 5]
+    Shirley:
+        pShirley: [400, False, 1.0E-6, 1.0E+3]
+    GLP:
+      A: [20, False, 5, 25]
+      x0: [84.5, True, 82, 88]
+      F: [1.0, False, 0.75, 2.5]
+      m: [0.3, False, 0, 1]
+    GLP:
+      A: ["3/4*GLP_01_A"]
+      x0: ["GLP_01_x0 +3.6"]
+      F: ["GLP_01_F"]
+      m: ["GLP_01_m"]
+      
 # 2D model fit (pinned parameters will be set to "base" Model fit result values)
 2D:
     Offset:
       y0: [2, False, 0, 5]
     Shirley:
-        p_Shirley: [400, False, 1.0E-6, 1.0E+3]
+        pShirley: [400, False, 1.0E-6, 1.0E+3]
     GLP:
       A: [20, False, 5, 25]
       x0: [84.5, True, 82, 88]
