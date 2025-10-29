@@ -17,7 +17,7 @@ from asteval import Interpreter
 # function library for energy, time, and distribution components
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import time as fcts_time
-#from trspecfit.functions import distribution as fcts_dist
+from trspecfit.functions import distribution as fcts_dist
 # function configurations
 from trspecfit.config.functions import prefix_exceptions, background_functions, energy_functions
 # plot configuration
@@ -50,8 +50,49 @@ def parse_component_name(comp_name):
     else:
         base_name = comp_name
         number = -1
-    
+    #
     return base_name, number
+
+#
+def get_component_parameters(comp_name):
+    """
+    Get the expected parameter names for a component by inspecting its function signature.
+    
+    Parameters
+    ----------
+    comp_name : str
+        Name of the component function
+    
+    Returns
+    -------
+    list
+        List of parameter names, excluding:
+        - First parameter (x or t)
+        - Last parameter if it's 'spectrum' (for background functions)
+    """
+    # Find which module contains this function
+    func = None
+    for module in [fcts_energy, fcts_time, fcts_dist]:
+        if hasattr(module, comp_name):
+            func = getattr(module, comp_name)
+            break
+    
+    if func is None:
+        return []
+    
+    # Get function signature
+    sig = inspect.signature(func)
+    param_names = list(sig.parameters.keys())
+    
+    # Remove first parameter (x or t)
+    if len(param_names) > 0:
+        param_names = param_names[1:]
+    
+    # Remove last parameter if it's 'spectrum' (background functions)
+    if len(param_names) > 0 and param_names[-1] == 'spectrum':
+        param_names = param_names[:-1]
+    #
+    return param_names
 
 #
 #
@@ -486,7 +527,7 @@ class Model:
             info = ''
         # ... energy-resolved model
         else:
-            x_dir = self.x_dir
+            x_dir = config.x_dir
             x = self.energy
             x_label = config.x_label  # e_label from project
             info = f'[{config.y_label}={round(self.time[t_ind],3)} (index={t_ind})]'

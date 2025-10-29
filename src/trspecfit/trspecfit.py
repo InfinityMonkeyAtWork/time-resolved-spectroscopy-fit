@@ -11,6 +11,7 @@ import numpy as np
 import os # replace os.join with "pathlib path /"subfolder" /"file name"
 import pathlib
 import copy
+import inspect
 import time
 from IPython.display import display
 # function library for energy, time, and distribution components
@@ -93,6 +94,13 @@ def construct_yaml_map(self, node):
 
 SafeConstructor.add_constructor(u'tag:yaml.org,2002:map', construct_yaml_map)
 yaml = YAML(typ='safe')
+
+#
+#
+class ModelValidationError(ValueError):
+    """Exception raised for errors in model YAML validation."""
+    # see _validate_model_components()
+    pass
 
 #
 #
@@ -338,6 +346,130 @@ class File:
         self.model_active = self.select_model(model_info)
 
     #
+    def _validate_model_components(self, model_info_dict, model_info, model_yaml_path):
+        """
+        Validate model components and parameters for common errors.
+        
+        Checks for:
+        - Invalid component names (not in available functions)
+        - Invalid parameter attributes (not value/vary/min/max or expr)
+        - Invalid parameter structure
+        - Missing required parameter attributes
+        - Invalid bounds (min > max, value outside bounds)
+        - Wrong parameter names for component type
+        """
+        available_functions = get_available_function_names()
+        #valid_param_keys = {'value', 'vary', 'min', 'max', 'expr'}
+        example_dir = pathlib.Path(__file__).parent.parent / "examples"
+        
+        # Only validate models that are being loaded
+        for model_name in model_info:
+            if model_name not in model_info_dict:
+                continue
+                
+            components = model_info_dict[model_name]
+            
+            for comp_name, params in components.items():
+                # Extract base component name (remove _01, _02 suffixes)
+                base_comp_name, _ = mcp.parse_component_name(comp_name)
+                
+                # Check 1: Component type exists
+                if base_comp_name not in available_functions:
+                    raise ModelValidationError(
+                        f"Unknown component type '{base_comp_name}' in model '{model_name}' in {model_yaml_path}\n"
+                        f"Available components: {sorted(available_functions)}\n"
+                        f"Check for typos in component name."
+                    )
+                
+                # Check 2: Parameters should be a dictionary
+                if not isinstance(params, dict):
+                    raise ModelValidationError(
+                        f"Parameters for '{comp_name}' in model '{model_name}' must be a dictionary.\n"
+                        f"Found: {type(params).__name__}\n"
+                        f"See 'models_energy.yaml' in example directory: {example_dir}"
+                    )
+                
+                # Get expected parameters for this component type
+                expected_params = mcp.get_component_parameters(base_comp_name)
+
+                # Check parameter count matches
+                if len(params) != len(expected_params):
+                    raise ModelValidationError(
+                        f"Component '{comp_name}' (type: {base_comp_name}) in model '{model_name}' has wrong number of parameters.\n"
+                        f"Expected {len(expected_params)} parameters: {expected_params}\n"
+                        f"Got {len(params)} parameters: {list(params.keys())}\n"
+                        f"Check {model_yaml_path}"
+                    )
+                
+                # Check 3: Validate each parameter
+                for param_name, param_value in params.items():
+                    
+                    # Check if parameter name is valid for this component
+                    if param_name not in expected_params:
+                        raise ModelValidationError(
+                            f"Invalid parameter '{param_name}' for component '{comp_name}' (type: {base_comp_name}) in model '{model_name}'.\n"
+                            f"Expected parameters: {expected_params}\n"
+                            f"Check for typos or wrong component type."
+                        )
+                    
+                    # Parameter value can be a list [value, vary, min, max] or a single expression string
+                    if isinstance(param_value, list):
+                        # Standard format: [value, vary, min, max]
+                        if len(param_value) == 4:
+                            value, vary, min_val, max_val = param_value
+
+                            # Check that 'vary' is boolean
+                            if not isinstance(vary, bool):
+                                raise ModelValidationError(
+                                    f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}'):\n"
+                                    f"'vary' (2nd element) must be True or False.\n"
+                                    f"Got: {vary} ({type(vary).__name__})"
+                                )
+                                                    
+                            # Check bounds validity
+                            if isinstance(min_val, (int, float)) and isinstance(max_val, (int, float)):
+                                if min_val > max_val:
+                                    raise ModelValidationError(
+                                        f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}'):\n"
+                                        f"min ({min_val}) is greater than max ({max_val})"
+                                    )
+                                
+                                # Check if value is within bounds
+                                if isinstance(value, (int, float)):
+                                    if value < min_val or value > max_val:
+                                        raise ModelValidationError(
+                                            f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}'):\n"
+                                            f"value ({value}) is outside bounds [{min_val}, {max_val}]"
+                                        )
+                        
+                        elif len(param_value) == 1:
+                            # Expression format: ["expression"]
+                            if not isinstance(param_value[0], str):
+                                raise ModelValidationError(
+                                    f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}'):\n"
+                                    f"Single-element list must contain a string expression.\n"
+                                    f"Got: {param_value[0]} ({type(param_value[0]).__name__})\n"
+                                    f'Example: ["GLP_01_x0 + 3.6"]'
+                                )
+                        else:
+                            raise ModelValidationError(
+                                f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}') has invalid format.\n"
+                                f'Expected: [value, vary, min, max] (4 elements) or ["expr"] (1 element)\n'
+                                f"Got: {param_value} ({len(param_value)} elements)\n"
+                                f"See 'models_energy.yaml' in example directory: {example_dir}"
+                            )
+                    
+                    else:
+                        raise ModelValidationError(
+                            f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}') has invalid format.\n"
+                            f"Expected either:\n"
+                            f"  - [value, vary, min, max] for standard parameters\n"
+                            f"  - ['expression'] for linked parameters\n"
+                            f"Got: {param_value}\n"
+                            f"See 'models_energy.yaml' in example directory: {example_dir}"
+                        )
+
+    #
     def _load_and_number_yaml_components(self, model_yaml, model_info, par_name='', DEBUG=False):
         """
         Load YAML file and apply appropriate component numbering strategy.
@@ -367,12 +499,8 @@ class File:
                         for comp_name, params in model_info_dict[model_name].items():
                             if isinstance(params, list):
                                 model_info_dict[model_name][comp_name] = dict(params)
-                else:
-                    if not isinstance(model_info_ALL, dict):
-                        raise ValueError("YAML root must be a dictionary or a list of (name, components) tuples.")
-                    model_info_dict = model_info_ALL
-                    if len(model_info_dict) != len(set(model_info_dict.keys())):
-                        raise ValueError("Duplicate model names found in YAML dictionary.")
+                else: # should never happen unless something is wrong with construct_yaml_map
+                    raise ValueError(f"Unexpected YAML structure in {model_yaml_path}")
                 
                 if DEBUG:
                     print('model_info_ALL:')
@@ -384,6 +512,10 @@ class File:
                 if par_name != '':
                     # This is a dynamics model - resolve numbering conflicts across subcycles
                     model_info_dict = self._resolve_dynamics_numbering_conflicts(model_info_dict, model_info, DEBUG)
+
+                # Validate the loaded model structure
+                self._validate_model_components(model_info_dict, model_info, model_yaml_path)
+                
                 # For energy models, numbering is already complete from construct_yaml_map
                 return model_info_dict
                 
@@ -393,8 +525,30 @@ class File:
                 f"File should be located in: {self.p.path}\n"
                 f"Check file name for typos: {model_yaml_path}"
             )
+        except ModelValidationError:
+            # Validator errors are already user-friendly, just pass through
+            raise
+        except ValueError as e:
+            # Structural errors (malformed entries, duplicates)
+            if "Malformed model entry" in str(e) or "Duplicate model name" in str(e):
+                raise
+            # Unexpected YAML parsing error
+            raise ValueError(
+                f"Unexpected error parsing {model_yaml_path}\n"
+                f"Original error: {e}\n\n"
+                f"This may be a bug in the YAML parser.\n"
+                f"Please report this error at: https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/issues\n"
+                f"Include your YAML file and this error message. Thank you!"
+            ) from e
         except YAMLError as exc:
-            raise RuntimeError(f"YAML error while loading {model_yaml}: {exc}")
+            raise RuntimeError(
+                f"YAML syntax error in {model_yaml_path}\n"
+                f"Please check for:\n"
+                f"  - Proper indentation (use spaces, not tabs)\n"
+                f"  - Matching brackets and quotes\n"
+                f"  - Valid YAML syntax\n"
+                f"Original error: {exc}"
+            )
 
     #
     def _resolve_dynamics_numbering_conflicts(self, model_info_dict, model_info, DEBUG=False):
@@ -576,9 +730,13 @@ class File:
             try:
                 submodel_info = model_info_dict[submodel]
             except KeyError:
-                print(f'Model "{submodel}" not found in {model_yaml}')
-                return None
-            
+                available_models = list(model_info_dict.keys())
+                raise ValueError(
+                    f'Model "{submodel}" not found in {model_yaml}\n'
+                    f"Available models in this file: {available_models}\n"
+                    f"Check for typos in model name."
+                )
+                    
             # Create components for this submodel using existing mcp.Component logic
             for c_name, c_info in submodel_info.items():
                 c_temp = mcp.Component(c_name, fcts_package, subcycle)
