@@ -38,7 +38,7 @@ class TestMCPModel:
         
         # Define Shirley background
         c_Shirley = Component('Shirley')
-        c_Shirley.add_pars({'p_Shirley': [2500, True, 1E-6, 1E6]})
+        c_Shirley.add_pars({'pShirley': [2500, True, 1E-6, 1E6]})
         
         # Define Offset parameters
         c_Offset = Component('Offset')
@@ -226,7 +226,7 @@ class TestMCPDynamics:
         
         # Define instrument response function
         c_IRF = Component('gaussCONV', fcts_time)
-        c_IRF.add_pars({'sigma': [80, True, 0, 1E4]})
+        c_IRF.add_pars({'SD': [80, True, 0, 1E4]})
         
         # Define decay components
         c_tD1 = Component('expFun', fcts_time)

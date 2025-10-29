@@ -7,7 +7,7 @@ simple_energy:
       y0: [2, True, 0, 5]
     # define Shirley background
     Shirley:
-      p_Shirley: [400, True, 1.0E-6, 1.0E+3]
+      pShirley: [400, True, 1.0E-6, 1.0E+3]
     # define peak type components 
     GLP:
       A: [20, True, 5, 25]
@@ -27,7 +27,7 @@ energy_expression:
       y0: [2, True, 0, 5]
     # define Shirley background
     Shirley:
-        p_Shirley: [400, True, 1.0E-6, 1.0E+3]
+        pShirley: [400, True, 1.0E-6, 1.0E+3]
     # define peak type components
     GLP:
       A: [20, True, 5, 25]
@@ -47,7 +47,7 @@ energy_expression_forward_reference:
       y0: [2, True, 0, 5]
     # define Shirley background
     Shirley:
-        p_Shirley: [400, True, 1.0E-6, 1.0E+3]
+        pShirley: [400, True, 1.0E-6, 1.0E+3]
     # define peak type components
     GLP:
       A: ["3/4*GLP_02_A"]

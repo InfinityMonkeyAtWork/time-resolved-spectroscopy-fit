@@ -41,7 +41,7 @@ class TestEnergyParsing:
         # Shirley (should not be numbered)
         assert file.model_active.components[1].fct_str == 'Shirley'
         assert file.model_active.components[1].comp_name == 'Shirley'
-        assert file.model_active.components[1].par_dict['p_Shirley'] == [400, True, 1.0E-6, 1.0E+3]    
+        assert file.model_active.components[1].par_dict['pShirley'] == [400, True, 1.0E-6, 1.0E+3]    
         
         # GLP_01 (should be numbered)
         assert file.model_active.components[2].fct_str == 'GLP'
@@ -82,7 +82,7 @@ class TestEnergyParsing:
         # Shirley
         assert file.model_active.components[1].fct_str == 'Shirley'
         assert file.model_active.components[1].comp_name == 'Shirley'
-        assert file.model_active.components[1].par_dict['p_Shirley'] == [400, True, 1.0E-6, 1.0E+3]    
+        assert file.model_active.components[1].par_dict['pShirley'] == [400, True, 1.0E-6, 1.0E+3]    
         
         # GLP_01
         assert file.model_active.components[2].fct_str == 'GLP'
@@ -119,7 +119,7 @@ class TestEnergyParsing:
         # Shirley
         assert file.model_active.components[1].fct_str == 'Shirley'
         assert file.model_active.components[1].comp_name == 'Shirley'
-        assert file.model_active.components[1].par_dict['p_Shirley'] == [400, True, 1.0E-6, 1.0E+3]    
+        assert file.model_active.components[1].par_dict['pShirley'] == [400, True, 1.0E-6, 1.0E+3]    
         
         # GLP_01
         assert file.model_active.components[2].fct_str == 'GLP'
@@ -192,7 +192,7 @@ class TestTimeParsing:
         # check the components
         assert model.components[0].fct_str == 'gaussCONV'
         assert model.components[0].comp_name == 'gaussCONV'
-        assert model.components[0].par_dict['sigma'] == [5.0E-2, True, 0, 1]
+        assert model.components[0].par_dict['SD'] == [5.0E-2, True, 0, 1]
         
         assert model.components[1].fct_str == 'expFun'
         assert model.components[1].comp_name == 'expFun_01'
@@ -233,7 +233,7 @@ class Test2DModelParsing:
         assert file.model_active.components[0].par_dict['y0'] == [2, True, 0, 5]
         assert file.model_active.components[1].fct_str == 'Shirley'
         assert file.model_active.components[1].comp_name == 'Shirley'
-        assert file.model_active.components[1].par_dict['p_Shirley'] == [400, True, 1.0E-6, 1.0E+3]
+        assert file.model_active.components[1].par_dict['pShirley'] == [400, True, 1.0E-6, 1.0E+3]
         # GLP_01
         assert file.model_active.components[2].fct_str == 'GLP'
         assert file.model_active.components[2].comp_name == 'GLP_01'
@@ -242,7 +242,7 @@ class Test2DModelParsing:
         # x0 is the time-dependent parameter
         td_par_model = file.model_active.components[2].pars[1].t_model
         assert td_par_model.components[0].comp_name == 'gaussCONV'
-        assert td_par_model.components[0].par_dict['sigma'] == [5.0E-2, True, 0, 1] 
+        assert td_par_model.components[0].par_dict['SD'] == [5.0E-2, True, 0, 1] 
         assert td_par_model.components[1].fct_str == 'expFun'
         assert td_par_model.components[1].comp_name == 'expFun_01'
         assert td_par_model.components[1].par_dict['A'] == [1, True, 0, 5]
