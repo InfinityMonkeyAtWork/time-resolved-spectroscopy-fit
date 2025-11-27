@@ -5,12 +5,11 @@
 trspecfit is a Python library to define and fit multi-component spectral models for 1D energy-resolved and 2D time-and-energy-resolved spectroscopy data. The package extends lmfit-based workflows to support component-based models, time-dynamics, convolution kernels and helpers for generating simulated data.
 
 ## Key capabilities
-- Define modular spectral components (Gaussian, Voigt/GLP/GLS, Doniach–Sunjic,
-	backgrounds, convolution kernels).
-- Build 1D (energy) and 2D (time × energy) spectra from components and
-	attach time-dynamics to individual model parameters.
-- Fit models with lmfit and wrappers for confidence intervals and optional
-	MCMC sampling (lmfit.emcee).
+- Define modular spectral components (Gaussian, Voigt/GLP/GLS, Doniach–Sunjic, backgrounds, convolution kernels).
+- Build 1D (energy) and 2D (time × energy) spectra from components and attach time-dynamics to individual model parameters.
+- Fit models with lmfit and wrappers for confidence intervals and optional MCMC sampling (lmfit.emcee).
+- Simulate individual 1D/2D spectra to validate models, sets of spectra with noise to validate fits.
+- Generate ML training data via parameter space exploration and model simulation with/out noise. 
 
 ## Repository layout
 - `src/trspecfit/` — library source code (core engine, functions, and utils)
@@ -47,9 +46,11 @@ pip install -e .
 ## Example Jupyter notebooks and YAML files
 
 Open the notebooks in `examples/` for runnable examples:
-- `examples/simulator/example.ipynb` — simulate noisy datasets based on your model input
+- `examples/simple_model/example.ipynb` — basic usage example (NOT implemented)
 - `examples/dependent_parameters/example.ipynb` — parameters of one peak depend on another peak
 - `examples/subcycles/example.ipynb` — multiple subcycles inside one pump-probe cycle
+- `examples/simulator/example.ipynb` — simulate (noisy) datasets based on your model input
+- `examples/simulator/ml_training_data_gen.ipynb` — sample model parameter space and create (noisy) datasets
 
 ## Fitting
 
@@ -57,9 +58,23 @@ Use `trspecfit.fitlib.residual_fun` together with `fitlib.fit_wrapper` to run
 fits using lmfit. The wrapper supports sequential optimization, `lmfit.conf_interval`
 and optional MCMC sampling with `lmfit.emcee` for robust uncertainty estimates.
 
+## Simulator
+
+Generate synthetic data with realistic noise models. The simulator supports:
+- **1D spectrum generation**: Single energy-resolved spectra at specific time points
+- **2D spectrum generation**: Complete time- and energy-resolved datasets
+- **Multiple noise realizations**: Generate N independent noisy datasets from the same model for statistical analysis
+- **Systematic parameter space exploration**: Generate ML training datasets by sweeping model parameters through user-defined ranges or distributions
+
+The simulator supports two detector types:
+- **Analog detectors** (CCD, photodiode, lock-in): Continuous signals with Gaussian or Poisson noise
+- **Photon counting** (APD, PMT, event mode): Discrete photon events with shot noise
+
+See `examples/simulator/` for complete examples (basic usage: `example.ipynb`, ML data generation: `ml_training_data_gen.ipynb`).
+
 ## Testing
 
-Run the unit tests with pytest (install pytest if needed):
+Run the unit tests with pytest (from the project root):
 
 ```powershell
 pip install pytest
@@ -68,7 +83,7 @@ pytest -q
 
 ## Plotting with PlotConfig
 
-trspecfit uses `PlotConfig` to manage plot settings consistently across your project.
+Use `PlotConfig` to manage plot settings consistently across your project.
 
 ### Basic Usage
 ```python

@@ -1,10 +1,67 @@
-from trspecfit.mcp import Model
+"""
+Synthetic data generation for testing, validation, ML training data generation.
+
+This module provides tools for generating realistic simulated spectroscopy
+data from models, with support for different detector types and noise models.
+Use for:
+- Testing fitting algorithms with known ground truth
+- Exploring parameter sensitivity and identifiability
+- Optimizing experimental design (SNR requirements)
+- Generating training data for machine learning
+- Validating analysis pipelines
+
+Key Features
+------------
+- Two detector types: analog and photon counting
+- Multiple noise models: Poisson, Gaussian, or none
+- 1D and 2D spectrum simulation
+- Batch generation for statistical analysis
+- Parameter sweeping (grid/random/uniform) for ML training
+
+Detector Types
+--------------
+**Analog Detectors** (CCD, photodiodes, lock-in amplifiers):
+- Continuous signal output
+- Additive noise (Gaussian or Poisson)
+- Noise level controlled by noise_level parameter
+
+**Photon Counting** (APD, photomultiplier, event mode):
+- Discrete photon events
+- Shot noise inherent (Poisson statistics)
+- Count rate determines signal-to-noise ratio
+
+Workflow
+--------
+1. Testing and Validation
+  - Create model with trspecfit.mcp.Model
+  - Initialize Simulator with model and noise parameters
+  - Generate data with simulate_1D() or simulate_2D()
+    OR generate multiple realizations with simulate_N()
+  - Save data and ground truth with save_data()
+  - Fit simulated data to validate fitting pipeline
+2. Machine Learning Training Data Generation
+  - Create model with trspecfit.mcp.Model
+  - Define parameter space using trspecfit.utils.simulator.ParameterSweep
+  - Initialize Simulator with model and noise parameters
+  - Generate multiple realizations (N) for each parameter combination
+    (data, ground truth, and relevant metadata get saved automatically)
+
+Examples
+--------
+See examples/simulator/ directory for complete workflows.
+"""
+
+import os
+from pathlib import Path
 import copy
 import numpy as np
 import matplotlib.pyplot as plt
 import json
 import h5py
 import pandas as pd
+from typing import Dict, List
+from trspecfit.mcp import Model
+from trspecfit.utils.sweep import ParameterSweep
 from trspecfit.utils import plot as uplt
 from trspecfit.config.plot import PlotConfig
 
@@ -12,44 +69,182 @@ from trspecfit.config.plot import PlotConfig
 #
 class Simulator:
     """
-    Simulate 2D time- and energy-resolved spectroscopy data with noise
+    Simulate 2D time- and energy-resolved spectroscopy data with noise.
     
     This class generates synthetic data based on a model, adding realistic noise
-    to simulate experimental measurements. It can be used for testing fitting
-    algorithms, exploring parameter sensitivity, and generating training data.
+    to simulate experimental measurements. Supports both analog detectors (with
+    additive noise) and photon counting detectors (with shot noise).
     
-    Attributes:
-        model: Model instance to use for simulation
-        detection: Detection technique ('analog' or 'photon_counting')
-        noise_level: Amplitude of noise relative to signal (analog detectors)
-        noise_type: Type of noise ('poisson', 'gaussian', 'none') (analog detectors)
-        counts_per_cycle: Total photon count per pump-probe cycle (photon counting)
-        count_rate: Photon count rate in Hz (photon counting)
-        cycle_time: Duration of one pump-probe cycle in seconds (photon counting)
-        seed: Random seed for reproducibility
+    Parameters
+    ----------
+    model : Model
+        Model instance from trspecfit.mcp with defined components and parameters.
+        Must have energy and time axes set before simulation.
+    detection : {'analog', 'photon_counting'}, default='analog'
+        Detection technique to simulate:
+        - 'analog': Continuous signal with additive noise
+        - 'photon_counting': Discrete photon events with Poisson statistics
+    noise_level : float, default=0.05
+        Noise amplitude for analog detectors (0.0-1.0 for relative noise).
+        Larger values = more noise. Ignored for photon_counting.
+    noise_type : {'poisson', 'gaussian', 'none'}, default='poisson'
+        Type of noise for analog detectors:
+        - 'poisson': Shot noise (realistic for low light)
+        - 'gaussian': White noise (simpler, faster)
+        - 'none': No noise (testing and debugging)
+        Ignored for photon_counting (always Poisson).
+    counts_per_cycle : int, optional
+        Total photon count per pump-probe cycle (photon_counting only).
+        Directly sets signal-to-noise ratio. Mutually exclusive with
+        count_rate + cycle_time.
+    count_rate : float, optional
+        Photon count rate in Hz (photon_counting only).
+        Combined with cycle_time to compute counts_per_cycle.
+    cycle_time : float, optional
+        Duration of one pump-probe cycle in seconds (photon_counting only).
+        Combined with count_rate to compute counts_per_cycle.
+    seed : int, optional
+        Random seed for reproducibility. If None, uses random initialization.
+    
+    Attributes
+    ----------
+    model : Model
+        Model instance used for simulation
+    detection : str
+        Detection type ('analog' or 'photon_counting')
+    seed : int or None
+        Random seed value
+    noise_level : float
+        Analog detector noise level
+    noise_type : str
+        Analog detector noise type
+    counts_per_cycle : int
+        Photon counting detector count budget
+    count_rate : float or None
+        Photon counting detector rate
+    cycle_time : float or None
+        Photon counting detector cycle duration
+    data_clean : ndarray or None
+        Most recently generated clean (noiseless) data
+    data_noisy : ndarray or None
+        Most recently generated noisy data
+    noise : ndarray or None
+        Most recently generated noise component (noisy - clean)
+
+    Examples
+    --------
+    See examples/simulator/ directory for complete workflows.
+
+    Notes
+    -----
+    **Analog vs. Photon Counting:**
+    
+    Analog detectors (CCD, photodiode, lock-in):
+    - Pros: High dynamic range, simple operation
+    - Cons: Read noise, dark current
+    - Simulation: Continuous signal + additive noise
+    
+    Photon counting (APD, PMT, event mode):
+    - Pros: No read noise, single-photon sensitivity
+    - Cons: Dead time, count rate limits, pulse pileup
+    - Simulation: Discrete events following Poisson statistics
+    
+    **Noise Level Selection:**
+    
+    For analog detectors, noise_level is relative to signal:
+    - 0.01 (1%): Very clean, ideal conditions
+    - 0.05 (5%): Typical good data
+    - 0.10 (10%): Moderate noise, still fittable
+    - 0.20 (20%): Challenging, may need averaging
+    
+    For photon counting, SNR set by counts_per_cycle:
+    - 100 counts: SNR ~ 10 (marginal)
+    - 1000 counts: SNR ~ 32 (good)
+    - 10000 counts: SNR ~ 100 (excellent)
+    
+    **Photon Counting Parameter Resolution:**
+    
+    The simulator resolves photon counting parameters as:
+    1. If counts_per_cycle specified directly → use it
+    2. Else if count_rate and cycle_time specified → compute counts_per_cycle
+    3. Else → estimate from model scale (prints warning)
+    
+    The third case assumes model amplitudes represent realistic count rates,
+    which may not be true. Always specify counts_per_cycle or (count_rate,
+    cycle_time) explicitly for accurate photon counting simulation.
+    
+    **Memory Usage:**
+    
+    Large 2D datasets can use significant memory:
+    - Single dataset: ~8 MB per 1000×500 spectrum (float64)
+    - simulate_N(N=100): ~800 MB for same size
+    - Consider smaller grids or batch processing for large N
+    
+    See Also
+    --------
+    trspecfit.mcp.Model : Model class for simulation
+    simulate_1D : Generate 1D spectrum
+    simulate_2D : Generate 2D spectrum
+    simulate_N : Generate multiple realizations
+    save_data : Save simulated data to HDF5
     """
     #
     def __init__(self, model, 
-                 detection='analog',
-                 noise_level=0.05, 
-                 noise_type='poisson',
-                 counts_per_cycle=None,
-                 count_rate=None,
-                 cycle_time=None,
-                 seed=None):
+             detection='analog',
+             noise_level=0.05, 
+             noise_type='poisson',
+             counts_per_cycle=None,
+             count_rate=None,
+             cycle_time=None,
+             seed=None):
         """
-        Initialize simulator with a model and noise parameters
+        Initialize simulator with a model and noise parameters.
         
-        Parameters:
-            model: Model instance with defined components and parameters
-            detection: 'analog' or 'photon_counting'
-            noise_level: Noise amplitude (0.0-1.0 for relative noise) - analog only
-            noise_type: 'poisson', 'gaussian', or 'none' - analog only
-            counts_per_cycle: Total photons per pump-probe cycle - photon counting only
-            count_rate: Photon rate in Hz - photon counting only (alternative parameter)
-            cycle_time: Pump-probe cycle duration in seconds - photon counting only
-            seed: Random seed for reproducibility (None for random)
-        """
+        Parameters
+        ----------
+        model : Model
+            Model instance with defined components and parameters.
+            Must have model.energy and (for 2D) model.time set.
+        detection : {'analog', 'photon_counting'}, default='analog'
+            Detection technique to simulate
+        noise_level : float, default=0.05
+            Noise amplitude for analog detectors (0.0-1.0 relative to signal)
+        noise_type : {'poisson', 'gaussian', 'none'}, default='poisson'
+            Noise type for analog detectors
+        counts_per_cycle : int, optional
+            Total photons per cycle (photon_counting only)
+        count_rate : float, optional
+            Photon rate in Hz (photon_counting only)
+        cycle_time : float, optional
+            Cycle duration in seconds (photon_counting only)
+        seed : int, optional
+            Random seed for reproducibility
+        
+        Raises
+        ------
+        ValueError
+            If detection type is invalid
+            If counts_per_cycle ≤ 0 (after estimation)
+        
+        Examples
+        --------
+        >>> # Analog with default settings
+        >>> sim = Simulator(model)
+        
+        >>> # Analog with custom noise
+        >>> sim = Simulator(model, noise_level=0.1, noise_type='gaussian')
+        
+        >>> # Photon counting with direct count specification
+        >>> sim = Simulator(model, detection='photon_counting',
+        ...                 counts_per_cycle=5000)
+        
+        >>> # Photon counting with rate specification
+        >>> sim = Simulator(model, detection='photon_counting',
+        ...                 count_rate=1e6, cycle_time=0.01)
+        
+        >>> # Reproducible simulation
+        >>> sim = Simulator(model, seed=42)
+        """ 
         self.model = model
         self.detection = detection.lower()
         self.seed = seed
@@ -188,13 +383,64 @@ class Simulator:
     #
     def simulate_1D(self, t_ind=0):
         """
-        Simulate 1D spectrum (energy-resolved) at a specific time point
+        Simulate 1D spectrum (energy-resolved) at a specific time point.
         
-        Parameters:
-            t_ind: Time index for which to generate spectrum
-            
-        Returns:
-            Tuple of (clean_data, noisy_data, noise)
+        Generates a single energy-resolved spectrum from the model at the
+        specified time index, adds appropriate noise for the detector type,
+        and stores results for later access.
+        
+        Parameters
+        ----------
+        t_ind : int, default=0
+            Time index for which to generate spectrum.
+            For models without time-dependence, use default 0.
+        
+        Returns
+        -------
+        clean_data : ndarray
+            Noiseless spectrum from model (shape: [n_energy])
+        noisy_data : ndarray
+            Spectrum with added noise (shape: [n_energy])
+        noise : ndarray
+            Noise component (noisy - clean, shape: [n_energy])
+        
+        Examples
+        --------
+        >>> # Simulate baseline spectrum
+        >>> sim = Simulator(model, noise_level=0.05)
+        >>> clean, noisy, noise = sim.simulate_1D(t_ind=0)
+        >>> 
+        >>> # Plot comparison
+        >>> plt.plot(model.energy, clean, 'k-', label='Clean')
+        >>> plt.plot(model.energy, noisy, 'r.', label='Noisy', ms=2)
+        >>> plt.legend()
+        
+        >>> # Calculate SNR
+        >>> snr = sim.get_SNR()
+        >>> print(f"Signal-to-noise ratio: {snr:.1f}")
+        
+        >>> # Simulate different time points
+        >>> for t_i in [0, 50, 100]:
+        ...     clean, noisy, noise = sim.simulate_1D(t_ind=t_i)
+        ...     plt.plot(model.energy, noisy, label=f't={model.time[t_i]:.1f}')
+        
+        Notes
+        -----
+        Results are stored in simulator attributes for later access:
+        - self.data_clean: (Last) clean spectrum
+        - self.data_noisy: Last noisy spectrum
+        - self.noise: Last noise realization
+        
+        Can access these without re-simulation:
+        >>> sim.simulate_1D()
+        >>> snr = sim.get_SNR()  # Uses stored data
+        >>> sim.plot_comparison(dim=1)  # Uses stored data
+        
+        See Also
+        --------
+        simulate_2D : Simulate full 2D spectrum
+        simulate_N : Generate multiple 1D realizations
+        plot_comparison : Visualize results
         """
         # Generate clean spectrum from model
         clean_data = self.generate_clean_data(dim=1, t_ind=t_ind)
@@ -212,10 +458,83 @@ class Simulator:
     #
     def simulate_2D(self):
         """
-        Simulate 2D spectrum (time- and energy-resolved)
-            
-        Returns:
-            Tuple of (clean_data, noisy_data, noise)
+        Simulate 2D spectrum (time- and energy-resolved).
+        
+        Generates a complete 2D time- and energy-resolved spectrum from the
+        model, adds appropriate noise for each time point, and stores results.
+        
+        Returns
+        -------
+        clean_data : ndarray
+            Noiseless 2D spectrum from model (shape: [n_time, n_energy])
+        noisy_data : ndarray
+            2D spectrum with added noise (shape: [n_time, n_energy])
+        noise : ndarray
+            Noise component (noisy - clean, shape: [n_time, n_energy])
+        
+        Examples
+        --------
+        >>> # Basic 2D simulation
+        >>> sim = Simulator(model, noise_level=0.05)
+        >>> clean, noisy, noise = sim.simulate_2D()
+        >>> 
+        >>> # Visualize with built-in plotter
+        >>> sim.plot_comparison(dim=2)
+        
+        >>> # Manual visualization
+        >>> fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+        >>> ax1.pcolormesh(model.energy, model.time, clean)
+        >>> ax1.set_title('Clean Model')
+        >>> ax2.pcolormesh(model.energy, model.time, noisy)
+        >>> ax2.set_title(f'Noisy (SNR={sim.get_SNR():.1f})')
+        
+        >>> # Test fitting on simulated data
+        >>> clean, noisy, noise = sim.simulate_2D()
+        >>> # ... set up fitting ...
+        >>> file.data = noisy  # Use noisy data for fit
+        >>> file.fit_2Dmodel(model_name='test', fit=2)
+        >>> # Compare fitted vs. true parameters
+        
+        >>> # Vary noise level to study impact
+        >>> for noise_level in [0.01, 0.05, 0.10]:
+        ...     sim.set_noise_level(noise_level)
+        ...     clean, noisy, noise = sim.simulate_2D()
+        ...     snr = sim.get_SNR()
+        ...     print(f"Noise level {noise_level:.2f}: SNR = {snr:.1f}")
+        
+        Notes
+        -----
+        **Noise Application:**
+        
+        For analog detectors, noise is added independently at each pixel.
+        For photon counting, photons are distributed across all pixels
+        according to the signal probability distribution, then reconverted
+        to same scale as input for direct comparison.
+        
+        **Performance:**
+        
+        Simulation time scales with:
+        - Model evaluation time (dominates for complex models)
+        - Array size (n_time × n_energy)
+        - Noise generation method
+        
+        Typical times:
+        - Simple model, 200×500 array: ~0.1-1 second
+        - Complex model with time-dependence: ~1-10 seconds
+        - Photon counting slightly slower than analog
+        
+        **Memory:**
+        
+        Three arrays stored (clean, noisy, noise), each:
+        - Size: n_time × n_energy × 8 bytes (float64)
+        - Example: 200×500 = ~2.4 MB per array, ~7.2 MB total
+        
+        See Also
+        --------
+        simulate_1D : Simulate single spectrum
+        simulate_N : Generate multiple 2D realizations
+        plot_comparison : Visualize results
+        save_data : Save to HDF5 file
         """
         # Generate clean spectrum from model
         clean_data = self.generate_clean_data(dim=2)
@@ -233,17 +552,126 @@ class Simulator:
     #
     def simulate_N(self, N, dim=2, t_ind=0, show_progress=True):
         """
-        Generate N simulated datasets with independent noise realizations
+        Generate N simulated datasets with independent noise realizations.
         
-        Parameters:
-            N: Number of datasets to generate
-            dim: Dimension (1 for 1D, 2 for 2D)
-            t_ind: Time index for 1D simulations (ignored for 2D)
-            show_progress: Print progress updates
-            
-        Returns:
-            Tuple of (clean_data, noisy_data_list, noise_list)
-            where clean_data is single array and others are lists of N arrays
+        Generates the clean data ONCE from the model, then adds N independent
+        noise realizations. Use for statistical analysis of fitting algorithms
+        and uncertainty quantification or machine learning model training.
+        
+        Parameters
+        ----------
+        N : int
+            Number of datasets to generate (number of noise realizations)
+        dim : {1, 2}, default=2
+            Dimensionality:
+            - 1: Generate 1D spectra
+            - 2: Generate 2D spectra
+        t_ind : int, default=0
+            Time index for 1D simulations (ignored for dim=2)
+        show_progress : bool, default=True
+            Print progress updates during generation
+        
+        Returns
+        -------
+        clean_data : ndarray
+            Single clean dataset (1D or 2D depending on dim).
+            Same for all N realizations (generated once).
+        noisy_data_list : list of ndarray
+            List of N noisy datasets, each with independent noise.
+            Each element has same shape as clean_data.
+        noise_list : list of ndarray
+            List of N noise realizations (noisy - clean for each dataset).
+            Each element has same shape as clean_data.
+        
+        Examples
+        --------
+        >>> # Generate 20 independent noisy datasets
+        >>> sim = Simulator(model, noise_level=0.05)
+        >>> clean, noisy_list, noise_list = sim.simulate_N(N=20, dim=2)
+        >>> 
+        >>> # Fit each dataset and analyze parameter distribution
+        >>> fitted_params = []
+        >>> for noisy_data in noisy_list:
+        ...     file.data = noisy_data
+        ...     file.fit_2Dmodel('test', fit=2)
+        ...     fitted_params.append(model.lmfit_pars['amplitude'].value)
+        >>> 
+        >>> # Check parameter recovery
+        >>> true_value = model.lmfit_pars['amplitude'].value
+        >>> mean_fitted = np.mean(fitted_params)
+        >>> std_fitted = np.std(fitted_params)
+        >>> print(f"True: {true_value:.2f}")
+        >>> print(f"Mean fitted: {mean_fitted:.2f} ± {std_fitted:.2f}")
+        
+        >>> # Analyze noise statistics
+        >>> noise_mean = np.mean(noise_list, axis=0)
+        >>> noise_std = np.std(noise_list, axis=0)
+        >>> 
+        >>> # Should be close to zero (unbiased)
+        >>> print(f"Noise mean: {np.mean(noise_mean):.2e}")
+        >>> # Should match noise_level * signal scale
+        >>> print(f"Noise std: {np.mean(noise_std):.2e}")
+        
+        >>> # Save multiple realizations for later use
+        >>> clean, noisy_list, noise_list = sim.simulate_N(N=100, dim=2)
+        >>> sim.save_data(
+        ...     filepath='simulations/batch_001.h5',
+        ...     N_data=noisy_list
+        ... )
+        
+        >>> # Test convergence of fitted parameters with N
+        >>> for n_datasets in [5, 10, 20, 50]:
+        ...     clean, noisy_list, _ = sim.simulate_N(N=n_datasets, dim=2)
+        ...     # ... fit each and compute parameter statistics ...
+        ...     print(f"N={n_datasets}: parameter std = {param_std:.3f}")
+        
+        Notes
+        -----
+        **Efficiency:**
+        
+        Generating clean data once and adding N noise realizations is much
+        faster than generating N complete simulations:
+        
+        - This method: 1 model evaluation + N noise additions
+        - N separate simulate_2D calls: N model evaluations + N noise additions
+        
+        For complex models where evaluation is slow, this can save
+        minutes to hours of computation time.
+        
+        **Statistical Analysis:**
+        
+        This function enables:
+        - Monte Carlo analysis of fitting uncertainty
+        - Algorithm validation (can recover true parameters?)
+        - Bias detection (systematic fitting errors)
+        - Confidence interval validation (coverage probability)
+        - Experimental design optimization (required SNR)
+        
+        **Memory Considerations:**
+        
+        All N datasets stored in memory as lists:
+        - Memory usage: N × (n_time × n_energy × 8 bytes)
+        - Example: 100 datasets of 200×500 = ~800 MB
+        
+        For very large N or large arrays, consider:
+        - Processing in batches
+        - Saving to disk incrementally
+        - Using generator pattern instead of list
+        
+        **Progress Display:**
+        
+        When show_progress=True, prints:
+        - "Generating clean data from model... Done"
+        - "Adding noise to dataset N/M" (updates in place)
+        - "Generated M noisy datasets successfully"
+        
+        Set show_progress=False for batch processing or when redirecting output.
+        
+        See Also
+        --------
+        simulate_1D : Single 1D simulation
+        simulate_2D : Single 2D simulation
+        save_data : Save multiple datasets to HDF5
         """
         # Generate clean data ONCE
         if show_progress:
@@ -480,15 +908,118 @@ class Simulator:
     #
     def get_SNR(self, scale='linear'):
         """
-        Calculate Signal-to-Noise Ratio (SNR)
-        scale: 'linear' or 'dB'
-
-        Returns:
-            SNR value (linear or decibels)
+        Calculate Signal-to-Noise Ratio (SNR).
+        
+        Computes SNR from the most recently simulated data using power-based
+        definition: SNR = signal_power / noise_power.
+        
+        Parameters
+        ----------
+        scale : {'linear', 'dB'}, default='linear'
+            Output scale:
+            - 'linear': SNR as ratio (e.g., 25.0)
+            - 'dB': SNR in decibels (e.g., 13.98 dB)
+        
+        Returns
+        -------
+        float
+            SNR value in requested scale.
+            Returns np.inf if noise_power is exactly zero.
+        
+        Raises
+        ------
+        ValueError
+            If no simulated data available (must call simulate_1D/2D/N first)
+        
+        Examples
+        --------
+        >>> # Calculate SNR after simulation
+        >>> sim = Simulator(model, noise_level=0.05)
+        >>> clean, noisy, noise = sim.simulate_2D()
+        >>> 
+        >>> snr_linear = sim.get_SNR(scale='linear')
+        >>> print(f"SNR: {snr_linear:.1f}")
+        SNR: 25.3
+        >>> 
+        >>> snr_db = sim.get_SNR(scale='dB')
+        >>> print(f"SNR: {snr_db:.1f} dB")
+        SNR: 14.0 dB
+        
+        >>> # Compare SNR across noise levels
+        >>> for noise_level in [0.01, 0.05, 0.10, 0.20]:
+        ...     sim.set_noise_level(noise_level)
+        ...     sim.simulate_2D()
+        ...     snr = sim.get_SNR()
+        ...     print(f"Noise {noise_level:.2f}: SNR = {snr:.1f}")
+        Noise 0.01: SNR = 625.0
+        Noise 0.05: SNR = 25.0
+        Noise 0.10: SNR = 6.2
+        Noise 0.20: SNR = 1.6
+        
+        >>> # Plot SNR vs photon count
+        >>> counts = [100, 500, 1000, 5000, 10000]
+        >>> snrs = []
+        >>> for count in counts:
+        ...     sim = Simulator(model, detection='photon_counting',
+        ...                     counts_per_cycle=count)
+        ...     sim.simulate_2D()
+        ...     snrs.append(sim.get_SNR())
+        >>> plt.loglog(counts, snrs, 'o-')
+        >>> plt.xlabel('Counts per cycle')
+        >>> plt.ylabel('SNR')
+        
+        Notes
+        -----
+        **SNR Definition:**
+        
+        Uses power-based (energy) definition:
+        
+        SNR_linear = (mean(signal²)) / (mean(noise²))
+        SNR_dB = 10 × log₁₀(SNR_linear)
+        
+        This differs from amplitude-based definition (20 log₁₀) by factor of 2.
+        Power-based is standard in signal processing and communications.
+        
+        **Interpretation:**
+        
+        Linear scale:
+        - SNR = 1: Signal and noise have equal power (marginal)
+        - SNR = 10: Signal 10× stronger than noise (good)
+        - SNR = 100: Signal 100× stronger than noise (excellent)
+        
+        dB scale:
+        - 0 dB: Equal signal and noise
+        - 10 dB: 10× signal power (good)
+        - 20 dB: 100× signal power (excellent)
+        - Each 10 dB = 10× power ratio
+        
+        **Typical Values:**
+        
+        For spectroscopy data:
+        - SNR < 5 (< 7 dB): Difficult to fit reliably
+        - SNR 5-20 (7-13 dB): Good quality, typical experimental data
+        - SNR 20-100 (13-20 dB): High quality
+        - SNR > 100 (> 20 dB): Exceptional, near ideal
+        
+        **Limitations:**
+        
+        This is a global SNR averaged over entire spectrum. Local SNR
+        may vary significantly, especially for:
+        - Weak features vs. strong peaks
+        - Time-dependent signals (varying amplitude)
+        - Non-uniform noise (detector artifacts)
+        
+        For accurate local SNR, compute on regions of interest separately.
+        
+        See Also
+        --------
+        simulate_1D : Must call before get_SNR
+        simulate_2D : Must call before get_SNR
+        plot_comparison : Shows SNR in title
         """
         if self.data_clean is None or self.noise is None:
             raise ValueError("No simulated data available. Run simulate_1D or simulate_2D first.")
-        
+        #$% enable ROI input here
         signal_power = np.mean(self.data_clean**2)
         noise_power = np.mean(self.noise**2)
         
@@ -503,16 +1034,98 @@ class Simulator:
     #
     def plot_comparison(self, t_ind=0, dim=1, SNR_scale='linear'):
         """
-        Plot comparison of clean vs noisy data
+        Plot comparison of clean vs noisy data.
+        
+        Creates visualization showing clean model data, noisy simulated data,
+        and noise component side-by-side. Essential for visually assessing
+        simulation quality and noise characteristics.
         
         Parameters
         ----------
-        t_ind : int
-            Time index for 1D plots (ignored for 2D)
-        dim : int
-            Dimension (1 for 1D plot, 2 for 2D plot)
-        SNR_scale : str
-            'linear' or 'dB' for SNR display in title
+        t_ind : int, default=0
+            Time index for 1D plots (ignored for dim=2)
+        dim : {1, 2}, default=1
+            Dimensionality:
+            - 1: Create 1D plot with clean, noisy, and noise curves
+            - 2: Create three-panel 2D plot (clean, noisy, noise)
+        SNR_scale : {'linear', 'dB'}, default='linear'
+            Scale for SNR display in title:
+            - 'linear': Show as ratio (e.g., "SNR: 25.0 linear")
+            - 'dB': Show in decibels (e.g., "SNR: 14.0 dB")
+        
+        Examples
+        --------
+        >>> # 1D comparison
+        >>> sim = Simulator(model, noise_level=0.05)
+        >>> sim.simulate_1D(t_ind=0)
+        >>> sim.plot_comparison(dim=1)
+        
+        >>> # 2D comparison with dB scale
+        >>> sim = Simulator(model, noise_level=0.05)
+        >>> sim.simulate_2D()
+        >>> sim.plot_comparison(dim=2, SNR_scale='dB')
+        
+        >>> # Compare different noise levels visually
+        >>> fig, axes = plt.subplots(3, 1, figsize=(10, 12))
+        >>> for i, noise_level in enumerate([0.01, 0.05, 0.10]):
+        ...     sim.set_noise_level(noise_level)
+        ...     sim.simulate_1D()
+        ...     # ... manual plotting on axes[i] ...
+        
+        >>> # Check photon counting vs analog
+        >>> sim_analog = Simulator(model, detection='analog', noise_level=0.05)
+        >>> sim_photon = Simulator(model, detection='photon_counting',
+        ...                         counts_per_cycle=1000)
+        >>> sim_analog.simulate_2D()
+        >>> sim_photon.simulate_2D()
+        >>> # ... compare visually ...
+        
+        Notes
+        -----
+        **1D Plot Layout:**
+        
+        Single plot with three traces:
+        - Clean: Black line (ground truth)
+        - Noisy: Red scatter points (simulated data)
+        - Noise: Gray line (noise component)
+        
+        Scatter points for noisy data help visualize noise granularity.
+        
+        **2D Plot Layout:**
+        
+        Three side-by-side panels:
+        - Left: Clean model data
+        - Center: Noisy simulated data (with SNR in title)
+        - Right: Noise component (difference)
+        
+        All use same colormap from model.plot_config for consistency.
+        
+        **Visual Assessment:**
+        
+        Good simulation should show:
+        - Noisy data follows clean data trend
+        - Noise is randomly distributed (no patterns)
+        - SNR appropriate for intended use case
+        - Peak features still distinguishable in noisy data
+        
+        If noise dominates signal (SNR << 1), features may be
+        completely obscured - increase signal or reduce noise.
+        
+        **Configuration:**
+        
+        Plot uses model.plot_config for:
+        - Axis labels (energy/time labels)
+        - Axis direction (e.g., reversed energy)
+        - Colormap (for 2D plots)
+        - DPI settings
+        
+        This ensures consistency with other trspecfit plots.
+        
+        See Also
+        --------
+        simulate_1D : Generate 1D data to plot
+        simulate_2D : Generate 2D data to plot
+        get_SNR : SNR calculation shown in title
         """
         detection_str = f' [{self.detection}]'
         plt_title = f'Simulated Data (SNR: {self.get_SNR(scale=SNR_scale):.1f} {SNR_scale}){detection_str}'
@@ -561,6 +1174,7 @@ class Simulator:
             axes[0].set_ylabel(config.y_label)
             if x_dir_reversed:
                 axes[0].invert_xaxis()
+            #$% add x_type and y_type (lin vs log) here 
             plt.colorbar(im1, ax=axes[0])
             
             # Noisy data
@@ -597,20 +1211,171 @@ class Simulator:
     #
     def save_data(self, filepath=None, save_format='hdf5', N_data=None, overwrite=True):
         """
-        Save simulated data to file
+        Save simulated data to file with metadata.
         
-        Parameters:
-            filepath: Path where to save data (defaults to './simulated_data/simulated_data.h5')
-            save_format: 'hdf5' (default) [others could be added later]
-            N_data: For HDF5 - list of multiple noisy datasets (from simulate_N)
-                If None, uses self.data_noisy from single simulation
-            overwrite: If True (default), overwrite existing files. If False, raise error if file exists.
+        Exports simulated data in HDF5 format with complete metadata including
+        model parameters, noise settings, and experimental axes. Essential for
+        sharing simulated datasets and ensuring reproducibility.
+        
+        Parameters
+        ----------
+        filepath : str or Path, optional
+            Path where to save data. If None, uses default:
+            './simulated_data/simulated_data.h5'
+            
+            If provided path doesn't include 'simulated_data' directory,
+            it will be automatically placed there.
+        save_format : str, default='hdf5'
+            File format. Currently only 'hdf5' supported.
+            Future: could add .mat, .npz, etc.
+        N_data : list of ndarray, optional
+            Multiple noisy datasets from simulate_N() to save.
+            If None, saves single dataset from simulate_1D() or simulate_2D().
+        overwrite : bool, default=True
+            If True, overwrite existing files.
+            If False, raise FileExistsError if file exists.
+        
+        Raises
+        ------
+        ValueError
+            If no simulated data available (must call simulate first)
+        FileExistsError
+            If file exists and overwrite=False
+        
+        Examples
+        --------
+        >>> # Save single simulation
+        >>> sim = Simulator(model, noise_level=0.05, seed=42)
+        >>> clean, noisy, noise = sim.simulate_2D()
+        >>> sim.save_data('simulation_001.h5')
+        Data saved to: ./simulated_data/simulation_001.h5
+        
+        >>> # Save multiple realizations
+        >>> clean, noisy_list, noise_list = sim.simulate_N(N=50, dim=2)
+        >>> sim.save_data(
+        ...     filepath='batch_simulation.h5',
+        ...     N_data=noisy_list
+        ... )
+        Data saved to: ./simulated_data/batch_simulation.h5
+        
+        >>> # Prevent accidental overwrites
+        >>> sim.save_data('important_data.h5', overwrite=False)
+        FileExistsError: File already exists: ./simulated_data/important_data.h5
+        Set overwrite=True to overwrite, or provide a different filepath.
+        
+        >>> # Load saved data later
+        >>> import h5py
+        >>> with h5py.File('simulated_data/simulation_001.h5', 'r') as f:
+        ...     energy = f['energy'][:]
+        ...     time = f['time'][:]
+        ...     clean = f['clean_data'][:]
+        ...     noisy = f['simulated_data/000000'][:]
+        ...     
+        ...     # Read metadata
+        ...     noise_level = f['metadata'].attrs['noise_level']
+        ...     model_params = f['metadata'].attrs['model_parameters']
+        
+        Notes
+        -----
+        **HDF5 File Structure:**
+        /
+        ├── energy              (dataset: 1D array)
+        ├── time                (dataset: 1D array, empty for 1D simulations)
+        ├── clean_data          (dataset: 1D or 2D array)
+        ├── simulated_data/     (group)
+        │   ├── 000000          (dataset: first noisy realization)
+        │   ├── 000001          (dataset: second noisy realization)
+        │   └── ...
+        └── metadata/           (group with attributes)
+            ├── detection       (attribute: 'analog' or 'photon_counting')
+            ├── noise_level     (attribute: analog noise level)
+            ├── noise_type      (attribute: analog noise type)
+            ├── counts_per_cycle (attribute: photon counting counts)
+            ├── count_rate      (attribute: photon counting rate, if set)
+            ├── cycle_time      (attribute: photon counting cycle, if set)
+            ├── seed            (attribute: random seed, if set)
+            ├── dimension       (attribute: 1 or 2)
+            ├── n_datasets      (attribute: number of noisy datasets)
+            ├── model_parameters (attribute: JSON string of all parameters)
+            └── model_name      (attribute: model name)
+
+        **Why HDF5?**
+        
+        HDF5 format chosen because:
+        - Efficient for large multidimensional arrays
+        - Self-describing (metadata embedded)
+        - Widely supported (Python, MATLAB, Igor, etc.)
+        - Allows partial loading (don't need entire file in memory)
+        - Standard in scientific computing
+        
+        **Model Parameters:**
+        
+        All model parameters saved as JSON string in metadata for complete
+        reproducibility. Includes:
+        - Parameter values
+        - vary flags (which parameters were free)
+        - Bounds (min/max)
+        - Expressions (parameter constraints)
+        
+        This allows exact recreation of the model used for simulation.
+        
+        **File Organization:**
+        
+        Default directory structure:
+        
+        project_directory/
+        └── simulated_data/
+            ├── simulation_001.h5
+            ├── simulation_002.h5
+            └── batch_001.h5
+
+            Keeps simulated data organized and separate from experimental data.
+        
+        **Multiple Datasets:**
+        
+        When N_data provided (from simulate_N), all realizations saved in
+        simulated_data group with sequential names:
+        - 000000, 000001, ..., 000099 for 100 datasets
+        - Zero-padded for proper sorting
+        
+        Clean data saved once (same for all realizations).
+        
+        **Loading Data:**
+        
+        Standard h5py usage:
+        ```python
+            import h5py
+            
+            with h5py.File('simulated_data/data.h5', 'r') as f:
+                # Load axes
+                energy = f['energy'][:]
+                time = f['time'][:]
+                
+                # Load clean data
+                clean = f['clean_data'][:]
+                
+                # Load all noisy datasets
+                noisy_datasets = []
+                for key in sorted(f['simulated_data'].keys()):
+                    noisy_datasets.append(f['simulated_data'][key][:])
+                
+                # Load metadata
+                detection = f['metadata'].attrs['detection']
+                n_datasets = f['metadata'].attrs['n_datasets']
+        ```
+            
+        See Also
+        --------
+        simulate_N : Generate multiple datasets to save
+        simulate_1D : Generate 1D data
+        simulate_2D : Generate 2D data
+        h5py : Python HDF5 library
         """
+
         if self.data_noisy is None and N_data is None:
             raise ValueError("No simulated data available. Run simulate_1D, simulate_2D, or simulate_N first.")
         
         # Create simulated_data directory if it doesn't exist
-        import os
         sim_dir = os.path.join(os.getcwd(), 'simulated_data')
         if not os.path.exists(sim_dir):
             os.makedirs(sim_dir)
@@ -654,9 +1419,7 @@ class Simulator:
             /simulated_data/000001 - second noisy dataset
             ...
             /metadata       - group containing simulation parameters
-        """
-        import h5py
-        
+        """      
         with h5py.File(filepath, 'w') as f:
             # Save axes at root level
             f.create_dataset('energy', data=self.model.energy)
@@ -729,6 +1492,282 @@ class Simulator:
                 }
             
             # Save as JSON string in metadata
-            import json
             meta.attrs['model_parameters'] = json.dumps(params_dict, indent=2)
             meta.attrs['model_name'] = self.model.name
+
+    #
+    def simulate_parameter_sweep(self, 
+                                parameter_sweep: ParameterSweep,
+                                N_realizations: int,
+                                filepath: str = 'ml_training_data.h5',
+                                show_progress: bool = True) -> None:
+        """
+        Generate ML training dataset by sweeping parameters.
+        
+        Processes configurations one at a time, immediately saving to disk.
+        Memory usage remains constant regardless of parameter space size.
+        
+        Parameters
+        ----------
+        parameter_sweep : ParameterSweep
+            Generator yielding parameter configurations
+        N_realizations : int
+            Number of noisy realizations per parameter configuration
+        filepath : str, default='ml_training_data.h5'
+            HDF5 file path for output
+        show_progress : bool, default=True
+            Print progress updates during generation
+        
+        Examples
+        --------
+        >>> # Set up parameter space
+        >>> sweep = ParameterSweep(strategy='random', seed=42)
+        >>> sweep.add_uniform('GLP_01_A', 5, 30, n_samples=100)
+        >>> sweep.add_uniform('GLP_01_x0', 5, 15, n_samples=100)
+        >>> 
+        >>> # Generate dataset
+        >>> sim = Simulator(model, noise_level=0.05, seed=42)
+        >>> sim.simulate_parameter_sweep(
+        ...     parameter_sweep=sweep,
+        ...     N_realizations=20,
+        ...     filepath='training_data.h5'
+        ... )
+        Processing config 1/100: {'GLP_01_A': 12.5, 'GLP_01_x0': 8.3}
+          Saved config 1 with 20 realizations
+        ...
+        Parameter sweep complete!
+        Generated 100 configs × 20 realizations
+        Data saved to: ./simulated_data/training_data.h5
+        
+        Notes
+        -----
+        **Memory Efficiency:**
+        Only one configuration is in memory at a time. Each is immediately
+        written to disk before processing the next. Total memory usage is
+        independent of parameter space size.
+        
+        **Resumability:**
+        If interrupted, completed configurations are already saved to disk.
+        Currently does not support automatic resume (will overwrite file).
+        
+        **File Structure:**
+        See _initialize_sweep_hdf5 for complete HDF5 structure description.
+        
+        See Also
+        --------
+        ParameterSweep : Define parameter space to sweep
+        simulate_N : Generate multiple noisy realizations
+        _initialize_sweep_hdf5 : HDF5 file structure
+        _append_config_to_hdf5 : Incremental saving logic
+        """
+
+        # Convert to Path object
+        filepath_obj = Path(filepath)
+        
+        # If filepath is just a filename (no directory component), 
+        # put it in simulated_data subdirectory
+        if filepath_obj.parent == Path('.'):
+            sim_dir = Path.cwd() / 'simulated_data'
+            sim_dir.mkdir(parents=True, exist_ok=True)
+            filepath = str(sim_dir / filepath_obj.name)
+        else:
+            # User provided a path with directory, use it as-is but ensure parent exists
+            filepath_obj.parent.mkdir(parents=True, exist_ok=True)
+            filepath = str(filepath_obj)
+        
+        # Get total number of configurations
+        n_configs = parameter_sweep.get_n_configs()
+        
+        if show_progress:
+            print(f"Starting parameter sweep:")
+            print(f"  Total configurations: {n_configs}")
+            print(f"  Realizations per config: {N_realizations}")
+            print(f"  Total datasets: {n_configs * N_realizations}")
+            print(f"  Output file: {filepath}")
+            print()
+        
+        # Initialize HDF5 file with structure
+        self._initialize_sweep_hdf5(filepath, parameter_sweep, 
+                                    N_realizations, n_configs)
+        
+        # Process each configuration
+        for config_idx, param_config in enumerate(parameter_sweep):
+            if show_progress:
+                # Format parameters nicely
+                param_str = ', '.join(f'{k}={v:.3g}' 
+                                     for k, v in param_config.items())
+                print(f'Processing config {config_idx+1}/{n_configs}: {{{param_str}}}')
+            
+            # Update model parameters
+            param_names = list(param_config.keys())
+            param_values = list(param_config.values())
+            self.model.update_value(param_values, par_select=param_names)
+            
+            # Generate noisy realizations for this config
+            clean, noisy_list, noise_list = self.simulate_N(
+                N=N_realizations,
+                dim=2,
+                show_progress=False  # Don't clutter output
+            )
+            
+            # Append to HDF5 immediately (memory-efficient)
+            self._append_config_to_hdf5(
+                filepath, config_idx, param_config, 
+                clean, noisy_list
+            )
+            
+            if show_progress:
+                print(f'  ✓ Saved config {config_idx+1} with {N_realizations} realizations')
+        
+        if show_progress:
+            print(f'\n{"="*60}')
+            print(f'Parameter sweep complete!')
+            print(f'Generated {n_configs} configs × {N_realizations} realizations')
+            print(f'Total datasets: {n_configs * N_realizations}')
+            print(f'Data saved to: {filepath}')
+            print(f'{"="*60}')
+
+    #
+    def _initialize_sweep_hdf5(self, filepath: str, 
+                              parameter_sweep: ParameterSweep,
+                              N_realizations: int, 
+                              n_configs: int) -> None:
+        """
+        Create HDF5 file structure for parameter sweep data.
+        
+        File Structure
+        --------------
+        /
+        ├── energy (dataset)              # Energy axis
+        ├── time (dataset)                # Time axis
+        ├── metadata/ (group)             # Sweep metadata
+        │   ├── attrs: n_configs, n_realizations_per_config, ...
+        │   └── attrs: parameter_space (JSON)
+        ├── parameter_configs/ (group)    # Parameter configurations
+        │   ├── config_000000/ (group)
+        │   │   ├── attrs: GLP_01_A, GLP_01_x0, ...
+        │   │   ├── attrs: all_parameters (JSON)
+        │   │   └── clean (dataset)       # Clean data for this config
+        │   ├── config_000001/ (group)
+        │   └── ...
+        └── simulated_data/ (group)       # Noisy realizations
+            ├── config_000000/ (group)
+            │   ├── 000000 (dataset)      # First realization
+            │   ├── 000001 (dataset)      # Second realization
+            │   └── ...
+            ├── config_000001/ (group)
+            └── ...
+        
+        Parameters
+        ----------
+        filepath : str
+            Path to HDF5 file to create
+        parameter_sweep : ParameterSweep
+            Parameter sweep object (for metadata)
+        N_realizations : int
+            Number of noisy realizations per config
+        n_configs : int
+            Total number of parameter configurations
+        """
+        with h5py.File(filepath, 'w') as f:
+            # Save axes (same for all configs)
+            f.create_dataset('energy', data=self.model.energy)
+            if self.model.time is not None and len(self.model.time) > 0:
+                f.create_dataset('time', data=self.model.time)
+            else:
+                f.create_dataset('time', data=np.array([]))
+            
+            # Create groups for organization
+            f.create_group('parameter_configs')
+            f.create_group('simulated_data')
+            
+            # Save sweep metadata
+            meta = f.create_group('metadata')
+            meta.attrs['n_configs'] = n_configs
+            meta.attrs['n_realizations_per_config'] = N_realizations
+            meta.attrs['total_datasets'] = n_configs * N_realizations
+            
+            # Simulator settings
+            meta.attrs['detection'] = self.detection
+            if self.detection == 'analog':
+                meta.attrs['noise_level'] = self.noise_level
+                meta.attrs['noise_type'] = self.noise_type
+            elif self.detection == 'photon_counting':
+                meta.attrs['counts_per_cycle'] = self.counts_per_cycle
+                if self.count_rate is not None:
+                    meta.attrs['count_rate'] = self.count_rate
+                if self.cycle_time is not None:
+                    meta.attrs['cycle_time'] = self.cycle_time
+            
+            if self.seed is not None:
+                meta.attrs['seed'] = self.seed
+            
+            # Parameter sweep settings
+            meta.attrs['sweep_strategy'] = parameter_sweep.strategy
+            meta.attrs['sweep_seed'] = parameter_sweep.seed if parameter_sweep.seed else 'None'
+            
+            # Save parameter space definition as JSON
+            param_space = {}
+            for par_name, spec in parameter_sweep.parameter_specs.items():
+                # Convert numpy arrays to lists for JSON serialization
+                spec_copy = spec.copy()
+                if 'values' in spec_copy:
+                    spec_copy['values'] = spec_copy['values'].tolist()
+                param_space[par_name] = spec_copy
+            
+            meta.attrs['parameter_space'] = json.dumps(param_space, indent=2)
+            
+            # Dimension info
+            if self.model.time is not None and len(self.model.time) > 0:
+                meta.attrs['dimension'] = 2
+            else:
+                meta.attrs['dimension'] = 1
+
+    #
+    def _append_config_to_hdf5(self, filepath: str, 
+                               config_idx: int,
+                               param_config: Dict[str, float],
+                               clean: np.ndarray,
+                               noisy_list: List[np.ndarray]) -> None:
+        """
+        Append single parameter configuration and its realizations to HDF5.
+        
+        Parameters
+        ----------
+        filepath : str
+            Path to HDF5 file
+        config_idx : int
+            Configuration index (for naming)
+        param_config : dict
+            Parameter values for this configuration
+        clean : ndarray
+            Clean (noiseless) data
+        noisy_list : list of ndarray
+            List of noisy realizations
+        """
+        with h5py.File(filepath, 'a') as f:
+            # Create group for this configuration
+            config_name = f'config_{config_idx:06d}'
+            config_group = f['parameter_configs'].create_group(config_name)
+            
+            # Save swept parameters as attributes
+            for par_name, value in param_config.items():
+                config_group.attrs[par_name] = float(value)
+            
+            # Save ALL model parameters as JSON (complete state)
+            params_dict = {}
+            for par_name in self.model.lmfit_pars:
+                par = self.model.lmfit_pars[par_name]
+                params_dict[par_name] = {
+                    'value': float(par.value),
+                    'vary': bool(par.vary),
+                }
+            config_group.attrs['all_parameters'] = json.dumps(params_dict)
+            
+            # Save clean data for this configuration
+            config_group.create_dataset('clean', data=clean)
+            
+            # Save noisy realizations
+            data_group = f['simulated_data'].create_group(config_name)
+            for real_idx, noisy_data in enumerate(noisy_list):
+                data_group.create_dataset(f'{real_idx:06d}', data=noisy_data)
