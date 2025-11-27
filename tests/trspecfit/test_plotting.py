@@ -28,7 +28,6 @@ import tempfile
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
-
 # Local imports
 from trspecfit.utils.plot import plot_1D, plot_2D
 from trspecfit.config.plot import PlotConfig

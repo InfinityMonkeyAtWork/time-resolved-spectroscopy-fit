@@ -6,8 +6,10 @@ This module provides utilities for:
 - Pandas DataFrame item extraction
 - Sign change detection with zero handling
 - Array padding and convolution for signal processing
-- Angular normalization and running averages
+- Angular normalization
+- Running averages
 """
+
 import math
 from decimal import Decimal
 import pandas as pd
@@ -78,28 +80,12 @@ def OoM(x):
     -------
     int
         Order of magnitude (power of 10)
-    
-    Examples
-    --------
-    >>> OoM(137)
-    2
-    >>> OoM(-137)
-    2
-    >>> OoM(0.006)
-    -3
-    >>> OoM(-0.006)
-    -3
-    
-    Notes
-    -----
-    Rounds down: OoM(9.99) returns 0, not 1.
-    Uses absolute value, so sign doesn't affect order of magnitude.
-    Raises ValueError for zero since log10(0) is undefined.
-    
+        [rounds down: OoM(9.99) returns 0, not 1]
+
     Raises
     ------
     ValueError
-        If x is zero (order of magnitude undefined)
+        If x is zero, since log10(0) is undefined.
     """
     if x == 0:
         raise ValueError("Order of magnitude undefined for zero")
@@ -206,11 +192,6 @@ def sign_change(array, ignore_zeros=True):
     array([0, 0, 1])  # One sign change
     >>> sign_change([1, 0, -1], ignore_zeros=False)
     array([0, 1, 1])  # Two sign changes (incorrect for most use cases)
-    
-    Notes
-    -----
-    Useful for detecting zero-crossings in noisy spectroscopy data where
-    zeros may be measurement artifacts rather than true crossings.
     """
     asign = np.sign(array)
     
@@ -254,16 +235,12 @@ def pad_x_y(x, y, x_step, pad_size):
     Examples
     --------
     >>> x = np.array([0, 1, 2])
-    >>> y = np.array([1, 2, 1])
+    >>> y = np.array([1, 3, 6])
     >>> x_pad, y_pad = pad_x_y(x, y, x_step=1, pad_size=2)
     >>> x_pad
     array([-2., -1.,  0.,  1.,  2.,  3.,  4.])
     >>> y_pad
-    array([1, 1, 1, 2, 1, 1, 1])
-    
-    Notes
-    -----
-    Used internally by my_conv for edge handling in convolution operations.
+    array([1, 1, 1, 3, 6, 6, 6])
     """
     pad_size = int(pad_size)
     
@@ -287,8 +264,7 @@ def my_conv(x, y, kernel, method='scipy'):
     Convolution with proper edge handling via padding.
     
     Wraps scipy.signal.convolve or numpy.convolve with automatic padding
-    to minimize edge artifacts. Used for convolving time dynamics with
-    instrument response functions (IRF) in time-resolved spectroscopy.
+    to minimize edge artifacts. Normalizes kernel (divides by sum).
     
     Parameters
     ----------
@@ -305,24 +281,6 @@ def my_conv(x, y, kernel, method='scipy'):
     -------
     ndarray
         Convolved signal with same length as input y
-    
-    Examples
-    --------
-    >>> x = np.linspace(0, 10, 100)
-    >>> y = np.sin(x)
-    >>> kernel = np.ones(5) / 5  # Boxcar average
-    >>> y_smooth = my_conv(x, y, kernel)
-    
-    Notes
-    -----
-    - Automatically pads arrays to minimize edge effects
-    - Normalizes kernel (divides by sum) for proper amplitude
-    - scipy method is generally faster and more robust
-    
-    See Also
-    --------
-    pad_x_y : Padding function used internally
-    scipy.signal.convolve : Backend convolution implementation
     """
     # Determine padding size from kernel
     pad_size = int(kernel.size / 2)
@@ -362,19 +320,6 @@ def phi_norm(phi, norm=2*np.pi):
     -------
     float
         Normalized angle in range [0, norm)
-    
-    Examples
-    --------
-    >>> phi_norm(3 * np.pi)  # Wrap to [0, 2π)
-    3.141592653589793
-    >>> phi_norm(-np.pi / 4)  # Negative angle
-    5.497787143782138
-    >>> phi_norm(3 * np.pi, norm=np.pi)  # Wrap to [0, π)
-    0.0
-    
-    Notes
-    -----
-    Works for both positive and negative angles. Result is always in [0, norm).
     """
     #
     return phi - norm * math.floor(phi / norm)
@@ -385,8 +330,9 @@ def running_mean(x, y, N):
     Calculate running (moving) average with proper edge handling.
     
     Computes a moving average using convolution with a boxcar kernel,
-    with padding to handle edges properly. Alternative to pandas.rolling().
-    
+    with padding to handle edges properly.
+    For more advanced smoothing, consider pandas.rolling() or scipy filters.
+
     Parameters
     ----------
     x : array_like
@@ -399,31 +345,15 @@ def running_mean(x, y, N):
     Returns
     -------
     ndarray
-        Smoothed signal with same length as input y
-    
-    Examples
-    --------
-    >>> x = np.linspace(0, 10, 100)
-    >>> y = np.sin(x) + 0.1 * np.random.randn(100)  # Noisy signal
-    >>> y_smooth = running_mean(x, y, N=5)
+        Smoothed signal with same length as input y    
     
     Notes
-    -----
-    Uses my_conv with boxcar kernel for proper edge handling.
-    For more advanced smoothing, consider pandas.rolling() or scipy filters.
-    
-    References
     ----------
     Performance comparison:
     https://stackoverflow.com/questions/13728392/moving-average-or-running-mean
     - numpy.convolve: slowest
     - cumsum: floating point errors for N > 1E5
     - scipy with padding: fastest and most robust (this implementation)
-    
-    See Also
-    --------
-    my_conv : Underlying convolution function
-    pandas.DataFrame.rolling : Alternative with more features
     """
     #
     return my_conv(x, y, np.ones(N))

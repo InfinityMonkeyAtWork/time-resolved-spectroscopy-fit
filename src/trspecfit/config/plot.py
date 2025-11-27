@@ -1,8 +1,10 @@
 """
 Configuration of trspecfit plotting functions
 """
+
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
+import copy as cp
 
 # Plot configuration hierarchy:
 #
@@ -170,12 +172,6 @@ class PlotConfig:
         -------
         PlotConfig
             Configuration object with settings from project
-            
-        Examples
-        --------
-        >>> project = Project(path='...')
-        >>> config = PlotConfig.from_project(project)
-        >>> config = PlotConfig.from_project(project, x_label='Custom Label')
         """
         config_dict = {
             'x_label': project.e_label,
@@ -211,11 +207,6 @@ class PlotConfig:
         -------
         PlotConfig
             Self (for chaining)
-            
-        Examples
-        --------
-        >>> config = PlotConfig()
-        >>> config.update(x_label='Energy', dpi_plot=150)
         """
         for key, value in kwargs.items():
             if hasattr(self, key):
@@ -238,13 +229,7 @@ class PlotConfig:
         -------
         PlotConfig
             New configuration object
-            
-        Examples
-        --------
-        >>> config = PlotConfig(x_label='Energy')
-        >>> config2 = config.copy(y_label='Intensity')
         """
-        import copy as cp
         new_config = cp.copy(self)
         new_config.update(**overrides)
         return new_config

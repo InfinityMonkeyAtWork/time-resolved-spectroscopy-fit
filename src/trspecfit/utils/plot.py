@@ -2,11 +2,12 @@
 Plotting utilities for trspecfit.
 
 This module provides matplotlib-based plotting functions for:
-- 1D spectroscopy data (energy or time resolved)
+- 1D spectroscopy data (energy- or time-resolved)
 - 2D spectroscopy data (time- and energy-resolved)
 - Image display and grid layouts
 - Matplotlib helper utilities for axis formatting
 """
+
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import numpy as np
@@ -31,16 +32,8 @@ def load_plot(path, dpi_fig=75):
         Path to the image file to load
     dpi_fig : int, default=75
         Display DPI (actual DPI multiplied by 1.25)
-    
-    Examples
-    --------
-    >>> load_plot('results/spectrum.png')
-    >>> load_plot('fit_results.png', dpi_fig=100)
-    
-    Notes
-    -----
-    The 1.25x factor accounts for typical whitespace/margins in saved figures.
     """
+    # 1.25x factor accounts for typical whitespace/margins in saved figures
     fig, ax = plt.subplots(1, 1, dpi=1.25*dpi_fig)
     img = mpimg.imread(path)
     plt.imshow(img)
@@ -48,7 +41,7 @@ def load_plot(path, dpi_fig=75):
     plt.show()
 
 #
-def load_plot_grid(paths, columns=3, fig_width=16, debug=0):
+def load_plot_grid(paths, columns=3, fig_width=16, debug=False):
     """
     Load and display multiple images in a grid layout.
     
@@ -63,23 +56,14 @@ def load_plot_grid(paths, columns=3, fig_width=16, debug=0):
         Number of columns in grid
     fig_width : float, default=16
         Total figure width in inches
-    debug : int, default=0
-        Debug verbosity level (0=none, 1+=print layout info)
-    
-    Examples
-    --------
-    >>> paths = ['fig1.png', 'fig2.png', 'fig3.png']
-    >>> load_plot_grid(paths, columns=2, fig_width=12)
-    
-    See Also
-    --------
-    plot_grid : Display pre-loaded images in grid
+    debug : bool, default=False
+        Print layout info if debug is True
     """
     images = [plt.imread(path) for path in paths]
     plot_grid(images, columns, fig_width, debug)
 
 #
-def plot_grid(images, columns=3, fig_width=16, debug=0):
+def plot_grid(images, columns=3, fig_width=16, debug=False):
     """
     Display multiple images in a grid layout.
     
@@ -94,13 +78,8 @@ def plot_grid(images, columns=3, fig_width=16, debug=0):
         Number of columns in grid
     fig_width : float, default=16
         Total figure width in inches
-    debug : int, default=0
-        If >= 1, print layout calculations (rows, aspect ratio, height)
-    
-    Examples
-    --------
-    >>> images = [plt.imread(f'fig{i}.png') for i in range(6)]
-    >>> plot_grid(images, columns=3, fig_width=12)
+    debug : bool, default=0
+        If True, print layout calculations (rows, aspect ratio, height)
     
     Notes
     -----
@@ -141,6 +120,7 @@ def plot_grid(images, columns=3, fig_width=16, debug=0):
 # Main plotting functions
 #
 
+#
 def plot_2D(data, x=None, y=None, config=None, **kwargs):
     """
     Plot 2D spectroscopy data as a color map.
@@ -202,11 +182,6 @@ def plot_2D(data, x=None, y=None, config=None, **kwargs):
     - x_lim/y_lim control display zoom using COORDINATE values
     - Color scale can be [min, max], [0, 'max'] for auto-max, or None for auto-both
     - Reference lines (vlines/hlines) use coordinate values, not indices
-    
-    See Also
-    --------
-    plot_1D : Plot 1D spectroscopy data
-    PlotConfig : Configuration object for plot settings
     """
     # Use default config if none provided
     if config is None:
@@ -421,11 +396,6 @@ def plot_1D(data, x=None, config=None, **kwargs):
     - y_norm=1 normalizes each trace independently to [0, 1]
     - y_scale allows scaling individual traces (e.g., [1, 0.5, 2])
     - If data is 2D array, each row is treated as a separate trace
-    
-    See Also
-    --------
-    plot_2D : Plot 2D spectroscopy data
-    PlotConfig : Configuration object for plot settings
     """
     # Use default config if none provided
     if config is None:
@@ -538,7 +508,7 @@ def plot_1D(data, x=None, config=None, **kwargs):
         else:
             y_minmax = [np.min([np.min(y_scale[i] * np.asarray(data[i]))
                                for i in range(N_plots)]),
-                       np.max([np.max(y_scale[i] * np.asarray(data[i]))
+                        np.max([np.max(y_scale[i] * np.asarray(data[i]))
                                for i in range(N_plots)])]
         plt.vlines(x=np.asarray(vlines),
                    ymin=y_minmax[0], ymax=y_minmax[1],
@@ -575,13 +545,13 @@ def plot_1D(data, x=None, config=None, **kwargs):
     else:
         plt.close()
 
-
+#
 def img_save(save_path, dpi=300):
     """
     Save current matplotlib figure with sensible defaults.
     
-    Wrapper around plt.savefig with settings optimized for publication-quality
-    output with proper whitespace handling.
+    Wrapper around plt.savefig with tight bounding box to minimize whitespace,
+    small padding (0.05 inches), white background, auto edge color.
     
     Parameters
     ----------
@@ -589,23 +559,6 @@ def img_save(save_path, dpi=300):
         Output file path (extension determines format: .png, .pdf, .svg, etc.)
     dpi : int, default=300
         Resolution in dots per inch
-    
-    Examples
-    --------
-    >>> plt.plot(x, y)
-    >>> img_save('figure.png', dpi=600)
-    
-    Notes
-    -----
-    Automatically applies:
-    - Tight bounding box to minimize whitespace
-    - Small padding (0.05 inches)
-    - White background
-    - Auto edge color
-    
-    See Also
-    --------
-    matplotlib.pyplot.savefig : Underlying save function
     """
     plt.savefig(save_path,
                 dpi=dpi,
@@ -635,20 +588,6 @@ def major_locator_input(x):
     -------
     float
         Major tick spacing (power of 10)
-    
-    Examples
-    --------
-    >>> x = np.linspace(0, 1000, 100)
-    >>> major_locator_input(x)
-    1000
-    >>> x = np.linspace(0, 0.1, 100)
-    >>> major_locator_input(x)
-    0.1
-    
-    See Also
-    --------
-    minor_locator_input : Calculate minor tick spacing
-    matplotlib.ticker.MultipleLocator : Matplotlib tick locator class
     """
     #
     return 10 ** OoM(np.max(x))
@@ -670,20 +609,6 @@ def minor_locator_input(x):
     -------
     float
         Minor tick spacing (1/10 of major spacing)
-    
-    Examples
-    --------
-    >>> x = np.linspace(0, 1000, 100)
-    >>> minor_locator_input(x)
-    100
-    >>> x = np.linspace(0, 0.1, 100)
-    >>> minor_locator_input(x)
-    0.01
-    
-    See Also
-    --------
-    major_locator_input : Calculate major tick spacing
-    matplotlib.ticker.MultipleLocator : Matplotlib tick locator class
     """
     #
     return 10 ** (OoM(np.max(x)) - 1)
@@ -705,29 +630,6 @@ def major_formatter_input(x):
     -------
     str
         Format string for matplotlib tick labels (e.g., '%0.2f', '%4.0f')
-    
-    Examples
-    --------
-    >>> x = np.linspace(0, 0.01, 100)
-    >>> major_formatter_input(x)
-    '%0.2f'
-    >>> x = np.linspace(0, 1, 100)
-    >>> major_formatter_input(x)
-    '%0.0f'
-    >>> x = np.linspace(0, 1000, 100)
-    >>> major_formatter_input(x)
-    '%4.0f'
-    
-    Notes
-    -----
-    Format selection:
-    - Negative OoM: Fixed point with abs(OoM) decimal places
-    - Zero OoM: Integer format
-    - Positive OoM: Integer format with (OoM+1) width
-    
-    See Also
-    --------
-    matplotlib.ticker.FormatStrFormatter : Matplotlib tick formatter class
     """
     axis_OoM = OoM(np.max(x))
     

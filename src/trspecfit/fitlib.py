@@ -1,6 +1,24 @@
-#
-# 1D and 2D peak fitting functions
-#
+"""
+1D and 2D peak fitting functions with lmfit integration.
+
+This module provides the complete fitting workflow for spectroscopy data:
+- Residual calculation for optimization
+- Fitting with lmfit (including global + local optimization)
+- Confidence interval estimation (lmfit.conf_interval)
+- MCMC sampling via lmfit.emcee for uncertainty quantification
+- Result visualization and export
+
+The fitting functions here work with the MCP (Model/Component/Parameter) system
+from trspecfit.mcp to provide a flexible, component-based fitting framework.
+
+Key Functions
+-------------
+residual_fun : Compute residual for optimizer
+fit_wrapper : Main fitting function with CI and MCMC support
+plt_fit_res_1D : Plot 1D fit results with residuals
+plt_fit_res_2D : Plot 2D fit results with residual maps
+"""
+
 import lmfit
 from trspecfit.utils import lmfit as ulmfit
 #import emcee
@@ -26,47 +44,69 @@ from trspecfit.config.plot import PlotConfig
 def residual_fun(par, x, data, package, fit_fun_str, unpack=0, e_lim=[],
                  t_lim=[], res_type='lmfit', args=[]):
     """
-    Residual function returns the residual of a fit for all lmfit or
-    scipy.optimize.minimize instances 
-        
-    <par> can be a list of parameter values or a lmfit.Parameters()
-    object which will be converted to a list of parameter values. This
-    list will be passed to fit function [getattr(package, fit_fun_str)]
+    Compute residual (data - fit) for optimization and analysis.
     
-    <x> (np.array) is the axis
-    <data> (np.array [1D or 2D] is the y axis.
+    This function is called repeatedly by optimizers to evaluate how well
+    current parameters fit the data. It supports both 1D and 2D fitting,
+    with options for limiting the fitting region and returning different
+    residual representations.
     
-    <unpack> =0 or =1 defines whether parameters are passed to fit 
-    function as <par> or <*par>
+    Parameters
+    ----------
+    par : list or lmfit.Parameters
+        Current parameter values. If lmfit.Parameters, values are extracted.
+        Order must match the fit function's parameter expectations.
+    x : ndarray
+        Independent variable axis (energy or time). Passed to fit function
+        but may not be used if function has its own axes.
+    data : ndarray (1D or 2D)
+        Experimental data to fit. Shape determines dimensionality:
+        - 1D: [n_energy] for energy-resolved fits
+        - 2D: [n_time, n_energy] for time- and energy-resolved fits
+    package : module
+        Python module containing the fit function (typically trspecfit.spectra)
+    fit_fun_str : str
+        Name of fit function within package (e.g., 'fit_model_mcp')
+    unpack : {0, 1}, default=0
+        Parameter passing mode:
+        - 0: Pass parameters as list: fit_fun(x, par, ...)
+        - 1: Unpack parameters: fit_fun(x, *par, ...)
+    e_lim : list of int, default=[]
+        Energy axis limits [left, right] for residual calculation.
+        Uses slice notation: data[e_lim[0]:-e_lim[1]]
+        Empty list uses full energy range.
+    t_lim : list of int, default=[]
+        Time axis limits [start, stop] for residual calculation.
+        Uses slice notation: data[t_lim[0]:t_lim[1]]
+        Empty list uses full time range.
+    res_type : {'lmfit', 'RSS', 'abs', 'res', 'fit'}, default='lmfit'
+        Return type:
+        - 'lmfit': Residual array (1D) or flattened residual (2D) for lmfit
+        - 'RSS': Residual sum of squares (scalar, for scipy.optimize)
+        - 'abs': Sum of absolute residuals (scalar, L1 norm)
+        - 'res': Raw residual array (data - fit)
+        - 'fit': Return fit itself instead of residual
+    args : tuple, default=()
+        Additional arguments for fit function, passed via *args
     
-    Limits define which area of data and fit will be considered for 
-    optimization and RSS computation: [read the examples carefully!]
-    energy: data = data[left : -right], time: data = data[start : stop]
-    <e_lim> are defining the energy axis limits (x axis), 
-    i.e. data[e_lim[0]:-e_lim[1]] (cut left and right)
-    <t_lim> are defining the time axis limits (y axis),
-    i.e. data[t_lim[0]:t_lim[1], :] (start and stop index)
-    
-    Options for return are selected via <res_type>:
-     - ='res': residual, i.e. data -fit
-     - ='lmfit': residual (1D data) or flattened residual (2D data)
-     - ='RSS': residual sum square (0D)
-     - ='abs': sum of the absolute residual
-     - ='fit': return the fit itself (np.array)
-    
-    <args> (tuple) additional arguments for the fit function are to be
-    passed via args (defaults to empty tuple) which will be unpacked 
-    via *args in the fit function itself
+    Returns
+    -------
+    ndarray or float
+        Return type depends on res_type:
+        - 'lmfit': ndarray (1D for 1D data, flattened for 2D data)
+        - 'RSS', 'abs': float (scalar metric)
+        - 'res': ndarray (same shape as data)
+        - 'fit': ndarray (same shape as data)
     """
     # define the fit function
     fit_fun = getattr(package, fit_fun_str)
     
     # if the minimizer calling this is from the lmfit package, then
     # extract the value from their lmfit.Parameter() (dictionary)
-    # or if list of [value, vary/fix, min, max] transition to val list
+    # or if list of [value, vary(, min, max)] transition to val list
     par = ulmfit.par_extract(par, return_type='list')
     
-    # compute the fit curve [plot_ind has to be hardcoded as False here!(?)]
+    # compute the fit curve [plot_ind has to be hardcoded as False/0 here]
     if unpack == 1: fit = fit_fun(x, *par, 0, *args)
     elif unpack == 0: fit = fit_fun(x, par, 0, *args)
     
@@ -87,9 +127,6 @@ def residual_fun(par, x, data, package, fit_fun_str, unpack=0, e_lim=[],
         # or use entire data and fit array to compute RSS
         else: residual = data -fit
     
-    # DEBUGGING, un/comment
-    #print(f'DEBUGGING: RSS={np.sum(residual**2)}')
-    
     # type of residual to return
     if res_type == 'RSS':
         return np.sum(residual**2)
@@ -108,32 +145,56 @@ def residual_fun(par, x, data, package, fit_fun_str, unpack=0, e_lim=[],
 #
 def time_display(t_start, print_str='', return_delta_seconds=False):
     """
-    Displays delta between <t_start> and now [t_start = time.time()]
-    (works up to days, i.e. ddd:hh:mm:ss [rounded to millisecond])
+    Display elapsed time in human-readable format.
+    
+    Computes time elapsed since t_start and displays it with appropriate
+    units (seconds, minutes, hours, or days). Useful for benchmarking
+    fitting operations.
+    
+    Parameters
+    ----------
+    t_start : float
+        Start time from time.time()
+    print_str : str, default=''
+        Prefix string for display (e.g., 'Fitting completed in: ')
+    return_delta_seconds : bool, default=False
+        If True, also return elapsed seconds as float
+    
+    Returns
+    -------
+    None or float
+        None normally, or elapsed seconds if return_delta_seconds=True
+    
+    Examples
+    --------
+    >>> import time
+    >>> t0 = time.time()
+    >>> # ... do some work ...
+    >>> time_display(t0, 'Operation completed in: ')
+    Operation completed in: 01:23.456(mm:ss.ms)
     """
     t_stop = time.time()
-    seconds = t_stop -t_start
+    seconds = t_stop - t_start
     
     str_format = 'ss.ms'
     minutes, seconds = divmod(seconds, 60)
     delta_format = f'{seconds:06.3f}'
     
     if minutes > 0:
-        str_format = 'mm:' +str_format
+        str_format = 'mm:' + str_format
         hours, minutes = divmod(minutes, 60)
         delta_format = f'{math.floor(minutes):02d}:{delta_format}'
         
         if hours > 0:
-            str_format = 'hh:' +str_format
+            str_format = 'hh:' + str_format
             days, hours = divmod(hours, 24)
-            delta_format = f'{math.floor(hours):02d}' +':' +delta_format
+            delta_format = f'{math.floor(hours):02d}' + ':' + delta_format
             
             if days > 0:
-                str_format = 'ddd:' +str_format
-                # could do weeks, months, years here
-                delta_format = f'{math.floor(days):03d}' +':' +delta_format
+                str_format = 'ddd:' + str_format
+                delta_format = f'{math.floor(days):03d}' + ':' + delta_format
         
-    print(print_str +delta_format +f'({str_format})')
+    print(print_str + delta_format + f'({str_format})')
     #
     if return_delta_seconds:
         return seconds
@@ -145,8 +206,16 @@ def time_display(t_start, print_str='', return_delta_seconds=False):
 #
 def sigma_dict():
     """
-    Returns dictionary of sigma values (str, "key") and their area
-    over total area ratios (float [in percent], "value")
+    Get percentage of distribution within N-sigma intervals.
+    
+    Returns dictionary mapping sigma values (as strings) to the percentage
+    of a normal distribution contained within ±N sigma of the mean.
+    
+    Returns
+    -------
+    dict
+        Keys: Sigma values as strings ('0.5', '1.0', ..., '5.0')
+        Values: Percentage of distribution (float)
     """
     sigma_dict = {'0.5' : 38.2924922548026,
                   '1.0' : 68.2689492137086,
@@ -164,13 +233,40 @@ def sigma_dict():
 #
 def sigma_start_stop_percent(sigma_list):
     """
-    <sigma_list> is a list of sigma values between (including) 0.5 and
-    5 passed as numbers (0.5 increment)
-    Returns a list of [start, stop] values (in percent) for each sigma
-    value (in sigma_list) e.g. to select/reject values from a discrete 
-    distribution based on whether they lie inside/outside of Nth-sigma
-    interval
-    """   
+    Calculate percentile bounds for symmetric confidence intervals.
+    
+    For each sigma level, computes the lower and upper percentiles that
+    define a symmetric interval containing the specified percentage of
+    a normal distribution.
+    
+    Parameters
+    ----------
+    sigma_list : list of float
+        Sigma values (e.g., [1, 2, 3] for 1σ, 2σ, 3σ intervals).
+        Values must be in range [0.5, 5.0] in 0.5 increments.
+    
+    Returns
+    -------
+    list of [float, float]
+        Percentile bounds for each sigma level.
+        Each element: [lower_percentile, upper_percentile]
+        Returns empty list if any sigma value not supported.
+    
+    Examples
+    --------
+    >>> # 1σ, 2σ, 3σ intervals
+    >>> bounds = sigma_start_stop_percent([1.0, 2.0, 3.0])
+    >>> print(bounds)
+    [[15.87, 84.13], [2.28, 97.72], [0.14, 99.86]]
+    
+    >>> # Use with numpy.percentile on MCMC samples
+    >>> import numpy as np
+    >>> samples = np.random.normal(0, 1, 10000)
+    >>> bounds_1sigma = sigma_start_stop_percent([1.0])[0]
+    >>> ci = np.percentile(samples, bounds_1sigma)
+    >>> print(f"1σ interval: [{ci[0]:.2f}, {ci[1]:.2f}]")
+    1σ interval: [-1.01, 1.02]
+    """
     borders_pc = [] # low/high borders in percent
     for sigma in sigma_list:
         A2A_total = sigma_dict().get("{:.1f}".format(sigma),
@@ -191,40 +287,182 @@ def fit_wrapper(const, args, par_names, par, fit_type, sigmas=[1,2,3],
                 fit_alg_1='Nelder', fit_alg_2='leastsq',
                 show_info=0, save_output=0, save_path=''):
     """
-    wrapper for lmfit fit, confidence interval, lmfit.emcee functions
-    <par_names> list of fit parameter names 
-    <par> is a list of fit parameters [see lmfit.Parameter.add()] each
-    passed as a list itself; pass either "[value=initial guess,
-    vary=True/False, min=min.boundary, max=max.boundary]" or a 
-    condition (string) only, passed as "[expr=<condition>]"; e.g. to
-    make one parameter conditional on another
-    (see https://lmfit.github.io/lmfit-py/constraints.html for details)
+    Comprehensive fitting wrapper with optimization, CI, and MCMC.
     
-    <const> are the constants passed to fit function through
-    <residual_fun> (see details there)
-    const = (x, data, package, function str, unpack, x limits, y limits)
-    <args> are the arguments that will be passed to fit function itself
+    This is the main fitting function in trspecfit. It handles:
+    - Single or two-stage optimization
+    - Confidence interval estimation via lmfit.conf_interval
+    - MCMC sampling via lmfit.emcee
+    - Result visualization and export
     
-    <fit_type> =0: no fit (debugging); =1: perform one fit with 
-    fit_alg_1 as method; =2: perform a first fit (with
-    method=<fit_alg_1>) to find the global minimum. 'Nelder' performs
-    most robustly; followed by a second fit (with method=<fit_alg_2> to
-    optimize locally around global minimum. 'leastsq' allows confidence 
-    interval determination with lmfit.conf_interval() if 
-    result.errorbars is True
-    Any error estimate will only be performed on the last/final fit
-     
-    <try_CI>=0: no confidence interval determination; =1: use 
-    conf_interval if possible
-    <MCsettings.use_emcee>=0: don't use lmfit.emcee(); =1: always use;
-    =2: use if conf_interval does not work. see "MCsettings" class
-    defined in utils.lmfit.py for more details
-    <sigmas> is a list of sigma values (int or float) that defines the
-    computed confidence intervals for both the conf_interval() and the
-    lmfit.emcee() methods
-
-    returns:
-    [par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs] = results
+    Two-stage fitting (fit_type=2) is recommended for robust optimization:
+    first finds global minimum with Nelder-Mead, then refines locally with
+    leastsq for accurate error bars.
+    
+    Parameters
+    ----------
+    const : tuple
+        Constants for residual_fun:
+        (x, data, package, function_str, unpack, e_lim, t_lim)
+    args : tuple
+        Arguments for fit function (passed to residual_fun):
+        Typically (model, dim, debug) for MCP models
+    par_names : list of str
+        Parameter names in order (for display and export)
+    par : lmfit.Parameters or list
+        Initial parameter guess:
+        - lmfit.Parameters: Use directly
+        - list: Convert to lmfit.Parameters using par_names
+          Each element: [value, vary, min, max] or ['expression']
+    fit_type : {0, 1, 2}
+        Fitting strategy:
+        - 0: No fit (return initial guess only, for debugging)
+        - 1: Single fit with fit_alg_1
+        - 2: Two-stage fit (global with fit_alg_1, local with fit_alg_2)
+    sigmas : list of int or float, default=[1,2,3]
+        Confidence levels for CI and MCMC (e.g., [1,2,3] for 1σ, 2σ, 3σ)
+    try_CI : {0, 1}, default=1
+        Confidence interval estimation:
+        - 0: Skip CI calculation
+        - 1: Calculate CI if error bars available (result.errorbars=True)
+    MCsettings : ulmfit.MC, default=ulmfit.MC()
+        MCMC configuration object:
+        - use_emcee: 0 (skip), 1 (always), 2 (if CI fails)
+        - steps: Number of MCMC steps per walker
+        - nwalkers: Number of MCMC walkers
+        - burn, thin, ntemps, workers, is_weighted: MCMC parameters
+        See ulmfit.MC class for details
+    fit_alg_1 : str, default='Nelder'
+        First/only optimization method. Common options:
+        - 'Nelder': Nelder-Mead (robust, no gradients, slower)
+        - 'powell': Powell (robust, no gradients)
+        - 'leastsq': Levenberg-Marquardt (fast, needs good initial guess)
+        See lmfit documentation for full list
+    fit_alg_2 : str, default='leastsq'
+        Second optimization method (fit_type=2 only).
+        Typically 'leastsq' for accurate local optimization and error bars.
+    show_info : {0, 1, 2, 3}, default=0
+        Verbosity level:
+        - 0: Silent
+        - 1: Basic timing and final results
+        - 1.5: Also show initial parameters
+        - 2: Also show constants and arguments
+    save_output : {-1, 0, 1}, default=0
+        Save results to files:
+        - 0: Don't save
+        - 1: Save all results (parameters, CIs, MCMC, plots)
+        - -1: Same as 1 (for compatibility)
+    save_path : str or Path, default=''
+        Base path for saved files (without extension).
+        Files saved: _par_ini.csv, _par_fin.txt, _par_fin.csv,
+        _conf_CIs.csv, _emcee_fin.txt, _emcee_flatchain.csv,
+        _emcee_CIs.csv, _emcee_walker_acceptance_ratio.png,
+        _emcee_corner_plot.png
+    
+    Returns
+    -------
+    list
+        Five-element list containing results:
+        [par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs]
+        
+        par_ini : lmfit.Parameters
+            Initial parameter guess
+        par_fin : lmfit.MinimizerResult or []
+            Final fit result from lmfit.minimize
+            Empty list if fit_type=0
+        conf_CIs : pd.DataFrame or pd.DataFrame()
+            Confidence intervals from lmfit.conf_interval
+            Columns: ['par[v]/sigma[>]', '-3σ', '-2σ', '-1σ', 'best', '+1σ', '+2σ', '+3σ']
+            Empty DataFrame if CI not calculated/failed
+        emcee_fin : lmfit.MinimizerResult or []
+            MCMC result from lmfit.emcee
+            Empty list if MCMC not used
+        emcee_CIs : pd.DataFrame or pd.DataFrame()
+            MCMC confidence intervals from quantiles of flatchain
+            Same column structure as conf_CIs
+            Empty DataFrame if MCMC not used
+    
+    Examples
+    --------
+    >>> # Basic single-stage fit
+    >>> const = (energy, spectrum, spectra, 'fit_model_mcp', 0, [], [])
+    >>> args = (model, 1, False)
+    >>> results = fit_wrapper(
+    ...     const=const,
+    ...     args=args,
+    ...     par_names=model.par_names,
+    ...     par=model.lmfit_pars,
+    ...     fit_type=1,
+    ...     show_info=1
+    ... )
+    >>> par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs = results
+    
+    >>> # Two-stage fit with confidence intervals
+    >>> results = fit_wrapper(
+    ...     const=const,
+    ...     args=args,
+    ...     par_names=model.par_names,
+    ...     par=model.lmfit_pars,
+    ...     fit_type=2,
+    ...     try_CI=1,
+    ...     sigmas=[1, 2, 3],
+    ...     show_info=1,
+    ...     save_output=1,
+    ...     save_path='fit_results/baseline_fit'
+    ... )
+    
+    >>> # Fit with MCMC for uncertainty quantification
+    >>> mc = ulmfit.MC(use_emcee=1, steps=5000, nwalkers=50)
+    >>> results = fit_wrapper(
+    ...     const=const,
+    ...     args=args,
+    ...     par_names=model.par_names,
+    ...     par=model.lmfit_pars,
+    ...     fit_type=2,
+    ...     try_CI=1,
+    ...     MCsettings=mc,
+    ...     show_info=1
+    ... )
+    
+    >>> # Debug mode (no fitting, just show initial guess)
+    >>> results = fit_wrapper(
+    ...     const=const,
+    ...     args=args,
+    ...     par_names=model.par_names,
+    ...     par=model.lmfit_pars,
+    ...     fit_type=0
+    ... )
+    
+    Notes
+    -----
+    **Two-Stage Fitting:**
+    Recommended approach for robust results:
+    1. Nelder-Mead finds global minimum (no gradient needed)
+    2. Levenberg-Marquardt refines locally (fast, accurate errors)
+    
+    This combination avoids local minima while providing reliable error estimates.
+    
+    **Error Estimation Methods:**
+    - Confidence intervals (CI): Profile likelihood method, exact but slow
+    - MCMC: Samples parameter space, handles correlations, provides full distributions
+    - Use MCMC for complex models or when CI fails
+    
+    **MCMC Diagnostics:**
+    When using MCMC, check:
+    - Acceptance ratios (saved plot): Should be 0.2-0.5
+    - Corner plot (saved): Should show well-defined peaks
+    - Chain length: Increase steps if distributions look noisy
+    
+    **Performance Tips:**
+    - Use fit_type=1 for quick fits during model development
+    - Use fit_type=2 for final/publication fits
+    - MCMC is slow (minutes for complex models) but provides best uncertainties
+    
+    **File Outputs:**
+    When save_output=1:
+    - CSV files: Comma-separated, easy to read in Excel/pandas
+    - TXT files: Human-readable lmfit.fit_report format
+    - PNG files: High-resolution plots for documentation
     """
     # construct the lmfit parameters if necessary
     if isinstance(par, lmfit.parameter.Parameters):
@@ -246,7 +484,7 @@ def fit_wrapper(const, args, par_names, par, fit_type, sigmas=[1,2,3],
     if show_info >= 1: t_0 = time.time() # start time
         
     if fit_type == 0:
-        # use plot_fit_res_1D to show data +initial guess +residual
+        # use plt_fit_res_1D to show data +initial guess +residual
         return [par_ini, [], pd.DataFrame(), [], pd.DataFrame()]
 
     # construct lmfit minimizer
@@ -434,12 +672,37 @@ def fit_wrapper(const, args, par_names, par, fit_type, sigmas=[1,2,3],
 #
 def results_select(data, skip=-1, N=-1, dim=1):
     """
-    Apply start (<skip>) and stop (<N>) index to 1D data like so:
-    return data[skip:N+1] (if skip and N deviate from default, i.e. -1)
-    x[:first_N_spec_only+1] : "+1" as "break" in for loop comes at end
-    of iteration
+    Select slice of results array for partial fitting analysis.
     
-    Note: add 2D options
+    Parameters
+    ----------
+    data : array-like
+        Data array to slice
+    skip : int, default=-1
+        Number of initial elements to skip. -1 means skip none.
+    N : int, default=-1
+        Number of elements to include. -1 means include all (after skip).
+    dim : int, default=1
+        Dimensionality (currently only dim=1 supported).
+    
+    Returns
+    -------
+    array-like
+        Sliced data
+    
+    Examples
+    --------
+    >>> # Get all data
+    >>> results_select(data)
+    
+    >>> # Skip first 10 points
+    >>> results_select(data, skip=10)
+    
+    >>> # Get first 50 points only
+    >>> results_select(data, N=50)
+    
+    >>> # Get points 10-60
+    >>> results_select(data, skip=10, N=60)
     """
     if dim == 1:
         if N == -1: 
@@ -447,7 +710,7 @@ def results_select(data, skip=-1, N=-1, dim=1):
                 return data # full data set
             else:
                 out = data[skip:]
-        else:
+        else: # "+1" accounts for Python's exclusive upper bound 
             if skip == -1:
                 out = data[:N+1]
             else:
@@ -460,20 +723,44 @@ def results2df(results, x=None, index=None, config=None,
                first_N_spec_only=-1, skip_first_N_spec=-1, 
                save_df=0, save_path=''):
     """
-    Convert Slice-by-Slice fit <results> list of lmfit_wrapper()
-    elements into a pandas dataframe
+    Convert Slice-by-Slice fit results to DataFrame with parameter plots.
     
-    Save dataframe of results and plots (parameter over time, 1 plot
-    each) if save_df != 0
-    Displays only the plots of parameters that are varied during fit
-    (saves all plots)
+    Transforms list of fit results (from slice-by-slice fitting) into
+    a pandas DataFrame with time/index as rows and parameters as columns.
+    Optionally creates individual plots for each parameter vs. time.
     
-    If not all slices have been fit, i.e. <skip_first_N_spec> and/or
-    <first_N_spec_only> != -1 
-    then the partial results will be displayed (if <save_df> >= 0)
-    and/or saved to <save_path>
-    returns a pandas dataframe of the fit results with <index> and <x>
-    as rows and parameters (retrieved from <results>) as columns.
+    Parameters
+    ----------
+    results : list
+        List of fit results from fit_wrapper, one per time slice.
+        Each element: [par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs]
+    x : array-like, optional
+        Time axis values. If provided, included as column in DataFrame.
+    index : array-like, optional
+        Index values (e.g., slice numbers). If provided, included as column.
+    config : PlotConfig, optional
+        Plot configuration. If None, uses defaults.
+    first_N_spec_only : int, default=-1
+        If != -1, include only first N results (for partial fitting).
+    skip_first_N_spec : int, default=-1
+        If != -1, skip first N results (for partial fitting).
+    save_df : {-1, 0, 1}, default=0
+        Save outputs:
+        - 0: Don't save
+        - 1: Save DataFrame and parameter plots
+        - -1: Same as 1
+        When save_df != 0, plots only varied (not fixed) parameters
+    save_path : str or Path, default=''
+        Directory path for saving files (not full filename) (created if not exists).
+        Files saved: 'fit_pars.csv', '<param_name>.png' for each parameter
+    
+    Returns
+    -------
+    pd.DataFrame
+        Results with structure:
+        - Columns: ['index', config.y_label, param1, param2, ...]
+        - Rows: One per fitted slice
+        - Values: Optimized parameter values
     """
     # Use default config if none provided
     if config is None:
@@ -515,23 +802,44 @@ def results2df(results, x=None, index=None, config=None,
 def results2fit2D(results, const, args, num_fmt='%.6e', delim=',',
                   save_2D=0, save_path=''):
     """
-    Create 2D fit data (numpy array) output from slice-by-slice fit
-    results.
+    Reconstruct 2D fit spectrum from Slice-by-Slice fit results.
     
-    <results> is a list of individual fit results, each structured as
-    defined by "lmfit_fit_wrapper(...)" function in this package
-    OR
-    a pandas dataframe where columns are fit parameters and rows are
-    the index/ x (e.g. from "results2df" function from this package)
+    Takes individual 1D fit results (one per time slice) and stacks them
+    into a complete 2D fit array. This allows visualization and comparison
+    with the measured 2D data for Slice-by-Slice fitting.
     
-    <const> = (x, data, package, function (str), unpack, e_limits, t_limits)
-    where args = (arguments for fit function called in residual_fun)
-    see "residual_fun" (this package) for more details!
+    Parameters
+    ----------
+    results : list or pd.DataFrame
+        Fit results, either:
+        - list: Output from fit_wrapper for each slice
+          Each element: [par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs]
+        - pd.DataFrame: From results2df() with parameters as columns
+    const : tuple
+        Constants for residual_fun:
+        (x, data, package, function_str, unpack, e_lim, t_lim)
+        Used to evaluate fit function at each time point.
+    args : tuple
+        Arguments for fit function (model, dim, debug).
+        Passed to residual_fun for spectrum generation.
+    num_fmt : str, default='%.6e'
+        Number format for saving (scientific notation with 6 decimals)
+    delim : str, default=','
+        Delimiter for CSV output
+    save_2D : {-1, 0, 1}, default=0
+        Save 2D fit to file:
+        - 0: Don't save
+        - 1: Save to CSV
+        - -1: Save to CSV (same as 1)
+    save_path : str or Path, default=''
+        Directory path for saving. File saved as: save_path/fit2D.csv
+        Directory created if doesn't exist.
     
-    <num_fmt> is the number format and <delim> is the delimiter used
-    to save data
-    <save_2D> =0: don't save, =1 (or -1): save as .csv ('%.6e') 
-    location of saved file is <save_path> / 'fit2D.csv'
+    Returns
+    -------
+    ndarray
+        2D fit array (shape: [n_time, n_energy])
+        Each row is the fitted spectrum for one time slice
     """
     lst = [] # intialize
     for N in range(len(results)):
@@ -556,45 +864,59 @@ def plt_fit_res_1D(x, y, fit_fun_str, package, par_init, par_fin, args=None,
                    plot_ind=True, show_init=True, title='', fit_lim=None, 
                    config=None, legend=None, **kwargs):
     """
-    Plot 1D fit results: data, initial guess, final fit, components, and residual
+    Plot 1D fit results: data, initial guess, final fit, components, and residual.
+    
+    Creates a comprehensive visualization showing data, model components,
+    total fit, and residual. Essential for evaluating fit quality and
+    understanding multi-component models.
     
     Parameters
     ----------
     x : array
-        X-axis data
+        X-axis data (energy or time)
     y : array
-        Y-axis data (to be fitted)
+        Y-axis data (spectrum to be fitted)
     fit_fun_str : str
-        Name of fitting function in package
+        Name of fitting function in package (e.g., 'fit_model_mcp')
     package : module
-        Python module containing fit_fun_str
+        Python module containing fit_fun_str (typically trspecfit.spectra)
     par_init : list or lmfit.Parameters
-        Initial parameter guess
+        Initial parameter guess. Can be empty list [] if show_init=False.
     par_fin : lmfit.MinimizerResult or lmfit.Parameters or list
-        Final fit parameters (empty list for initial guess only)
+        Final fit parameters:
+        - lmfit.MinimizerResult: From fit_wrapper result[1]
+        - lmfit.Parameters: Manual parameter object
+        - list: Empty list shows initial guess only (no final fit)
     args : tuple, optional
-        Additional arguments for fit function
-    plot_ind : bool
-        False: plot sum only, True: plot individual components
-    show_init : bool
-        False: don't show initial guess, True: show initial guess
-    title : str
-        Plot title
-    fit_lim : list, optional
-        Fit limit indices [left, right] to show as vertical lines
+        Additional arguments for fit function (model, dim, debug).
+        If None, defaults to empty tuple.
+    plot_ind : bool, default=True
+        Plot individual components:
+        - True: Show each component separately (colored + filled)
+        - False: Show only total fit (faster, cleaner for many components)
+    show_init : bool, default=True
+        Show initial parameter guess:
+        - True: Plot initial guess as dotted gold line
+        - False: Skip initial guess (cleaner when guess is far off)
+    title : str, default=''
+        Plot title. Use for file/model identification.
+    fit_lim : list of int, optional
+        Fit limit indices [left, right] to show as vertical dashed lines.
+        Visualizes which data region was used for optimization.
     config : PlotConfig, optional
-        Configuration object with plot settings
+        Plot configuration object. If None, uses defaults.
     legend : list of str, optional
-        Legend labels for components (only used if plot_ind is True)
+        Legend labels for components (used only if plot_ind=True).
+        If None, auto-generates 'component 0', 'component 1', etc.
     **kwargs : dict
-        Override config attributes: x_label, y_label, x_lim, y_lim, 
-        x_dir, y_dir, res_mult, save_img, save_path (directory), 
-        dpi_plot, dpi_save
+        Override config attributes for this plot:
+        x_label, y_label, x_lim, y_lim, x_dir, y_dir, res_mult,
+        save_img, save_path, dpi_plot, dpi_save
     
     Notes
     -----
-    save_path should be a directory path. The file will be saved as
-    '1D_data_fit_res.png' in that directory.
+    When saving (save_img=1 or -1), provide full path with extension:
+    save_path='results/baseline_fit.png'
     """
     if config is None:
         config = PlotConfig()
@@ -712,37 +1034,39 @@ def plt_fit_res_1D(x, y, fit_fun_str, package, par_init, par_fin, args=None,
 #
 def plt_fit_res_2D(data, fit, x=None, y=None, config=None, **kwargs):
     """
-    Plot data, fit, and residual 2D maps
+    Plot 2D fit results: data, fit, and residual maps.
+    
+    Creates a three-panel visualization showing measured data, fitted data,
+    and residual (data - fit) as 2D color maps. Use to improve fit by switching
+    component type, changing number of components, etc.
     
     Parameters
     ----------
     data : 2D array
-        Measured data
+        Measured data (shape: [n_time, n_energy])
     fit : 2D array
-        Fitted data
+        Fitted data (same shape as data)
     x : array-like, optional
-        X-axis (energy) coordinates. If None, uses indices.
+        X-axis (energy) coordinates. If None, uses column indices.
     y : array-like, optional
-        Y-axis (time) coordinates. If None, uses indices.
+        Y-axis (time) coordinates. If None, uses row indices.
     config : PlotConfig, optional
-        Configuration object with plot settings. If None, uses defaults.
+        Plot configuration object. If None, uses defaults.
     **kwargs : dict
-        Override config attributes. Common options:
-        x_label, y_label, z_colormap, x_dir, y_dir, x_lim, y_lim,
-        z_lim_top (for data and fit - synchronized),
-        z_lim_res (for residual - independent),
-        save_img, save_path
-    
-    Notes
-    -----
-    Data and fit panels share the same color scale (min/max across both)
-    to enable direct comparison. Residual has independent color scale.
-    
-    x_lim and y_lim are INDEX-based limits: x_lim=[left, right], y_lim=[start, stop]
-    Used both for slicing residual calculation and for drawing limit lines.
-
-    save_path should be a directory path. The file will be saved as
-    '2D_data_fit_res.png' in that directory.
+        Override config attributes for this plot. 
+        Common options:
+        - x_label, y_label : Axis labels (z_label used for colorbar title)
+        - x_lim, y_lim : Fit limit indices [left, right] or [start, stop]
+          Used for both slicing residual and drawing limit lines
+        - z_lim_top : Color scale [min, max] for data and fit panels
+          Synchronized scale enables direct comparison
+        - z_lim_res : Color scale [min, max] for residual panel
+          Independent scale optimizes residual visibility
+        - z_colormap : Colormap name (default 'viridis')
+        - x_dir, y_dir : 'def' or 'rev' for axis direction
+        - x_type, y_type : 'lin' or 'log' for axis scale
+        - save_img : 0 (display), 1 (save+display), -1 (save only)
+        - save_path : Directory path (file saved as '2D_data_fit_res.png')
     """
     if config is None:
         config = PlotConfig()
@@ -886,10 +1210,32 @@ def plt_fit_res_2D(data, fit, x=None, y=None, config=None, **kwargs):
 #
 def plt_fit_res_pars(df, x=None, config=None, save_img=0, save_path=''):
     """
-    Plot fit result parameters individually and optionally save figures
-    <save_img> =1 plot and save, =0 plot only, =-1 save only
-    <save_img> type is list: one element per row of <df>
-                       int: apply this setting to all parameters
+    Plot fit parameters individually as functions of time/index.
+    
+    Creates separate plots for each parameter column in the DataFrame,
+    showing how parameters evolve over time (from Slice-by-Slice fitting).
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with parameters as columns. Typically from results2df().
+        Each row represents one fitted slice/time point.
+    x : array-like, optional
+        X-axis (time) values for plotting. If None, uses row indices.
+    config : PlotConfig, optional
+        Plot configuration object. If None, uses defaults.
+    save_img : int or list, default=0
+        Save/display control for each plot:
+        - int: Apply same setting to all parameters
+          - 0: Display only
+          - 1: Display and save
+          - -1: Save only (no display)
+        - list: One element per parameter (per row in df)
+          Allows selective saving (e.g., save only varied parameters)
+    save_path : str or Path, default=''
+        Directory path for saving plots.
+        Each plot saved as: save_path/<parameter_name>.png
+        Directory created if doesn't exist.
     """
     # Use default config if none provided
     if config is None:

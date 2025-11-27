@@ -1,63 +1,114 @@
-# 
-# individual peak shapes/ spectral components 
-# and background functions to generate spectra
-#
+"""
+Spectral component functions for energy-resolved spectroscopy.
+
+Function Conventions
+--------------------
+**Peak Functions:**
+Signature: func(x, par1, par2, ...)
+- x: Energy axis (numpy array)
+- par1, par2, ...: Function-specific parameters
+- Returns: Spectrum as numpy array (same shape as x)
+
+**Background Functions:**
+Signature: func(x, par, spectrum)
+- x: Energy axis (numpy array)
+- par: Background parameter(s)
+- spectrum: Current peak sum (numpy array, for backgrounds that depend on peaks)
+- Returns: Background spectrum as numpy array (same shape as x)
+
+**Parameter Naming:**
+- Use descriptive names without underscores: A, x0, SD, W, F, m, alpha
+- A: Amplitude (maximum value of function)
+- x0: Peak center/position
+- SD: Standard deviation (Gaussian width)
+- W: FWHM (Full Width at Half Maximum)
+- F: Width parameter (pseudo-Voigt approximations)
+- m: Mixing parameter (Gaussian-Lorentzian balance)
+- alpha: Asymmetry parameter (Doniach-Sunjic)
+
+Implementation Notes
+--------------------
+**Amplitude vs Area:**
+All functions currently use amplitude normalization (peak height = A).
+Future versions may add area normalization options. SD2FWHM = 2*np.sqrt(2*np.log(2))
+
+Adding New Functions
+--------------------
+To add a new peak or background function:
+
+1. Implement function following conventions above
+2. Add to config/functions.py if it's a background
+3. Test with realistic spectroscopy parameters
+"""
+
 import numpy as np
 from scipy.special import wofz
-#
-# INFORMATION (readme)
-# - do not use underscores in function or parameter names
-# - the combination of these components into a model is handled in mcp.py
-# - individual components should have the form function(x, par1, par2, ...)
-# - background functions have the structure function(x, spectrum, par)
-#   where spectrum is the sum of all peaks/components (before "Offset")
-#
-# currently uses amplitude in all function definitions in this package!
-# [should swap to area for all functions at some point?]
-# SD2FWHM = 2*np.sqrt(2*np.log(2))
-
-#
-# background function definitions
-# IF YOU ADD A BACKGROUND FUNCTION, ADD IT TO THE CONFIG.PY FILE!
-#
 
 #
 def Offset(x, y0, spectrum):
     """
-    Create offset for input spectrum [x axis is not used]
+    Constant offset background.
+    
+    Parameters
+    ----------
+    x : ndarray
+        Energy axis (not used, but required for consistent function signature)
+    y0 : float
+        Offset value (constant intensity level)
+    spectrum : ndarray
+        Current peak sum (not used, but required for background function signature)
+    
+    Returns
+    -------
+    ndarray
+        Constant array of shape len(x) with value y0
     """
     return y0* np.ones(np.shape(spectrum)[0])
 
 #
 def Shirley(x, pShirley, spectrum):
     """
-    Create Shirley background for an input <spectrum> (1D numpy array)
-    Input spectrum should have increasing kinetic energy (or decreasing
-    binding energy) as an independent variable.
+    Shirley background for inelastic electron scattering.
     
-    <pShirley> is the factor used to convert area under the <spectrum>
-    to intensity of Shirley spectrum that is returned (type np.array)
-    <pShirley> is internally (in here) multiplied by 1E-6 as fitting
-    functions may have problems dealing with small values
+    Parameters
+    ----------
+    x : ndarray
+        Energy axis (not used in calculation, but required for signature)
+    pShirley : float
+        Shirley scaling factor (internally multiplied by 1E-6 for numerical stability).
+        Controls the strength of the background relative to peak area.
+    spectrum : ndarray
+        Current peak sum. The Shirley background is computed as cumulative integral
+        of this spectrum. **Must have increasing kinetic energy (or decreasing
+        binding energy) direction.**
     
+    Returns
+    -------
+    ndarray
+        Shirley background spectrum (same shape as spectrum)
     """
-    # serial (slow)
-    #return 1E-6 *pShirley *np.asarray([np.sum(spectrum[i:]) for \
-    #                                   i in range(np.shape(spectrum)[0])])
-    # vectorized
     return 1E-6 * pShirley * np.cumsum(spectrum[::-1])[::-1]
-
-#
-#def ExpBack(x, pExponential, spectrum):
-#    """
-#    """
-#    return np.exp()
 
 #
 def LinBack(x, pLinear, spectrum):
     """
-    Create linear background for an input <spectrum>, both 1D np.array
-    Background starts at first point of spectrum, increases, ends at last
+    Linear background with positive slope.
+    
+    Parameters
+    ----------
+    x : ndarray
+        Energy axis (not used in calculation, but required for signature)
+    pLinear : float
+        Slope of linear background (in intensity per index).
+        Positive values create increasing background.
+    spectrum : ndarray
+        Current peak sum. Used to determine starting point (spectrum[0])
+        and length of background array.
+    
+    Returns
+    -------
+    ndarray
+        Linear background starting at spectrum[0] with slope pLinear
     """  
     background = np.arange(0, np.shape(spectrum)[0], 1)
     return pLinear*background + spectrum[0]
@@ -65,10 +116,23 @@ def LinBack(x, pLinear, spectrum):
 #
 def LinBackRev(x, pLinear, spectrum):
     """
-    Create linear background for an input <spectrum>, both 1D np.array
-    Background starts at last point of spectrum, decreases, ends at first
+    Linear background with negative slope.
     
-    Note: implement option for start/ stop selector (in energy)?
+    Parameters
+    ----------
+    x : ndarray
+        Energy axis (not used in calculation, but required for signature)
+    pLinear : float
+        Slope magnitude of linear background (in intensity per index).
+        Positive values create decreasing background (reversed).
+    spectrum : ndarray
+        Current peak sum. Used to determine starting point (spectrum[-1])
+        and length of background array.
+    
+    Returns
+    -------
+    ndarray
+        Linear background starting at spectrum[-1] with negative slope
     """  
     background = np.arange(0, np.shape(spectrum)[0], 1)
     return pLinear*background[::-1] + spectrum[-1]
@@ -80,19 +144,52 @@ def LinBackRev(x, pLinear, spectrum):
 #
 def Gauss(x, A, x0, SD):
     """
-    Define Gaussian function for every value in the 1D array x,
-    where A is the amplitude, x0 is the x axis offset (center), 
-    SD is the standard deviation of the Gaussian distribution.
-    The maximum value of this function is equal to A
+    Gaussian (normal) distribution peak.
+    
+    Parameters
+    ----------
+    x : ndarray
+        Energy axis
+    A : float
+        Peak amplitude (maximum value of function)
+    x0 : float
+        Peak center position (energy at maximum)
+    SD : float
+        Standard deviation (Gaussian width parameter).
+        Related to FWHM by: FWHM = 2.355 * SD = 2*sqrt(2*ln(2)) * SD
+    
+    Returns
+    -------
+    ndarray
+        Gaussian peak spectrum
     """
     return A*np.exp(-1/2*((x-x0)/SD)**2)
 
 #
 def GaussAsym(x, A, x0, SD, ratio):
     """
-    Define asymmetric Gaussian function with SD1 below x0 and
-    SD2 above x0. A is the amplitude
-    SD1 = SD, SD2 = ratio *SD -> ratio = SD2 /SD1
+    Asymmetric Gaussian peak with different widths on each side.
+    
+    Parameters
+    ----------
+    x : ndarray
+        Energy axis
+    A : float
+        Peak amplitude (maximum value at x0)
+    x0 : float
+        Peak center position (energy at maximum)
+    SD : float
+        Standard deviation for x < x0 (low energy side)
+    ratio : float
+        Width ratio: SD2/SD1, where SD2 is width for x >= x0.
+        - ratio = 1: Symmetric Gaussian
+        - ratio < 1: Narrower on high energy side
+        - ratio > 1: Broader on high energy side
+    
+    Returns
+    -------
+    ndarray
+        Asymmetric Gaussian peak spectrum
     """
     # define two Gaussians different SDs
     lo_x0 = Gauss(x, A, x0, SD)
@@ -104,20 +201,50 @@ def GaussAsym(x, A, x0, SD, ratio):
 #
 def Lorentz(x, A, x0, W):
     """
-    Define Lorentzian function with full width at half 
-    amplitude of W centered around x0
-    The amplitude of the function is A
-    Returns values on the grid defined by x
+    Lorentzian (Cauchy) distribution peak.
+    
+    Parameters
+    ----------
+    x : ndarray
+        Energy axis
+    A : float
+        Peak amplitude (maximum value at x0)
+    x0 : float
+        Peak center position
+    W : float
+        Full width at half maximum (FWHM).
+        The width where intensity drops to half the maximum value.
+    
+    Returns
+    -------
+    ndarray
+        Lorentzian peak spectrum
     """
     return A /(1+ ((x-x0) /W*2)**2)
 
 #
 def Voigt(x, A, x0, SD, W):
     """
-    Define Voigt function (convolution of Gaussian and
-    Lorentzian) with x input, Lorentzian FWHM W, Gaussian 
-    standard deviation SD, amplitude A, and x axis offset
-    of center x0
+    Voigt profile (convolution of Gaussian and Lorentzian).
+    [Use GLP or GLS (pseudo-Voigt) for ~10x speedup]
+
+    Parameters
+    ----------
+    x : ndarray
+        Energy axis
+    A : float
+        Peak amplitude (maximum value, approximately, for narrow peaks)
+    x0 : float
+        Peak center position
+    SD : float
+        Gaussian standard deviation (instrumental/inhomogeneous width)
+    W : float
+        Lorentzian FWHM (lifetime/homogeneous width)
+    
+    Returns
+    -------
+    ndarray
+        Voigt profile spectrum
     """
     # scipy version
     #voigt = np.real(wofz(((x-x0) + 1j*(W/2)) \
@@ -129,15 +256,29 @@ def Voigt(x, A, x0, SD, W):
 #
 def GLS(x, A, x0, F, m):
     """
-    Gaussian-Lorentzian sum form to approximate a Voigt
-    from http://www.casaxps.com/help_manual/line_shapes.htm
-    <x> is the x axis on which to define the peak (np.array)
-    <A> is the amplitude of the peak (maximum value).
-    <x0> is the center of the peak on the x axis (float).
-    <m> (float, typical value is 0.3) determines the mix of
-    Gaussian and Lorentzian weight in this approximation
-    of a Voigt line shape. m=0 ->Gaussian, m=1 ->Lorentzian
-    <F> is the overall width of the peak (proportional?)
+    Gaussian-Lorentzian Sum (pseudo-Voigt) approximation.
+    
+    Parameters
+    ----------
+    x : ndarray
+        Energy axis
+    A : float
+        Peak amplitude (maximum value)
+    x0 : float
+        Peak center position
+    F : float
+        Peak width parameter (related to FWHM)
+    m : float
+        Mixing parameter controlling Gaussian/Lorentzian balance:
+        - m = 0: Pure Gaussian
+        - m = 1: Pure Lorentzian
+        - 0 < m < 1: Weighted mixture
+        Typical value: m ≈ 0.3
+    
+    Returns
+    -------
+    ndarray
+        Pseudo-Voigt profile (sum form)
     """
     return A*(1-m) *np.exp(-((x-x0) /F)**2 *4 *np.log(2)) \
             + m/(1+ 4*((x-x0) /F)**2)
@@ -145,15 +286,29 @@ def GLS(x, A, x0, F, m):
 #
 def GLP(x, A, x0, F, m):
     """
-    Gaussian-Lorentzian product form to approximate a Voigt
-    from http://www.casaxps.com/help_manual/line_shapes.htm
-    <x> is the x axis on which to define the peak (np.array)
-    <A> is the amplitude of the peak (maximum value).
-    <x0> is the center of the peak on the x axis (float).
-    <m> (float, typical value is 0.3) determines the mix of
-    Gaussian and Lorentzian weight in this approximation
-    of a Voigt line shape. m=0 ->Gaussian, m=1 ->Lorentzian
-    <F> is the overall width of the peak (proportional?)
+    Gaussian-Lorentzian Product (pseudo-Voigt) approximation.
+    
+    Parameters
+    ----------
+    x : ndarray
+        Energy axis
+    A : float
+        Peak amplitude (maximum value)
+    x0 : float
+        Peak center position
+    F : float
+        Peak width parameter (related to FWHM)
+    m : float
+        Mixing parameter controlling Gaussian/Lorentzian character:
+        - m = 0: Pure Gaussian
+        - m = 1: Pure Lorentzian
+        - 0 < m < 1: Hybrid shape
+        Typical value: m ≈ 0.3
+    
+    Returns
+    -------
+    ndarray
+        Pseudo-Voigt profile (product form)
     """
     return A*np.exp(-((x-x0) /F)**2 *4 *np.log(2) *(1-m)) \
             / (1+ 4*m*((x-x0) /F)**2)
@@ -161,12 +316,29 @@ def GLP(x, A, x0, F, m):
 #
 def DS(x, A, x0, F, alpha):
     """
-    Doniac Sunjic is a theory-based asymmetric lineshape.
-    See http://www.casaxps.com/help_manual/line_shapes.htm
-    and Doniach S. and Sunjic M., J. Phys. 4C31, 285 (1970)
-    for more information.
+    Doniach-Sunjic lineshape for metallic systems.
     
-    A is not the amplitude. Should it be or will that distort?
+    Parameters
+    ----------
+    x : ndarray
+        Energy axis
+    A : float
+        Amplitude scaling factor (note: NOT the maximum value due to asymmetry)
+    x0 : float
+        Peak position (approximately the maximum, depends on alpha)
+    F : float
+        Width parameter (related to FWHM, but complex due to asymmetry)
+    alpha : float
+        Asymmetry parameter (singularity index):
+        - alpha = 0: Lorentzian (no asymmetry)
+        - 0 < alpha < 0.3: Typical for metals (e.g., Al: 0.10-0.15)
+        - Larger alpha: Stronger asymmetry, more pronounced tail
+        - Range: typically 0-0.5 for physical systems
+    
+    Returns
+    -------
+    ndarray
+        Doniach-Sunjic lineshape
     """
     return A *np.cos(np.pi*alpha/2 +(1-alpha)*np.arctan((x-x0)/F)) \
            / (F**2 +(x-x0)**2 )**((1-alpha)/2)
@@ -175,41 +347,75 @@ def DS(x, A, x0, F, alpha):
 # Definition of a new (DSS) peak shape for fitting asymmetric XPS signals
 # Surf Interface Anal. 2022; 54(1): 67-77. doi:10.1002/sia.7021
 
-#
-def DSGLS(x, A, x0, F, alpha, m):
-    """
-    Linear blend between Doniac Sunjic and Voigt-type functions,
-    called F function in casaXPS
-    (http://www.casaxps.com/help_manual/line_shapes.htm)
-    Voigt-type used here is Gaussian-Lorentzian Sum function (GLS)
+# CasaXPS Manual: http://www.casaxps.com/help_manual/line_shapes.htm
+
+# #
+# def DSGLS(x, A, x0, F, alpha, m):
+#     """
+#     Doniach-Sunjic blended with Gaussian-Lorentzian Sum.
     
-    THE MIXING m (m and 1-m) is between 0 and 100 and controls the 
-    amount of DS-ness, but the m in GLS/GLP is between 0 and 1 and 
-    controls the Gauss vs Lorentz
-    casaXPS also mentions extra convolution with Gaussian
+#     Parameters
+#     ----------
+#     x : ndarray
+#         Energy axis
+#     A : float
+#         Amplitude scaling factor
+#     x0 : float
+#         Peak center position
+#     F : float
+#         Width parameter (shared by DS and GLS components)
+#     alpha : float
+#         Asymmetry parameter (from DS):
+#         - 0 < alpha < 0.5: Metallic asymmetry
+#         - alpha = 0: Reduces to pure GLS
+#     m : float
+#         Mixing parameter (from GLS):
+#         - Controls Gaussian/Lorentzian balance in symmetric part
+#         - 0 < m < 1 (typical: 0.3)
     
-    READ MORE (double check this one)
-    """
-    return A* (m /(F**2 +(x-x0)**2 )**((1-alpha)/2) + \
-           (1-m) *GLS(x, A=1, x0=x0, F=F, m=0.3))
+#     Returns
+#     -------
+#     ndarray
+#         Hybrid DS-GLS lineshape
+#     """
+#     return A* (m /(F**2 +(x-x0)**2 )**((1-alpha)/2) + \
+#            (1-m) *GLS(x, A=1, x0=x0, F=F, m=0.3))
+
+# #
+# def DSGLP(x, A, x0, F, alpha, m):
+#     """
+#     Doniach-Sunjic blended with Gaussian-Lorentzian Product.
+    
+#     Parameters
+#     ----------
+#     x : ndarray
+#         Energy axis
+#     A : float
+#         Amplitude scaling factor
+#     x0 : float
+#         Peak center position
+#     F : float
+#         Width parameter (shared by DS and GLP components)
+#     alpha : float
+#         Asymmetry parameter (from DS):
+#         - 0 < alpha < 0.5: Metallic asymmetry
+#         - alpha = 0: Reduces to pure GLP
+#     m : float
+#         Mixing parameter:
+#         - Controls both DS blending and Gaussian/Lorentzian balance
+#         - Implementation details unclear (see Notes)
+    
+#     Returns
+#     -------
+#     ndarray
+#         Hybrid DS-GLP lineshape
+#     """
+#     return A* (m /(F**2 +(x-x0)**2 )**((1-alpha)/2) + \
+#            (1-m) *GLP(x, A=1, x0=x0, F=F, m=0.3))
 
 #
-def DSGLP(x, A, x0, F, alpha, m):
-    """
-    Linear blend between Doniac Sunjic and Voigt-type functions,
-    called F function in casaXPS
-    (http://www.casaxps.com/help_manual/line_shapes.htm)
-    Voigt-type used here is Gaussian-Lorentzian Product function (GLP)
-    
-    THE MIXING m (m and 1-m) is between 0 and 100 and controls the
-    amount of DS-ness, but the m in GLS/GLP is between 0 and 1 and
-    controls the Gauss vs Lorentz
-    casaXPS also mentions extra convolution with Gaussian
-    
-    READ MORE (double check this one)
-    """
-    return A* (m /(F**2 +(x-x0)**2 )**((1-alpha)/2) + \
-           (1-m) *GLP(x, A=1, x0=x0, F=F, m=0.3))
+# Area instead of Amplitude
+#
 
 #
 # def gauss_fun_int1(x, A, x0, SD):
