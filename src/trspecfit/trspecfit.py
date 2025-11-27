@@ -1,6 +1,7 @@
 """
 1D/2D Spectroscopy Fitting Module
 """
+
 from trspecfit import mcp
 from trspecfit import fitlib
 from trspecfit import spectra
@@ -412,11 +413,17 @@ class File:
                             f"Check for typos or wrong component type."
                         )
                     
-                    # Parameter value can be a list [value, vary, min, max] or a single expression string
+                    # Parameter value can be a list [value, vary, min, max] or [value, vary]
+                    # or a single expression string
                     if isinstance(param_value, list):
-                        # Standard format: [value, vary, min, max]
-                        if len(param_value) == 4:
-                            value, vary, min_val, max_val = param_value
+                        
+                        if (len(param_value) == 4) or (len(param_value) == 2):
+                            if len(param_value) == 4: # Standard format: [value, vary, min, max]
+                                value, vary, min_val, max_val = param_value
+                            elif len(param_value) == 2: # Unbound format: [value, vary]
+                                value, vary = param_value
+                                min_val = -np.inf
+                                max_val = np.inf
 
                             # Check that 'vary' is boolean
                             if not isinstance(vary, bool):
@@ -454,7 +461,7 @@ class File:
                         else:
                             raise ModelValidationError(
                                 f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}') has invalid format.\n"
-                                f'Expected: [value, vary, min, max] (4 elements) or ["expr"] (1 element)\n'
+                                f'Expected: [value, vary, min, max] or [value, vary] or ["expr"]\n'
                                 f"Got: {param_value} ({len(param_value)} elements)\n"
                                 f"See 'models_energy.yaml' in example directory: {example_dir}"
                             )
@@ -464,19 +471,20 @@ class File:
                             f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}') has invalid format.\n"
                             f"Expected either:\n"
                             f"  - [value, vary, min, max] for standard parameters\n"
+                            f"  - [value, vary] for unbound parameters\n"
                             f"  - ['expression'] for linked parameters\n"
                             f"Got: {param_value}\n"
                             f"See 'models_energy.yaml' in example directory: {example_dir}"
                         )
 
     #
-    def _load_and_number_yaml_components(self, model_yaml, model_info, par_name='', DEBUG=False):
+    def _load_and_number_yaml_components(self, model_yaml, model_info, par_name='', debug=False):
         """
         Load YAML file and apply appropriate component numbering strategy.
         For energy models: use component numbering from construct_yaml_map
         For dynamics models with subcycles: number components globally 
         """
-        if DEBUG:
+        if debug:
             print(f'"model.yaml" file: {model_yaml}')
         model_yaml_path = self.p.path / model_yaml
         
@@ -502,7 +510,7 @@ class File:
                 else: # should never happen unless something is wrong with construct_yaml_map
                     raise ValueError(f"Unexpected YAML structure in {model_yaml_path}")
                 
-                if DEBUG:
+                if debug:
                     print('model_info_ALL:')
                     print(model_info_ALL)
                     print('model_info_dict:')
@@ -511,7 +519,7 @@ class File:
                 # Apply appropriate numbering strategy
                 if par_name != '':
                     # This is a dynamics model - resolve numbering conflicts across subcycles
-                    model_info_dict = self._resolve_dynamics_numbering_conflicts(model_info_dict, model_info, DEBUG)
+                    model_info_dict = self._resolve_dynamics_numbering_conflicts(model_info_dict, model_info, debug)
 
                 # Validate the loaded model structure
                 self._validate_model_components(model_info_dict, model_info, model_yaml_path)
@@ -551,7 +559,7 @@ class File:
             )
 
     #
-    def _resolve_dynamics_numbering_conflicts(self, model_info_dict, model_info, DEBUG=False):
+    def _resolve_dynamics_numbering_conflicts(self, model_info_dict, model_info, debug=False):
         """
         Resolve numbering conflicts for dynamics models by tracking used numbers globally
         and reassigning conflicting numbers to the next available number.
@@ -559,7 +567,7 @@ class File:
         This preserves the existing YAML numbering where possible and only changes
         numbers when there are conflicts across subcycles.
         """
-        if DEBUG:
+        if debug:
             print("=== STARTING CONFLICT RESOLUTION ===")
             print(f"model_info: {model_info}")
             print(f"\nmodel_info_dict BEFORE resolution:")
@@ -597,7 +605,7 @@ class File:
                     used_numbers[base_name].add(number)
                     global_next_available[base_name] = max(global_next_available[base_name], number + 1)
         
-        if DEBUG:
+        if debug:
             print(f"\nAfter first pass - used_numbers: {used_numbers}")
             print(f"global_next_available: {global_next_available}")
 
@@ -631,7 +639,7 @@ class File:
                         new_number = global_next_available[base_name]
                         global_next_available[base_name] += 1
                         
-                        if DEBUG:
+                        if debug:
                             print(f"Conflict resolved: {comp_name} -> {base_name}_{new_number:02d} in {submodel}")
                     else:
                         # No conflict, use current number
@@ -648,11 +656,11 @@ class File:
                     # Not a component function, keep as-is
                     processed_dict[submodel][comp_name] = comp_params
 
-            if DEBUG:
+            if debug:
                 print(f"\nProcessed submodel: {submodel}")
                 print(f"  {submodel}: {list(processed_dict[submodel].keys())}")
         
-        if DEBUG:
+        if debug:
             print(f"\nFINAL processed_dict:")
             for submodel in model_info:
                 if submodel in processed_dict:
@@ -661,7 +669,7 @@ class File:
         return processed_dict
 
     #
-    def load_model(self, model_yaml, model_info, par_name='', DEBUG=False):
+    def load_model(self, model_yaml, model_info, par_name='', debug=False):
         """
         Loads a model defined in <model_yaml> file located in Parent.path based on <model_info>:
         1) for energy-dependent models (1D or 2D) pass a list with one element, i.e. model name
@@ -694,7 +702,7 @@ class File:
             )
 
         # Load and process YAML file with appropriate numbering strategy
-        model_info_dict = self._load_and_number_yaml_components(model_yaml, model_info, par_name, DEBUG)
+        model_info_dict = self._load_and_number_yaml_components(model_yaml, model_info, par_name, debug)
 
         # initialize model
         if par_name == '':
@@ -1174,7 +1182,7 @@ class File:
         The time-dependent behaviour repeats either not at all (default, -1) or with <frequency>
         """
         t_mod = self.load_model(model_yaml, model_info, par_name, 
-                                DEBUG=False if self.p.show_info<2 else True) # load
+                                debug=False if self.p.show_info<2 else True) # load
         self.model_active.add_dynamics(t_mod, frequency) # add
         self.model_active.dim = 2 # increase dimension of model to 2
         #

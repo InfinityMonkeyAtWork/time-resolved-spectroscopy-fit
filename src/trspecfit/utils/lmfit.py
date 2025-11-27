@@ -8,6 +8,7 @@ This module provides utilities for:
 - Managing MCMC sampling configuration
 - Compatibility with scipy.optimize workflows
 """
+
 import lmfit
 import numpy as np
 import pandas as pd
@@ -17,7 +18,7 @@ import pandas as pd
 #
 
 #
-def par_create(par_name, par_info, prefix='', suffix='', DEBUG=0):
+def par_create(par_name, par_info, prefix='', suffix='', debug=False):
     """
     Create lmfit.Parameter object with optional name modifiers.
     
@@ -32,50 +33,23 @@ def par_create(par_name, par_info, prefix='', suffix='', DEBUG=0):
     par_info : list
         Parameter specification, either:
         - [value, vary, min, max] for standard parameter
+        - [value, vary] for unbound fit parameter
         - [expr_string] for expression-based parameter
     prefix : str, default=''
         String to prepend to parameter name
     suffix : str, default=''
         String to append to parameter name
-    DEBUG : int, default=0
-        If 1, print parameter name and info during creation
+    debug : bool, default=False
+        If True, print parameter name and info during creation
     
     Returns
     -------
     lmfit.Parameter
         Configured parameter object
-    
-    Examples
-    --------
-    >>> # Standard parameter
-    >>> par = par_create('amplitude', [10, True, 0, 100])
-    >>> par.name
-    'amplitude'
-    
-    >>> # With prefix (e.g., for numbered components)
-    >>> par = par_create('x0', [5.0, True, 0, 10], prefix='peak1_')
-    >>> par.name
-    'peak1_x0'
-    
-    >>> # Expression-based parameter
-    >>> par = par_create('A2', ['peak1_A * 0.75'], prefix='peak2_')
-    >>> par.expr
-    'peak1_A * 0.75'
-    
-    Notes
-    -----
-    - Expression parameters reference other parameters by name
-    - Useful for creating dependent parameters (e.g., peak splitting)
-    - Prefix/suffix useful for multi-component models
-    
-    See Also
-    --------
-    par_construct : Create full lmfit.Parameters object from lists
-    lmfit.Parameter : Underlying lmfit parameter class
     """
     # Assemble parameter name
     par_str = prefix + par_name + suffix
-    if DEBUG == 1:
+    if debug:
         print(par_str)
         print(par_info)
     
@@ -85,14 +59,18 @@ def par_create(par_name, par_info, prefix='', suffix='', DEBUG=0):
     # Standard parameter: [value, vary, min, max]
     if len(par_info) == 4:
         lmf_par.set(*par_info)
+    # Unbound fit parameter: [value, vary]
+    elif len(par_info) == 2:
+        lmf_par.set(par_info[0], par_info[1], -np.inf, np.inf)
     # Expression parameter: [expr_string]
     elif len(par_info) == 1:
-        if DEBUG == 1:
+        if debug:
             print('expr=' + par_info[0])
         try:
             lmf_par.set(expr=par_info[0])
         except Exception as e:
-            print(f'Exception while adding expression {par_info[0]} to parameter {par_str}: {e}')
+            print(f'Exception while adding expression {par_info[0]} '
+                  f'to parameter {par_str}: {e}')
     #
     return lmf_par
 
@@ -151,10 +129,6 @@ def par_extract(lmfit_pars, return_type='list'):
     >>> par_obj = par_extract(params, return_type='par.x')
     >>> par_obj.x
     [1.5, 2.0]
-    
-    See Also
-    --------
-    par_dummy : Dummy object for scipy compatibility
     """
     # lmfit.Parameters object
     if isinstance(lmfit_pars, lmfit.parameter.Parameters):
@@ -200,35 +174,13 @@ def par_construct(par_names, par_info):
     par_info : list of list
         Parameter specifications, one per name. Each element is either:
         - [value, vary, min, max] for standard parameter
+        - [value, vary] for unbound fit parameter
         - [expr_string] for expression-based parameter
     
     Returns
     -------
     lmfit.Parameters
         Complete Parameters object with all parameters added
-    
-    Examples
-    --------
-    >>> names = ['amplitude', 'center', 'width']
-    >>> info = [[10, True, 0, 100],
-    ...         [5.0, True, 0, 10],
-    ...         [1.0, True, 0.1, 5]]
-    >>> params = par_construct(names, info)
-    >>> params['amplitude'].value
-    10
-    
-    >>> # With expression-based parameter
-    >>> names = ['peak1_A', 'peak2_A']
-    >>> info = [[10, True, 0, 100],
-    ...         ['peak1_A * 0.75']]
-    >>> params = par_construct(names, info)
-    >>> params['peak2_A'].expr
-    'peak1_A * 0.75'
-    
-    See Also
-    --------
-    par_create : Create individual parameter objects
-    lmfit.Parameters : Underlying lmfit Parameters class
     """
     # Initialize Parameters object
     lmf_pars = lmfit.Parameters()
@@ -237,6 +189,8 @@ def par_construct(par_names, par_info):
     for par_name, p_info in zip(par_names, par_info):
         if len(p_info) == 4:  # [value, vary, min, max]
             lmf_pars.add(par_name, *p_info)
+        elif len(p_info) == 2: # [value, vary]
+            lmf_pars.add(par_name, p_info[0], p_info[1], -np.inf, np.inf)
         elif len(p_info) == 1:  # [expr]
             lmf_pars.add(par_name, expr=p_info[0])
     #
@@ -253,6 +207,8 @@ def conf_interval2df(ci, CI_cols):
     
     Transforms the nested dictionary structure returned by lmfit.conf_interval
     into a tabular DataFrame format suitable for display and saving.
+    Each row contains parameter name followed by values at different sigma levels.
+    The confidence interval values represent parameter bounds at each sigma level.
     
     Parameters
     ----------
@@ -275,16 +231,6 @@ def conf_interval2df(ci, CI_cols):
     >>> CI_cols = ['parameter', '-3', '-2', '-1', 'best', '+1', '+2', '+3']
     >>> df = conf_interval2df(ci, CI_cols)
     >>> df.to_csv('confidence_intervals.csv', index=False)
-    
-    Notes
-    -----
-    Each row contains parameter name followed by values at different sigma levels.
-    The confidence interval values represent parameter bounds at each sigma level.
-    
-    See Also
-    --------
-    lmfit.conf_interval : Calculate confidence intervals
-    par2df : Convert Parameters to DataFrame
     """
     conf_CIs_list = []
     
@@ -349,11 +295,6 @@ def par2df(lmfit_params, col_type, par_names=None):
     Notes
     -----
     Relative error (value/stderr*100) not included but easily computed from output.
-    
-    See Also
-    --------
-    conf_interval2df : Convert confidence intervals to DataFrame
-    list_of_par2df : Combine parameters from multiple fits
     """
     # Select all parameters if none specified
     if par_names is None:
@@ -385,6 +326,8 @@ def list_of_par2df(results):
     Collects optimized parameter values from a list of lmfit fit results
     (e.g., from slice-by-slice fitting) and organizes them in a DataFrame
     with rows=fits and columns=parameters.
+    Assumes all fits have the same parameter names (typical for slice-by-slice).
+    Parameter names are extracted from the first result.
     
     Parameters
     ----------
@@ -415,16 +358,6 @@ def list_of_par2df(results):
     >>> plt.plot(df['center'])
     >>> plt.xlabel('Slice number')
     >>> plt.ylabel('Peak center')
-    
-    Notes
-    -----
-    Assumes all fits have the same parameter names (typical for slice-by-slice).
-    Parameter names are extracted from the first result.
-    
-    See Also
-    --------
-    par2df : Convert single Parameters object to DataFrame
-    par_extract : Extract values from single fit result
     """
     # Extract parameter values from each result
     param_values_list = [par_extract(results[i][1].params) for i in range(len(results))]
@@ -566,16 +499,6 @@ class par_dummy:
     >>> plot_parameters(params_init)  # Initial guess
     >>> result = minimize(...)
     >>> plot_parameters(result)        # Fit result
-    
-    Notes
-    -----
-    This allows code that expects scipy.optimize result objects to also
-    handle initial parameter guesses without special casing.
-    
-    See Also
-    --------
-    par_extract : Extract parameters in scipy-compatible format
-    scipy.optimize.minimize : Optimization function this mimics
     """
     #
     def __init__(self):

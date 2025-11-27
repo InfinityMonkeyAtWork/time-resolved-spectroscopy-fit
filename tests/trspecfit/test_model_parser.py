@@ -17,12 +17,15 @@ class TestEnergyParsing:
         file = File(parent_project=project)
         file.load_model(model_yaml='test_models_energy.yaml',
                         model_info=[model_info,],
-                        DEBUG=False)
+                        debug=False)
         return file
     
     #
     def test_simple_energy_model(self):
-        """Test simple energy model"""
+        """
+        Test simple energy model with unbound parameter [value, vary] and 
+        standard parameter [value, vary, min, max] formats
+        """
         
         # import the model
         file = self.setUp('simple_energy')
@@ -38,10 +41,16 @@ class TestEnergyParsing:
         assert file.model_active.components[0].comp_name == 'Offset'
         assert file.model_active.components[0].par_dict['y0'] == [2, True, 0, 5]
         
-        # Shirley (should not be numbered)
+        # Shirley (should not be numbered) - now uses [value, vary] format
         assert file.model_active.components[1].fct_str == 'Shirley'
         assert file.model_active.components[1].comp_name == 'Shirley'
-        assert file.model_active.components[1].par_dict['pShirley'] == [400, True, 1.0E-6, 1.0E+3]    
+        assert file.model_active.components[1].par_dict['pShirley'] == [400, False]
+        # Check that lmfit parameter was created with unbounded min/max
+        shirley_par = file.model_active.lmfit_pars['pShirley']
+        assert shirley_par.value == 400
+        assert shirley_par.vary == False
+        assert shirley_par.min == -np.inf
+        assert shirley_par.max == np.inf
         
         # GLP_01 (should be numbered)
         assert file.model_active.components[2].fct_str == 'GLP'
@@ -52,12 +61,18 @@ class TestEnergyParsing:
         assert file.model_active.components[2].par_dict['F'] == [1.0, True, 0.75, 2.5]
         assert file.model_active.components[2].par_dict['m'] == [0.3, True, 0, 1]
         
-        # GLP_02 (should be numbered)
+        # GLP_02 (should be numbered) - x0 now uses [value, vary] format
         assert file.model_active.components[3].fct_str == 'GLP'
         assert file.model_active.components[3].comp_name == 'GLP_02'
         assert file.model_active.components[3].N == 2
         assert file.model_active.components[3].par_dict['A'] == [17, True, 5, 25]
-        assert file.model_active.components[3].par_dict['x0'] == [88.1, True, 85, 92]
+        assert file.model_active.components[3].par_dict['x0'] == [88.1, True]
+        # Check that lmfit parameter was created with unbounded min/max
+        x0_par = file.model_active.lmfit_pars['GLP_02_x0']
+        assert x0_par.value == 88.1
+        assert x0_par.vary == True
+        assert x0_par.min == -np.inf
+        assert x0_par.max == np.inf
         assert file.model_active.components[3].par_dict['F'] == [1.0, True, 0.75, 2.5]
         assert file.model_active.components[3].par_dict['m'] == [0.3, True, 0, 1]
     
@@ -154,7 +169,7 @@ class TestTimeParsing:
         model = file.load_model(model_yaml='test_models_time.yaml',
                         model_info=[model_info,],
                         par_name='parTEST', # this is the name of the time-dependent parameter
-                        DEBUG=True)
+                        debug=True)
         return model
 
     #
@@ -212,7 +227,7 @@ class Test2DModelParsing:
         file = File(parent_project=project)
         file.load_model(model_yaml='test_models_energy.yaml',
                         model_info=[model_energy,],
-                        DEBUG=False)
+                        debug=False)
         file.time = np.linspace(-10, 100, 111) # needed for time-dependent models
         file.add_time_dependence(model_yaml='test_models_time.yaml',
                                  model_info=[model_time,],
@@ -222,7 +237,8 @@ class Test2DModelParsing:
     #
     def test_simple_2D_model(self):
         """Add IRF+exp_decay time-dependence to the simple energy model"""
-        file = self.setUp(model_energy='simple_energy', par_name='GLP_01_x0', model_time='MonoExpPosIRF')
+        file = self.setUp(model_energy='simple_energy', par_name='GLP_01_x0', 
+                         model_time='MonoExpPosIRF')
         
         # check the model
         assert file.model_active.name == 'simple_energy'
@@ -233,7 +249,8 @@ class Test2DModelParsing:
         assert file.model_active.components[0].par_dict['y0'] == [2, True, 0, 5]
         assert file.model_active.components[1].fct_str == 'Shirley'
         assert file.model_active.components[1].comp_name == 'Shirley'
-        assert file.model_active.components[1].par_dict['pShirley'] == [400, True, 1.0E-6, 1.0E+3]
+        # Updated to check [value, vary] format
+        assert file.model_active.components[1].par_dict['pShirley'] == [400, False]
         # GLP_01
         assert file.model_active.components[2].fct_str == 'GLP'
         assert file.model_active.components[2].comp_name == 'GLP_01'
@@ -252,14 +269,18 @@ class Test2DModelParsing:
         # end of time-dependent parameter model
         assert file.model_active.components[2].par_dict['F'] == [1.0, True, 0.75, 2.5]
         assert file.model_active.components[2].par_dict['m'] == [0.3, True, 0, 1]
-        # GLP_02
+        # GLP_02 - x0 now uses [value, vary] format
         assert file.model_active.components[3].fct_str == 'GLP'
         assert file.model_active.components[3].comp_name == 'GLP_02'
         assert file.model_active.components[3].par_dict['A'] == [17, True, 5, 25]
-        assert file.model_active.components[3].par_dict['x0'] == [88.1, True, 85, 92]
+        assert file.model_active.components[3].par_dict['x0'] == [88.1, True]
         assert file.model_active.components[3].par_dict['F'] == [1.0, True, 0.75, 2.5]
         assert file.model_active.components[3].par_dict['m'] == [0.3, True, 0, 1]
         
     #$%
     # make sure that time-dependence added to a dependent energy parameter throws an error!
     # e.g. GLP_02_x0 depends on GLP_01_x0 and then the user adds time-dependence to GLP_02_x0
+
+
+if __name__ == '__main__':
+    pytest.main([__file__])

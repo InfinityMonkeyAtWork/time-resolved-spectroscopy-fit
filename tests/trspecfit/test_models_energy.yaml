@@ -7,7 +7,7 @@ simple_energy:
       y0: [2, True, 0, 5]
     # define Shirley background
     Shirley:
-      pShirley: [400, True, 1.0E-6, 1.0E+3]
+      pShirley: [400, False]
     # define peak type components 
     GLP:
       A: [20, True, 5, 25]
@@ -16,7 +16,7 @@ simple_energy:
       m: [0.3, True, 0, 1]
     GLP:
       A: [17, True, 5, 25]
-      x0: [88.1, True, 85, 92]
+      x0: [88.1, True]
       F: [1.0, True, 0.75, 2.5]
       m: [0.3, True, 0, 1]
 
