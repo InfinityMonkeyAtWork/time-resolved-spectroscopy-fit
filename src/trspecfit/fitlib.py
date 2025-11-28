@@ -483,8 +483,14 @@ def fit_wrapper(const, args, par_names, par, fit_type, sigmas=[1,2,3],
         display_pretty(args)
     if show_info >= 1: t_0 = time.time() # start time
         
-    if fit_type == 0:
-        # use plt_fit_res_1D to show data +initial guess +residual
+    if fit_type == 0: 
+        #$% deprecated: use plt_fit_res_1D/2D to show data +initial guess +residual
+        # instead use file.model.describe() to see initial guess!
+        if show_info >= 1:
+            print(); print('Deprecated. Option will be removed.')
+            print('Use file.model.describe() to see initial guess.')
+            print('Returning initial parameters without fitting.')
+        #
         return [par_ini, [], pd.DataFrame(), [], pd.DataFrame()]
 
     # construct lmfit minimizer

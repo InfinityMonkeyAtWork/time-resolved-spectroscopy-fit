@@ -1248,8 +1248,8 @@ class File:
             x=self.energy,
             y=self.time,
             config=self.plot_config,
-            xlim=self.e_lim,
-            ylim=self.t_lim,
+            x_lim=self.e_lim,
+            y_lim=self.t_lim,
             save_img=-1 if self.p.show_info==0 else 1,
             save_path=save_path
         )
