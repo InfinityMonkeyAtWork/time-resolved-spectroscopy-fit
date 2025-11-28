@@ -16,14 +16,13 @@ from trspecfit.functions import time as fcts_time
 #from trspecfit.functions import distribution as fcts_dist
 
 #
-def prefix_exceptions():
+def numbering_exceptions():
     """
     Get function names that should not receive automatic numbering.
     
     These functions have special behavior in model construction:
     - Background functions: Only one instance makes sense per model
     - Convolution functions: Applied globally, not per-component
-    - 'none': Placeholder function for empty subcycles
     
     Returns
     -------
@@ -31,7 +30,8 @@ def prefix_exceptions():
         Function names that should not be numbered
     """
     # none is a placeholder function to define an empty mcp.Dynamics subcycle
-    return background_functions() + convolution_functions() + ('none',)
+    # theoretically, someone could want multiple empty subcycles [do not add here]
+    return background_functions() + convolution_functions()
 
 #
 def background_functions():

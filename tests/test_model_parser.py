@@ -48,7 +48,7 @@ class TestEnergyParsing:
         assert file.model_active.components[1].comp_name == 'Shirley'
         assert file.model_active.components[1].par_dict['pShirley'] == [400, False]
         # Check that lmfit parameter was created with unbounded min/max
-        shirley_par = file.model_active.lmfit_pars['pShirley']
+        shirley_par = file.model_active.lmfit_pars['Shirley_pShirley']
         assert shirley_par.value == 400
         assert shirley_par.vary == False
         assert shirley_par.min == -np.inf

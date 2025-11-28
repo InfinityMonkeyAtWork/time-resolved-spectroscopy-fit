@@ -65,7 +65,7 @@ from trspecfit.functions import time as fcts_time
 from trspecfit.functions import distribution as fcts_dist
 # function configurations
 from trspecfit.config.functions import (
-    prefix_exceptions,
+    numbering_exceptions,
     background_functions,
     energy_functions,
     time_functions,
@@ -1715,23 +1715,10 @@ class Component:
         -------
         str
             Parameter prefix:
-            - '': For exception functions (backgrounds, convolutions, none)
-            - comp_name + '_': For regular components
-        
-        Examples
-        --------
-        >>> comp = Component('GLP_01')
-        >>> comp.prefix
-        'GLP_01_'
-        >>> comp = Component('Offset')
-        >>> comp.prefix
-        ''
+            comp_name + '_': For regular components
         """
-        # define prefix for parameter names
-        if self.fct_str in prefix_exceptions():
-            return ''
-        else: # number the components starting from N=1
-            return self.comp_name +'_'
+        # component number handled by self.N
+        return self.comp_name +'_'
         
     # [automatic] create a name for this component
     @property 

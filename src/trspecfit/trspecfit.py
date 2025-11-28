@@ -24,7 +24,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.constructor import SafeConstructor
 from ruamel.yaml.error import YAMLError
 # yaml parser needs to know which components to number
-from trspecfit.config.functions import prefix_exceptions
+from trspecfit.config.functions import numbering_exceptions
 # standardized plotting configuration
 from trspecfit.config.plot import PlotConfig
 
@@ -65,7 +65,7 @@ def construct_yaml_map(self, node):
     # Get all available function names
     available_functions = get_available_function_names()
     # Get exceptions (functions that don't get numbered)
-    exceptions = prefix_exceptions()
+    exceptions = numbering_exceptions()
     
     # Track component names to handle duplicates
     component_counts = {}
@@ -577,7 +577,7 @@ class File:
 
         # Get all available function names and exceptions
         available_functions = get_available_function_names()
-        exceptions = prefix_exceptions()
+        exceptions = numbering_exceptions()
         
         # Track the next available number for each function type globally
         global_next_available = {}
