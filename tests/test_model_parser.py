@@ -1,19 +1,21 @@
-# 
-# test parsing of models from YAML files passed by user
-#
+"""
+Test parsing of models from YAML files passed by user
+"""
+
 import pytest
 import numpy as np
 from pathlib import Path
 # local imports
 from trspecfit import Project, File
 
+#
 # test class for 1D energy models
 class TestEnergyParsing:
     
     #
     def setUp(self, model_info):
         """Setup function to create project, file, and load model"""
-        project = Project(path='tests/trspecfit')
+        project = Project(path='tests')
         file = File(parent_project=project)
         file.load_model(model_yaml='test_models_energy.yaml',
                         model_info=[model_info,],
@@ -154,8 +156,6 @@ class TestEnergyParsing:
         assert file.model_active.components[3].par_dict['F'] == [1.0, True, 0.75, 2.5]
         assert file.model_active.components[3].par_dict['m'] == [0.3, True, 0, 1]
 
-
-
 #
 # test class for 1D time models (mcp.Dynamics)
 class TestTimeParsing:
@@ -163,7 +163,7 @@ class TestTimeParsing:
     #
     def setUp(self, model_info):
         """Setup function to create project, file, and load model"""
-        project = Project(path='tests/trspecfit')
+        project = Project(path='tests')
         file = File(parent_project=project)
         file.time = np.linspace(-10, 100, 111) # needed for time-dependent models
         model = file.load_model(model_yaml='test_models_time.yaml',
@@ -223,7 +223,7 @@ class Test2DModelParsing:
     #
     def setUp(self, model_energy, par_name, model_time):
         """Setup function to create project, file, load model, and add dynamics"""
-        project = Project(path='tests/trspecfit')
+        project = Project(path='tests')
         file = File(parent_project=project)
         file.load_model(model_yaml='test_models_energy.yaml',
                         model_info=[model_energy,],

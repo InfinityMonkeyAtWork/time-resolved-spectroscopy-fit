@@ -1,7 +1,7 @@
-# 
-# Test MCP (Model/Component/Parameter) library functionality
-# Refactored from tests/mcp_tests/TRAPXPS_MCP.ipynb
-#
+"""
+Test MCP (Model/Component/Parameter) library functionality
+"""
+
 import pytest
 import numpy as np
 import matplotlib.pyplot as plt

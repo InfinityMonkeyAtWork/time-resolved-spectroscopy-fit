@@ -11,10 +11,12 @@ from pathlib import Path
 from trspecfit.utils.sweep import ParameterSweep
 from trspecfit import Simulator, Project, File
 
-
+#
+#
 class TestParameterSweep:
     """Test ParameterSweep class"""
     
+    #
     def test_creation(self):
         """Test basic sweep creation"""
         sweep = ParameterSweep(strategy='auto', seed=42)
@@ -22,11 +24,13 @@ class TestParameterSweep:
         assert sweep.seed == 42
         assert sweep.parameter_specs == {}
     
+    #
     def test_invalid_strategy(self):
         """Test that invalid strategy raises error"""
         with pytest.raises(ValueError, match="strategy must be one of"):
             ParameterSweep(strategy='invalid')
     
+    #
     def test_add_range(self):
         """Test adding discrete parameter range"""
         sweep = ParameterSweep()
@@ -36,6 +40,7 @@ class TestParameterSweep:
         assert sweep.parameter_specs['param_A']['type'] == 'range'
         assert len(sweep.parameter_specs['param_A']['values']) == 3
     
+    #
     def test_add_uniform(self):
         """Test adding uniform distribution parameter"""
         sweep = ParameterSweep()
@@ -47,6 +52,7 @@ class TestParameterSweep:
         assert sweep.parameter_specs['param_B']['max'] == 10
         assert sweep.parameter_specs['param_B']['n_samples'] == 5
     
+    #
     def test_add_normal(self):
         """Test adding normal distribution parameter"""
         sweep = ParameterSweep()
@@ -57,6 +63,7 @@ class TestParameterSweep:
         assert sweep.parameter_specs['param_C']['mean'] == 5
         assert sweep.parameter_specs['param_C']['std'] == 1
     
+    #
     def test_add_lognormal(self):
         """Test adding lognormal distribution parameter"""
         sweep = ParameterSweep()
@@ -65,6 +72,7 @@ class TestParameterSweep:
         assert 'param_D' in sweep.parameter_specs
         assert sweep.parameter_specs['param_D']['type'] == 'lognormal'
     
+    #
     def test_grid_strategy_detection(self):
         """Test auto strategy detects grid for all discrete parameters"""
         sweep = ParameterSweep(strategy='auto', seed=42)
@@ -73,6 +81,7 @@ class TestParameterSweep:
         
         assert sweep._determine_strategy() == 'grid'
     
+    #
     def test_random_strategy_detection(self):
         """Test auto strategy detects random for mixed parameters"""
         sweep = ParameterSweep(strategy='auto', seed=42)
@@ -81,6 +90,7 @@ class TestParameterSweep:
         
         assert sweep._determine_strategy() == 'random'
     
+    #
     def test_grid_generation_discrete_only(self):
         """Test grid generation with only discrete parameters"""
         sweep = ParameterSweep(strategy='grid', seed=42)
@@ -93,6 +103,7 @@ class TestParameterSweep:
         assert configs[0] == {'param_A': 1, 'param_B': 10}
         assert configs[-1] == {'param_A': 2, 'param_B': 30}
     
+    #
     def test_grid_generation_with_continuous(self):
         """Test grid generation with continuous distributions"""
         sweep = ParameterSweep(strategy='grid', seed=42)
@@ -108,6 +119,7 @@ class TestParameterSweep:
         param_b_values = [c['param_B'] for c in configs]
         assert len(set(param_b_values)) == 3  # 3 unique samples
     
+    #
     def test_random_generation(self):
         """Test random sampling generation"""
         sweep = ParameterSweep(strategy='random', seed=42)
@@ -122,6 +134,7 @@ class TestParameterSweep:
         # All param_B values should be in range [0, 10]
         assert all(0 <= c['param_B'] <= 10 for c in configs)
     
+    #
     def test_reproducibility_with_seed(self):
         """Test that same seed produces same results"""
         sweep1 = ParameterSweep(strategy='random', seed=42)
@@ -135,6 +148,7 @@ class TestParameterSweep:
         
         assert configs1 == configs2
     
+    #
     def test_different_seeds_produce_different_results(self):
         """Test that different seeds produce different results"""
         sweep1 = ParameterSweep(strategy='random', seed=42)
@@ -148,6 +162,7 @@ class TestParameterSweep:
         
         assert configs1 != configs2
     
+    #
     def test_get_n_configs_grid(self):
         """Test config count calculation for grid strategy"""
         sweep = ParameterSweep(strategy='grid')
@@ -156,6 +171,7 @@ class TestParameterSweep:
         
         assert sweep.get_n_configs() == 6  # 3 × 2
     
+    #
     def test_get_n_configs_random(self):
         """Test config count calculation for random strategy"""
         sweep = ParameterSweep(strategy='random')
@@ -164,6 +180,7 @@ class TestParameterSweep:
         
         assert sweep.get_n_configs() == 15  # max(15, 10)
     
+    #
     def test_iteration_multiple_times(self):
         """Test that sweep can be iterated multiple times"""
         sweep = ParameterSweep(strategy='random', seed=42)
@@ -176,14 +193,15 @@ class TestParameterSweep:
         assert configs1 == configs2
         assert len(configs1) == 5
 
-
+#
+#
 class TestSimulatorParameterSweep:
     """Test Simulator.simulate_parameter_sweep() integration"""
     #
     @pytest.fixture
     def simple_model(self):
         """Create a simple model for testing"""
-        project = Project(path='tests/trspecfit', name='test')
+        project = Project(path='tests', name='test')
         file = File(
             parent_project=project,
             energy=np.arange(0, 20, 0.5),  # Coarse for speed
