@@ -64,7 +64,13 @@ from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import time as fcts_time
 from trspecfit.functions import distribution as fcts_dist
 # function configurations
-from trspecfit.config.functions import prefix_exceptions, background_functions, energy_functions
+from trspecfit.config.functions import (
+    prefix_exceptions,
+    background_functions,
+    energy_functions,
+    time_functions,
+    convolution_functions,
+)
 # plot configuration
 from trspecfit.config.plot import PlotConfig
 
@@ -1742,6 +1748,68 @@ class Component:
         return self.comp_name
     
     #
+    def _add_prefix_to_expression(self, expr: str, prefix: str) -> str:
+        """
+        Add prefix to time function parameter references in Dynamics models.
+        
+        For Dynamics models, parameters of time functions need the Dynamics model
+        name as a prefix, while energy function parameters reference the parent
+        energy model directly without prefix.
+        
+        Parameters
+        ----------
+        expr : str
+            Expression string from YAML (e.g., "expFun_01_tau + GLP_01_A")
+        prefix : str
+            Dynamics model name to prepend (e.g., "GLP_01_x0")
+        
+        Returns
+        -------
+        str
+            Expression with time function parameters prefixed
+            (e.g., "GLP_01_x0_expFun_01_tau + GLP_01_A")
+        
+        Examples
+        --------
+        For Dynamics model "GLP_01_x0":
+        - "expFun_01_tau" -> "GLP_01_x0_expFun_01_tau" (time function)
+        - "GLP_01_A" -> "GLP_01_A" (energy function, unchanged)
+        - "expFun_01_tau * 0.5 + GLP_01_A" -> "GLP_01_x0_expFun_01_tau * 0.5 + GLP_01_A"
+        """
+        # Get function names from both libraries
+        time_funcs = set(time_functions())
+        energy_funcs = set(energy_functions())
+        conv_funcs = set(convolution_functions())
+        
+        # Pattern to match parameter references: function_name_NN_param_name
+        # Captures: (function_name)(_NN_param_name)
+        pattern = r'\b([A-Za-z_][A-Za-z0-9_]*?)(_\d{2}_[A-Za-z_][A-Za-z0-9_]*)\b'
+        
+        def replace_with_prefix(match):
+            func_name = match.group(1)  # e.g., "expFun" or "GLP"
+            rest = match.group(2)        # e.g., "_01_tau"
+            full_match = match.group(0)  # e.g., "expFun_01_tau"
+            
+            # Defensive: Check if already prefixed
+            if full_match.startswith(prefix + "_"):
+                return full_match
+            
+            # Time functions need prefix (they're in this Dynamics model)
+            # if func_name in time_funcs: #$% don't allow refs to convs?
+            if func_name in time_funcs or func_name in conv_funcs:
+                return f"{prefix}{func_name}{rest}"
+            
+            # Energy functions don't need prefix (they reference parent energy model)
+            elif func_name in energy_funcs:
+                return full_match
+            
+            # Unknown function - leave unchanged and let lmfit error naturally
+            else:
+                return full_match
+        
+        return re.sub(pattern, replace_with_prefix, expr)
+
+    #
     def add_pars(self, par_info_dict):
         """
         Add parameter specifications to component.
@@ -1835,6 +1903,7 @@ class Component:
         lst = [] # initialize pars list
         if len(prefix) > 0:
             prefix += '_'
+
         # First pass: create all Par objects, but do not set expressions
         expr_params = []
         for p_name, p_info in self.par_dict.items():
@@ -1844,7 +1913,14 @@ class Component:
             temp.parent_model = self.parent_model
             # If this is an expression, skip setting it for now
             if len(p_info) == 1 and isinstance(p_info[0], str):
-                expr_params.append((temp, p_info[0]))
+                expr = p_info[0]
+                # If this component is part of a Dynamics model, 
+                # auto-prefix time function parameter references
+                if isinstance(self.parent_model, Dynamics) and prefix:
+                    expr = self._add_prefix_to_expression(expr, prefix)
+                    if debug:
+                        print(f"Expression transform: '{p_info[0]}' -> '{expr}'")
+                expr_params.append((temp, expr))
                 # Temporarily set a dummy value (needed for lmfit creation)      
                 temp.create(expr_skip=True)
             else:
@@ -2317,7 +2393,7 @@ class Par:
         # create standard lmfit parameter (spectral component)
         if expr_skip and len(self.info) == 1 and isinstance(self.info[0], str):
             # if skipping expression, use a dummy value for now
-            lmfit_par = ulmfit.par_create(self.name, [0, True, -np.inf, np.inf], prefix, suffix, debug)
+            lmfit_par = ulmfit.par_create(self.name, [1, True, -np.inf, np.inf], prefix, suffix, debug)
         else:
             lmfit_par = ulmfit.par_create(self.name, self.info, prefix, suffix, debug)
         # add to lmfit_par attribute

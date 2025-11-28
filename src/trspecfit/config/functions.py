@@ -51,6 +51,46 @@ def background_functions():
     return ('Offset', 'Shirley', 'LinBack', 'LinBackRev')
 
 #
+def energy_functions():
+    """
+    Get names of all energy/spectral component functions.
+    
+    Energy functions define peak shapes and lineshapes used to construct
+    spectral models. These include Gaussians, Lorentzians, Voigt profiles,
+    and other lineshapes common in spectroscopy.
+    
+    Returns
+    -------
+    tuple of str
+        All public function names from energy module
+    """
+    #
+    return tuple(name for name in dir(fcts_energy)
+                 if callable(getattr(fcts_energy, name))
+                 and not name.startswith('_'))
+
+#
+def time_functions():
+    """
+    Get names of all time dynamics functions.
+    
+    Time functions define temporal evolution of parameters in Dynamics models.
+    These include exponential decays/rises, oscillations, and other time-domain
+    behaviors. Convolution kernels (ending in 'CONV') are excluded as they have
+    special handling.
+    
+    Returns
+    -------
+    tuple of str
+        Time function names (excluding convolution kernels)
+    """
+    # Get all function names from functions/time.py excluding convolutions
+    return tuple(name for name in dir(fcts_time) 
+                 if callable(getattr(fcts_time, name)) 
+                 and not name.startswith('_')
+                 and not name.endswith('CONV'))
+
+#
 def convolution_functions():
     """
     Get names of all convolution kernel functions.
@@ -68,23 +108,4 @@ def convolution_functions():
     return tuple(name for name in dir(fcts_time) 
                  if callable(getattr(fcts_time, name)) 
                  and name.endswith('CONV') 
-                 and not name.startswith('_'))
-
-#
-def energy_functions():
-    """
-    Get names of all energy/spectral component functions.
-    
-    Energy functions define peak shapes and lineshapes used to construct
-    spectral models. These include Gaussians, Lorentzians, Voigt profiles,
-    and other lineshapes common in spectroscopy.
-    
-    Returns
-    -------
-    tuple of str
-        All public function names from energy module
-    """
-    #
-    return tuple(name for name in dir(fcts_energy)
-                 if callable(getattr(fcts_energy, name))
                  and not name.startswith('_'))
