@@ -5,22 +5,22 @@
 ModelNone:
     none: {}
 
+# define instrument response function to convolve everything with (Gaussian)
 IRF:
-    # define Gauss to convolve everything with 
-    # (instrument response function)
     gaussCONV:
         SD: [5.0E-2, True, 0, 1]
 
+# define time-dependence of peak positions
+# exponential decay function for subcycle with negative shift 
 MonoExpNeg:
-    # expFun(t, A, tau, t0, y0)
     expFun:
         A: [-2, True, -5, -1E-3]
         tau: [2, True, 1E-1, 10]
         t0: [0, False, 0, 1]
         y0: [0, False, 0, 1]
 
+# exponential decay function for subcycle with positive shift 
 MonoExpPos:
-    # expFun(t, A, tau, t0, y0)
     expFun:
         A: ["-expFun_01_A"]
         tau: ["expFun_01_tau"]
