@@ -8,23 +8,18 @@ from trspecfit import spectra
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import arrays as uarr
 from trspecfit.utils import plot as uplt
+from trspecfit.utils import parsing as uparsing
 import numpy as np
 import os # replace os.join with "pathlib path /"subfolder" /"file name"
 import pathlib
 import copy
-import inspect
 import time
 from IPython.display import display
+from ruamel.yaml import YAML
 # function library for energy, time, and distribution components
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import time as fcts_time
 from trspecfit.functions import distribution as fcts_dist
-#ruaml.yaml mod (instead of "import yaml"):
-from ruamel.yaml import YAML
-from ruamel.yaml.constructor import SafeConstructor
-from ruamel.yaml.error import YAMLError
-# yaml parser needs to know which components to number
-from trspecfit.config.functions import numbering_exceptions
 # standardized plotting configuration
 from trspecfit.config.plot import PlotConfig
 
@@ -32,76 +27,6 @@ from trspecfit.config.plot import PlotConfig
 
 # multi-subcycle models allow for convolution only in the "0th subcycle" i.e. first model_info element
 # which affects all times t. "conv" functions in individual subcycles are currently ignored
-
-#
-def get_available_function_names():
-    """
-    Dynamically discover all available function names from the functions modules.
-    Returns a set of all function names that can be used as components.
-    """
-    function_names = set()
-    
-    # Get all function names from each module
-    for module in [fcts_energy, fcts_time, fcts_dist]:
-        for name in dir(module):
-            # Only include callable functions (not constants or classes)
-            if callable(getattr(module, name)) and not name.startswith('_'):
-                function_names.add(name)
-    
-    return function_names
-
-# yaml is by default read as dictionary which creates problems with non-unique keys
-# this function enables multiple components of the same type with automatic numbering
-# by reading the yaml as a list of tuples, numbering, then converting to a dictionary
-def construct_yaml_map(self, node):
-    """
-    Enable multiple components of the same type with automatic numbering.
-    All components get numbered starting from _01: GLP -> GLP_01, GLP_02, etc.
-    Exceptions(functions that don't get numbered): background, convolutions, offset.
-    """
-    data = []
-    yield data
-
-    # Get all available function names
-    available_functions = get_available_function_names()
-    # Get exceptions (functions that don't get numbered)
-    exceptions = numbering_exceptions()
-    
-    # Track component names to handle duplicates
-    component_counts = {}
-    
-    for key_node, value_node in node.value:
-        key = self.construct_object(key_node, deep=True)
-        val = self.construct_object(value_node, deep=True)
-        
-        # Check if this key is a component name (function name)
-        if isinstance(key, str) and key in available_functions:
-            # Check if this is an exception (background/offset function)
-            if key in exceptions:
-                # Don't number exceptions, just use the original name
-                data.append((key, val))
-            else:
-                # This is a regular component, always number it
-                if key in component_counts:
-                    component_counts[key] += 1
-                else:
-                    component_counts[key] = 1
-                
-                numbered_key = f"{key}_{component_counts[key]:02d}"
-                data.append((numbered_key, val))
-        else:
-            # This is a model name or other key, don't number it
-            data.append((key, val))
-
-SafeConstructor.add_constructor(u'tag:yaml.org,2002:map', construct_yaml_map)
-yaml = YAML(typ='safe')
-
-#
-#
-class ModelValidationError(ValueError):
-    """Exception raised for errors in model YAML validation."""
-    # see _validate_model_components()
-    pass
 
 #
 #
@@ -169,9 +94,7 @@ class Project:
         ----------
         config_file : str or Path
             Name or path of config file (looks in self.path)
-        """
-        from ruamel.yaml import YAML
-        
+        """        
         yaml = YAML()  # Standard YAML loading
         config_path = self.path / config_file
         
@@ -347,328 +270,6 @@ class File:
         self.model_active = self.select_model(model_info)
 
     #
-    def _validate_model_components(self, model_info_dict, model_info, model_yaml_path):
-        """
-        Validate model components and parameters for common errors.
-        
-        Checks for:
-        - Invalid component names (not in available functions)
-        - Invalid parameter attributes (not value/vary/min/max or expr)
-        - Invalid parameter structure
-        - Missing required parameter attributes
-        - Invalid bounds (min > max, value outside bounds)
-        - Wrong parameter names for component type
-        """
-        available_functions = get_available_function_names()
-        #valid_param_keys = {'value', 'vary', 'min', 'max', 'expr'}
-        example_dir = pathlib.Path(__file__).parent.parent / "examples"
-        
-        # Only validate models that are being loaded
-        for model_name in model_info:
-            if model_name not in model_info_dict:
-                continue
-                
-            components = model_info_dict[model_name]
-            
-            for comp_name, params in components.items():
-                # Extract base component name (remove _01, _02 suffixes)
-                base_comp_name, _ = mcp.parse_component_name(comp_name)
-                
-                # Check 1: Component type exists
-                if base_comp_name not in available_functions:
-                    raise ModelValidationError(
-                        f"Unknown component type '{base_comp_name}' in model '{model_name}' in {model_yaml_path}\n"
-                        f"Available components: {sorted(available_functions)}\n"
-                        f"Check for typos in component name."
-                    )
-                
-                # Check 2: Parameters should be a dictionary
-                if not isinstance(params, dict):
-                    raise ModelValidationError(
-                        f"Parameters for '{comp_name}' in model '{model_name}' must be a dictionary.\n"
-                        f"Found: {type(params).__name__}\n"
-                        f"See 'models_energy.yaml' in example directory: {example_dir}"
-                    )
-                
-                # Get expected parameters for this component type
-                expected_params = mcp.get_component_parameters(base_comp_name)
-
-                # Check parameter count matches
-                if len(params) != len(expected_params):
-                    raise ModelValidationError(
-                        f"Component '{comp_name}' (type: {base_comp_name}) in model '{model_name}' has wrong number of parameters.\n"
-                        f"Expected {len(expected_params)} parameters: {expected_params}\n"
-                        f"Got {len(params)} parameters: {list(params.keys())}\n"
-                        f"Check {model_yaml_path}"
-                    )
-                
-                # Check 3: Validate each parameter
-                for param_name, param_value in params.items():
-                    
-                    # Check if parameter name is valid for this component
-                    if param_name not in expected_params:
-                        raise ModelValidationError(
-                            f"Invalid parameter '{param_name}' for component '{comp_name}' (type: {base_comp_name}) in model '{model_name}'.\n"
-                            f"Expected parameters: {expected_params}\n"
-                            f"Check for typos or wrong component type."
-                        )
-                    
-                    # Parameter value can be a list [value, vary, min, max] or [value, vary]
-                    # or a single expression string
-                    if isinstance(param_value, list):
-                        
-                        if (len(param_value) == 4) or (len(param_value) == 2):
-                            if len(param_value) == 4: # Standard format: [value, vary, min, max]
-                                value, vary, min_val, max_val = param_value
-                            elif len(param_value) == 2: # Unbound format: [value, vary]
-                                value, vary = param_value
-                                min_val = -np.inf
-                                max_val = np.inf
-
-                            # Check that 'vary' is boolean
-                            if not isinstance(vary, bool):
-                                raise ModelValidationError(
-                                    f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}'):\n"
-                                    f"'vary' (2nd element) must be True or False.\n"
-                                    f"Got: {vary} ({type(vary).__name__})"
-                                )
-                                                    
-                            # Check bounds validity
-                            if isinstance(min_val, (int, float)) and isinstance(max_val, (int, float)):
-                                if min_val > max_val:
-                                    raise ModelValidationError(
-                                        f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}'):\n"
-                                        f"min ({min_val}) is greater than max ({max_val})"
-                                    )
-                                
-                                # Check if value is within bounds
-                                if isinstance(value, (int, float)):
-                                    if value < min_val or value > max_val:
-                                        raise ModelValidationError(
-                                            f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}'):\n"
-                                            f"value ({value}) is outside bounds [{min_val}, {max_val}]"
-                                        )
-                        
-                        elif len(param_value) == 1:
-                            # Expression format: ["expression"]
-                            if not isinstance(param_value[0], str):
-                                raise ModelValidationError(
-                                    f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}'):\n"
-                                    f"Single-element list must contain a string expression.\n"
-                                    f"Got: {param_value[0]} ({type(param_value[0]).__name__})\n"
-                                    f'Example: ["GLP_01_x0 + 3.6"]'
-                                )
-                        else:
-                            raise ModelValidationError(
-                                f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}') has invalid format.\n"
-                                f'Expected: [value, vary, min, max] or [value, vary] or ["expr"]\n'
-                                f"Got: {param_value} ({len(param_value)} elements)\n"
-                                f"See 'models_energy.yaml' in example directory: {example_dir}"
-                            )
-                    
-                    else:
-                        raise ModelValidationError(
-                            f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}') has invalid format.\n"
-                            f"Expected either:\n"
-                            f"  - [value, vary, min, max] for standard parameters\n"
-                            f"  - [value, vary] for unbound parameters\n"
-                            f"  - ['expression'] for linked parameters\n"
-                            f"Got: {param_value}\n"
-                            f"See 'models_energy.yaml' in example directory: {example_dir}"
-                        )
-
-    #
-    def _load_and_number_yaml_components(self, model_yaml, model_info, par_name='', debug=False):
-        """
-        Load YAML file and apply appropriate component numbering strategy.
-        For energy models: use component numbering from construct_yaml_map
-        For dynamics models with subcycles: number components globally 
-        """
-        if debug:
-            print(f'"model.yaml" file: {model_yaml}')
-        model_yaml_path = self.p.path / model_yaml
-        
-        try:
-            with open(model_yaml_path) as f_yaml:
-                model_info_ALL = yaml.load(f_yaml)
-                
-                # Convert YAML structure to dictionary format
-                if isinstance(model_info_ALL, list):
-                    model_info_dict = {}
-                    for model_entry in model_info_ALL:
-                        if not (isinstance(model_entry, tuple) and len(model_entry) == 2):
-                            raise ValueError(f"Malformed model entry: {model_entry}")
-                        model_name, components = model_entry
-                        if model_name in model_info_dict:
-                            raise ValueError(f"Duplicate model name found: '{model_name}'")
-                        # Convert components to dict format
-                        model_info_dict[model_name] = dict(components) if isinstance(components, list) else components
-                        # Convert parameters to dict format
-                        for comp_name, params in model_info_dict[model_name].items():
-                            if isinstance(params, list):
-                                model_info_dict[model_name][comp_name] = dict(params)
-                else: # should never happen unless something is wrong with construct_yaml_map
-                    raise ValueError(f"Unexpected YAML structure in {model_yaml_path}")
-                
-                if debug:
-                    print('model_info_ALL:')
-                    print(model_info_ALL)
-                    print('model_info_dict:')
-                    print(model_info_dict)
-                
-                # Apply appropriate numbering strategy
-                if par_name != '':
-                    # This is a dynamics model - resolve numbering conflicts across subcycles
-                    model_info_dict = self._resolve_dynamics_numbering_conflicts(model_info_dict, model_info, debug)
-
-                # Validate the loaded model structure
-                self._validate_model_components(model_info_dict, model_info, model_yaml_path)
-                
-                # For energy models, numbering is already complete from construct_yaml_map
-                return model_info_dict
-                
-        except FileNotFoundError:
-            raise FileNotFoundError(
-                f"FileNotFound: <model_yaml> file input\n"
-                f"File should be located in: {self.p.path}\n"
-                f"Check file name for typos: {model_yaml_path}"
-            )
-        except ModelValidationError:
-            # Validator errors are already user-friendly, just pass through
-            raise
-        except ValueError as e:
-            # Structural errors (malformed entries, duplicates)
-            if "Malformed model entry" in str(e) or "Duplicate model name" in str(e):
-                raise
-            # Unexpected YAML parsing error
-            raise ValueError(
-                f"Unexpected error parsing {model_yaml_path}\n"
-                f"Original error: {e}\n\n"
-                f"This may be a bug in the YAML parser.\n"
-                f"Please report this error at: https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/issues\n"
-                f"Include your YAML file and this error message. Thank you!"
-            ) from e
-        except YAMLError as exc:
-            raise RuntimeError(
-                f"YAML syntax error in {model_yaml_path}\n"
-                f"Please check for:\n"
-                f"  - Proper indentation (use spaces, not tabs)\n"
-                f"  - Matching brackets and quotes\n"
-                f"  - Valid YAML syntax\n"
-                f"Original error: {exc}"
-            )
-
-    #
-    def _resolve_dynamics_numbering_conflicts(self, model_info_dict, model_info, debug=False):
-        """
-        Resolve numbering conflicts for dynamics models by tracking used numbers globally
-        and reassigning conflicting numbers to the next available number.
-        
-        This preserves the existing YAML numbering where possible and only changes
-        numbers when there are conflicts across subcycles.
-        """
-        if debug:
-            print("=== STARTING CONFLICT RESOLUTION ===")
-            print(f"model_info: {model_info}")
-            print(f"\nmodel_info_dict BEFORE resolution:")
-            for submodel, comps in model_info_dict.items():
-                if submodel in model_info:
-                    print(f"  {submodel}: {list(comps.keys())}")
-
-        # Get all available function names and exceptions
-        available_functions = get_available_function_names()
-        exceptions = numbering_exceptions()
-        
-        # Track the next available number for each function type globally
-        global_next_available = {}
-        # Track all used numbers for each function type
-        used_numbers = {}
-        
-
-        # First pass: collect all existing numbers and find conflicts
-        for submodel in model_info:
-            if submodel not in model_info_dict:
-                continue
-                
-            for comp_name, comp_params in model_info_dict[submodel].items():
-                base_name, number = mcp.parse_component_name(comp_name)
-                
-                if base_name in available_functions and base_name not in exceptions:
-                    if number == -1:
-                        number = 1  # Default numbering
-                        
-                    # Track used numbers
-                    if base_name not in used_numbers:
-                        used_numbers[base_name] = set()
-                        global_next_available[base_name] = 1
-                    
-                    used_numbers[base_name].add(number)
-                    global_next_available[base_name] = max(global_next_available[base_name], number + 1)
-        
-        if debug:
-            print(f"\nAfter first pass - used_numbers: {used_numbers}")
-            print(f"global_next_available: {global_next_available}")
-
-        # Second pass: resolve conflicts by reassigning duplicate numbers
-        processed_dict = {}
-        assigned_numbers = {}  # Track what we've already assigned in this pass
-        
-        for submodel in model_info:
-            if submodel not in model_info_dict:
-                continue
-                
-            processed_dict[submodel] = {}
-            
-
-            for comp_name, comp_params in model_info_dict[submodel].items():
-                base_name, current_number = mcp.parse_component_name(comp_name)
-                
-                if base_name in available_functions and base_name not in exceptions:
-                    if current_number == -1:
-                        current_number = 1  # Default numbering
-                
-                    # Initialize tracking for this base name
-                    if base_name not in assigned_numbers:
-                        assigned_numbers[base_name] = set()
-                    
-                    # Check if this number is already assigned in this dynamics model
-                    if current_number in assigned_numbers[base_name]:
-                        # Conflict! Find next available number
-                        while global_next_available[base_name] in assigned_numbers[base_name]:
-                            global_next_available[base_name] += 1
-                        new_number = global_next_available[base_name]
-                        global_next_available[base_name] += 1
-                        
-                        if debug:
-                            print(f"Conflict resolved: {comp_name} -> {base_name}_{new_number:02d} in {submodel}")
-                    else:
-                        # No conflict, use current number
-                        new_number = current_number
-                    
-                    # Mark this number as assigned
-                    assigned_numbers[base_name].add(new_number)
-                    
-                    # Create the final component name
-                    final_name = f"{base_name}_{new_number:02d}"
-                    processed_dict[submodel][final_name] = comp_params
-                    
-                else:
-                    # Not a component function, keep as-is
-                    processed_dict[submodel][comp_name] = comp_params
-
-            if debug:
-                print(f"\nProcessed submodel: {submodel}")
-                print(f"  {submodel}: {list(processed_dict[submodel].keys())}")
-        
-        if debug:
-            print(f"\nFINAL processed_dict:")
-            for submodel in model_info:
-                if submodel in processed_dict:
-                    print(f"  {submodel}: {list(processed_dict[submodel].keys())}")
-        #
-        return processed_dict
-
-    #
     def load_model(self, model_yaml, model_info, par_name='', debug=False):
         """
         Loads a model defined in <model_yaml> file located in Parent.path based on <model_info>:
@@ -702,9 +303,15 @@ class File:
             )
 
         # Load and process YAML file with appropriate numbering strategy
-        model_info_dict = self._load_and_number_yaml_components(model_yaml, model_info, par_name, debug)
+        model_yaml_path = self.p.path / model_yaml
+        model_info_dict = uparsing.load_and_number_yaml_components(
+            model_yaml_path=model_yaml_path,
+            model_info=model_info,
+            par_name=par_name,
+            debug=debug
+        )
 
-        # initialize model
+        # Initialize model
         if par_name == '':
             if self.p.show_info >= 1:
                 print(
@@ -722,7 +329,7 @@ class File:
             fcts_package = fcts_time
             loaded_model = mcp.Dynamics(par_name)
         
-        # inherit necessary model attributes from function input, file, and project
+        # Inherit necessary model attributes from function input, file, and project
         loaded_model.yaml_f_name = model_yaml.split(".")[0] # yaml file name
         loaded_model.dim = 1 # start with 1, +1 when adding dynamics
         loaded_model.subcycles = len(model_info)-1
@@ -731,10 +338,10 @@ class File:
         
         all_comps = [] # initialize component list
         
-        # go through (sub)model(s)
+        # Go through (sub)model(s)
         # (for mcp.Dynamics model instances length model_info could be larger than 1)
         for subcycle, submodel in enumerate(model_info):
-            # get the section defined by model_info
+            # Get the section defined by model_info
             try:
                 submodel_info = model_info_dict[submodel]
             except KeyError:
@@ -751,10 +358,10 @@ class File:
                 c_temp.add_pars(c_info)
                 all_comps.append(c_temp)
                 
-        # add all components (and their parameters) to model
+        # Add all components (and their parameters) to model
         loaded_model.add_components(all_comps)
         
-        # add model to file
+        # Add model to file
         if not isinstance(loaded_model, mcp.Dynamics):
             self.models.append(loaded_model)
             self.set_active_model(model_info) # set as current active model

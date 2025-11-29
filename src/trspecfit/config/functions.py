@@ -11,9 +11,27 @@ The configuration here determines how the YAML parser handles component definiti
 and how the mcp module constructs models from user input.
 """
 
+import inspect
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import time as fcts_time
-#from trspecfit.functions import distribution as fcts_dist
+from trspecfit.functions import distribution as fcts_dist
+
+#
+def all_functions():
+    """
+    Dynamically discover all available function names from the functions modules.
+    Returns a set of all function names that can be used as components.
+    """
+    function_names = set()
+    
+    # Get all function names from each module
+    for module in [fcts_energy, fcts_time, fcts_dist]:
+        for name in dir(module):
+            # Only include callable functions (not constants or classes)
+            if callable(getattr(module, name)) and not name.startswith('_'):
+                function_names.add(name)
+    
+    return tuple(function_names)
 
 #
 def numbering_exceptions():
@@ -109,3 +127,42 @@ def convolution_functions():
                  if callable(getattr(fcts_time, name)) 
                  and name.endswith('CONV') 
                  and not name.startswith('_'))
+
+#
+def get_function_parameters(function_name):
+    """
+    Get expected parameter names for a function by inspecting its signature.
+    
+    Parameters
+    ----------
+    function_name : str
+        Base function name (e.g., 'GLP', 'expFun', 'Shirley')
+    
+    Returns
+    -------
+    list of str
+        Parameter names expected by this function
+    """
+    # Find which module contains this function
+    func = None
+    for module in [fcts_energy, fcts_time, fcts_dist]:
+        if hasattr(module, function_name):
+            func = getattr(module, function_name)
+            break
+    
+    if func is None:
+        return []
+    
+    # Get function signature
+    sig = inspect.signature(func)
+    param_names = list(sig.parameters.keys())
+    
+    # Remove first parameter (x or t)
+    if len(param_names) > 0:
+        param_names = param_names[1:]
+    
+    # Remove last parameter if it's 'spectrum' (background functions)
+    if len(param_names) > 0 and param_names[-1] == 'spectrum':
+        param_names = param_names[:-1]
+    #
+    return param_names

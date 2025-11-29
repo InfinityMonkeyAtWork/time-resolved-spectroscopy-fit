@@ -50,6 +50,7 @@ import lmfit
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import arrays as uarr
 from trspecfit.utils import plot as uplt
+from trspecfit.utils import parsing as uparsing
 import math
 import numpy as np
 import re
@@ -73,141 +74,6 @@ from trspecfit.config.functions import (
 )
 # plot configuration
 from trspecfit.config.plot import PlotConfig
-
-
-#
-def parse_component_name(comp_name):
-    """
-    Parse a component name into base function name and number.
-    
-    Component names follow the pattern: function_name or function_name_NN
-    where NN is a two-digit number. This function extracts both parts.
-    
-    Parameters
-    ----------
-    comp_name : str
-        Component name to parse (e.g., 'GLP_01', 'expFun_02', 'Offset')
-    
-    Returns
-    -------
-    base_name : str
-        Function name without number (e.g., 'GLP', 'expFun', 'Offset')
-    number : int
-        Component number (e.g., 1, 2) or -1 if unnumbered
-    
-    Examples
-    --------
-    >>> parse_component_name('expFun_01')
-    ('expFun', 1)
-    >>> parse_component_name('GLP_02')
-    ('GLP', 2)
-    >>> parse_component_name('Offset')
-    ('Offset', -1)
-    >>> parse_component_name('GaussAsym_15')
-    ('GaussAsym', 15)
-    
-    Notes
-    -----
-    Numbered components allow multiple instances of the same function type
-    in a model (e.g., multiple peaks with different parameters).
-    
-    Background functions and convolution kernels are typically unnumbered
-    as only one instance per model makes sense.
-    
-    The numbering convention (_01, _02, etc.) is enforced during YAML parsing
-    to ensure consistent parameter naming across the model.
-    
-    See Also
-    --------
-    get_component_parameters : Get expected parameters for a component type
-    Component : Component class that uses this parsing
-    """
-    if '_' in comp_name and comp_name.split('_')[-1].isdigit():
-        parts = comp_name.split('_')
-        if len(parts) >= 2 and parts[-1].isdigit():
-            base_name = '_'.join(parts[:-1])
-            number = int(parts[-1])
-        else:
-            base_name = comp_name
-            number = -1
-    else:
-        base_name = comp_name
-        number = -1
-    #
-    return base_name, number
-
-#
-def get_component_parameters(comp_name):
-    """
-    Get the expected parameter names for a component by inspecting its function.
-    
-    Extracts parameter names from the function signature, excluding the
-    independent variable (first parameter) and special parameters like
-    'spectrum' (for background functions).
-    
-    Parameters
-    ----------
-    comp_name : str
-        Base name of the component function (e.g., 'GLP', 'expFun', 'Shirley')
-    
-    Returns
-    -------
-    list of str
-        Parameter names expected by this component, excluding:
-        - First parameter (x or t axis)
-        - 'spectrum' parameter (for background functions)
-    
-    Examples
-    --------
-    >>> get_component_parameters('GLP')
-    ['A', 'x0', 'F', 'm']
-    >>> get_component_parameters('expFun')
-    ['A', 'tau', 't0', 'y0']
-    >>> get_component_parameters('Shirley')
-    ['pShirley']
-    
-    Notes
-    -----
-    This function searches for the component in the function libraries:
-    - fcts_energy (spectral components and backgrounds)
-    - fcts_time (temporal dynamics and convolutions)
-    - fcts_dist (parameter distributions)
-    
-    Used for:
-    - YAML validation: Checking if user-provided parameters match expectations
-    - Error messages: Providing helpful feedback when parameters are wrong
-    - Auto-completion: Suggesting parameter names in interactive use
-    
-    Returns empty list if function not found in any module.
-    
-    See Also
-    --------
-    parse_component_name : Parse component names into base name and number
-    Component.create_pars : Create parameters for a component
-    """
-    # Find which module contains this function
-    func = None
-    for module in [fcts_energy, fcts_time, fcts_dist]:
-        if hasattr(module, comp_name):
-            func = getattr(module, comp_name)
-            break
-    
-    if func is None:
-        return []
-    
-    # Get function signature
-    sig = inspect.signature(func)
-    param_names = list(sig.parameters.keys())
-    
-    # Remove first parameter (x or t)
-    if len(param_names) > 0:
-        param_names = param_names[1:]
-    
-    # Remove last parameter if it's 'spectrum' (background functions)
-    if len(param_names) > 0 and param_names[-1] == 'spectrum':
-        param_names = param_names[:-1]
-    #
-    return param_names
 
 #
 #
@@ -1634,7 +1500,7 @@ class Component:
         # name of the component (str)
         self.comp_name = comp_name
         # parse the component name into function string and component number
-        self.fct_str, self.N = parse_component_name(comp_name)       
+        self.fct_str, self.N = uparsing.parse_component_name(comp_name)       
         # determine component type: 'add', 'conv', 'back', or 'none'
         if self.fct_str in background_functions():
             self.comp_type = 'back'
@@ -1764,9 +1630,9 @@ class Component:
         - "expFun_01_tau * 0.5 + GLP_01_A" -> "GLP_01_x0_expFun_01_tau * 0.5 + GLP_01_A"
         """
         # Get function names from both libraries
-        time_funcs = set(time_functions())
-        energy_funcs = set(energy_functions())
-        conv_funcs = set(convolution_functions())
+        time_funcs = time_functions()
+        energy_funcs = energy_functions()
+        conv_funcs = convolution_functions()
         
         # Pattern to match parameter references: function_name_NN_param_name
         # Captures: (function_name)(_NN_param_name)
@@ -1782,7 +1648,6 @@ class Component:
                 return full_match
             
             # Time functions need prefix (they're in this Dynamics model)
-            # if func_name in time_funcs: #$% don't allow refs to convs?
             if func_name in time_funcs or func_name in conv_funcs:
                 return f"{prefix}{func_name}{rest}"
             
@@ -2554,7 +2419,7 @@ class Par:
         if len(self.info) == 1 and isinstance(self.info[0], str):
             self.expr_string = self.info[0]
             # Parse expression to find referenced parameters
-            self.expr_refs = self._extract_parameter_references(self.expr_string)
+            self.expr_refs = uparsing.extract_expression_parameters(self.expr_string)
             
             # Check if any referenced parameters are time-dependent
             for ref_name in self.expr_refs:
@@ -2564,50 +2429,6 @@ class Par:
                     break
         #
         return None
-    
-    #
-    def _extract_parameter_references(self, expr_string):
-        """
-        Extract parameter names referenced in expression.
-        
-        Parses expression string to find parameter names, which are identified
-        as strings starting with known function names (since parameter naming
-        follows function_name_NN_paramname pattern).
-        
-        Parameters
-        ----------
-        expr_string : str
-            Expression to parse (e.g., "GLP_01_A * 0.75 + GLP_02_x0")
-        
-        Returns
-        -------
-        list of str
-            Parameter names found in expression
-        
-        Notes
-        -----
-        Uses pattern matching to find valid parameter names. A valid reference
-        must start with a known function name from the energy functions list.
-        
-        See Also
-        --------
-        analyze_expression_dependencies : Uses this to find references
-        """        
-        # Pattern to match parameter names (letters, numbers, underscores, but not starting with number)
-        pattern = r'\b[A-Za-z_][A-Za-z0-9_]*\b'
-        matches = re.findall(pattern, expr_string)
-        
-        # Filter to keep only strings that start with known function names
-        # This catches parameter names like GLP_01_A, GLP_02_x0, etc.
-        parameter_refs = []
-        for match in matches:
-            #$% if a mcp.Dynamics Par references another mcp.Dynamics Par this doesn't work yet!
-            for func_name in set(energy_functions()):
-                if match.startswith(func_name + '_'):
-                    parameter_refs.append(match)
-                    break  # Found a match, no need to check other function names
-        
-        return parameter_refs
     
     #
     def _find_parameter_by_name(self, par_name, all_parameters):
