@@ -2,7 +2,7 @@
 Test plotting functions and configuration system.
 
 Strategy:
-- Test without displaying (plt.close() or save_img=-1)
+- Test without displaying or saving(save_img=-2)
 - Verify no crashes, figure object creation, file creation
 - Check config propagation through hierarchy
 - Test edge cases and common user patterns
@@ -16,7 +16,7 @@ Strategy:
 #     plot_1D(
 #         y_list, x=x, config=default_config,
 #         my_new_param=value,
-#         save_img=-1
+#         save_img=-2 # don't display, don't save
 #     )
 #     plt.close('all')
 
@@ -119,7 +119,7 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
         
-        plot_1D(y_list, x=x, config=config, save_img=-1)
+        plot_1D(y_list, x=x, config=config, save_img=-2)
         plt.close('all')
     
     #
@@ -129,7 +129,7 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig(x_label='Energy (eV)', x_dir='rev', dpi_plot=150)
         
-        plot_1D(y_list, x=x, config=config, save_img=-1)
+        plot_1D(y_list, x=x, config=config, save_img=-2)
         plt.close('all')
     
     #
@@ -143,7 +143,7 @@ class TestPlot1D:
             y_list, x=x, config=config,
             x_label='Override Label',
             x_dir='rev',
-            save_img=-1
+            save_img=-2
         )
         plt.close('all')
     
@@ -153,7 +153,7 @@ class TestPlot1D:
         y_list = [np.sin(np.linspace(0, 10, 100)), np.cos(np.linspace(0, 10, 100))]
         config = PlotConfig()
         
-        plot_1D(y_list, config=config, save_img=-1)
+        plot_1D(y_list, config=config, save_img=-2)
         plt.close('all')
     
     #
@@ -163,7 +163,7 @@ class TestPlot1D:
         y_list = [np.sin(x)]
         config = PlotConfig()
         
-        plot_1D(y_list, x=x, config=config, save_img=-1)
+        plot_1D(y_list, x=x, config=config, save_img=-2)
         plt.close('all')
     
     #
@@ -177,7 +177,7 @@ class TestPlot1D:
             y_list, x=x, config=config,
             x_lim=(2, 8),
             y_lim=(-1.5, 1.5),
-            save_img=-1
+            save_img=-2
         )
         plt.close('all')
     
@@ -188,7 +188,7 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
         
-        plot_1D(y_list, x=x, config=config, x_dir='rev', save_img=-1)
+        plot_1D(y_list, x=x, config=config, x_dir='rev', save_img=-2)
         plt.close('all')
     
     #
@@ -199,7 +199,7 @@ class TestPlot1D:
         y_list = [np.abs(np.sin(x)) + 0.1, np.abs(np.cos(x)) + 0.1]
         config = PlotConfig()
         
-        plot_1D(y_list, x=x, config=config, y_type='log', save_img=-1)
+        plot_1D(y_list, x=x, config=config, y_type='log', save_img=-2)
         plt.close('all')
     
     #
@@ -209,7 +209,7 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
         
-        plot_1D(y_list, x=x, config=config, vlines=[3, 7], save_img=-1)
+        plot_1D(y_list, x=x, config=config, vlines=[3, 7], save_img=-2)
         plt.close('all')
     
     #
@@ -219,7 +219,7 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
         
-        plot_1D(y_list, x=x, config=config, waterfall=0.5, save_img=-1)
+        plot_1D(y_list, x=x, config=config, waterfall=0.5, save_img=-2)
         plt.close('all')
     
     #
@@ -248,7 +248,7 @@ class TestPlot1D:
             linestyles=['-', '--'],
             linewidths=[2, 1],
             legend=['Trace 1', 'Trace 2'],
-            save_img=-1
+            save_img=-2
         )
         plt.close('all')
 
@@ -265,7 +265,7 @@ class TestPlot2D:
         data = np.random.randn(30, 50) + np.outer(y, np.sin(x))
         config = PlotConfig()
         
-        plot_2D(data, x=x, y=y, config=config, save_img=-1)
+        plot_2D(data, x=x, y=y, config=config, save_img=-2)
         plt.close('all')
     
     #
@@ -276,7 +276,7 @@ class TestPlot2D:
         data = np.random.randn(30, 50) + np.outer(y, np.sin(x))
         config = PlotConfig(z_colormap='plasma', x_dir='rev')
         
-        plot_2D(data, x=x, y=y, config=config, save_img=-1)
+        plot_2D(data, x=x, y=y, config=config, save_img=-2)
         plt.close('all')
     
     #
@@ -291,7 +291,7 @@ class TestPlot2D:
             data, x=x, y=y, config=config,
             z_colormap='plasma',
             x_dir='rev',
-            save_img=-1
+            save_img=-2
         )
         plt.close('all')
     
@@ -301,7 +301,7 @@ class TestPlot2D:
         data = np.random.randn(30, 50)
         config = PlotConfig()
         
-        plot_2D(data, config=config, save_img=-1)
+        plot_2D(data, config=config, save_img=-2)
         plt.close('all')
     
     #
@@ -316,7 +316,7 @@ class TestPlot2D:
             data, x=x, y=y, config=config,
             x_lim=(2, 8),
             y_lim=(1, 4),
-            save_img=-1
+            save_img=-2
         )
         plt.close('all')
     
@@ -328,7 +328,7 @@ class TestPlot2D:
         data = np.random.randn(30, 50) + np.outer(y, np.sin(x))
         config = PlotConfig()
         
-        plot_2D(data, x=x, y=y, config=config, z_lim=(-2, 2), save_img=-1)
+        plot_2D(data, x=x, y=y, config=config, z_lim=(-2, 2), save_img=-2)
         plt.close('all')
     
     #
@@ -342,7 +342,7 @@ class TestPlot2D:
         plot_2D(
             data, x=x, y=y, config=config,
             data_slice=[[10, 40], [5, 25]],
-            save_img=-1
+            save_img=-2
         )
         plt.close('all')
     
@@ -358,7 +358,7 @@ class TestPlot2D:
             data, x=x, y=y, config=config,
             vlines=[3, 7],
             hlines=[1, 4],
-            save_img=-1
+            save_img=-2
         )
         plt.close('all')
     
@@ -374,7 +374,7 @@ class TestPlot2D:
             data, x=x, y=y, config=config,
             x_dir='rev',
             y_dir='rev',
-            save_img=-1
+            save_img=-2
         )
         plt.close('all')
     
@@ -386,7 +386,7 @@ class TestPlot2D:
         data = np.random.randn(30, 50) + np.outer(y, np.sin(x))
         config = PlotConfig()
         
-        plot_2D(data, x=x, y=y, config=config, z_colorbar='hor', save_img=-1)
+        plot_2D(data, x=x, y=y, config=config, z_colorbar='hor', save_img=-2)
         plt.close('all')
     
     #
@@ -458,7 +458,7 @@ class TestEdgeCases:
     def test_single_point(self):
         """Test plotting single data point"""
         config = PlotConfig()
-        plot_1D([[1]], x=[0], config=config, save_img=-1)
+        plot_1D([[1]], x=[0], config=config, save_img=-2)
         plt.close('all')
     
     #
@@ -469,7 +469,7 @@ class TestEdgeCases:
         y[10] = np.nan
         config = PlotConfig()
         
-        plot_1D([y], x=x, config=config, save_img=-1)
+        plot_1D([y], x=x, config=config, save_img=-2)
         plt.close('all')
 
 
