@@ -57,7 +57,9 @@ import re
 import inspect
 import copy
 from IPython.display import display
-import concurrent.futures
+#import concurrent.futures
+from typing import List, Optional, Tuple, Union, Dict, Any, Callable
+import types
 # asteval is used for expressions referencing time-dependent parameters
 from asteval import Interpreter
 # function library for energy, time, and distribution components
@@ -66,7 +68,6 @@ from trspecfit.functions import time as fcts_time
 from trspecfit.functions import distribution as fcts_dist
 # function configurations
 from trspecfit.config.functions import (
-    numbering_exceptions,
     background_functions,
     energy_functions,
     time_functions,
@@ -127,45 +128,8 @@ class Model:
     time : ndarray or None
         Time axis for temporal dynamics
     
-    Examples
-    --------
-    Create a simple 1D energy-resolved model:
-    
-    >>> model = Model('Au4f_doublet')
-    >>> model.energy = np.linspace(80, 95, 150)
-    >>> model.time = np.array([0])  # Single time point
-    >>> 
-    >>> # Add components (typically done via File.load_model from YAML)
-    >>> c1 = Component('GLP')
-    >>> c1.add_pars({'A': [20, True, 5, 30], ...})
-    >>> model.add_components([c1, ...])
-    >>> 
-    >>> # Evaluate model
-    >>> model.create_value1D(store1D=True)
-    >>> model.plot_1D(plot_ind=True)  # Plot individual components
-    
-    Create a 2D time-and-energy-resolved model:
-    
-    >>> model = Model('Au4f_2D')
-    >>> model.energy = np.linspace(80, 95, 150)
-    >>> model.time = np.linspace(-100, 1000, 200)
-    >>> 
-    >>> # Add components and time-dependence
-    >>> model.add_components([...])
-    >>> t_model = Dynamics('GLP_01_x0')  # Time-dependence for peak position
-    >>> model.add_dynamics(t_model)
-    >>> 
-    >>> # Evaluate 2D spectrum
-    >>> model.create_value2D()
-    >>> model.plot_2D()
-    
     Notes
     -----
-    **Model Construction:**
-    Models are typically constructed via File.load_model() which reads
-    component definitions from YAML files. Direct construction (as shown
-    in examples) is useful for programmatic model building.
-    
     **Component Combination:**
     Components are combined in reverse order (last to first) via the
     Model.combine() static method, which handles:
@@ -192,41 +156,41 @@ class Model:
     File.load_model : Load models from YAML definitions
     """
     #
-    def __init__(self, model_name='test'):
-        self.name = model_name
+    def __init__(self, model_name: str = 'test') -> None:
+        self.name: str = model_name
         # file name of yaml file containing model details
-        self.yaml_f_name = None
+        self.yaml_f_name: Optional[str] = None
         # functions of spectral components of fit
-        self.peak_fcts = []
+        self.peak_fcts: List[Callable] = []
         # list of objects of type defined in Component class
-        self.components = []
+        self.components: List['Component'] = []
         # flattened lmfit parameters list (1D with time- and energy-components)
-        self.lmfit_par_list = [] # (individual lmfit.Parameter objects)
+        self.lmfit_par_list: List[lmfit.Parameter] = [] # (individual lmfit.Parameter objects)
         # lmfit.Parameters object corresponding to lmfit_par_list attribute
-        self.lmfit_pars = lmfit.Parameters()
+        self.lmfit_pars: lmfit.Parameters = lmfit.Parameters()
         # list of all parameter names
-        self.par_names = None
+        self.par_names: Optional[List[str]] = None
         # list of component spectra (from last evaluation/ current parameters)
-        self.component_spectra = []
+        self.component_spectra: List[np.ndarray] = []
         # 1D spectrum (i.e. sum/ combination of all components)
-        self.value1D = None
+        self.value1D: Optional[np.ndarray] = None
         # 2D spectrum (i.e. 1D spectra one per time step)
-        self.value2D = None # self.value2D = np.empty((len(self.time), len(self.energy)))
+        self.value2D: Optional[np.ndarray] = None # self.value2D = np.empty((len(self.time), len(self.energy)))
         # fit parameters and results
-        self.const = None
-        self.args = None
-        self.result = []
+        self.const: Optional[Tuple] = None
+        self.args: Optional[Tuple] = None
+        self.result: List = []
         # ATTRIBUTES THAT SHOULD BE INHERITED FROM A PARENT ENTITY WHEN LOADING MODEL
-        self.parent_file = None  # parent reference (set by File when loading model)
+        self.parent_file: Optional[Any] = None  # parent reference (set by File when loading model)
         #self.data = None # (currently) not necessary
-        self.dim = None
-        self.energy = None # necessarry or should just point to file?
-        self.time = None # necessarry or should just point to file?
+        self.dim: Optional[int] = None
+        self.energy: Optional[np.ndarray] = None # necessarry or should just point to file?
+        self.time: Optional[np.ndarray] = None # necessarry or should just point to file?
         #
         return None
     
     @property
-    def plot_config(self):
+    def plot_config(self) -> PlotConfig:
         """
         Get plot configuration from parent File.
         
@@ -237,21 +201,6 @@ class Model:
         -------
         PlotConfig
             Configuration object with plot settings (axes, colors, DPI, etc.)
-        
-        Examples
-        --------
-        >>> model.plot_1D()  # Uses parent File's plot config
-        >>> config = model.plot_config
-        >>> config.x_dir = 'rev'  # Customize for this plot
-        
-        Notes
-        -----
-        If no parent File exists (standalone model), returns default PlotConfig.
-        
-        See Also
-        --------
-        PlotConfig : Plot configuration class
-        File.plot_config : File-level configuration
         """
         if hasattr(self, 'parent_file') and self.parent_file is not None:
             return self.parent_file.plot_config
@@ -260,7 +209,7 @@ class Model:
         return PlotConfig()
 
     #  
-    def describe(self, detail=0):
+    def describe(self, detail: int = 0) -> None:
         """
         Display information about model structure and parameters.
         
@@ -270,22 +219,6 @@ class Model:
             Level of detail to display:
             - 0: Component list and parameters only
             - 1+: Also plot initial guess and (for 2D) data comparison
-        
-        Examples
-        --------
-        >>> model.describe()  # Basic info
-        >>> model.describe(detail=1)  # With plots
-        
-        Notes
-        -----
-        Useful for:
-        - Verifying model loaded correctly from YAML
-        - Checking parameter bounds and initial values
-        - Visualizing initial guess before fitting
-        
-        See Also
-        --------
-        Component.describe : Component-level information
         """
         # minimum model description
         print('model name: ' +self.name)
@@ -311,7 +244,7 @@ class Model:
         return None
     
     #
-    def add_components(self, comps_list, debug=False):
+    def add_components(self, comps_list: List['Component'], debug: bool = False) -> None:
         """
         Add components to model and initialize their parameters.
         
@@ -326,14 +259,6 @@ class Model:
             their parameter dictionaries populated via Component.add_pars().
         debug : bool, default=False
             If True, print detailed parameter information during creation
-        
-        Examples
-        --------
-        >>> c_offset = Component('Offset')
-        >>> c_offset.add_pars({'y0': [2, True, 0, 5]})
-        >>> c_peak = Component('GLP')
-        >>> c_peak.add_pars({'A': [20, True, 5, 30], ...})
-        >>> model.add_components([c_offset, c_peak])
         
         Notes
         -----
@@ -357,12 +282,6 @@ class Model:
         **Model Updates:**
         After adding components, the model's lmfit_pars and par_names
         are automatically updated via self.update().
-        
-        See Also
-        --------
-        Component.create_pars : Create parameters for a component
-        update : Update model parameter structures
-        File.load_model : Typical way to populate components from YAML
         """
         # add list to <components> attribute 
         self.components = comps_list
@@ -398,12 +317,12 @@ class Model:
         return None
     
     #
-    def find_par_by_name(self, par_name):
+    def find_par_by_name(self, par_name: str) -> Tuple[Optional[int], Optional[int]]:
         """
         Find the component and parameter indices for a given parameter name.
         
         Searches through all components and their parameters to locate the
-        indices needed to access a specific parameter by name.
+        indices needed to access a specific parameter by name (exact match).
         
         Parameters
         ----------
@@ -416,27 +335,6 @@ class Model:
             Component index in self.components, or None if not found
         pi : int or None
             Parameter index in component.pars, or None if not found
-        
-        Examples
-        --------
-        >>> ci, pi = model.find_par_by_name('GLP_01_x0')
-        >>> if ci is not None:
-        ...     param = model.components[ci].pars[pi]
-        ...     print(f"Found: {param.name} = {param.value()}")
-        
-        Notes
-        -----
-        Used internally when adding time-dependence to parameters via
-        Model.add_dynamics(). The parameter name must match exactly,
-        including component numbering and prefix.
-        
-        Returns (None, None) if parameter not found. A message is printed
-        to console indicating the parameter wasn't found.
-        
-        See Also
-        --------
-        add_dynamics : Add time-dependence to a parameter
-        Par.name : Parameter naming convention
         """
         done = False
         for ci, comp in enumerate(self.components):
@@ -444,32 +342,19 @@ class Model:
                 if par.name == par_name:
                     done = True; break
             if done == True: break
-        if done == False:
+        if done == False: #$% should this Raise?
             print(f'parameter "{par_name}" not found in model {self.name}')
             ci = None; pi = None
         #
         return ci, pi
     
     #
-    def print_all_pars(self, detail=0):
+    def print_all_pars(self, detail: int = 0) -> None:
         """
         Print information on all parameters individually.
-        
-        Parameters
-        ----------
-        detail : int, default=0
-            Detail level passed to Par.describe()
-        
-        Notes
-        -----
         Debugging utility to inspect parameter structure and values.
         For routine parameter inspection, use model.describe() or
         model.lmfit_pars.pretty_print().
-        
-        See Also
-        --------
-        describe : More user-friendly model summary
-        Par.describe : Parameter-level information
         """
         for c in self.components:
             for p in c.pars:
@@ -478,34 +363,19 @@ class Model:
         return None
     
     #
-    def update(self, debug=False):
+    def update(self, debug: bool = False) -> None:
         """
         Update model from bottom up: parameters → components → model.
         
         Recompiles all parameters from all components and recreates the
         flattened lmfit parameter structures. Call this after modifying
-        parameter structure (e.g., after add_components or add_dynamics).
+        parameter structure.
+        (automatically called after add_components or add_dynamics)
         
         Parameters
         ----------
         debug : bool, default=False
             If True, print parameter list after update
-        
-        Notes
-        -----
-        Updates performed:
-        - Recompiles lmfit_par_list from all components
-        - Recreates lmfit_pars object
-        - Updates par_names list
-        
-        This is automatically called by add_components() and add_dynamics(),
-        so manual calling is rarely needed.
-        
-        See Also
-        --------
-        add_components : Adds components and calls update
-        add_dynamics : Adds time-dependence and calls update
-        Component.update_lmfit_par_list : Component-level update
         """
         # re-initialize
         self.lmfit_par_list = []
@@ -528,7 +398,8 @@ class Model:
         return None
     
     #
-    def update_value(self, new_par_values, par_select='all'):
+    def update_value(self, new_par_values: Union[List[float], np.ndarray], 
+                     par_select: Union[str, List[str]] = 'all') -> None:
         """
         Update model from top down: model → components → parameters.
         
@@ -545,28 +416,13 @@ class Model:
             Which parameters to update:
             - 'all': Update all parameters in order
             - list: Update only parameters with names in this list
-        
-        Examples
-        --------
-        >>> # Update all parameters (during fitting)
-        >>> model.update_value([1.5, 84.2, 1.8, 0.3, ...])
-        
-        >>> # Update specific parameters only
-        >>> model.update_value([84.2, 88.0], par_select=['GLP_01_x0', 'GLP_02_x0'])
-        
+
         Notes
         -----
         Called by spectra.fit_model_mcp() on every iteration during fitting
         to update model parameters before evaluation.
-        
         Does not trigger model re-evaluation; call create_value1D() or
         create_value2D() after updating values.
-        
-        See Also
-        --------
-        spectra.fit_model_mcp : Calls this during fitting
-        create_value1D : Evaluate 1D model after update
-        create_value2D : Evaluate 2D model after update
         """
         p_count = 0 # initialize counter for parameters in <par_select>
         for i, p in enumerate(self.lmfit_pars):
@@ -582,7 +438,8 @@ class Model:
         return None
     
     #
-    def add_dynamics(self, dynamics_model, frequency=-1, debug=False):
+    def add_dynamics(self, dynamics_model: 'Dynamics', frequency: float = -1, 
+                     debug: bool = False) -> None:
         """
         Add temporal dynamics model to a parameter.
         
@@ -601,51 +458,6 @@ class Model:
             - >0: Dynamics repeat at this frequency
         debug : bool, default=False
             If True, print parameter structure after adding dynamics
-        
-        Examples
-        --------
-        >>> # Create 2D model
-        >>> model = Model('Au4f_2D')
-        >>> model.energy = np.linspace(80, 95, 150)
-        >>> model.time = np.linspace(-100, 1000, 200)
-        >>> # ... add components ...
-        
-        >>> # Create time-dependence for peak position
-        >>> t_model = Dynamics('GLP_01_x0')
-        >>> t_model.time = model.time
-        >>> # ... add temporal components to t_model ...
-        
-        >>> # Attach to parameter
-        >>> model.add_dynamics(t_model, frequency=10)  # 10 Hz repetition
-        
-        Notes
-        -----
-        **Parameter Naming:**
-        The dynamics_model.name must exactly match a parameter name in the
-        model. For example, if you have a GLP component numbered as GLP_01,
-        and you want to make its x0 parameter time-dependent, the Dynamics
-        model must be named 'GLP_01_x0'.
-        
-        **Dimensionality:**
-        Adding dynamics does not change model.dim from 1 to 2. The parent
-        must set model.dim = 2 explicitly (typically done by File class).
-        
-        **Expression Parameters:**
-        If a parameter has an expression (depends on another parameter),
-        and the referenced parameter becomes time-dependent, the expression
-        will automatically track time-dependent values. However, adding
-        dynamics directly to an expression parameter is not recommended.
-        
-        **Multi-Cycle Dynamics:**
-        When frequency > 0, the dynamics repeat periodically. Subcycles
-        within each period can be defined in the Dynamics model for complex
-        multi-step processes (e.g., pump-probe-pump experiments).
-        
-        See Also
-        --------
-        Dynamics : Time-dependence model class
-        Dynamics.set_frequency : Configure repetition frequency
-        Par.update : Parameter update with Dynamics
         """
         # set the model instance calling this method as parent model for Dynamics 
         dynamics_model.parent_model = self
@@ -667,7 +479,7 @@ class Model:
         return None
     
     #
-    def _analyze_expression_dependencies(self):
+    def _analyze_expression_dependencies(self) -> None:
         """
         Analyze all parameter expressions for time-dependent references.
         
@@ -678,15 +490,6 @@ class Model:
         
         Called automatically after add_dynamics() to update expression
         dependency tracking.
-        
-        Notes
-        -----
-        Internal method. Users typically don't need to call this directly.
-        
-        See Also
-        --------
-        Par.analyze_expression_dependencies : Parameter-level analysis
-        add_dynamics : Triggers this analysis
         """
         # Get all parameters from all components
         all_parameters = self._get_all_parameters()
@@ -697,22 +500,15 @@ class Model:
         return None
     
     #
-    def _get_all_parameters(self):
+    def _get_all_parameters(self) -> List['Par']:
         """
         Get all parameters from all components in this model.
+        (Used internally for expression analysis and parameter searches)
         
         Returns
         -------
         list of Par
             All Par objects from all components
-        
-        Notes
-        -----
-        Used internally for expression analysis and parameter searches.
-        
-        See Also
-        --------
-        _analyze_expression_dependencies : Uses this to get parameter list
         """
         all_parameters = []
         for comp in self.components:
@@ -721,7 +517,7 @@ class Model:
         return all_parameters
     
     #
-    def combine(value, comp, t_ind=0):
+    def combine(value: np.ndarray, comp: 'Component', t_ind: int = 0) -> np.ndarray:
         """
         Combine component value with input spectrum via addition or convolution.
         
@@ -742,47 +538,6 @@ class Model:
         -------
         ndarray
             Updated spectrum after combining with component
-        
-        Notes
-        -----
-        **Component Types:**
-        - 'add': Regular addition (peaks, lineshapes)
-        - 'back': Background addition (requires existing spectrum)
-        - 'conv': Convolution with kernel (IRF, broadening)
-        - 'none': Placeholder, returns value unchanged
-        
-        **Order Matters:**
-        Components are combined in reverse order (last to first) to handle
-        backgrounds properly. Backgrounds need the sum of all peaks evaluated
-        before them.
-        
-        **Subcycles:**
-        Component subcycle handling (for multi-cycle dynamics) is performed
-        in Component.value(), not here. This method just handles the
-        combination logic.
-        
-        Examples
-        --------
-        Typical component order in YAML:
-```yaml
-        model:
-          Offset:      # Applied last (added to everything)
-          Shirley:     # Applied second-to-last
-          GLP:         # Peak 1
-          GLP:         # Peak 2
-```
-        
-        Evaluation order (reverse):
-        1. GLP_02 -> value
-        2. GLP_01 -> value + GLP_02
-        3. Shirley -> value + peaks + Shirley(peaks)
-        4. Offset -> value + peaks + Shirley + Offset
-        
-        See Also
-        --------
-        create_value1D : Uses this to build 1D spectra
-        Component.value : Component evaluation at time point
-        uarr.my_conv : Convolution implementation
         """
         # skip 'none' type components entirely (no-op)
         if comp.comp_type == 'none':
@@ -804,69 +559,8 @@ class Model:
             return uarr.my_conv(x=x_axis, y=value, kernel=comp.value(t_ind))
    
     #
-    def create_valueTEST(self, t_ind=0, store1D=0, return1D=0, debug=False):
-        """
-        Experimental version of create_value1D with efficiency improvements.
-        
-        **Note: This is a test/experimental method. Use create_value1D() for
-        production code.**
-        
-        Attempts to optimize model evaluation by avoiding redundant component
-        evaluations for time-independent components. However, the interaction
-        with convolutions and backgrounds makes this optimization non-trivial.
-        
-        Parameters
-        ----------
-        t_ind : int, default=0
-            Time index for evaluation
-        store1D : int, default=0
-            If 1, store individual component spectra
-        return1D : int, default=0
-            If 1, return the 1D spectrum
-        debug : bool, default=False
-            If True, print debug information
-        
-        Notes
-        -----
-        Current implementation is incomplete and may not correctly handle:
-        - Time-independent components with convolution
-        - Background functions with time-dependent spectrum
-        - Subcycle interactions
-        
-        For reliable results, use create_value1D() instead.
-        
-        See Also
-        --------
-        create_value1D : Stable production version
-        """
-        # re-initialize list containing individual component spectra
-        if store1D == 1: self.component_spectra = []
-        # re-initialize value1D
-        if isinstance(self, Dynamics):
-            self.value1D = np.zeros(len(self.time))
-        else:
-            self.value1D = np.zeros(len(self.energy))
-        
-        # combine the components into a spectrum/ time dynamics curve
-        for N in range(len(self.components)):
-            if debug: print(N+1); print(self.components[-(N+1)].fct_str)
-            if store1D == 1: current_spec = copy.deepcopy(self.value1D)
-            #
-            self.value1D = Model.combine(self.value1D, 
-                                         self.components[-(N+1)],
-                                         t_ind)
-            # check on last component value added to model
-            if store1D == 1: self.component_spectra.append(self.value1D -current_spec)
-            if debug: uplt.plot_1D([self.component_spectra[-1],])
-            
-        # flip component spectra list as components are combined LIFO in this function
-        if store1D == 1: self.component_spectra = self.component_spectra[::-1]
-        #
-        if return1D == 1: return self.value1D
-        else: return None
-    
-    #
-    def create_value1D(self, t_ind=0, store1D=0, return1D=0, debug=False):
+    def create_value1D(self, t_ind: int = 0, store1D: int = 0, 
+                       return1D: int = 0, debug: bool = False) -> Optional[np.ndarray]:
         """
         Evaluate model to create 1D spectrum (energy or time).
         
@@ -895,21 +589,6 @@ class Model:
             If return1D=1, returns the 1D spectrum. Otherwise returns None.
             Spectrum is always stored in self.value1D regardless of return setting.
         
-        Examples
-        --------
-        >>> # Evaluate model at time index 0
-        >>> model.create_value1D(t_ind=0)
-        >>> plt.plot(model.energy, model.value1D)
-        
-        >>> # Store individual components for plotting
-        >>> model.create_value1D(t_ind=0, store1D=1)
-        >>> for i, comp_spec in enumerate(model.component_spectra):
-        ...     plt.plot(model.energy, comp_spec, label=f'Component {i}')
-        
-        >>> # Use return value directly
-        >>> spectrum = model.create_value1D(t_ind=0, return1D=1)
-        >>> residual = data - spectrum
-        
         Notes
         -----
         **Component Combination Order:**
@@ -928,13 +607,6 @@ class Model:
         If components have no time-dependence, their evaluation could be cached,
         but current implementation re-evaluates for simplicity and correctness
         with convolution/background interactions.
-        
-        See Also
-        --------
-        create_value2D : Evaluate 2D model (calls this for each time point)
-        Model.combine : Static method that combines components
-        Component.value : Evaluate individual component
-        plot_1D : Visualize 1D results
         """
         # re-initialize list containing individual component spectra
         if store1D == 1: self.component_spectra = []
@@ -961,7 +633,7 @@ class Model:
         else: return None
 
     #
-    def create_value2D(self, t_ind=[], debug=False):
+    def create_value2D(self, t_ind: List[int] = [], debug: bool = False) -> None:
         """
         Evaluate model to create 2D spectrum (time × energy).
         
@@ -978,19 +650,6 @@ class Model:
         debug : bool, default=False
             If True, print debug information during evaluation
         
-        Examples
-        --------
-        >>> # Evaluate full 2D spectrum
-        >>> model.create_value2D()
-        >>> plt.pcolormesh(model.energy, model.time, model.value2D)
-        
-        >>> # Evaluate partial time range (e.g., for testing)
-        >>> model.create_value2D(t_ind=[0, 50])  # First 50 time points
-        
-        >>> # After fitting, visualize result
-        >>> model.create_value2D()
-        >>> model.plot_2D()
-        
         Notes
         -----
         **Performance:**
@@ -998,11 +657,6 @@ class Model:
         - Number of time points (len(self.time))
         - Number of energy points (len(self.energy))
         - Model complexity (number of components, time-dependent parameters)
-        
-        For large models, expect:
-        - ~0.01-0.1 seconds per time point for typical models
-        - Minutes for high-resolution 2D scans
-        - Consider create_value2D_parallel() for multi-core speedup
         
         **Memory:**
         Result stored in self.value2D has shape (n_time, n_energy).
@@ -1014,17 +668,6 @@ class Model:
         1. Time-dependent parameters evaluate their Dynamics at t_i
         2. Model components use these parameter values
         3. 1D spectrum computed and stored in value2D[t_i, :]
-        
-        This allows complex dynamics like:
-        - Peak positions shifting over time
-        - Amplitudes decaying exponentially
-        - Widths evolving with multi-exponential kinetics
-        
-        See Also
-        --------
-        create_value1D : Evaluates spectrum at single time point
-        create_value2D_parallel : Multi-threaded version for speedup
-        plot_2D : Visualize 2D results
         """
         if len(t_ind) == 0: # process entire time axis
             self.value2D = np.empty((len(self.time), len(self.energy)))
@@ -1038,73 +681,10 @@ class Model:
         return None
     
     #
-    def create_value2D_parallel(self, t_ind=[], debug=False):
-        """
-        Evaluate 2D model using parallel computation.
-        
-        **Experimental:** Multi-threaded version of create_value2D() that
-        evaluates time points in parallel. May provide speedup for complex
-        models on multi-core systems.
-        
-        Parameters
-        ----------
-        t_ind : list, optional
-            Time index range to process (see create_value2D)
-        debug : bool, default=False
-            Debug output flag
-        
-        Notes
-        -----
-        **Status:** Experimental, needs testing and optimization.
-        
-        **Potential Issues:**
-        - Thread safety with model parameter updates
-        - GIL limitations for pure Python code
-        - Memory overhead from multiple threads
-        
-        **When to Use:**
-        Consider this if:
-        - Model has many time-independent operations
-        - System has multiple CPU cores available
-        - Standard create_value2D() is bottleneck
-        
-        **When NOT to Use:**
-        - Small models (overhead > benefit)
-        - Memory-constrained systems
-        - Untested production code
-        
-        For most cases, standard create_value2D() is recommended until
-        this method is fully validated.
-        
-        See Also
-        --------
-        create_value2D : Standard serial version (recommended)
-        """
-        if len(t_ind) == 0: # process entire time axis
-            n_times = len(self.time)
-            self.value2D = np.empty((n_times, len(self.energy)))
-            # Parallelize the 1D computations
-            def compute_1d(ti):
-                return self.create_value1D(t_ind=ti, return1D=1)
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                results = list(executor.map(compute_1d, range(n_times)))
-            for ti, val in enumerate(results):
-                self.value2D[ti, :] = val
-        else: # process selection according to t_ind
-            t_start, t_stop = t_ind[0], t_ind[1]
-            n_times = len(self.time[t_start:t_stop])
-            self.value2D = np.empty((n_times, len(self.energy)))
-            def compute_1d(ti):
-                return self.create_value1D(t_ind=ti, return1D=1)
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                results = list(executor.map(compute_1d, range(t_start, t_stop)))
-            for ti, val in enumerate(results):
-                self.value2D[ti, :] = val
-        #
-        return None
-
-    #
-    def plot_1D(self, t_ind=0, plot_ind=False, x_lim=None, y_lim=None, save_img=0, save_path=''):
+    def plot_1D(self, t_ind: int = 0, plot_ind: bool = False, 
+                x_lim: Optional[Tuple[float, float]] = None, 
+                y_lim: Optional[Tuple[float, float]] = None, 
+                save_img: int = 0, save_path: str = '') -> None:
         """
         Plot 1D model spectrum (energy or time).
         
@@ -1132,42 +712,6 @@ class Model:
             - -1: Save only (no display)
         save_path : str, default=''
             Path for saving figure (if save_img != 0)
-        
-        Examples
-        --------
-        >>> # Plot total spectrum
-        >>> model.plot_1D(t_ind=0)
-        
-        >>> # Plot individual components with legend
-        >>> model.plot_1D(t_ind=0, plot_ind=True)
-        
-        >>> # Zoom in on region of interest
-        >>> model.plot_1D(t_ind=0, plot_ind=True, 
-        ...               x_lim=(83, 89), y_lim=(0, 25))
-        
-        >>> # Save without displaying
-        >>> model.plot_1D(t_ind=0, plot_ind=True,
-        ...               save_img=-1, save_path='model_components.png')
-        
-        Notes
-        -----
-        **Automatic Configuration:**
-        Plot settings are inherited from parent File via plot_config property.
-        This ensures consistency with data plots and other model plots.
-        
-        **Component Colors:**
-        When plot_ind=True, components are automatically assigned different
-        colors from the default matplotlib color cycle.
-        
-        **Dynamics Models:**
-        For Dynamics instances, x-axis is always time (regardless of x_dir
-        setting) and shows temporal evolution of the parameter.
-        
-        See Also
-        --------
-        plot_2D : Plot 2D time-and-energy spectrum
-        create_value1D : Must be called first with store1D=1 for plot_ind=True
-        PlotConfig : Plot configuration system
         """
         # Get model config for plotting
         config = self.plot_config
@@ -1207,7 +751,10 @@ class Model:
         return None
 
     #
-    def plot_2D(self, save_img=0, save_path='', x_lim=None, y_lim=None, z_lim=None):
+    def plot_2D(self, save_img: int = 0, save_path: str = '', 
+                x_lim: Optional[Tuple[float, float]] = None, 
+                y_lim: Optional[Tuple[float, float]] = None, 
+                z_lim: Optional[Tuple[float, float]] = None) -> None:
         """
         Plot 2D time-and-energy spectrum as heatmap.
         
@@ -1230,42 +777,6 @@ class Model:
             Time axis display range (min, max)
         z_lim : tuple of float, optional
             Color scale limits (min, max)
-        
-        Examples
-        --------
-        >>> # Plot full 2D spectrum
-        >>> model.create_value2D()
-        >>> model.plot_2D()
-        
-        >>> # Focus on specific time/energy region
-        >>> model.plot_2D(x_lim=(83, 89), y_lim=(0, 500))
-        
-        >>> # Set color scale limits
-        >>> model.plot_2D(z_lim=(0, 20))
-        
-        >>> # Save high-res figure for publication
-        >>> model.plot_2D(save_img=-1, save_path='model_2D_final.png')
-        
-        Notes
-        -----
-        **Model Evaluation:**
-        You must call model.create_value2D() before plotting. The plot shows
-        the content of model.value2D, which is only populated by create_value2D().
-        
-        **Configuration:**
-        Plot appearance (colormap, axis direction, labels) inherited from
-        parent File via plot_config property.
-        
-        **Performance:**
-        For large 2D arrays (1000+ time points), rendering may take a few
-        seconds. Consider downsampling for quick visualization during
-        model development.
-        
-        See Also
-        --------
-        plot_1D : Plot 1D spectrum or time slice
-        create_value2D : Must be called first to populate value2D
-        PlotConfig : Plot configuration system
         """
         # Plot using the utility plot_2D
         uplt.plot_2D(
@@ -1280,90 +791,6 @@ class Model:
         )
         #
         return None
-
-    #
-    def par_distribution_brood_force_test(self, comp_ind, par_ns, A_dist, x_dist):
-        """
-        Test parameter distribution effects via brute-force sampling.
-        
-        **Experimental:** Explores how parameter distributions (e.g., from
-        ensemble averaging or inhomogeneous samples) affect the resulting
-        spectrum by evaluating multiple parameter combinations.
-        
-        Parameters
-        ----------
-        comp_ind : int
-            Component index to test
-        par_ns : list of str
-            Parameter names to distribute (e.g., ['A', 'x0'])
-        A_dist : list of float
-            Distribution of amplitude values to test
-        x_dist : list of float
-            Distribution of position values to test
-        
-        Returns
-        -------
-        out_lst : list of ndarray
-            Individual spectra for each parameter combination
-        out_sum : ndarray
-            Sum of all spectra (ensemble average)
-        
-        Examples
-        --------
-        >>> # Test effect of position distribution
-        >>> A_vals = [10, 9, 8, 7, 6]  # Amplitude distribution
-        >>> x0_vals = [85.5, 85.3, 85.1, 84.9, 84.7]  # Position distribution
-        >>> spectra, avg = model.par_distribution_brood_force_test(
-        ...     comp_ind=0, par_ns=['A', 'x0'], A_dist=A_vals, x_dist=x0_vals)
-        >>> 
-        >>> # Compare individual and average
-        >>> for spec in spectra:
-        ...     plt.plot(model.energy, spec, alpha=0.3)
-        >>> plt.plot(model.energy, avg, 'k-', linewidth=2, label='Average')
-        
-        Notes
-        -----
-        **Use Cases:**
-        - Modeling inhomogeneous broadening
-        - Ensemble averaging effects
-        - Parameter uncertainty impact
-        - Sample heterogeneity effects
-        
-        **Limitations:**
-        - Only handles two parameters currently
-        - No proper distribution weighting
-        - Computationally expensive for many samples
-        
-        **Future Work:**
-        This could be expanded into a proper distribution system using
-        trspecfit.functions.distribution module for realistic distributions
-        (Gaussian, Lorentzian, etc.) with proper weighting.
-        
-        See Also
-        --------
-        trspecfit.functions.distribution : Distribution functions (underdeveloped)
-        """
-        # initialize
-        out = np.zeros(len(self.energy))
-        out_lst = []
-        out_sum = np.zeros(len(self.energy))
-        
-        # select component from model as defined by user (index) input
-        #c = self.components[comp_ind]
-        
-        # create sum over all components with A and x0 values passed by user
-        for Atemp, xtemp in zip(A_dist, x_dist):
-            # update parameters in model
-            self.update_value(new_par_values = [Atemp, xtemp],
-                              par_select = par_ns)
-            display(self.lmfit_pars) # debug
-            # add to list of all component versions
-            out_lst.append(Model.combine(out,
-                                         self.components[comp_ind]))
-            # add to summation spectrum
-            out_sum += out_lst[-1]
-        #
-        return out_lst, out_sum
     
 #    
 #
@@ -1434,76 +861,21 @@ class Component:
         Prefix for parameter names ('' for exceptions, comp_name+'_' otherwise)
     name : str
         Component display name
-    
-    Examples
-    --------
-    Create a peak component manually:
-    
-    >>> comp = Component('GLP_01', package=fcts_energy)
-    >>> comp.add_pars({
-    ...     'A': [20, True, 5, 30],
-    ...     'x0': [84.5, True, 82, 88],
-    ...     'F': [1.6, True, 1, 2.5],
-    ...     'm': [0.3, False, 0, 1]
-    ... })
-    >>> comp.energy = np.linspace(80, 95, 150)
-    >>> comp.create_pars()
-    
-    Create a time dynamics component:
-    
-    >>> comp = Component('expFun_01', package=fcts_time)
-    >>> comp.add_pars({
-    ...     'A': [2, True, 0, 5],
-    ...     'tau': [1000, True, 100, 5000],
-    ...     't0': [0, False, 0, 1],
-    ...     'y0': [0, False, 0, 1]
-    ... })
-    >>> comp.time = np.linspace(-100, 1000, 200)
-    >>> comp.create_pars()
-    
-    Notes
-    -----
-    **Component Types:**
-    Type is determined automatically from function name:
-    - Background functions (Offset, Shirley, etc.) -> 'back'
-    - Functions ending in 'CONV' -> 'conv'
-    - 'none' function -> 'none'
-    - All others -> 'add'
-    
-    **Parameter Naming:**
-    Parameters are named with prefix to avoid conflicts in multi-component models:
-    - Exception functions (backgrounds, convolutions): no prefix
-    - Regular functions: comp_name + '_' + param_name
-    
-    **Subcycles:**
-    For multi-cycle Dynamics models (e.g., pump-probe-pump), components can
-    be assigned to specific subcycles. The time_N_sub mask controls when the
-    component is active.
-    
-    **Convolution:**
-    Convolution components receive a special kernel time axis (via
-    create_t_kernel) that is wider than the main time axis to properly
-    handle edge effects.
-    
-    See Also
-    --------
-    Model : Container for components
-    Par : Parameter management
-    create_t_kernel : Kernel axis construction
-    trspecfit.functions.energy : Available energy/spectral functions
-    trspecfit.functions.time : Available time/dynamics functions
     """
     #
-    def __init__(self, comp_name, package=fcts_energy, comp_subcycle=0):
+    def __init__(self, comp_name: str, package: types.ModuleType = fcts_energy, 
+                 comp_subcycle: int = 0) -> None:
         # package containing component (either fcts_energy or fcts_time)
-        self.package = package
+        self.package: types.ModuleType = package
         # name of the component (str)
-        self.comp_name = comp_name
+        self.comp_name: str = comp_name
         # parse the component name into function string and component number
+        self.fct_str: str
+        self.N: int
         self.fct_str, self.N = uparsing.parse_component_name(comp_name)       
         # determine component type: 'add', 'conv', 'back', or 'none'
         if self.fct_str in background_functions():
-            self.comp_type = 'back'
+            self.comp_type: str = 'back'
         elif self.fct_str == 'none': # placeholder function (see src/functions/time.py)
             self.comp_type = 'none'
         elif 'CONV' in self.fct_str or self.fct_str.endswith('CONV'):
@@ -1511,27 +883,27 @@ class Component:
         else:
             self.comp_type = 'add'
         # dict of par_name: par_info from yaml file passed by user
-        self.par_dict = {}
+        self.par_dict: Dict[str, List] = {}
         # (for self.package=fcts_time) which subcycle is this component part of 
-        self.subcycle = comp_subcycle # see "t-dynamics.normalize_time" for more details
-        self.time_N_sub = None # 1 where model subcycle equals component subcycle
-        self.time_norm = None # restarts at zero for every subcycle
+        self.subcycle: int = comp_subcycle # see "t-dynamics.normalize_time" for more details
+        self.time_N_sub: Optional[np.ndarray] = None # 1 where model subcycle equals component subcycle
+        self.time_norm: Optional[np.ndarray] = None # restarts at zero for every subcycle
         # list of Par objects needed to construct component
-        self.pars = [] # used to create component value during fit
+        self.pars: List['Par'] = [] # used to create component value during fit
         # flattened list of all lmfit parameters defining this component
-        self.lmfit_par_list = []
+        self.lmfit_par_list: List[lmfit.Parameter] = []
         # time and energy axis of component are inherited from model
-        self.time = None
-        self.energy = None
+        self.time: Optional[np.ndarray] = None
+        self.energy: Optional[np.ndarray] = None
         # parent model reference
-        self.parent_model = None
+        self.parent_model: Optional[Model] = None
         #
         return None
     
     # [automatic] create self.fct attribute that will update if either
     # self.package or self.fct_str changes [attribute is read only]
     @property 
-    def fct(self):
+    def fct(self) -> Callable:
         """
         Function object for this component.
         
@@ -1547,7 +919,7 @@ class Component:
     
     # [automatic] do the same for function argument specs
     @property 
-    def fct_specs(self):
+    def fct_specs(self) -> inspect.FullArgSpec:
         """
         Function signature specifications.
         
@@ -1560,7 +932,7 @@ class Component:
     
     # [automatic] and function arguments specifically
     @property 
-    def fct_args(self):
+    def fct_args(self) -> List[str]:
         """
         Function argument names.
         
@@ -1573,7 +945,7 @@ class Component:
     
     # [automatic] create a prefix for parameters of this component
     @property 
-    def prefix(self):
+    def prefix(self) -> str:
         """
         Prefix for parameter names.
         
@@ -1588,7 +960,7 @@ class Component:
         
     # [automatic] create a name for this component
     @property 
-    def name(self):
+    def name(self) -> str:
         """
         Component display name.
         
@@ -1662,7 +1034,7 @@ class Component:
         return re.sub(pattern, replace_with_prefix, expr)
 
     #
-    def add_pars(self, par_info_dict):
+    def add_pars(self, par_info_dict: Dict[str, List]) -> None:
         """
         Add parameter specifications to component.
         
@@ -1673,40 +1045,22 @@ class Component:
         Parameters
         ----------
         par_info_dict : dict
-            Parameter specifications: {name: [value, vary, min, max]} or
-            {name: ['expression']} for constrained parameters
-        
-        Examples
-        --------
-        >>> comp = Component('GLP_01')
-        >>> comp.add_pars({
-        ...     'A': [20, True, 5, 30],
-        ...     'x0': [84.5, True, 82, 88],
-        ...     'F': [1.6, True, 1, 2.5],
-        ...     'm': [0.3, False, 0, 1]
-        ... })
-        
-        >>> # Parameter with expression
-        >>> comp.add_pars({
-        ...     'x0': ['GLP_01_x0 + 3.6']  # Depends on another parameter
-        ... })
+            Parameter specifications: {name: [value, vary, min, max]} for
+            constrained or {name: [value], vary} for unconstrained parameters,
+            or {name: ['expression']} for dependent parameters
         
         Notes
         -----
         Does not create the actual Par objects yet - that happens in
         create_pars(). This separation allows parameters to be defined
         before axes are known.
-        
-        See Also
-        --------
-        create_pars : Actually create Par objects from this dictionary
         """
         self.par_dict = par_info_dict
         #
         return None
     
     #
-    def create_pars(self, prefix='', debug=False):
+    def create_pars(self, prefix: str = '', debug: bool = False) -> None:
         """
         Create Par objects from parameter dictionary.
         
@@ -1721,15 +1075,6 @@ class Component:
         debug : bool, default=False
             If True, print parameter details during creation
         
-        Examples
-        --------
-        >>> comp = Component('GLP_01')
-        >>> comp.add_pars({'A': [20, True, 5, 30], ...})
-        >>> comp.energy = np.linspace(80, 95, 150)
-        >>> comp.create_pars()
-        >>> print([p.name for p in comp.pars])
-        ['GLP_01_A', 'GLP_01_x0', 'GLP_01_F', 'GLP_01_m']
-        
         Notes
         -----
         **Two-Pass Creation:**
@@ -1738,26 +1083,13 @@ class Component:
         
         This ensures expressions like 'GLP_02_A' work even when GLP_02
         is defined after GLP_01 in the component list.
-        
-        **Parent References:**
-        Each Par receives a parent_model reference for expression evaluation
-        and time-dependence tracking.
-        
-        **Axes:**
-        Each Par inherits the time axis from the component for use in
-        Dynamics models.
-        
-        See Also
-        --------
-        add_pars : Define parameters before calling this
-        Par.create : Individual parameter creation
         """
         lst = [] # initialize pars list
         if len(prefix) > 0:
             prefix += '_'
 
         # First pass: create all Par objects, but do not set expressions
-        expr_params = []
+        expr_params: List[Tuple['Par', str]] = []
         for p_name, p_info in self.par_dict.items():
             temp = Par(name=prefix + self.prefix + p_name)
             temp.info = p_info  # see Par class for details
@@ -1795,7 +1127,7 @@ class Component:
         return None
     
     #
-    def update_lmfit_par_list(self):
+    def update_lmfit_par_list(self) -> None:
         """
         Update flattened list of lmfit parameters.
         
@@ -1810,11 +1142,6 @@ class Component:
         
         The flattened list is used by Model to construct the complete
         lmfit.Parameters object for fitting.
-        
-        See Also
-        --------
-        Model.update : Calls this for all components
-        Par.lmfit_par_list : Individual parameter lists
         """
         # re-initialize the list
         self.lmfit_par_list = []
@@ -1826,7 +1153,7 @@ class Component:
         return None
     
     #
-    def describe(self, detail=1):
+    def describe(self, detail: int = 1) -> None:
         """
         Print component information.
         
@@ -1836,18 +1163,6 @@ class Component:
             Detail level:
             - 0: Function name only
             - 1+: Function name, type, subcycle, and parameters
-        
-        Examples
-        --------
-        >>> comp.describe(detail=0)
-        function: GLP from <module 'trspecfit.functions.energy'>
-        
-        >>> comp.describe(detail=1)
-        function: GLP from <module 'trspecfit.functions.energy'>
-        function will be added to other components [for all times t]
-        GLP_01_A: [20, True, 5, 30]
-        GLP_01_x0: [84.5, True, 82, 88]
-        ...
         """
         # print info on function
         print(f'function: {self.fct_str} from {self.package}')
@@ -1881,7 +1196,7 @@ class Component:
         return None
     
     #
-    def create_t_kernel(self, debug=False):
+    def create_t_kernel(self, debug: bool = False) -> np.ndarray:
         """
         Create time axis for convolution kernel.
         
@@ -1898,35 +1213,6 @@ class Component:
         -------
         ndarray
             Kernel time axis, centered at 0 and extending ±(width * kernel_parameter)
-        
-        Examples
-        --------
-        >>> comp = Component('gaussCONV', package=fcts_time)
-        >>> comp.add_pars({'SD': [80, True, 0, 1000]})
-        >>> comp.time = np.linspace(-100, 1000, 200)
-        >>> t_kernel = comp.create_t_kernel()
-        >>> print(f"Kernel spans {t_kernel[0]:.1f} to {t_kernel[-1]:.1f}")
-        Kernel spans -320.0 to 320.0
-        
-        Notes
-        -----
-        **Kernel Width:**
-        Each convolution function has an associated width function (e.g.,
-        gaussCONV_kernel_width()) that returns a multiplier. The kernel axis
-        extends to ±(first_parameter × multiplier).
-        
-        **Time Step:**
-        Uses the same time step as the main time axis for consistent
-        convolution behavior.
-        
-        **Function Names:**
-        Only works with functions ending in 'CONV' that have corresponding
-        kernel_width functions in fcts_time module.
-        
-        See Also
-        --------
-        trspecfit.functions.time : Convolution functions and kernel widths
-        Model.combine : Uses kernel for convolution operation
         """
         # get kernel parameters i.e. component parameters
         parK = ulmfit.par_extract(self.par_dict, return_type='list')
@@ -1943,7 +1229,7 @@ class Component:
         return t_kernel
 
     #
-    def value(self, t_ind=0, **kwargs):
+    def value(self, t_ind: int = 0, **kwargs) -> np.ndarray:
         """
         Evaluate component at specific time point.
         
@@ -1963,21 +1249,6 @@ class Component:
         ndarray
             Component value as function of energy or time
         
-        Examples
-        --------
-        >>> # Evaluate energy-resolved component
-        >>> comp.energy = np.linspace(80, 95, 150)
-        >>> spec = comp.value(t_ind=0)
-        >>> plt.plot(comp.energy, spec)
-        
-        >>> # Evaluate time-resolved component
-        >>> comp.time = np.linspace(-100, 1000, 200)
-        >>> dynamics = comp.value(t_ind=0)
-        >>> plt.plot(comp.time, dynamics)
-        
-        >>> # Background component (needs existing spectrum)
-        >>> shirley = back_comp.value(t_ind=0, spectrum=peak_sum)
-        
         Notes
         -----
         **Parameter Evaluation:**
@@ -1993,11 +1264,6 @@ class Component:
         **Background Functions:**
         Background functions receive the 'spectrum' kwarg containing the
         current peak sum, which they use to compute backgrounds like Shirley.
-        
-        See Also
-        --------
-        Par.value : Parameter evaluation at time point
-        Model.combine : Combines component values into spectrum
         """
         # get component parameters as list
         pars = []
@@ -2018,7 +1284,7 @@ class Component:
                 return self.fct(self.time_norm, *pars, **kwargs) *self.time_N_sub
     
     #
-    def plot(self, t_ind=0, **kwargs):
+    def plot(self, t_ind: int = 0, **kwargs) -> None:
         """
         Plot component as standalone spectrum/dynamics.
         
@@ -2031,26 +1297,6 @@ class Component:
             Time index for evaluation
         **kwargs : dict
             Additional arguments passed to component function
-        
-        Examples
-        --------
-        >>> comp.energy = np.linspace(80, 95, 150)
-        >>> comp.plot()  # Shows component shape
-        
-        >>> # Check time-dynamics
-        >>> t_comp.time = np.linspace(-100, 1000, 200)
-        >>> t_comp.plot()  # Shows temporal evolution
-        
-        Notes
-        -----
-        Plots use default styling and don't inherit File plot configuration.
-        For publication-quality plots, evaluate component and use uplt.plot_1D
-        with proper configuration.
-        
-        See Also
-        --------
-        value : Underlying evaluation method
-        uplt.plot_1D : More configurable plotting
         """
         # get x axis and its label
         if self.package == fcts_energy: 
@@ -2109,31 +1355,6 @@ class Par:
     parent_model : Model or None
         Parent model reference (for finding other parameters)
     
-    Examples
-    --------
-    Create a standard parameter:
-    
-    >>> par = Par('GLP_01_A', [20, True, 5, 30])
-    >>> par.create()
-    >>> print(par.value())
-    20
-    
-    Create an expression parameter:
-    
-    >>> par = Par('GLP_02_A', ['3/4 * GLP_01_A'])
-    >>> par.create()
-    >>> # Value will be computed from GLP_01_A when evaluated
-    
-    Add time-dependence:
-    
-    >>> par = Par('GLP_01_x0', [84.5, True, 82, 88])
-    >>> par.create()
-    >>> t_model = Dynamics('GLP_01_x0')
-    >>> # ... configure t_model ...
-    >>> par.update(t_model)
-    >>> par.t_vary
-    True
-    
     Notes
     -----
     **Time-Dependence:**
@@ -2153,15 +1374,9 @@ class Par:
     lmfit_par_list contains all parameters defining this Par:
     - Without time-dependence: 1 parameter (the spectral one)
     - With time-dependence: N parameters (spectral + all from Dynamics model)
-    
-    See Also
-    --------
-    Component : Contains Par objects
-    Dynamics : Time-dependence model
-    Model.add_dynamics : Attach Dynamics to parameter
     """
     #
-    def __init__(self, name, info=[]):
+    def __init__(self, name: str, info: list = []) -> None:
         self.name = name
         self.info = info
         self.lmfit_par = lmfit.Parameters()
@@ -2177,7 +1392,7 @@ class Par:
         return None
     
     #
-    def describe(self, detail=0):
+    def describe(self, detail: int = 0) -> None:
         """
         Print parameter information.
         
@@ -2185,14 +1400,6 @@ class Par:
         ----------
         detail : int, default=0
             Detail level for display (passed to t_model.describe if applicable)
-        
-        Examples
-        --------
-        >>> par.describe()
-        par name: GLP_01_A [value: 20] and its <lmfit_par> attribute:
-        Name      Value      Min      Max   Stderr     Vary     Expr Brute_Step
-        GLP_01_A      20        5       30     None     True     None      None
-        parameter has no time dependence
         """
         print(f'par name: {self.name} [value: {self.value()}] and its <lmfit_par> attribute:')
         try: 
@@ -2211,7 +1418,7 @@ class Par:
         return None
         
     #
-    def create(self, prefix='', suffix='', expr_skip=False, debug=False):
+    def create(self, prefix: str = '', suffix: str = '', expr_skip: bool = False, debug: bool = False) -> None:
         """
         Create lmfit parameter from info specification.
         
@@ -2236,11 +1443,6 @@ class Par:
         For expression parameters, expr_skip=True creates a temporary
         parameter with dummy value. The actual expression is set in a
         second pass (see Component.create_pars) to handle forward references.
-        
-        See Also
-        --------
-        Component.create_pars : Two-pass creation for expressions
-        ulmfit.par_create : Underlying parameter creation
         """
         # create standard lmfit parameter (spectral component)
         if expr_skip and len(self.info) == 1 and isinstance(self.info[0], str):
@@ -2256,7 +1458,7 @@ class Par:
         return None
     
     #
-    def update(self, t_model):
+    def update(self, t_model: 'Dynamics') -> None:
         """
         Add time-dependence to parameter via Dynamics model.
         
@@ -2267,35 +1469,6 @@ class Par:
         ----------
         t_model : Dynamics
             Dynamics model describing time evolution
-        
-        Examples
-        --------
-        >>> par = Par('GLP_01_x0', [84.5, True, 82, 88])
-        >>> par.create()
-        >>> 
-        >>> t_model = Dynamics('GLP_01_x0')
-        >>> t_model.time = np.linspace(-100, 1000, 200)
-        >>> # ... add components to t_model ...
-        >>> 
-        >>> par.update(t_model)
-        >>> print(par.t_vary)
-        True
-        >>> print(len(par.lmfit_par_list))  # Now includes temporal parameters
-        5  # (1 base + 4 from dynamics components, for example)
-        
-        Notes
-        -----
-        After calling update:
-        - t_vary flag set to True
-        - t_model attribute stores the Dynamics model
-        - lmfit_par_list extended with temporal parameters
-        - value() method will return time-dependent values
-        
-        See Also
-        --------
-        Model.add_dynamics : High-level method that calls this
-        Dynamics : Time-dependence model class
-        value : Evaluation with time-dependence
         """
         # update t_vary (default = False)
         self.t_vary = True
@@ -2309,7 +1482,7 @@ class Par:
         return None
     
     #
-    def value(self, t_ind=0, update_t_model=True):
+    def value(self, t_ind: int = 0, update_t_model: bool = True) -> list:
         """
         Get parameter value at specific time point.
         
@@ -2329,23 +1502,6 @@ class Par:
         float or list
             Parameter value(s) at time point t_ind
         
-        Examples
-        --------
-        >>> # Time-independent parameter
-        >>> par = Par('GLP_01_A', [20, True, 5, 30])
-        >>> par.create()
-        >>> par.value()
-        20
-        
-        >>> # Time-dependent parameter
-        >>> par.t_vary = True
-        >>> par.t_model.value1D = np.array([0, 1, 2, 3, ...])  # Dynamics result
-        >>> par.value(t_ind=10)
-        20 + par.t_model.value1D[10]  # Base + dynamics
-        
-        >>> # Expression parameter referencing time-dependent parameter
-        >>> # Automatically tracks referenced parameter's time-dependence
-        
         Notes
         -----
         **Return Type:**
@@ -2364,11 +1520,6 @@ class Par:
         **Expression Evaluation:**
         For expressions referencing time-dependent parameters, the expression
         is evaluated with current values of all referenced parameters at t_ind.
-        
-        See Also
-        --------
-        update : Add time-dependence to parameter
-        _evaluate_time_dependent_expression : Expression evaluation
         """
         if self.t_vary == False:
             if self.expr_refs_time_dep:
@@ -2391,30 +1542,19 @@ class Par:
         return value
     
     #
-    def analyze_expression_dependencies(self, all_parameters):
+    def analyze_expression_dependencies(self, all_parameters: list['Par']) -> None:
         """
         Analyze expression for time-dependent parameter references.
         
         Checks if this parameter's expression references any time-dependent
         parameters. If so, sets expr_refs_time_dep flag so value() can
         handle dynamic expression evaluation.
-        
+        Called automatically after adding time-dependence to any parameter.
+
         Parameters
         ----------
         all_parameters : list of Par
             All parameters in parent model (to check time-dependence)
-        
-        Notes
-        -----
-        Called automatically by Model._analyze_expression_dependencies after
-        adding time-dependence to any parameter.
-        
-        Users don't typically call this directly.
-        
-        See Also
-        --------
-        Model._analyze_expression_dependencies : Triggers this analysis
-        _evaluate_time_dependent_expression : Uses the analysis results
         """
         if len(self.info) == 1 and isinstance(self.info[0], str):
             self.expr_string = self.info[0]
@@ -2431,7 +1571,7 @@ class Par:
         return None
     
     #
-    def _find_parameter_by_name(self, par_name, all_parameters):
+    def _find_parameter_by_name(self, par_name: str, all_parameters: list['Par']) -> 'Par':
         """
         Find parameter by name in list.
         
@@ -2454,7 +1594,7 @@ class Par:
         return None
     
     #
-    def _evaluate_time_dependent_expression(self, t_ind, all_parameters, update_t_model=True):
+    def _evaluate_time_dependent_expression(self, t_ind: int, all_parameters: list['Par'], update_t_model: bool = True) -> list:
         """
         Evaluate expression with time-dependent parameter values.
         
@@ -2506,7 +1646,7 @@ class Par:
             raise ValueError(f"Error evaluating expression '{self.expr_string}': {e}")
     
     #
-    def _get_all_parameters(self):
+    def _get_all_parameters(self) -> list['Par']:
         """
         Get all parameters from parent model.
         
@@ -2514,10 +1654,6 @@ class Par:
         -------
         list of Par
             All parameters in parent model
-        
-        Notes
-        -----
-        Used for expression evaluation to find referenced parameters.
         """
         if hasattr(self, 'parent_model') and self.parent_model:
             return self.parent_model._get_all_parameters()
@@ -2561,47 +1697,6 @@ class Dynamics(Model):
     N_counter : ndarray or None
         Cumulative subcycle counter (increments each subcycle)
     
-    Examples
-    --------
-    Simple exponential decay:
-    
-    >>> t_model = Dynamics('GLP_01_x0')
-    >>> t_model.time = np.linspace(-100, 1000, 200)
-    >>> 
-    >>> c_exp = Component('expFun', fcts_time)
-    >>> c_exp.add_pars({
-    ...     'A': [2, True, 0, 5],
-    ...     'tau': [500, True, 100, 2000],
-    ...     't0': [0, False, 0, 1],
-    ...     'y0': [0, False, 0, 1]
-    ... })
-    >>> t_model.add_components([c_exp])
-    
-    With instrumental response function:
-    
-    >>> t_model = Dynamics('GLP_01_x0')
-    >>> t_model.time = np.linspace(-100, 1000, 200)
-    >>> 
-    >>> c_irf = Component('gaussCONV', fcts_time)
-    >>> c_irf.add_pars({'SD': [50, True, 10, 200]})
-    >>> 
-    >>> c_exp = Component('expFun', fcts_time)
-    >>> c_exp.add_pars({...})
-    >>> 
-    >>> t_model.add_components([c_irf, c_exp])
-    
-    Multi-cycle with subcycles (pump-probe-pump):
-    
-    >>> t_model = Dynamics('GLP_01_x0')
-    >>> t_model.time = np.linspace(0, 1000, 1000)  # Multiple cycles
-    >>> t_model.subcycles = 2  # Two subcycles per main cycle
-    >>> 
-    >>> # Load from YAML with two submodels
-    >>> file.load_model('dynamics.yaml', ['model_sub1', 'model_sub2'], 
-    ...                 par_name='GLP_01_x0')
-    >>> file.add_time_dependence('dynamics.yaml', ['model_sub1', 'model_sub2'],
-    ...                          par_name='GLP_01_x0', frequency=10)
-    
     Notes
     -----
     **Single Cycle (frequency=-1):**
@@ -2635,16 +1730,9 @@ class Dynamics(Model):
     **Evaluation:**
     The dynamics model evaluates to value1D, which is added to the base
     parameter value: param_total(t) = param_base + dynamics.value1D[t]
-    
-    See Also
-    --------
-    Model.add_dynamics : Attach Dynamics to parameter
-    Par.update : Parameter-level attachment
-    trspecfit.functions.time : Available dynamics functions
-    normalize_time : Time axis normalization for multi-cycle
     """
     #
-    def __init__(self, model_name):
+    def __init__(self, model_name: str) -> None:
         super().__init__(model_name)     
         # repetition frequency of time-dependent model behaviour
         self.frequency = -1
@@ -2658,7 +1746,7 @@ class Dynamics(Model):
         return None
     
     #
-    def set_frequency(self, frequency, time_unit=0):
+    def set_frequency(self, frequency: float, time_unit: int = 0) -> None:
         """
         Set repetition frequency and update time normalization.
         
@@ -2675,14 +1763,6 @@ class Dynamics(Model):
             Power of 10 for time axis units (e.g., 0 for seconds, -3 for ms).
             Currently disabled/unused.
         
-        Examples
-        --------
-        >>> t_model = Dynamics('GLP_01_x0')
-        >>> t_model.time = np.linspace(0, 1, 1000)  # 0-1 second
-        >>> t_model.subcycles = 2
-        >>> t_model.set_frequency(10)  # 10 Hz = 0.1 s period
-        >>> # Now time_norm resets every 0.05 s (half period for 2 subcycles)
-        
         Notes
         -----
         After setting frequency:
@@ -2694,11 +1774,6 @@ class Dynamics(Model):
         For each component:
         - time_N_sub mask applied (zeros where subcycle doesn't match)
         - Normalized time axis inherited (if subcycle != 0)
-        
-        See Also
-        --------
-        normalize_time : Computes normalized time arrays
-        Component.value : Uses time_N_sub and time_norm during evaluation
         """
         self.frequency = frequency # set the frequency attribute itslef
         self.normalize_time() # update the normalization of the time axis
@@ -2714,7 +1789,7 @@ class Dynamics(Model):
         return None
 
     #
-    def normalize_time(self, time_unit=0, debug=False):
+    def normalize_time(self, time_unit: int = 0, debug: bool = False) -> None:
         """
         Normalize time axis for multi-cycle dynamics with subcycles.
         
@@ -2768,11 +1843,6 @@ class Dynamics(Model):
         - subcycles = 1 (use subcycles=0 for no subdivision)
         - frequency < 0 and != -1
         - subcycles > 1 with frequency = -1 (inconsistent)
-        
-        See Also
-        --------
-        set_frequency : High-level method that calls this
-        Component.value : Uses normalized time for subcycle components
         """
         # Sanity checks
         if self.subcycles == 1 or not isinstance(self.subcycles, int):

@@ -7,17 +7,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 import copy
-
-# local imports
 from trspecfit import Project, File
 from trspecfit.mcp import Model, Component, Par
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import time as fcts_time
 
-
+#
+#
 class TestMCPModel:
     """Test MCP Model class functionality"""
     
+    #
     def test_model_creation(self):
         """Test basic model creation and initialization"""
         model = Model('test_model')
@@ -29,6 +29,7 @@ class TestMCPModel:
         assert model.energy is None
         assert model.time is None
     
+    #
     def test_model_with_components(self):
         """Test model with spectral components (Au4f test from notebook)"""
         # Initialize 2D fit model
@@ -72,40 +73,34 @@ class TestMCPModel:
         assert mod2D.components[2].fct_str == 'GLP'
         assert mod2D.components[3].fct_str == 'GLP'
     
-    def test_model_parameter_distribution(self):
-        """Test parameter distribution functionality"""
-        # Create a simple model for testing
-        model = Model('test_dist')
-        model.energy = np.linspace(80, 90, 100)
-        model.time = np.linspace(0, 10, 50)
+    #$% parameter distributions to be implemented 
+    # def test_model_parameter_distribution(self):
+    #     """Test parameter distribution functionality"""
+    #     # Create a simple model for testing
+    #     model = Model('test_dist')
+    #     model.energy = np.linspace(80, 90, 100)
+    #     model.time = np.linspace(0, 10, 50)
         
-        # Add a GLP component
-        c_peak = Component('GLP')
-        c_peak.add_pars({
-            'A': [10, True, 5, 15],
-            'x0': [85, True, 80, 90],
-            'F': [1.5, True, 1, 2],
-            'm': [0.3, False, 0, 1]
-        })
-        model.add_components([c_peak])
+    #     # Add a GLP component
+    #     c_peak = Component('GLP')
+    #     c_peak.add_pars({
+    #         'A': [10, True, 5, 15],
+    #         'x0': [85, True, 80, 90],
+    #         'F': [1.5, True, 1, 2],
+    #         'm': [0.3, False, 0, 1]
+    #     })
+    #     model.add_components([c_peak])
         
-        # Test parameter distribution
-        comp_ind = 0
-        par_ns = ['A', 'x0']
-        A_dist = [10, 9, 8, 7, 6]
-        x_dist = [85.5, 85.3, 85.1, 84.9, 84.7]
-        
-        specs, s_sum = model.par_distribution_brood_force_test(comp_ind, par_ns, A_dist, x_dist)
-        
-        assert len(specs) == len(A_dist)
-        assert s_sum is not None
-        # The function returns 1D spectra, not 2D
-        assert np.shape(specs[0]) == (len(model.energy),)
+    #     # Test parameter distribution
+    #     # ...
+    #     assert bla bla
 
-
+#
+#
 class TestMCPComponent:
     """Test MCP Component class functionality"""
     
+    #
     def test_component_creation(self):
         """Test basic component creation"""
         comp = Component('GLP')
@@ -115,6 +110,7 @@ class TestMCPComponent:
         assert comp.par_dict == {}
         assert comp.pars == []
     
+    #
     def test_numbered_component(self):
         """Test numbered component creation"""
         comp = Component('GLP_01')
@@ -123,6 +119,7 @@ class TestMCPComponent:
         assert comp.N == 1
         assert comp.comp_name == 'GLP_01'
     
+    #
     def test_component_parameter_management(self):
         """Test component parameter addition and management"""
         comp = Component('GLP')
@@ -138,6 +135,7 @@ class TestMCPComponent:
         assert comp.par_dict['F'] == [1.0, True, 0.75, 2.5]
         assert comp.par_dict['m'] == [0.3, True, 0, 1]
     
+    #
     def test_component_prefix_handling(self):
         """Test component prefix handling when component number changes"""
         comp = Component('GLP')
@@ -152,6 +150,7 @@ class TestMCPComponent:
         assert comp.prefix == 'GLP_08_'
         assert comp.comp_name == 'GLP_08'
     
+    #
     def test_component_creation_with_energy_time(self):
         """Test component creation with energy and time axes"""
         comp = Component('GLP')
@@ -175,10 +174,12 @@ class TestMCPComponent:
         assert comp.pars[2].name == 'GLP_F'
         assert comp.pars[3].name == 'GLP_m'
 
-
+#
+#
 class TestMCPParameter:
     """Test MCP Parameter class functionality"""
     
+    #
     def test_parameter_creation(self):
         """Test basic parameter creation"""
         par = Par('test_param')
@@ -188,6 +189,7 @@ class TestMCPParameter:
         assert par.t_vary == False
         assert par.t_model is not None
     
+    #
     def test_parameter_with_info(self):
         """Test parameter creation with parameter info"""
         par = Par('test_param', [87.6, True, 84, 90])
@@ -195,6 +197,7 @@ class TestMCPParameter:
         assert par.name == 'test_param'
         assert par.info == [87.6, True, 84, 90]
     
+    #
     def test_parameter_creation_with_expression(self):
         """Test parameter creation with expression"""
         par = Par('test_param', ['GLP_01_A * 0.75'])
@@ -202,6 +205,7 @@ class TestMCPParameter:
         assert par.name == 'test_param'
         assert par.info == ['GLP_01_A * 0.75']
     
+    #
     def test_parameter_lmfit_creation(self):
         """Test parameter lmfit object creation"""
         par = Par('test_param', [87.6, True, 84, 90])
@@ -214,10 +218,12 @@ class TestMCPParameter:
         assert par.lmfit_par['test_param'].min == 84
         assert par.lmfit_par['test_param'].max == 90
 
-
+#
+#
 class TestMCPDynamics:
     """Test MCP Dynamics (time-dependent) functionality"""
     
+    #
     def test_dynamics_model_creation(self):
         """Test creation of time-dependence model"""
         # Initialize dynamics model
@@ -255,6 +261,7 @@ class TestMCPDynamics:
         assert t_mod.components[1].fct_str == 'expFun'
         assert t_mod.components[2].fct_str == 'expFun'
     
+    #
     def test_dynamics_parameter_handling(self):
         """Test parameter handling in dynamics models"""
         # Create a simple dynamics model
@@ -277,10 +284,12 @@ class TestMCPDynamics:
         assert t_mod.components[0].par_dict['A'] == [1, True, 0, 5]
         assert t_mod.components[0].par_dict['tau'] == [2.5, True, 1, 10]
 
-
+#
+#
 class TestMCPIntegration:
     """Test MCP integration with 2D models"""
     
+    #
     def test_2d_model_with_dynamics(self):
         """Test 2D model with time-dependent parameters"""
         # Create 2D model
@@ -330,6 +339,7 @@ class TestMCPIntegration:
         assert x0_param.t_vary == True
         assert x0_param.t_model is not None
     
+    #
     def test_parameter_value_updates(self):
         """Test parameter value updates during fitting"""
         # Create a simple model
@@ -365,10 +375,12 @@ class TestMCPIntegration:
         updated_values = [model.lmfit_pars[p].value for p in model.lmfit_pars]
         assert updated_values == new_values
 
-
+#
+#
 class TestEnergyFunctions:
     """Test energy/spectral function functionality"""
     
+    #
     def test_energy_function_imports(self):
         """Test that energy functions can be imported and used"""
         # Test that we can access energy functions
@@ -376,6 +388,7 @@ class TestEnergyFunctions:
         assert hasattr(fcts_energy, 'Shirley')
         assert hasattr(fcts_energy, 'GLP')
     
+    #
     def test_energy_function_evaluation(self):
         """Test energy function evaluation"""
         # Create test energy array
@@ -392,10 +405,12 @@ class TestEnergyFunctions:
         assert len(y_glp) == len(e)
         assert np.max(y_glp) > 0  # Should have a peak
 
-
+#
+#
 class TestTimeFunctions:
     """Test time/dynamics function functionality"""
     
+    #
     def test_time_function_imports(self):
         """Test that time functions can be imported and used"""
         # Test that we can access time functions
@@ -403,6 +418,7 @@ class TestTimeFunctions:
         assert hasattr(fcts_time, 'linFun')
         assert hasattr(fcts_time, 'gaussCONV')
     
+    #
     def test_time_function_evaluation(self):
         """Test time function evaluation"""
         # Create test time array
@@ -421,10 +437,12 @@ class TestTimeFunctions:
         y_gauss = fcts_time.gaussCONV(t, SD=5)
         assert len(y_gauss) == len(t)
 
-
+#
+#
 class TestMCPNormalization:
     """Test MCP time normalization functionality"""
     
+    #
     def test_time_normalization(self):
         """Test time normalization for multi-cycle dynamics"""
         # Create a dynamics model with frequency
@@ -443,7 +461,8 @@ class TestMCPNormalization:
         # Test that normalized time is calculated
         if hasattr(t_mod, 'time_norm'):
             assert len(t_mod.time_norm) == len(t_mod.time)
-        
+    
+    #
     def test_subcycle_handling(self):
         """Test subcycle handling in components"""
         # Create a component with subcycle
