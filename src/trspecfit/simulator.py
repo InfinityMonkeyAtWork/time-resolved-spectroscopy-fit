@@ -41,7 +41,7 @@ Workflow
   - Fit simulated data to validate fitting pipeline
 2. Machine Learning Training Data Generation
   - Create model with trspecfit.mcp.Model
-  - Define parameter space using trspecfit.utils.simulator.ParameterSweep
+  - Define parameter space using trspecfit.utils.sweep.ParameterSweep
   - Initialize Simulator with model and noise parameters
   - Generate multiple realizations (N) for each parameter combination
     (data, ground truth, and relevant metadata get saved automatically)
