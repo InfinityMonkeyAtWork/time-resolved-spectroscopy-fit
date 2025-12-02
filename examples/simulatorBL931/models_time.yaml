@@ -1,0 +1,23 @@
+# use these models to add time-dependence to a parameter in a 2D model
+# (available functions info: /src/trspecfit/functions/time.py)
+
+# use this to define an empty subcycle in a mcp.Dynamics model
+ModelNone:
+    none: {}
+
+# define time-dependence of peak positions
+# exponential decay function for subcycle with negative shift 
+MonoExpNeg:
+    expFun:
+        A: [-2, True, -10, -1E-3]
+        tau: [2, True, 1E-3, 1E3]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]
+
+# exponential decay function for subcycle with positive shift 
+MonoExpPos:
+    expFun:
+        A: ["-expFun_01_A"]
+        tau: ["expFun_01_tau"]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]
