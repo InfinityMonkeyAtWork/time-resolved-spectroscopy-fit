@@ -205,3 +205,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+examples/subcycles_fits/
+examples/subcycles/simulated_data/
+examples/simulator/simulated_data/
+examples/simulatorBL931/simulated_data/
+.DS_Store

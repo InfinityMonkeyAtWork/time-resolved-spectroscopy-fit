@@ -1,0 +1,15 @@
+Au4f: 
+    Offset:
+      y0: [2, True, 0, 5]
+    Shirley:
+        pShirley: [400, True, 1.0E-6, 1.0E+3]
+    GLP:
+      A: [20, True, 5, 25]
+      x0: [84, True, 80, 90]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+    GLP:
+      A: ["3/4*GLP_01_A"]
+      x0: ["GLP_01_x0 +3.6"]
+      F: ["GLP_01_F"]
+      m: ["GLP_01_m"]
