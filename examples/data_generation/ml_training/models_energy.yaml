@@ -1,3 +1,6 @@
+# use these models to describe the energy-dependent data
+# (available functions info: /src/trspecfit/functions/energy.py)
+
 single_peak: 
     Offset:
       y0: [2, True, 0, 5]

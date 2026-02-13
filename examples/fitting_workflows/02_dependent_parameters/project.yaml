@@ -1,0 +1,20 @@
+# Project configuration for trspecfit dependent_parameters example
+
+# Display settings (general verbosity)
+show_info: 1  # 0: no output, 1: important, 2: all, 3+: debugging
+
+# Axis labels
+e_label: 'Binding energy (eV)' # x -> energy
+t_label: 'Time (s)' # y -> time
+z_label: 'Intensity (arb. units)' # z -> intensity
+
+# Plot settings
+x_dir: 'rev'  # def(ault) or rev(erse)
+x_type: 'lin'  # lin or log
+y_dir: 'def'  # def(ault) or rev(erse)
+y_type: 'lin'  # lin or log
+z_colormap: 'RdBu' # colormap in 2D plots
+z_type: 'lin'  # lin or log (2D plots)
+dpi_plt: 100 # figure display dpi
+dpi_save: 300 # figure save dpi
+res_mult: 5 # residual multiplier in figures

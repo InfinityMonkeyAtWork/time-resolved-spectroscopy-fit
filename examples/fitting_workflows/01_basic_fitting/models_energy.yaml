@@ -1,0 +1,38 @@
+# use these models to describe the energy-dependent data
+# (available functions info: /src/trspecfit/functions/energy.py)
+
+# ground state (most parameters should be able to vary)
+base:
+    Offset:
+      y0: [3, True, 0, 5]
+    LinBack:
+      pLinear: [1E-3, True, 0, 1]
+    GLP:
+      A: [12, True, 5, 15]
+      x0: [8, True, 5, 15]
+      F: [1.5, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+
+# Slice-by-Slice model fit (pinned parameters will be set to "base" Model fit result values)
+SbS:
+    Offset:
+      y0: [3, False, 0, 5]
+    LinBack:
+      pLinear: [1E-3, False, 0, 1]
+    GLP:
+      A: [12, False, 5, 15]
+      x0: [8, True, 5, 15]
+      F: [1.5, False, 0.75, 2.5]
+      m: [0.3, False, 0, 1]
+
+# 2D model fit (pinned parameters will be set to "base" Model fit result values)
+2D:
+    Offset:
+      y0: [3, False, 0, 5]
+    LinBack:
+      pLinear: [1E-3, False, 0, 1]
+    GLP:
+      A: [12, False, 5, 15]
+      x0: [8, True, 5, 15]
+      F: [1.5, False, 0.75, 2.5]
+      m: [0.3, False, 0, 1]

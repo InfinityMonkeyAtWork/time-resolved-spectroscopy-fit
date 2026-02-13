@@ -1,4 +1,4 @@
-# Project configuration for trspecfit simulator
+# Project configuration for trspecfit ML training data generation example
 
 # Display settings (general verbosity)
 show_info: 1  # 0: no output, 1: important, 2: all, 3+: debugging
@@ -18,10 +18,3 @@ z_type: 'lin'  # lin or log (2D plots)
 dpi_plt: 100 # figure display dpi
 dpi_save: 300 # figure save dpi
 res_mult: 5 # residual multiplier in figures
-
-# File I/O settings
-ext: '.dat'
-fmt: '%.6e'
-delim: ','
-DA_fmt: '%04d'
-DA_slices_fmt: '%06d'

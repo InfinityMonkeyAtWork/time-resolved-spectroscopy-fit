@@ -8,3 +8,4 @@ sine_wave:
         phi: [0, True, -0.75,0.75]
         t0: [0, False, 0, 1]
         y0: [0, False, 0, 1]
+        

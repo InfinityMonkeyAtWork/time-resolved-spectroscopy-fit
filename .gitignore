@@ -70,6 +70,8 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+docs/_static/
+docs/_templates/
 
 # PyBuilder
 .pybuilder/
@@ -205,3 +207,13 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project-specific
+# Internal beamline-specific examples (not for public repo)
+examples/simulatorBL931/
+
+# Generated fit results (created by trspecfit)
+*_fits/
+
+# Generated simulated data (from simulator and ML training examples)
+examples/**/simulated_data/

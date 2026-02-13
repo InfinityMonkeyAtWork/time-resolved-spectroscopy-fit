@@ -1,3 +1,6 @@
+# use these models to describe the energy-dependent data
+# (available functions info: /src/trspecfit/functions/energy.py)
+
 # ground state (most parameters should be able to vary)
 base: 
     Offset:
@@ -48,3 +51,4 @@ SbS:
       x0: ["GLP_01_x0 +3.6"]
       F: ["GLP_01_F"]
       m: ["GLP_01_m"]
+      
