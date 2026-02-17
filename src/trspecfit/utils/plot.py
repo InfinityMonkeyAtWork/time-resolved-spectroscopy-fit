@@ -13,13 +13,18 @@ import matplotlib.image as mpimg
 import numpy as np
 from trspecfit.config.plot import PlotConfig
 from trspecfit.utils.arrays import OoM
+import pathlib
+from typing import Any, Optional, Sequence, Union, cast
+from numpy.typing import ArrayLike, NDArray
+
+PathLike = Union[str, pathlib.Path]
 
 #
 # Image display utilities
 #
 
 #
-def load_plot(path, dpi_fig=75):
+def load_plot(path: PathLike, dpi_fig: int = 75) -> None:
     """
     Load and display a saved figure as an image.
     
@@ -41,7 +46,8 @@ def load_plot(path, dpi_fig=75):
     plt.show()
 
 #
-def load_plot_grid(paths, columns=3, fig_width=16, debug=False):
+def load_plot_grid(paths: Sequence[PathLike], columns: int = 3, fig_width: float = 16,
+                   debug: bool = False) -> None:
     """
     Load and display multiple images in a grid layout.
     
@@ -63,7 +69,8 @@ def load_plot_grid(paths, columns=3, fig_width=16, debug=False):
     plot_grid(images, columns, fig_width, debug)
 
 #
-def plot_grid(images, columns=3, fig_width=16, debug=False):
+def plot_grid(images: Sequence[NDArray[np.generic]], columns: int = 3,
+              fig_width: float = 16, debug: bool = False) -> None:
     """
     Display multiple images in a grid layout.
     
@@ -121,7 +128,13 @@ def plot_grid(images, columns=3, fig_width=16, debug=False):
 #
 
 #
-def plot_2D(data, x=None, y=None, config=None, **kwargs):
+def plot_2D(
+    data: ArrayLike,
+    x: Optional[ArrayLike] = None,
+    y: Optional[ArrayLike] = None,
+    config: Optional[PlotConfig] = None,
+    **kwargs: Any
+) -> None:
     """
     Plot 2D spectroscopy data as a color map.
     
@@ -186,6 +199,12 @@ def plot_2D(data, x=None, y=None, config=None, **kwargs):
     # Use default config if none provided
     if config is None:
         config = PlotConfig()
+
+    data_arr = np.asarray(data)
+    if data_arr.ndim != 2:
+        raise ValueError("data must be a 2D array")
+    x_arr = None if x is None else np.asarray(x)
+    y_arr = None if y is None else np.asarray(y)
     
     # Extract settings from config, allowing kwargs to override
     x_label = kwargs.get('x_label', config.x_label)
@@ -213,28 +232,28 @@ def plot_2D(data, x=None, y=None, config=None, **kwargs):
     fig_size = kwargs.get('fig_size', [])
     
     # Slice data if requested
-    data_plt = data
-    x_plt = x
-    y_plt = y
+    data_plt = data_arr
+    x_plt = x_arr
+    y_plt = y_arr
     
     if data_slice is not None:
         x_slice = data_slice[0] if len(data_slice) > 0 else []
         y_slice = data_slice[1] if len(data_slice) > 1 else []
         
         if len(x_slice) > 0 and len(y_slice) > 0:
-            data_plt = data[y_slice[0]:y_slice[1], x_slice[0]:x_slice[1]]
-            if x is not None:
-                x_plt = x[x_slice[0]:x_slice[1]]
-            if y is not None:
-                y_plt = y[y_slice[0]:y_slice[1]]
+            data_plt = data_arr[y_slice[0]:y_slice[1], x_slice[0]:x_slice[1]]
+            if x_arr is not None:
+                x_plt = x_arr[x_slice[0]:x_slice[1]]
+            if y_arr is not None:
+                y_plt = y_arr[y_slice[0]:y_slice[1]]
         elif len(y_slice) > 0:  # y only
-            data_plt = data[y_slice[0]:y_slice[1], :]
-            if y is not None:
-                y_plt = y[y_slice[0]:y_slice[1]]
+            data_plt = data_arr[y_slice[0]:y_slice[1], :]
+            if y_arr is not None:
+                y_plt = y_arr[y_slice[0]:y_slice[1]]
         elif len(x_slice) > 0:  # x only
-            data_plt = data[:, x_slice[0]:x_slice[1]]
-            if x is not None:
-                x_plt = x[x_slice[0]:x_slice[1]]
+            data_plt = data_arr[:, x_slice[0]:x_slice[1]]
+            if x_arr is not None:
+                x_plt = x_arr[x_slice[0]:x_slice[1]]
     
     # Determine z-axis (color) range
     if z_lim is None:
@@ -330,7 +349,12 @@ def plot_2D(data, x=None, y=None, config=None, **kwargs):
         plt.close()
 
 #
-def plot_1D(data, x=None, config=None, **kwargs):
+def plot_1D(
+    data: Union[Sequence[ArrayLike], ArrayLike],
+    x: Optional[Union[ArrayLike, list[ArrayLike]]] = None,
+    config: Optional[PlotConfig] = None,
+    **kwargs: Any
+) -> None:
     """
     Plot 1D spectroscopy data with extensive customization.
     
@@ -400,6 +424,17 @@ def plot_1D(data, x=None, config=None, **kwargs):
     # Use default config if none provided
     if config is None:
         config = PlotConfig()
+
+    if isinstance(data, Sequence) and not isinstance(data, np.ndarray):
+        data_series = [np.asarray(trace, dtype=float) for trace in data]
+    else:
+        data_arr = np.asarray(data, dtype=float)
+        if data_arr.ndim == 1:
+            data_series = [data_arr]
+        elif data_arr.ndim == 2:
+            data_series = [data_arr[i, :] for i in range(data_arr.shape[0])]
+        else:
+            raise ValueError("data must be a 1D/2D array or a sequence of 1D arrays")
     
     # Extract settings from config, allowing kwargs to override
     x_label = kwargs.get('x_label', config.x_label)
@@ -431,10 +466,7 @@ def plot_1D(data, x=None, config=None, **kwargs):
     y_scale = kwargs.get('y_scale', config.y_scale)
     
     # Determine number of plots
-    if isinstance(data, list):
-        N_plots = len(data)
-    else:
-        N_plots = np.shape(data)[0]
+    N_plots = len(data_series)
     
     # Create default values if not provided
     if linestyles is None:
@@ -448,9 +480,18 @@ def plot_1D(data, x=None, config=None, **kwargs):
     if markersizes is None:
         markersizes = N_plots * [6]
     if x is None:
-        x = np.arange(0, np.shape(data)[1], 1)
+        x_common = np.arange(0, data_series[0].shape[0], 1)
+        x_list: Optional[list[NDArray[np.float64]]] = None
+    elif isinstance(x, list):
+        x_common = None
+        x_list = [np.asarray(xi, dtype=float) for xi in x]
+    else:
+        x_common = np.asarray(x, dtype=float)
+        x_list = None
     if y_scale is None:
-        y_scale = np.ones(N_plots)
+        y_scale_arr = np.ones(N_plots, dtype=float)
+    else:
+        y_scale_arr = np.asarray(y_scale, dtype=float)
     if legend is None:
         legend = [i + 1 for i in range(N_plots)]
     
@@ -465,20 +506,20 @@ def plot_1D(data, x=None, config=None, **kwargs):
     
     # Plot each dataset
     for i in range(N_plots):
-        if isinstance(x, list):
-            x_plot = x[i]
-        else:
-            x_plot = x
+        x_plot = x_list[i] if x_list is not None else x_common
+        if x_plot is None:
+            raise ValueError("x axis could not be determined")
+        y_data = data_series[i]
         
         # Normalize if requested
         if y_norm == 1:
-            y_plot = (np.asarray(data[i]) - np.min(data[i])) / \
-                     (np.max(np.asarray(data[i]) - np.min(data[i]))) + i * waterfall
+            y_plot = (y_data - np.min(y_data)) / (np.max(y_data - np.min(y_data)))
+            y_plot = y_plot + i * waterfall
         else:
-            y_plot = y_scale[i] * np.asarray(data[i]) + i * waterfall
+            y_plot = y_scale_arr[i] * y_data + i * waterfall
         
         # Plot
-        label = f'{y_scale[i]}*{legend[i]}' if y_scale[i] != 1 else str(legend[i])
+        label = f'{y_scale_arr[i]}*{legend[i]}' if y_scale_arr[i] != 1 else str(legend[i])
         ax.plot(x_plot, y_plot,
                 ls=linestyles[i],
                 c=colors[i % len(colors)],
@@ -493,11 +534,15 @@ def plot_1D(data, x=None, config=None, **kwargs):
     
     # Reference lines
     if hlines is not None:
-        if isinstance(x, list):
-            x_minmax = [np.min([np.min(x[i]) for i in range(N_plots)]),
-                       np.max([np.max(x[i]) for i in range(N_plots)])]
+        if x_list is not None:
+            x_minmax = [
+                np.min([np.min(x_list[i]) for i in range(N_plots)]),
+                np.max([np.max(x_list[i]) for i in range(N_plots)]),
+            ]
         else:
-            x_minmax = [np.min(x), np.max(x)]
+            if x_common is None:
+                raise ValueError("x axis could not be determined")
+            x_minmax = [np.min(x_common), np.max(x_common)]
         plt.hlines(y=np.asarray(hlines),
                    xmin=x_minmax[0], xmax=x_minmax[1],
                    color='#808080', linestyle=':')
@@ -506,10 +551,10 @@ def plot_1D(data, x=None, config=None, **kwargs):
         if y_norm == 1:
             y_minmax = [0, 1]
         else:
-            y_minmax = [np.min([np.min(y_scale[i] * np.asarray(data[i]))
-                               for i in range(N_plots)]),
-                        np.max([np.max(y_scale[i] * np.asarray(data[i]))
-                               for i in range(N_plots)])]
+            y_minmax = [
+                np.min([np.min(y_scale_arr[i] * data_series[i]) for i in range(N_plots)]),
+                np.max([np.max(y_scale_arr[i] * data_series[i]) for i in range(N_plots)]),
+            ]
         plt.vlines(x=np.asarray(vlines),
                    ymin=y_minmax[0], ymax=y_minmax[1],
                    color='#808080', linestyle='--')
@@ -546,7 +591,7 @@ def plot_1D(data, x=None, config=None, **kwargs):
         plt.close()
 
 #
-def img_save(save_path, dpi=300):
+def img_save(save_path: PathLike, dpi: int = 300) -> None:
     """
     Save current matplotlib figure with sensible defaults.
     
@@ -572,7 +617,7 @@ def img_save(save_path, dpi=300):
 #
 
 #
-def major_locator_input(x):
+def major_locator_input(x: ArrayLike) -> float:
     """
     Calculate major tick spacing for matplotlib axis.
     
@@ -590,10 +635,11 @@ def major_locator_input(x):
         Major tick spacing (power of 10)
     """
     #
-    return 10 ** OoM(np.max(x))
+    x_max = float(np.max(np.asarray(x, dtype=float)))
+    return float(10 ** OoM(x_max))
 
 #
-def minor_locator_input(x):
+def minor_locator_input(x: ArrayLike) -> float:
     """
     Calculate minor tick spacing for matplotlib axis.
     
@@ -611,10 +657,11 @@ def minor_locator_input(x):
         Minor tick spacing (1/10 of major spacing)
     """
     #
-    return 10 ** (OoM(np.max(x)) - 1)
+    x_max = float(np.max(np.asarray(x, dtype=float)))
+    return float(10 ** (OoM(x_max) - 1))
 
 #
-def major_formatter_input(x):
+def major_formatter_input(x: ArrayLike) -> str:
     """
     Generate format string for matplotlib axis tick labels.
     

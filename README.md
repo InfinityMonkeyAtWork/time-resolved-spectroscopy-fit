@@ -43,14 +43,13 @@ pip install -U pip
 pip install -e .
 ```
 
-## Example Jupyter notebooks and YAML files
+## Examples
 
-Open the notebooks in `examples/` for runnable examples:
-- `examples/simple_model/example.ipynb` — basic usage example (NOT implemented)
-- `examples/dependent_parameters/example.ipynb` — parameters of one peak depend on another peak
-- `examples/subcycles/example.ipynb` — multiple subcycles inside one pump-probe cycle
-- `examples/simulator/example.ipynb` — simulate (noisy) datasets based on your model input
-- `examples/simulator/ml_training_data_gen.ipynb` — sample model parameter space and create (noisy) datasets
+The `examples/` directory contains two types of workflows:
+- **Data fitting workflows** for typical analysis use cases. Start with `examples/fitting_workflows/01_basic_fitting/example.ipynb`.
+- **Data generation workflows** for simulation, model validation, and ML training data generation. Start with `examples/data_generation/simulator/example.ipynb`.
+
+For the full examples structure and details, see `examples/README.md`.
 
 ## Fitting
 
@@ -70,7 +69,7 @@ The simulator supports two detector types:
 - **Analog detectors** (CCD, photodiode, lock-in): Continuous signals with Gaussian or Poisson noise
 - **Photon counting** (APD, PMT, event mode): Discrete photon events with shot noise
 
-See `examples/simulator/` for complete examples (basic usage: `example.ipynb`, ML data generation: `ml_training_data_gen.ipynb`).
+See `examples/README.md` for complete simulator and data-generation workflows.
 
 ## Testing
 
@@ -140,3 +139,6 @@ such, the U.S. Government has been granted for itself and others acting on
 its behalf a paid-up, nonexclusive, irrevocable, worldwide license in the
 Software to reproduce, distribute copies to the public, prepare derivative 
 works, and perform publicly and display publicly, and to permit others to do so.
+
+
+

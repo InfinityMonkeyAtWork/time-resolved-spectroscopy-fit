@@ -15,13 +15,15 @@ from decimal import Decimal
 import pandas as pd
 import numpy as np
 from scipy.signal import convolve
+from typing import Literal, Union, cast
+from numpy.typing import ArrayLike, NDArray
 
 #
 # General
 #
 
 #
-def format_float_scientific(number, exp_digits=4, precision=14):
+def format_float_scientific(number: float, exp_digits: int = 4, precision: int = 14) -> str:
     """
     Format number in scientific notation with consistent string length.
     
@@ -67,7 +69,7 @@ def format_float_scientific(number, exp_digits=4, precision=14):
     return f"{num}E{sign}{exp}"
 
 #
-def OoM(x):
+def OoM(x: float) -> int:
     """
     Get order of magnitude of a number.
     
@@ -97,7 +99,12 @@ def OoM(x):
 #
 
 #
-def get_item(df, row, col, astype='series'):
+def get_item(
+    df: pd.DataFrame,
+    row: Union[int, list],
+    col: Union[str, int],
+    astype: Literal['series', 'float', 'bool'] = 'series'
+) -> Union[pd.Series, float, bool, int]:
     """
     Extract item from pandas DataFrame with flexible row/column selection.
     
@@ -144,12 +151,16 @@ def get_item(df, row, col, astype='series'):
         series = df.iloc[row]
     elif isinstance(row, list):
         series = df.loc[df[row[0]].isin(row[1])]
+    else:
+        raise TypeError("row must be int or list")
     
     # Column selection
     if isinstance(col, str):
         item = series[col]
     elif isinstance(col, int):
         item = series[series.columns[col]]
+    else:
+        raise TypeError("col must be str or int")
     
     # Type conversion
     if astype == 'series':
@@ -158,13 +169,15 @@ def get_item(df, row, col, astype='series'):
         return float(item)
     elif astype == 'bool':
         return bool(item)
+    else:
+        raise ValueError(f"astype must be 'series', 'float', or 'bool', got '{astype}'")
 
 #
 # NumPy/SciPy array operations
 #
 
 #
-def sign_change(array, ignore_zeros=True):
+def sign_change(array: ArrayLike, ignore_zeros: bool = True) -> NDArray[np.int_]:
     """
     Detect sign changes in an array with proper zero handling.
     
@@ -204,10 +217,15 @@ def sign_change(array, ignore_zeros=True):
     sign_change_arr = ((np.roll(asign, 1) - asign) != 0).astype(int)
     sign_change_arr[0] = 0
     #
-    return sign_change_arr
+    return cast(NDArray[np.int_], sign_change_arr)
 
 #
-def pad_x_y(x, y, x_step, pad_size):
+def pad_x_y(
+    x: ArrayLike,
+    y: ArrayLike,
+    x_step: float,
+    pad_size: Union[int, float]
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """
     Pad x and y arrays for convolution with proper edge handling.
     
@@ -242,24 +260,31 @@ def pad_x_y(x, y, x_step, pad_size):
     >>> y_pad
     array([1, 1, 1, 3, 6, 6, 6])
     """
+    x_arr = np.asarray(x, dtype=float)
+    y_arr = np.asarray(y, dtype=float)
     pad_size = int(pad_size)
     
     # Pad y-axis (replicate edge values)
-    y_pad_l = y[0] * np.ones(pad_size)
-    y_pad_r = y[-1] * np.ones(pad_size)
-    y_pad = np.concatenate((y_pad_l, y, y_pad_r))
+    y_pad_l = y_arr[0] * np.ones(pad_size)
+    y_pad_r = y_arr[-1] * np.ones(pad_size)
+    y_pad = np.concatenate((y_pad_l, y_arr, y_pad_r))
     
     # Pad x-axis (extend linearly)
-    x_pad_l = np.linspace(x[0] - x_step*pad_size, x[0], pad_size, 
+    x_pad_l = np.linspace(x_arr[0] - x_step*pad_size, x_arr[0], pad_size, 
                           endpoint=False)
-    x_pad_r = np.linspace(x[-1] + x_step, x[-1] + pad_size*x_step, 
+    x_pad_r = np.linspace(x_arr[-1] + x_step, x_arr[-1] + pad_size*x_step, 
                           pad_size, endpoint=True)
-    x_pad = np.concatenate((x_pad_l, x, x_pad_r))
+    x_pad = np.concatenate((x_pad_l, x_arr, x_pad_r))
     #
     return x_pad, y_pad
 
 #
-def my_conv(x, y, kernel, method='scipy'):
+def my_conv(
+    x: ArrayLike,
+    y: ArrayLike,
+    kernel: ArrayLike,
+    method: Literal['scipy', 'numpy'] = 'scipy'
+) -> NDArray[np.float64]:
     """
     Convolution with proper edge handling via padding.
     
@@ -283,24 +308,33 @@ def my_conv(x, y, kernel, method='scipy'):
         Convolved signal with same length as input y
     """
     # Determine padding size from kernel
-    pad_size = int(kernel.size / 2)
+    x_arr = np.asarray(x, dtype=float)
+    y_arr = np.asarray(y, dtype=float)
+    kernel_arr = np.asarray(kernel, dtype=float)
+    pad_size = int(kernel_arr.size / 2)
     
     # Add padding to minimize edge artifacts
-    x_pad, y_pad = pad_x_y(x, y, x[1] - x[0], pad_size)
+    x_pad, y_pad = pad_x_y(x_arr, y_arr, float(x_arr[1] - x_arr[0]), pad_size)
     
     # Compute convolution with normalized kernel
     if method == 'scipy':
-        y_conv_pad = convolve(y_pad, kernel, mode='same') / np.sum(kernel)
+        y_conv_pad = np.asarray(
+            convolve(y_pad, kernel_arr, mode='same') / np.sum(kernel_arr),
+            dtype=float,
+        )
     elif method == 'numpy':
-        y_conv_pad = np.convolve(y_pad, kernel, mode='same') / np.sum(kernel)
+        y_conv_pad = np.asarray(
+            np.convolve(y_pad, kernel_arr, mode='same') / np.sum(kernel_arr),
+            dtype=float,
+        )
     else:
-        raise ValueError(f"method must be 'scipy' or 'numpy', got '{method}'")
+        raise ValueError(f"Unknown method '{method}'")
     
     # Remove padding and return
-    return y_conv_pad[pad_size:-pad_size]
+    return cast(NDArray[np.float64], y_conv_pad[pad_size:-pad_size])
 
 #
-def phi_norm(phi, norm=2*np.pi):
+def phi_norm(phi: float, norm: float = 2*np.pi) -> float:
     """
     Normalize angle to range [0, norm).
     
@@ -311,8 +345,10 @@ def phi_norm(phi, norm=2*np.pi):
     ----------
     phi : float
         Angle to normalize (radians)
+        
     norm : float, default=2*pi
         Normalization range:
+
         - 2*pi: Full circle [0, 2π), preserves sine/cosine character
         - pi: Half circle [0, π), forces sine character
     
@@ -325,7 +361,7 @@ def phi_norm(phi, norm=2*np.pi):
     return phi - norm * math.floor(phi / norm)
 
 #
-def running_mean(x, y, N):
+def running_mean(x: ArrayLike, y: ArrayLike, N: int) -> NDArray[np.float64]:
     """
     Calculate running (moving) average with proper edge handling.
     

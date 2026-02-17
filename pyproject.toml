@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trspecfit"
-version = "0.3.8"
+version = "0.4.0"
 authors = [
     {name = "Johannes Mahl", email = "johannes.a.mahl@gmail.com"},
 ]
@@ -42,10 +42,23 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest"
+  "pre-commit",
+  "mypy",
+  "pytest",
 ]
    
 [project.urls]
 Repository = "https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/"
 "Bug Tracker" = "https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/issues"
 Discussions = "https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/discussions"
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pyright]
+include = ["src"]
+reportMissingImports = true
+typeCheckingMode = "basic"

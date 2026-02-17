@@ -11,7 +11,7 @@ Utilities for inspecting parameter sweep datasets.
 
 import numpy as np
 import itertools
-from typing import Dict, Generator, Any, Optional, List, Tuple
+from typing import Dict, Generator, Any, Optional, List, Tuple, cast
 import h5py
 import json
 import pandas as pd
@@ -63,7 +63,7 @@ class ParameterSweep:
     Simulator.simulate_parameter_sweep : Use sweep to generate datasets
     """
     #
-    def __init__(self, strategy: str = 'auto', seed: Optional[int] = None):
+    def __init__(self, strategy: str = 'auto', seed: Optional[int] = None) -> None:
         """
         Initialize parameter sweep generator.
         
@@ -249,14 +249,14 @@ class ParameterSweep:
         ndarray
             Array of samples from the specified distribution
         """
-        n = spec.get('n_samples', 10)
+        n = int(spec.get('n_samples', 10))
         
         if spec['type'] == 'uniform':
-            return np.random.uniform(spec['min'], spec['max'], n)
+            return cast(np.ndarray, np.random.uniform(spec['min'], spec['max'], n))
         elif spec['type'] == 'normal':
-            return np.random.normal(spec['mean'], spec['std'], n)
+            return cast(np.ndarray, np.random.normal(spec['mean'], spec['std'], n))
         elif spec['type'] == 'lognormal':
-            return np.random.lognormal(spec['mean'], spec['std'], n)
+            return cast(np.ndarray, np.random.lognormal(spec['mean'], spec['std'], n))
         else:
             raise ValueError(f"Unknown distribution type: {spec['type']}")
     
@@ -384,10 +384,10 @@ class ParameterSweep:
             return n
         else:  # random
             # Maximum n_samples across all parameters
-            return max(
-                spec.get('n_samples', len(spec.get('values', [10])))
+            return int(max(
+                int(spec.get('n_samples', len(spec.get('values', [10]))))
                 for spec in self.parameter_specs.values()
-            )
+            ))
 
 #
 #
@@ -438,7 +438,7 @@ class SweepDataset:
     Simulator.simulate_parameter_sweep : Generates these datasets
     """
     #
-    def __init__(self, filepath: str):
+    def __init__(self, filepath: str) -> None:
         """
         Initialize dataset inspector.
         
@@ -488,8 +488,10 @@ class SweepDataset:
         >>> print(f"Energy: {len(energy)} points")
         """
         with h5py.File(self.filepath, 'r') as f:
-            energy = f['energy'][:]
-            time = f['time'][:]
+            energy = np.asarray(f['energy'][:], dtype=float)
+            time = np.asarray(f['time'][:], dtype=float)
+            if energy.ndim != 1 or time.ndim != 1:
+                raise ValueError("HDF5 axes 'energy' and 'time' must be 1D arrays")
             return energy, time
     
     #
@@ -535,7 +537,7 @@ class SweepDataset:
     #
     def load_config(self, config_idx: int, 
                    load_clean: bool = True,
-                   load_noisy: bool = True) -> Dict:
+                   load_noisy: bool = True) -> Dict[str, Any]:
         """
         Load a single parameter configuration and its data.
         
@@ -568,7 +570,7 @@ class SweepDataset:
         >>> print(f"Data shape: {config['clean'].shape}")
         """
         config_name = f'config_{config_idx:06d}'
-        result = {}
+        result: Dict[str, Any] = {}
         
         with h5py.File(self.filepath, 'r') as f:
             # Load parameter values
@@ -652,7 +654,7 @@ class SweepDataset:
             print(f"Noise level: {self.meta.get('noise_level', 'N/A')}")
             print(f"Noise type: {self.meta.get('noise_type', 'N/A')}")
         else:
-            print(f"Counts per cycle: {self.meta.get('counts_per_cycle', 'N/A')}")
+            print(f"Counts per delay: {self.meta.get('counts_per_delay', 'N/A')}")
         print()
         
         print("Parameter space:")

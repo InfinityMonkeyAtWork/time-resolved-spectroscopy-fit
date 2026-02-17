@@ -25,12 +25,12 @@ Dynamics : Model subclass for time-dependent behavior
 
 Architecture
 ------------
-The MCP system uses composition to build models from bottom-up:
+The MCP system uses composition to build models from bottom-up::
 
-    Par (values + time-dependence) 
+    Par (values + time-dependence)
       ↓
     Component (function + parameters)
-      ↓  
+      ↓
     Model (components + combination rules)
       ↓
     Spectrum (1D or 2D evaluated model)
@@ -58,7 +58,7 @@ import inspect
 import copy
 from IPython.display import display
 #import concurrent.futures
-from typing import List, Optional, Tuple, Union, Dict, Any, Callable
+from typing import List, Optional, Tuple, Union, Dict, Any, Callable, cast
 import types
 # asteval is used for expressions referencing time-dependent parameters
 from asteval import Interpreter
@@ -169,7 +169,7 @@ class Model:
         # lmfit.Parameters object corresponding to lmfit_par_list attribute
         self.lmfit_pars: lmfit.Parameters = lmfit.Parameters()
         # list of all parameter names
-        self.par_names: Optional[List[str]] = None
+        self.par_names: List[str] = []
         # list of component spectra (from last evaluation/ current parameters)
         self.component_spectra: List[np.ndarray] = []
         # 1D spectrum (i.e. sum/ combination of all components)
@@ -203,7 +203,7 @@ class Model:
             Configuration object with plot settings (axes, colors, DPI, etc.)
         """
         if hasattr(self, 'parent_file') and self.parent_file is not None:
-            return self.parent_file.plot_config
+            return cast(PlotConfig, self.parent_file.plot_config)
         
         # Fallback to defaults if no parent
         return PlotConfig()
@@ -222,7 +222,9 @@ class Model:
         """
         # minimum model description
         print('model name: ' +self.name)
-        try: [comp.describe(detail=detail-1) for comp in self.components]
+        try:
+            for comp in self.components:
+                comp.describe(detail=detail-1)
         except: print('no elements in this model')
         print('all (1D flattened if applicable) lmfit.Parameters(): [sorted alphabetically]')
         try: self.lmfit_pars.pretty_print()
@@ -268,9 +270,11 @@ class Model:
         handled during YAML parsing, not here.
         
         **Parameter Naming:**
+
         Parameter names are constructed as: prefix + component_name + '_' + param_name
-        - For Dynamics models: prefix = model.name (e.g., 'GLP_01_x0_')
-        - For regular models: prefix = '' (e.g., 'GLP_01_A')
+
+        - For Dynamics models: prefix = model.name (e.g., ``'GLP_01_x0_'``)
+        - For regular models: prefix = ``''`` (e.g., ``'GLP_01_A'``)
         
         **Component Preparation:**
         Each component receives:
@@ -283,7 +287,7 @@ class Model:
         After adding components, the model's lmfit_pars and par_names
         are automatically updated via self.update().
         """
-        # add list to <components> attribute 
+        # add list to components attribute 
         self.components = comps_list
         
         # the model calling this method is describing temporal dynamics of a par
@@ -303,6 +307,8 @@ class Model:
             comp.parent_model = self
             # subcycle time axis [updated when using Dynamics.set_frequency] 
             if isinstance(self, Dynamics):
+                if self.time is None:
+                    raise ValueError("Model time axis must be defined for Dynamics components")
                 comp.time_N_sub = np.ones(len(self.time)) # initialize all active
             # if comp should be convoluted it will be defined on a t_kernel axis 
             if comp.comp_type == 'conv':
@@ -337,6 +343,8 @@ class Model:
             Parameter index in component.pars, or None if not found
         """
         done = False
+        ci: Optional[int] = None
+        pi: Optional[int] = None
         for ci, comp in enumerate(self.components):
             for pi, par in enumerate(comp.pars):
                 if par.name == par_name:
@@ -414,6 +422,7 @@ class Model:
             parameters being updated.
         par_select : str or list of str, default='all'
             Which parameters to update:
+
             - 'all': Update all parameters in order
             - list: Update only parameters with names in this list
 
@@ -424,7 +433,7 @@ class Model:
         Does not trigger model re-evaluation; call create_value1D() or
         create_value2D() after updating values.
         """
-        p_count = 0 # initialize counter for parameters in <par_select>
+        p_count = 0 # initialize counter for parameters in par_select
         for i, p in enumerate(self.lmfit_pars):
             # update ALL values in model.lmfit_pars attribute
             if par_select == 'all':
@@ -467,6 +476,8 @@ class Model:
         
         # find component and parameter index from Dynamics model name
         ci, pi = self.find_par_by_name(dynamics_model.name)
+        if ci is None or pi is None:
+            raise ValueError(f'Parameter "{dynamics_model.name}" not found in model {self.name}')
         
         # add Dynamics model and update corresponding parameter
         self.components[ci].pars[pi].update(dynamics_model)
@@ -517,6 +528,7 @@ class Model:
         return all_parameters
     
     #
+    @staticmethod
     def combine(value: np.ndarray, comp: 'Component', t_ind: int = 0) -> np.ndarray:
         """
         Combine component value with input spectrum via addition or convolution.
@@ -544,10 +556,10 @@ class Model:
             return value
         # add a component to existing spectrum
         if comp.comp_type == 'add':
-            return value +comp.value(t_ind)
+            return cast(np.ndarray, value + np.asarray(comp.value(t_ind)))
         # add a background component to exisiting spectrum
         elif comp.comp_type == 'back':
-            return value +comp.value(t_ind, spectrum=value)
+            return cast(np.ndarray, value + np.asarray(comp.value(t_ind, spectrum=value)))
         # convolute component with existing spectrum 
         elif comp.comp_type == 'conv':
             if comp.package == fcts_energy:
@@ -555,8 +567,14 @@ class Model:
                 print('convolution of spectral components not defined')
             elif comp.package == fcts_time:
                 x_axis = comp.time
+            else:
+                x_axis = None
             #
-            return uarr.my_conv(x=x_axis, y=value, kernel=comp.value(t_ind))
+            if x_axis is None:
+                raise ValueError(f"Convolution axis not defined for component '{comp.name}'")
+            return uarr.my_conv(x=x_axis, y=value, kernel=np.asarray(comp.value(t_ind)))
+        else:
+            raise ValueError(f"Unknown component type: {comp.comp_type}")
    
     #
     def create_value1D(self, t_ind: int = 0, store1D: int = 0, 
@@ -669,14 +687,23 @@ class Model:
         2. Model components use these parameter values
         3. 1D spectrum computed and stored in value2D[t_i, :]
         """
+        if self.time is None or self.energy is None:
+            raise ValueError("Model time and energy axes must be defined for 2D evaluation")
+
         if len(t_ind) == 0: # process entire time axis
             self.value2D = np.empty((len(self.time), len(self.energy)))
             for ti, t in enumerate(self.time):
-                self.value2D[ti,:] = self.create_value1D(t_ind=ti, return1D=1)
+                val = self.create_value1D(t_ind=ti, return1D=1)
+                if val is None:
+                    raise RuntimeError("create_value1D returned None during 2D evaluation")
+                self.value2D[ti,:] = val
         else: # process selection according to t_ind
             self.value2D = np.empty((len(self.time[t_ind[0]:t_ind[1]]), len(self.energy)))
             for ti, t in enumerate(self.time[t_ind[0]:t_ind[1]]):
-                self.value2D[ti,:] = self.create_value1D(t_ind=ti, return1D=1)
+                val = self.create_value1D(t_ind=ti, return1D=1)
+                if val is None:
+                    raise RuntimeError("create_value1D returned None during 2D evaluation")
+                self.value2D[ti,:] = val
         #
         return None
     
@@ -720,22 +747,29 @@ class Model:
         # ... time-resolved model (mcp.Dynamics)
         if isinstance(self, Dynamics):
             x_dir = 'def'  # Always default for Dynamics
+            if self.time is None:
+                raise ValueError("Dynamics model time axis is not defined")
             x = self.time
             x_label = config.y_label  # t_label from project
             info = ''
         # ... energy-resolved model
         else:
             x_dir = config.x_dir
+            if self.energy is None or self.time is None:
+                raise ValueError("Model energy/time axes are not defined")
             x = self.energy
             x_label = config.x_label  # e_label from project
             info = f'[{config.y_label}={round(self.time[t_ind],3)} (index={t_ind})]'
             
-        # Populate <component_spectra> argument of the model
+        # Populate component_spectra argument of the model
         self.create_value1D(t_ind, store1D=1)
+        if not plot_ind and self.value1D is None:
+            raise RuntimeError("Model evaluation did not produce value1D")
         
         # Plot
+        plot_data = self.component_spectra if plot_ind else [cast(np.ndarray, self.value1D)]
         uplt.plot_1D(
-            data=self.component_spectra if plot_ind else [self.value1D,],
+            data=plot_data,
             x=x,
             config=config,
             title=f'Model "{self.name}" {info}',
@@ -778,6 +812,10 @@ class Model:
         z_lim : tuple of float, optional
             Color scale limits (min, max)
         """
+        if self.value2D is None:
+            self.create_value2D()
+        if self.value2D is None or self.energy is None or self.time is None:
+            raise ValueError("Model value2D, energy, and time must be defined for plot_2D")
         # Plot using the utility plot_2D
         uplt.plot_2D(
             data=self.value2D,
@@ -807,8 +845,9 @@ class Component:
     comp_name : str
         Component name, possibly with numbering (e.g., 'GLP_01', 'expFun_02').
         Numbering is typically assigned during YAML parsing.
-    package : module, default=fcts_energy
-        Python module containing the component function (fcts_energy or fcts_time)
+    package : module, optional
+        Python module containing the component function (fcts_energy or fcts_time).
+        Defaults to fcts_energy (energy-resolved functions)
     comp_subcycle : int, default=0
         Subcycle number for multi-cycle Dynamics models:
         - 0: Active for entire time axis (default)
@@ -848,24 +887,26 @@ class Component:
         Energy axis (inherited from model)
     parent_model : Model or None
         Parent model reference (for parameter lookups)
-    
-    Properties
-    ----------
-    fct : callable
-        Function object (auto-updates if package or fct_str changes)
-    fct_specs : inspect.FullArgSpec
-        Function signature information
-    fct_args : list of str
-        Function argument names
-    prefix : str
-        Prefix for parameter names ('' for exceptions, comp_name+'_' otherwise)
-    name : str
-        Component display name
+
+    Notes
+    -----
+    **Component Properties:**
+
+    The Component class provides several computed properties for accessing
+    function information:
+
+    - ``fct`` : callable - Function object (auto-updates if package or fct_str changes)
+    - ``fct_specs`` : inspect.FullArgSpec - Function signature information
+    - ``fct_args`` : list of str - Function argument names
+    - ``prefix`` : str - Prefix for parameter names ('' for exceptions, comp_name+'_' otherwise)
+    - ``name`` : str - Component display name
     """
     #
-    def __init__(self, comp_name: str, package: types.ModuleType = fcts_energy, 
+    def __init__(self, comp_name: str, package: Optional[types.ModuleType] = None,
                  comp_subcycle: int = 0) -> None:
         # package containing component (either fcts_energy or fcts_time)
+        if package is None:
+            package = fcts_energy
         self.package: types.ModuleType = package
         # name of the component (str)
         self.comp_name: str = comp_name
@@ -915,7 +956,7 @@ class Component:
         callable
             Function object (e.g., fcts_energy.GLP, fcts_time.expFun)
         """
-        return getattr(self.package, self.fct_str)
+        return cast(Callable, getattr(self.package, self.fct_str))
     
     # [automatic] do the same for function argument specs
     @property 
@@ -1010,7 +1051,7 @@ class Component:
         # Captures: (function_name)(_NN_param_name)
         pattern = r'\b([A-Za-z_][A-Za-z0-9_]*?)(_\d{2}_[A-Za-z_][A-Za-z0-9_]*)\b'
         
-        def replace_with_prefix(match):
+        def replace_with_prefix(match: re.Match[str]) -> str:
             func_name = match.group(1)  # e.g., "expFun" or "GLP"
             rest = match.group(2)        # e.g., "_01_tau"
             full_match = match.group(0)  # e.g., "expFun_01_tau"
@@ -1109,7 +1150,6 @@ class Component:
                 temp.create(expr_skip=True)
             else:
                 temp.create()
-            temp.time = self.time  # inherit time axis from component
             if debug:
                 temp.describe()
             lst.append(temp)
@@ -1215,14 +1255,15 @@ class Component:
             Kernel time axis, centered at 0 and extending ±(width * kernel_parameter)
         """
         # get kernel parameters i.e. component parameters
-        parK = ulmfit.par_extract(self.par_dict, return_type='list')
+        parK = cast(list[Any], ulmfit.par_extract(self.par_dict, return_type='list'))
         if debug: print(f'component/kernel parameters as list: {parK}')
         # define kernel time axis
         kernel_width = getattr(fcts_time, self.fct_str +'_kernel_width')()
         if debug: print(f'kernel width loaded from fcts_time: {kernel_width}')
         t_range = parK[0] *kernel_width
-        try: t_step = self.time[1] -self.time[0]
-        except: print(f'time axis of component {self.fct_str} not defined')
+        if self.time is None or len(self.time) < 2:
+            raise ValueError(f'time axis of component {self.fct_str} not defined')
+        t_step = self.time[1] -self.time[0]
         if debug: print(f'delta time (from self.time): {t_step}')
         t_kernel = np.arange(-t_range, t_range+t_step, t_step)
         #
@@ -1267,21 +1308,33 @@ class Component:
         """
         # get component parameters as list
         pars = []
+        # HOTFIX NOTE:
+        # Par.value() currently returns a one-element list for compatibility.
+        # Future cleanup: make Par.value() return scalar float and switch
+        # this call from pars.extend(...) to pars.append(...).
         for p in self.pars:
             #$% slightly hacky to only update Par.t_model for t_ind=0, change?
-            pars.extend(p.value(t_ind, 
+            pars.extend(p.value(t_ind,
                                 update_t_model = True if t_ind==0 else False))
-                  
+
         # get x axis and create component function evaluation
         if self.package == fcts_energy:
-            return self.fct(self.energy, *pars, **kwargs)
+            if self.energy is None:
+                raise ValueError(f"Energy axis not defined for component '{self.comp_name}'")
+            return np.asarray(self.fct(self.energy, *pars, **kwargs))
         elif self.package == fcts_time:
+            if self.time is None:
+                raise ValueError(f"Time axis not defined for component '{self.comp_name}'")
             if self.subcycle == 0: # single cycle
-                return self.fct(self.time, *pars, **kwargs)
+                return np.asarray(self.fct(self.time, *pars, **kwargs))
             else: # multi-cycle
                 # multpliy value with 1 where subcycle applies, 0 otherwise
                 # use normalized time instead of standard time for sub!=0]
-                return self.fct(self.time_norm, *pars, **kwargs) *self.time_N_sub
+                if self.time_norm is None or self.time_N_sub is None:
+                    raise ValueError(f"Subcycle axes not defined for component '{self.comp_name}'")
+                return np.asarray(self.fct(self.time_norm, *pars, **kwargs) *self.time_N_sub)
+        else:
+            raise ValueError(f"Unsupported function package for component '{self.comp_name}'")
     
     #
     def plot(self, t_ind: int = 0, **kwargs) -> None:
@@ -1358,36 +1411,42 @@ class Par:
     Notes
     -----
     **Time-Dependence:**
-    When t_vary=True, the parameter value at time t is:
+
+    When t_vary=True, the parameter value at time t is::
+
         value(t) = base_value + dynamics_model.value1D[t]
-    
+
     **Expression Handling:**
+
     Expressions are evaluated using asteval (same as lmfit) for safety.
     Can reference other parameters, including time-dependent ones.
-    
+
     **Expression + Dynamics:**
+
     A parameter can have an expression that references a time-dependent
     parameter. In this case, expr_refs_time_dep=True and the expression
     is re-evaluated at each time point during model evaluation.
-    
+
     **Parameter Flattening:**
+
     lmfit_par_list contains all parameters defining this Par:
+
     - Without time-dependence: 1 parameter (the spectral one)
     - With time-dependence: N parameters (spectral + all from Dynamics model)
     """
     #
-    def __init__(self, name: str, info: list = []) -> None:
+    def __init__(self, name: str, info: Optional[list[Any]] = None) -> None:
         self.name = name
-        self.info = info
-        self.lmfit_par = lmfit.Parameters()
-        self.t_vary = False
-        self.t_model = Model(f'{name}_tModel')
-        self.lmfit_par_list = []
+        self.info: list[Any] = [] if info is None else list(info)
+        self.lmfit_par: lmfit.Parameters = lmfit.Parameters()
+        self.t_vary: bool = False
+        self.t_model: Model = Model(f'{name}_tModel')
+        self.lmfit_par_list: List[lmfit.Parameter] = []
         # Expression analysis attributes
-        self.expr_refs_time_dep = False  # flag for time-dependent references
-        self.expr_string = None          # store original expression
-        self.expr_refs = []              # list of referenced parameter names
-        self.parent_model = None         # reference to parent model
+        self.expr_refs_time_dep: bool = False  # flag for time-dependent references
+        self.expr_string: Optional[str] = None  # store original expression
+        self.expr_refs: List[str] = []          # list of referenced parameter names
+        self.parent_model: Optional[Model] = None  # reference to parent model
         #
         return None
     
@@ -1401,7 +1460,7 @@ class Par:
         detail : int, default=0
             Detail level for display (passed to t_model.describe if applicable)
         """
-        print(f'par name: {self.name} [value: {self.value()}] and its <lmfit_par> attribute:')
+        print(f'par name: {self.name} [value: {self.value()}] and its lmfit_par attribute:')
         try: 
             self.lmfit_par.pretty_print()
         except: 
@@ -1413,7 +1472,7 @@ class Par:
         elif self.t_vary == True:
             print(f'parameter has time-dependence described by model {self.t_model.name}')
             if detail == 1:
-                display(self.t_model.describe())
+                self.t_model.describe()
         #
         return None
         
@@ -1482,7 +1541,7 @@ class Par:
         return None
     
     #
-    def value(self, t_ind: int = 0, update_t_model: bool = True) -> list:
+    def value(self, t_ind: int = 0, update_t_model: bool = True) -> list[Any]:
         """
         Get parameter value at specific time point.
         
@@ -1528,15 +1587,18 @@ class Par:
                 return self._evaluate_time_dependent_expression(t_ind, all_parameters, update_t_model)
             else:
                 # Standard lmfit evaluation
-                value = ulmfit.par_extract(self.lmfit_par)
+                value = cast(list[Any], ulmfit.par_extract(self.lmfit_par))
 
         elif self.t_vary == True:
             if update_t_model == True:
                 self.t_model.create_value1D() # update t_model, specifically self.t_model.value1D
-            value = ulmfit.par_extract(self.lmfit_par) + self.t_model.value1D[t_ind]
+            base = cast(list[Any], ulmfit.par_extract(self.lmfit_par))
+            if self.t_model.value1D is None:
+                raise RuntimeError(f'Dynamics model "{self.t_model.name}" has no value1D')
+            value = [base[0] + self.t_model.value1D[t_ind]]
             
         else:
-            value = -1
+            value = [-1]
             print(f't_vary attribute of Par "{self.name}" is not valid')
         #
         return value
@@ -1571,7 +1633,7 @@ class Par:
         return None
     
     #
-    def _find_parameter_by_name(self, par_name: str, all_parameters: list['Par']) -> 'Par':
+    def _find_parameter_by_name(self, par_name: str, all_parameters: list['Par']) -> Optional['Par']:
         """
         Find parameter by name in list.
         
@@ -1594,7 +1656,7 @@ class Par:
         return None
     
     #
-    def _evaluate_time_dependent_expression(self, t_ind: int, all_parameters: list['Par'], update_t_model: bool = True) -> list:
+    def _evaluate_time_dependent_expression(self, t_ind: int, all_parameters: list['Par'], update_t_model: bool = True) -> list[Any]:
         """
         Evaluate expression with time-dependent parameter values.
         
@@ -1627,12 +1689,20 @@ class Par:
         value : Main evaluation method that calls this
         analyze_expression_dependencies : Sets up for this evaluation
         """
-        # Create namespace with current values of referenced parameters
+        # HOTFIX: use scalar values in asteval namespace.
+        # Passing one-element lists (from Par.value) can make expressions like
+        # "GLP_01_x0 + 3.6" evaluate to None inside asteval.
         namespace = {}
         for ref_name in self.expr_refs:
             ref_par = self._find_parameter_by_name(ref_name, all_parameters)
             if ref_par:
-                namespace[ref_name] = ref_par.value(t_ind, update_t_model=update_t_model)
+                ref_val = ref_par.value(t_ind, update_t_model=update_t_model)
+                if isinstance(ref_val, list):
+                    if len(ref_val) == 0:
+                        raise ValueError(f"Referenced parameter '{ref_name}' returned empty value list")
+                    namespace[ref_name] = ref_val[0]
+                else:
+                    namespace[ref_name] = ref_val
         
         # Evaluate expression using asteval (safe, same as lmfit uses)
         try:
@@ -1641,7 +1711,15 @@ class Par:
             # (Interpreter.__call__ doesn't accept a namespace argument)
             for k, v in namespace.items():
                 aeval.symtable[k] = v
-            return aeval(self.expr_string)
+            expr = cast(str, self.expr_string)
+            result = aeval(expr)
+            # HOTFIX: asteval may record errors and return None without raising.
+            if aeval.error:
+                msg = "; ".join(err.get_error()[1] for err in aeval.error)
+                raise ValueError(
+                    f"Asteval error while evaluating expression '{self.expr_string}': {msg}"
+                )
+            return result if isinstance(result, list) else [result]
         except Exception as e:
             raise ValueError(f"Error evaluating expression '{self.expr_string}': {e}")
     
@@ -1735,13 +1813,14 @@ class Dynamics(Model):
     def __init__(self, model_name: str) -> None:
         super().__init__(model_name)     
         # repetition frequency of time-dependent model behaviour
-        self.frequency = -1
+        self.frequency: float = -1
         # number of subcycles (within time = 1/frequency)
-        self.subcycles = 0 # defined via "number of models -1" [model_info in file.load_model()]
+        self.subcycles: int = 0 # defined via "number of models -1" [model_info in file.load_model()]
         # "normalized time" attributes (all have same length as time axis)
-        self.time_norm = None # restart time (at 0) every 1/(freqency *number of subcycles)
-        self.N_sub = None # which subcycle is active at time step (t_i)
-        self.N_counter = None # cummulative counter of subcycles (at t_i)
+        self.time_norm: Optional[np.ndarray] = None # restart time (at 0) every 1/(freqency *number of subcycles)
+        self.N_sub: Optional[np.ndarray] = None # which subcycle is active at time step (t_i)
+        self.N_counter: Optional[np.ndarray] = None # cummulative counter of subcycles (at t_i)
+        self.parent_model: Optional[Model] = None
         #
         return None
     
@@ -1777,9 +1856,13 @@ class Dynamics(Model):
         """
         self.frequency = frequency # set the frequency attribute itslef
         self.normalize_time() # update the normalization of the time axis
+        if self.N_sub is None:
+            raise RuntimeError("N_sub not initialized; call normalize_time() first")
         # update components accordingly
         for comp in self.components:
             # <time_N_sub> is 0/1 where subcomponent is in-/active
+            if comp.time_N_sub is None:
+                comp.time_N_sub = np.ones(len(self.N_sub))
             comp.time_N_sub[self.N_sub != comp.subcycle] = 0
             # inherit normalized time from Dynamics model
             if comp.subcycle != 0: comp.time_norm = self.time_norm
@@ -1844,6 +1927,8 @@ class Dynamics(Model):
         - frequency < 0 and != -1
         - subcycles > 1 with frequency = -1 (inconsistent)
         """
+        if self.time is None:
+            raise ValueError("Dynamics.time axis must be defined")
         # Sanity checks
         if self.subcycles == 1 or not isinstance(self.subcycles, int):
             raise ValueError(

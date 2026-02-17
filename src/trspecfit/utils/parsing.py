@@ -7,7 +7,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.constructor import SafeConstructor
 from ruamel.yaml.error import YAMLError
 from pathlib import Path
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Generator, Set
 import numpy as np
 import re
 
@@ -25,7 +25,7 @@ class ModelValidationError(ValueError):
     pass
 
 #
-def construct_yaml_map(self, node) -> List[Tuple[str, Any]]:
+def construct_yaml_map(self, node) -> Generator[List[Tuple[str, Any]], None, None]:
     """
     Enable multiple components of the same type with automatic numbering.
     
@@ -46,7 +46,7 @@ def construct_yaml_map(self, node) -> List[Tuple[str, Any]]:
     list of tuple
         List of (component_name, parameters) tuples with automatic numbering applied
     """
-    data = []
+    data: List[Tuple[str, Any]] = []
     yield data
 
     # Get all available function names
@@ -55,7 +55,7 @@ def construct_yaml_map(self, node) -> List[Tuple[str, Any]]:
     exceptions = numbering_exceptions()
     
     # Track component names to handle duplicates
-    component_counts = {}
+    component_counts: Dict[str, int] = {}
     
     for key_node, value_node in node.value:
         key = self.construct_object(key_node, deep=True)
@@ -426,9 +426,9 @@ def resolve_dynamics_numbering_conflicts(
     exceptions = numbering_exceptions()
     
     # Track the next available number for each function type globally
-    global_next_available = {}
+    global_next_available: Dict[str, int] = {}
     # Track all used numbers for each function type
-    used_numbers = {}
+    used_numbers: Dict[str, Set[int]] = {}
 
     # First pass: collect all existing numbers and find conflicts
     for submodel in model_info:
@@ -455,8 +455,8 @@ def resolve_dynamics_numbering_conflicts(
         print(f"global_next_available: {global_next_available}")
 
     # Second pass: resolve conflicts by reassigning duplicate numbers
-    processed_dict = {}
-    assigned_numbers = {}  # Track what we've already assigned in this pass
+    processed_dict: Dict[str, Dict[str, Any]] = {}
+    assigned_numbers: Dict[str, Set[int]] = {}  # Track what we've already assigned in this pass
     
     for submodel in model_info:
         if submodel not in model_info_dict:

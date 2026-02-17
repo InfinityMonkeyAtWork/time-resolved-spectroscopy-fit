@@ -33,18 +33,21 @@ Detector Types
 Workflow
 --------
 1. Testing and Validation
-  - Create model with trspecfit.mcp.Model
-  - Initialize Simulator with model and noise parameters
-  - Generate data with simulate_1D() or simulate_2D()
-    OR generate multiple realizations with simulate_N()
-  - Save data and ground truth with save_data()
-  - Fit simulated data to validate fitting pipeline
+
+   - Create model with trspecfit.mcp.Model
+   - Initialize Simulator with model and noise parameters
+   - Generate data with simulate_1D() or simulate_2D()
+     OR generate multiple realizations with simulate_N()
+   - Save data and ground truth with save_data()
+   - Fit simulated data to validate fitting pipeline
+
 2. Machine Learning Training Data Generation
-  - Create model with trspecfit.mcp.Model
-  - Define parameter space using trspecfit.utils.sweep.ParameterSweep
-  - Initialize Simulator with model and noise parameters
-  - Generate multiple realizations (N) for each parameter combination
-    (data, ground truth, and relevant metadata get saved automatically)
+
+   - Create model with trspecfit.mcp.Model
+   - Define parameter space using trspecfit.utils.sweep.ParameterSweep
+   - Initialize Simulator with model and noise parameters
+   - Generate multiple realizations (N) for each parameter combination
+     (data, ground truth, and relevant metadata get saved automatically)
 
 Examples
 --------
@@ -59,7 +62,7 @@ import matplotlib.pyplot as plt
 import json
 import h5py
 import pandas as pd
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple, cast
 from trspecfit.mcp import Model
 from trspecfit.utils.sweep import ParameterSweep
 from trspecfit.utils import plot as uplt
@@ -93,16 +96,16 @@ class Simulator:
         - 'gaussian': White noise (simpler, faster)
         - 'none': No noise (testing and debugging)
         Ignored for photon_counting (always Poisson).
-    counts_per_cycle : int, optional
-        Total photon count per pump-probe cycle (photon_counting only).
+    counts_per_delay : int, optional
+        Total photon count per time delay (photon_counting only).
         Directly sets signal-to-noise ratio. Mutually exclusive with
-        count_rate + cycle_time.
+        count_rate + integration_time.
     count_rate : float, optional
         Photon count rate in Hz (photon_counting only).
-        Combined with cycle_time to compute counts_per_cycle.
-    cycle_time : float, optional
-        Duration of one pump-probe cycle in seconds (photon_counting only).
-        Combined with count_rate to compute counts_per_cycle.
+        Combined with integration_time to compute counts_per_delay.
+    integration_time : float, optional
+        Integration time per delay point in seconds (photon_counting only).
+        Combined with count_rate to compute counts_per_delay.
     seed : int, optional
         Random seed for reproducibility. If None, uses random initialization.
     
@@ -118,12 +121,12 @@ class Simulator:
         Analog detector noise level
     noise_type : str
         Analog detector noise type
-    counts_per_cycle : int
+    counts_per_delay : int
         Photon counting detector count budget
     count_rate : float or None
         Photon counting detector rate
-    cycle_time : float or None
-        Photon counting detector cycle duration
+    integration_time : float or None
+        Photon counting integration time per delay
     data_clean : ndarray or None
         Most recently generated clean (noiseless) data
     data_noisy : ndarray or None
@@ -157,7 +160,7 @@ class Simulator:
     - 0.10 (10%): Moderate noise, still fittable
     - 0.20 (20%): Challenging, may need averaging
     
-    For photon counting, SNR set by counts_per_cycle:
+    For photon counting, SNR set by counts_per_delay:
     - 100 counts: SNR ~ 10 (marginal)
     - 1000 counts: SNR ~ 32 (good)
     - 10000 counts: SNR ~ 100 (excellent)
@@ -165,13 +168,13 @@ class Simulator:
     **Photon Counting Parameter Resolution:**
     
     The simulator resolves photon counting parameters as:
-    1. If counts_per_cycle specified directly → use it
-    2. Else if count_rate and cycle_time specified → compute counts_per_cycle
+    1. If counts_per_delay specified directly → use it
+    2. Else if count_rate and integration_time specified → compute counts_per_delay
     3. Else → estimate from model scale (prints warning)
     
     The third case assumes model amplitudes represent realistic count rates,
-    which may not be true. Always specify counts_per_cycle or (count_rate,
-    cycle_time) explicitly for accurate photon counting simulation.
+    which may not be true. Always specify counts_per_delay or (count_rate,
+    integration_time) explicitly for accurate photon counting simulation.
     
     **Memory Usage:**
     
@@ -189,14 +192,17 @@ class Simulator:
     save_data : Save simulated data to HDF5
     """
     #
-    def __init__(self, model, 
-             detection='analog',
-             noise_level=0.05, 
-             noise_type='poisson',
-             counts_per_cycle=None,
-             count_rate=None,
-             cycle_time=None,
-             seed=None):
+    def __init__(
+        self,
+        model: Model,
+        detection: str = 'analog',
+        noise_level: float = 0.05,
+        noise_type: str = 'poisson',
+        counts_per_delay: Optional[int] = None,
+        count_rate: Optional[float] = None,
+        integration_time: Optional[float] = None,
+        seed: Optional[int] = None
+    ) -> None:
         """
         Initialize simulator with a model and noise parameters.
         
@@ -211,12 +217,12 @@ class Simulator:
             Noise amplitude for analog detectors (0.0-1.0 relative to signal)
         noise_type : {'poisson', 'gaussian', 'none'}, default='poisson'
             Noise type for analog detectors
-        counts_per_cycle : int, optional
-            Total photons per cycle (photon_counting only)
+        counts_per_delay : int, optional
+            Total photons per delay (photon_counting only)
         count_rate : float, optional
             Photon rate in Hz (photon_counting only)
-        cycle_time : float, optional
-            Cycle duration in seconds (photon_counting only)
+        integration_time : float, optional
+            Integration time per delay in seconds (photon_counting only)
         seed : int, optional
             Random seed for reproducibility
         
@@ -224,7 +230,7 @@ class Simulator:
         ------
         ValueError
             If detection type is invalid
-            If counts_per_cycle ≤ 0 (after estimation)
+            If counts_per_delay ≤ 0 (after estimation)
         
         Examples
         --------
@@ -236,11 +242,11 @@ class Simulator:
         
         >>> # Photon counting with direct count specification
         >>> sim = Simulator(model, detection='photon_counting',
-        ...                 counts_per_cycle=5000)
+        ...                 counts_per_delay=5000)
         
         >>> # Photon counting with rate specification
         >>> sim = Simulator(model, detection='photon_counting',
-        ...                 count_rate=1e6, cycle_time=0.01)
+        ...                 count_rate=1e6, integration_time=0.01)
         
         >>> # Reproducible simulation
         >>> sim = Simulator(model, seed=42)
@@ -254,9 +260,9 @@ class Simulator:
         self.noise_type = noise_type.lower()
         
         # Photon counting parameters
-        self.counts_per_cycle = counts_per_cycle
-        self.count_rate = count_rate
-        self.cycle_time = cycle_time
+        self.counts_per_delay: Optional[int] = counts_per_delay
+        self.count_rate: Optional[float] = count_rate
+        self.integration_time: Optional[float] = integration_time
         
         # Validate and resolve photon counting parameters
         if self.detection == 'photon_counting':
@@ -271,25 +277,25 @@ class Simulator:
             np.random.seed(seed)
         
         # Storage for simulated data
-        self.data_clean = None  # Without noise
-        self.data_noisy = None  # With noise
-        self.noise = None       # Just the noise component
+        self.data_clean: Optional[np.ndarray] = None  # Without noise
+        self.data_noisy: Optional[np.ndarray] = None  # With noise
+        self.noise: Optional[np.ndarray] = None       # Just the noise component
     
     #
-    def _resolve_photon_counting_params(self):
+    def _resolve_photon_counting_params(self) -> None:
         """
         Resolve photon counting parameters. User can specify either:
-        - counts_per_cycle directly, OR
-        - count_rate and cycle_time (will compute counts_per_cycle), OR
+        - counts_per_delay directly, OR
+        - count_rate and integration_time (will compute counts_per_delay), OR
         - nothing (will estimate from model scale with warning)
         """
-        if self.counts_per_cycle is not None:
+        if self.counts_per_delay is not None:
             # Direct specification takes precedence
-            if self.count_rate is not None or self.cycle_time is not None:
-                print("Warning: counts_per_cycle specified directly. Ignoring count_rate and cycle_time.")
-        elif self.count_rate is not None and self.cycle_time is not None:
+            if self.count_rate is not None or self.integration_time is not None:
+                print("Warning: counts_per_delay specified directly. Ignoring count_rate and integration_time.")
+        elif self.count_rate is not None and self.integration_time is not None:
             # Calculate from rate and time
-            self.counts_per_cycle = int(self.count_rate * self.cycle_time)
+            self.counts_per_delay = int(self.count_rate * self.integration_time)
         else:
             # Estimate from model: assume clean_data represents count rates
             # Generate clean data to get the scale
@@ -301,28 +307,32 @@ class Simulator:
                 # 1D data
                 self.model.create_value1D()
                 clean_data = self.model.value1D
+            if clean_data is None:
+                raise RuntimeError("Model evaluation did not produce clean data for photon counting estimation")
             
-            # Use total integrated signal as estimate
+            # Estimate counts_per_delay as the average total signal per time step
             # This assumes the model amplitudes are in a realistic count rate range
-            total_signal = np.sum(np.abs(clean_data))
-            avg_per_pixel = total_signal / clean_data.size
-            self.counts_per_cycle = int(total_signal)
-            
+            signal_positive = np.abs(clean_data)
+            if clean_data.ndim == 2:
+                row_totals = np.sum(signal_positive, axis=1)
+                self.counts_per_delay = int(np.mean(row_totals))
+            else:
+                self.counts_per_delay = int(np.sum(signal_positive))
+
             print(f"WARNING: No photon count specified for photon_counting detection.")
-            print(f"Estimating from model: {self.counts_per_cycle:.2e} counts/cycle")
-            print(f"  (average ~{avg_per_pixel:.1f} counts/pixel)")
-            print(f"For accurate simulation, specify counts_per_cycle or (count_rate, cycle_time).")
+            print(f"Estimating from model: {self.counts_per_delay:.2e} counts/delay")
+            print(f"For accurate simulation, specify counts_per_delay or (count_rate, integration_time).")
             print(f"This estimate assumes your model amplitudes represent realistic count rates.")
         
-        # Ensure counts_per_cycle is positive
-        if self.counts_per_cycle <= 0:
+        # Ensure counts_per_delay is positive
+        if self.counts_per_delay <= 0:
             raise ValueError(
-                f"counts_per_cycle must be positive, got {self.counts_per_cycle}.\n"
-                f"Model may have negative or zero signal. Check your model or specify counts_per_cycle manually."
+                f"counts_per_delay must be positive, got {self.counts_per_delay}.\n"
+                f"Model may have negative or zero signal. Check your model or specify counts_per_delay manually."
             )
     
     #
-    def generate_clean_data(self, dim=2, t_ind=0):
+    def generate_clean_data(self, dim: int = 2, t_ind: int = 0) -> np.ndarray:
         """
         Generate clean data from model (no noise)
         
@@ -341,11 +351,13 @@ class Simulator:
             self.data_clean = copy.deepcopy(self.model.value2D)
         else:
             raise ValueError(f"dim must be 1 or 2, got {dim}")
-        
+
+        if self.data_clean is None:
+            raise RuntimeError("Model evaluation did not produce clean data")
         return self.data_clean
     
     #
-    def add_noise(self, clean_data, dim=2):
+    def add_noise(self, clean_data: np.ndarray, dim: int = 2) -> Tuple[np.ndarray, np.ndarray]:
         """
         Add noise to clean data based on detection technique
         
@@ -377,11 +389,13 @@ class Simulator:
                 raise ValueError(f"dim must be 1 or 2, got {dim}")
             
             noise = noisy_data - clean_data
+        else:
+            raise ValueError(f"Unknown detection type: {self.detection}")
         
         return noisy_data, noise
     
     #
-    def simulate_1D(self, t_ind=0):
+    def simulate_1D(self, t_ind: int = 0) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Simulate 1D spectrum (energy-resolved) at a specific time point.
         
@@ -456,7 +470,7 @@ class Simulator:
         return clean_data, noisy_data, noise
     
     #
-    def simulate_2D(self):
+    def simulate_2D(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Simulate 2D spectrum (time- and energy-resolved).
         
@@ -550,7 +564,13 @@ class Simulator:
         return clean_data, noisy_data, noise
     
     #
-    def simulate_N(self, N, dim=2, t_ind=0, show_progress=True):
+    def simulate_N(
+        self,
+        N: int,
+        dim: int = 2,
+        t_ind: int = 0,
+        show_progress: bool = True
+    ) -> Tuple[np.ndarray, List[np.ndarray], List[np.ndarray]]:
         """
         Generate N simulated datasets with independent noise realizations.
         
@@ -705,7 +725,7 @@ class Simulator:
         return clean_data, noisy_data_list, noise_list
     
     #
-    def _generate_noise_analog_1D(self, signal):
+    def _generate_noise_analog_1D(self, signal: np.ndarray) -> np.ndarray:
         """
         Generate 1D noise array for analog detectors
         
@@ -721,7 +741,7 @@ class Simulator:
         elif self.noise_type == 'gaussian':
             # Gaussian noise with amplitude proportional to noise_level
             noise_amplitude = self.noise_level * np.max(np.abs(signal))
-            return np.random.normal(0, noise_amplitude, signal.shape)
+            return cast(np.ndarray, np.random.normal(0, noise_amplitude, signal.shape))
         
         elif self.noise_type == 'poisson':
             # Poisson noise: scale signal to photon counts, add noise, scale back
@@ -740,14 +760,14 @@ class Simulator:
             noise = signal_noisy - signal_positive
             
             # Restore original sign
-            return noise * np.sign(signal)
+            return cast(np.ndarray, noise * np.sign(signal))
         
         else:
             raise ValueError(f"Unknown noise type: {self.noise_type}. "
                            "Use 'poisson', 'gaussian', or 'none'")
     
     #
-    def _generate_noise_analog_2D(self, signal):
+    def _generate_noise_analog_2D(self, signal: np.ndarray) -> np.ndarray:
         """
         Generate 2D noise array for analog detectors
         
@@ -763,7 +783,7 @@ class Simulator:
         elif self.noise_type == 'gaussian':
             # Gaussian noise with amplitude proportional to noise_level
             noise_amplitude = self.noise_level * np.max(np.abs(signal))
-            return np.random.normal(0, noise_amplitude, signal.shape)
+            return cast(np.ndarray, np.random.normal(0, noise_amplitude, signal.shape))
         
         elif self.noise_type == 'poisson':
             # Poisson noise: scale signal to photon counts, add noise, scale back
@@ -781,132 +801,143 @@ class Simulator:
             noise = signal_noisy - signal_positive
             
             # Restore original sign
-            return noise * np.sign(signal)
+            return cast(np.ndarray, noise * np.sign(signal))
         
         else:
             raise ValueError(f"Unknown noise type: {self.noise_type}. "
                            "Use 'poisson', 'gaussian', or 'none'")
     
     #
-    def _sample_photons_1D(self, signal):
+    def _sample_photons_1D(self, signal: np.ndarray) -> np.ndarray:
         """
-        Sample photons for 1D photon counting detection
-        
+        Sample photons for 1D photon counting detection.
+
+        Each energy pixel independently draws from a Poisson distribution
+        where the expected count is proportional to the signal intensity.
+        The signal is scaled so the total expected counts across all energy
+        pixels equals counts_per_delay.
+
         Parameters:
             signal: Clean signal array (represents expected count rate)
-            
+
         Returns:
-            Noisy data array with integer photon counts
+            Noisy data array in same units as input signal
         """
-        # Ensure signal is non-negative
         signal_positive = np.abs(signal)
-        
-        # Normalize to probability distribution
         total_signal = np.sum(signal_positive)
+
         if total_signal == 0:
-            # No signal, return zeros
             return np.zeros_like(signal)
-        
-        prob_dist = signal_positive / total_signal
-        
-        # Sample photons according to multinomial distribution
-        photon_counts = np.random.multinomial(self.counts_per_cycle, prob_dist)
-        
-        # Convert back to same scale as input signal
-        # Each photon represents (total_signal / counts_per_cycle) in signal units
-        noisy_data = photon_counts * (total_signal / self.counts_per_cycle)
-        
-        return noisy_data
-    
+        if self.counts_per_delay is None:
+            raise ValueError("counts_per_delay must be defined for photon counting simulation")
+
+        # Scale signal to expected photon counts
+        # Total expected counts across all pixels = counts_per_delay
+        scale_factor = self.counts_per_delay / total_signal
+        expected_counts = signal_positive * scale_factor
+
+        # Independent Poisson draw per pixel
+        photon_counts = np.random.poisson(expected_counts)
+
+        # Scale back to original signal units and restore sign
+        # (negative signal = bleach/emission, positive = absorption)
+        noisy_data = photon_counts / scale_factor * np.sign(signal)
+
+        return cast(np.ndarray, noisy_data)
+
     #
-    def _sample_photons_2D(self, signal):
+    def _sample_photons_2D(self, signal: np.ndarray) -> np.ndarray:
         """
-        Sample photons for 2D photon counting detection
-        
+        Sample photons for 2D photon counting detection.
+
+        Applies independent Poisson noise per pixel across the full 2D array.
+        The signal is scaled so the average total expected counts per time step
+        equals counts_per_delay. Time steps with stronger signal naturally
+        accumulate more photons (better SNR), matching real experiments where
+        each time delay is measured for the same integration time.
+
         Parameters:
-            signal: Clean 2D signal array (represents expected count rate)
-            
+            signal: Clean 2D signal array (shape: [n_time, n_energy])
+
         Returns:
-            Noisy 2D data array with integer photon counts
+            Noisy 2D data array in same units as input signal
         """
-        # Ensure signal is non-negative
         signal_positive = np.abs(signal)
-        
-        # Flatten for multinomial sampling
-        signal_flat = signal_positive.flatten()
-        
-        # Normalize to probability distribution
-        total_signal = np.sum(signal_flat)
-        if total_signal == 0:
-            # No signal, return zeros
+
+        # Average total signal per time step
+        row_totals = np.sum(signal_positive, axis=1)
+        mean_row_total = np.mean(row_totals)
+
+        if mean_row_total == 0:
             return np.zeros_like(signal)
-        
-        prob_dist = signal_flat / total_signal
-        
-        # Sample photons according to multinomial distribution
-        photon_counts_flat = np.random.multinomial(self.counts_per_cycle, prob_dist)
-        
-        # Reshape back to 2D
-        photon_counts = photon_counts_flat.reshape(signal.shape)
-        
-        # Convert back to same scale as input signal
-        # Each photon represents (total_signal / counts_per_cycle) in signal units
-        noisy_data = photon_counts * (total_signal / self.counts_per_cycle)
-        
-        return noisy_data
+        if self.counts_per_delay is None:
+            raise ValueError("counts_per_delay must be defined for photon counting simulation")
+
+        # Scale so the average row has counts_per_delay total expected counts
+        scale_factor = self.counts_per_delay / mean_row_total
+        expected_counts = signal_positive * scale_factor
+
+        # Independent Poisson draw per pixel
+        photon_counts = np.random.poisson(expected_counts)
+
+        # Scale back to original signal units and restore sign
+        # (negative signal = bleach/emission, positive = absorption)
+        noisy_data = photon_counts / scale_factor * np.sign(signal)
+
+        return cast(np.ndarray, noisy_data)
     
     #
-    def set_noise_level(self, noise_level):
+    def set_noise_level(self, noise_level: float) -> None:
         """Update noise level (analog detectors only)"""
         if self.detection != 'analog':
             print("Warning: noise_level only applies to analog detection")
         self.noise_level = noise_level
     
     #
-    def set_noise_type(self, noise_type):
+    def set_noise_type(self, noise_type: str) -> None:
         """Update noise type (analog detectors only)"""
         if self.detection != 'analog':
             print("Warning: noise_type only applies to analog detection")
         self.noise_type = noise_type.lower()
     
     #
-    def set_counts_per_cycle(self, counts_per_cycle):
-        """Update counts per cycle (photon counting only)"""
+    def set_counts_per_delay(self, counts_per_delay: int) -> None:
+        """Update counts per delay (photon counting only)"""
         if self.detection != 'photon_counting':
-            print("Warning: counts_per_cycle only applies to photon_counting detection")
-        self.counts_per_cycle = counts_per_cycle
+            print("Warning: counts_per_delay only applies to photon_counting detection")
+        self.counts_per_delay = counts_per_delay
     
     #
-    def set_count_rate(self, count_rate, cycle_time=None):
+    def set_count_rate(self, count_rate: float, integration_time: Optional[float] = None) -> None:
         """
         Update count rate (photon counting only)
         
         Parameters:
             count_rate: Photon rate in Hz
-            cycle_time: Cycle duration in seconds (if None, uses existing value)
+            integration_time: Integration time per delay in seconds (if None, uses existing value)
         """
         if self.detection != 'photon_counting':
             print("Warning: count_rate only applies to photon_counting detection")
             return
         
         self.count_rate = count_rate
-        if cycle_time is not None:
-            self.cycle_time = cycle_time
+        if integration_time is not None:
+            self.integration_time = integration_time
         
-        if self.cycle_time is not None:
-            self.counts_per_cycle = int(self.count_rate * self.cycle_time)
+        if self.integration_time is not None:
+            self.counts_per_delay = int(self.count_rate * self.integration_time)
         else:
-            raise ValueError("cycle_time must be set to calculate counts_per_cycle from count_rate")
+            raise ValueError("integration_time must be set to calculate counts_per_delay from count_rate")
     
     #
-    def set_seed(self, seed):
+    def set_seed(self, seed: Optional[int]) -> None:
         """Update random seed"""
         self.seed = seed
         if seed is not None:
             np.random.seed(seed)
     
     #
-    def get_SNR(self, scale='linear'):
+    def get_SNR(self, scale: str = 'linear') -> float:
         """
         Calculate Signal-to-Noise Ratio (SNR).
         
@@ -929,7 +960,8 @@ class Simulator:
         Raises
         ------
         ValueError
-            If no simulated data available (must call simulate_1D/2D/N first)
+            If no simulated data available (must call simulate_1D/2D/N first),
+            or if scale is not 'linear' or 'dB'.
         
         Examples
         --------
@@ -961,11 +993,11 @@ class Simulator:
         >>> snrs = []
         >>> for count in counts:
         ...     sim = Simulator(model, detection='photon_counting',
-        ...                     counts_per_cycle=count)
+        ...                     counts_per_delay=count)
         ...     sim.simulate_2D()
         ...     snrs.append(sim.get_SNR())
         >>> plt.loglog(counts, snrs, 'o-')
-        >>> plt.xlabel('Counts per cycle')
+        >>> plt.xlabel('Counts per delay')
         >>> plt.ylabel('SNR')
         
         Notes
@@ -1024,15 +1056,17 @@ class Simulator:
         noise_power = np.mean(self.noise**2)
         
         if noise_power == 0:
-            return np.inf
+            return float(np.inf)
         
         if scale == 'linear':
-            return signal_power / noise_power
+            return float(signal_power / noise_power)
         elif scale == 'dB':
-            return 10 * np.log10(signal_power / noise_power)
+            return float(10 * np.log10(signal_power / noise_power))
+        else:
+            raise ValueError("scale must be either 'linear' or 'dB'")
     
     #
-    def plot_comparison(self, t_ind=0, dim=1, SNR_scale='linear'):
+    def plot_comparison(self, t_ind: int = 0, dim: int = 1, SNR_scale: str = 'linear') -> None:
         """
         Plot comparison of clean vs noisy data.
         
@@ -1075,7 +1109,7 @@ class Simulator:
         >>> # Check photon counting vs analog
         >>> sim_analog = Simulator(model, detection='analog', noise_level=0.05)
         >>> sim_photon = Simulator(model, detection='photon_counting',
-        ...                         counts_per_cycle=1000)
+        ...                         counts_per_delay=1000)
         >>> sim_analog.simulate_2D()
         >>> sim_photon.simulate_2D()
         >>> # ... compare visually ...
@@ -1133,6 +1167,8 @@ class Simulator:
         if dim == 1:
             if self.data_clean is None:
                 self.simulate_1D(t_ind)
+            if self.data_clean is None or self.data_noisy is None or self.noise is None:
+                raise RuntimeError("Simulation data not available for plotting")
             
             # Get config from model
             config = self.model.plot_config
@@ -1152,6 +1188,8 @@ class Simulator:
         elif dim == 2:
             if self.data_clean is None:
                 self.simulate_2D()
+            if self.data_clean is None or self.data_noisy is None or self.noise is None:
+                raise RuntimeError("Simulation data not available for plotting")
             
             # Get config from model
             config = self.model.plot_config
@@ -1209,7 +1247,13 @@ class Simulator:
             plt.show()
     
     #
-    def save_data(self, filepath=None, save_format='hdf5', N_data=None, overwrite=True):
+    def save_data(
+        self,
+        filepath: Optional[str] = None,
+        save_format: str = 'hdf5',
+        N_data: Optional[List[np.ndarray]] = None,
+        overwrite: bool = True
+    ) -> None:
         """
         Save simulated data to file with metadata.
         
@@ -1222,7 +1266,6 @@ class Simulator:
         filepath : str or Path, optional
             Path where to save data. If None, uses default:
             './simulated_data/simulated_data.h5'
-            
             If provided path doesn't include 'simulated_data' directory,
             it will be automatically placed there.
         save_format : str, default='hdf5'
@@ -1278,26 +1321,29 @@ class Simulator:
         Notes
         -----
         **HDF5 File Structure:**
-        /
-        ├── energy              (dataset: 1D array)
-        ├── time                (dataset: 1D array, empty for 1D simulations)
-        ├── clean_data          (dataset: 1D or 2D array)
-        ├── simulated_data/     (group)
-        │   ├── 000000          (dataset: first noisy realization)
-        │   ├── 000001          (dataset: second noisy realization)
-        │   └── ...
-        └── metadata/           (group with attributes)
-            ├── detection       (attribute: 'analog' or 'photon_counting')
-            ├── noise_level     (attribute: analog noise level)
-            ├── noise_type      (attribute: analog noise type)
-            ├── counts_per_cycle (attribute: photon counting counts)
-            ├── count_rate      (attribute: photon counting rate, if set)
-            ├── cycle_time      (attribute: photon counting cycle, if set)
-            ├── seed            (attribute: random seed, if set)
-            ├── dimension       (attribute: 1 or 2)
-            ├── n_datasets      (attribute: number of noisy datasets)
-            ├── model_parameters (attribute: JSON string of all parameters)
-            └── model_name      (attribute: model name)
+
+        ::
+
+            /
+            ├── energy              (dataset: 1D array)
+            ├── time                (dataset: 1D array, empty for 1D simulations)
+            ├── clean_data          (dataset: 1D or 2D array)
+            ├── simulated_data/     (group)
+            │   ├── 000000          (dataset: first noisy realization)
+            │   ├── 000001          (dataset: second noisy realization)
+            │   └── ...
+            └── metadata/           (group with attributes)
+                ├── detection       (attribute: 'analog' or 'photon_counting')
+                ├── noise_level     (attribute: analog noise level)
+                ├── noise_type      (attribute: analog noise type)
+                ├── counts_per_delay (attribute: photon counting counts)
+                ├── count_rate      (attribute: photon counting rate, if set)
+                ├── integration_time      (attribute: photon counting integration time, if set)
+                ├── seed            (attribute: random seed, if set)
+                ├── dimension       (attribute: 1 or 2)
+                ├── n_datasets      (attribute: number of noisy datasets)
+                ├── model_parameters (attribute: JSON string of all parameters)
+                └── model_name      (attribute: model name)
 
         **Why HDF5?**
         
@@ -1309,9 +1355,10 @@ class Simulator:
         - Standard in scientific computing
         
         **Model Parameters:**
-        
+
         All model parameters saved as JSON string in metadata for complete
         reproducibility. Includes:
+
         - Parameter values
         - vary flags (which parameters were free)
         - Bounds (min/max)
@@ -1320,49 +1367,49 @@ class Simulator:
         This allows exact recreation of the model used for simulation.
         
         **File Organization:**
-        
-        Default directory structure:
-        
-        project_directory/
-        └── simulated_data/
-            ├── simulation_001.h5
-            ├── simulation_002.h5
-            └── batch_001.h5
 
-            Keeps simulated data organized and separate from experimental data.
+        Default directory structure::
+
+            project_directory/
+            └── simulated_data/
+                ├── simulation_001.h5
+                ├── simulation_002.h5
+                └── batch_001.h5
+
+        Keeps simulated data organized and separate from experimental data.
         
         **Multiple Datasets:**
-        
+
         When N_data provided (from simulate_N), all realizations saved in
         simulated_data group with sequential names:
+
         - 000000, 000001, ..., 000099 for 100 datasets
         - Zero-padded for proper sorting
         
         Clean data saved once (same for all realizations).
         
         **Loading Data:**
-        
-        Standard h5py usage:
-        ```python
+
+        Standard h5py usage::
+
             import h5py
-            
+
             with h5py.File('simulated_data/data.h5', 'r') as f:
                 # Load axes
                 energy = f['energy'][:]
                 time = f['time'][:]
-                
+
                 # Load clean data
                 clean = f['clean_data'][:]
-                
+
                 # Load all noisy datasets
                 noisy_datasets = []
                 for key in sorted(f['simulated_data'].keys()):
                     noisy_datasets.append(f['simulated_data'][key][:])
-                
+
                 # Load metadata
                 detection = f['metadata'].attrs['detection']
                 n_datasets = f['metadata'].attrs['n_datasets']
-        ```
             
         See Also
         --------
@@ -1390,6 +1437,8 @@ class Simulator:
                 filepath = os.path.join(sim_dir, os.path.basename(filepath))
         
         # Check if file exists and handle overwrite
+        if filepath is None:
+            raise ValueError("filepath could not be resolved")
         if os.path.exists(filepath) and not overwrite:
             raise FileExistsError(
                 f"File already exists: {filepath}\n"
@@ -1407,7 +1456,7 @@ class Simulator:
         print(f"Data saved to: {filepath}")
 
     #
-    def _save_hdf5(self, filepath, N_data=None):
+    def _save_hdf5(self, filepath: str, N_data: Optional[List[np.ndarray]] = None) -> None:
         """
         Save data to HDF5 format with proper structure
         
@@ -1457,11 +1506,11 @@ class Simulator:
                 meta.attrs['noise_level'] = self.noise_level
                 meta.attrs['noise_type'] = self.noise_type
             elif self.detection == 'photon_counting':
-                meta.attrs['counts_per_cycle'] = self.counts_per_cycle
+                meta.attrs['counts_per_delay'] = self.counts_per_delay
                 if self.count_rate is not None:
                     meta.attrs['count_rate'] = self.count_rate
-                if self.cycle_time is not None:
-                    meta.attrs['cycle_time'] = self.cycle_time
+                if self.integration_time is not None:
+                    meta.attrs['integration_time'] = self.integration_time
             
             if self.seed is not None:
                 meta.attrs['seed'] = self.seed
@@ -1693,11 +1742,11 @@ class Simulator:
                 meta.attrs['noise_level'] = self.noise_level
                 meta.attrs['noise_type'] = self.noise_type
             elif self.detection == 'photon_counting':
-                meta.attrs['counts_per_cycle'] = self.counts_per_cycle
+                meta.attrs['counts_per_delay'] = self.counts_per_delay
                 if self.count_rate is not None:
                     meta.attrs['count_rate'] = self.count_rate
-                if self.cycle_time is not None:
-                    meta.attrs['cycle_time'] = self.cycle_time
+                if self.integration_time is not None:
+                    meta.attrs['integration_time'] = self.integration_time
             
             if self.seed is not None:
                 meta.attrs['seed'] = self.seed
@@ -1771,3 +1820,4 @@ class Simulator:
             data_group = f['simulated_data'].create_group(config_name)
             for real_idx, noisy_data in enumerate(noisy_list):
                 data_group.create_dataset(f'{real_idx:06d}', data=noisy_data)
+                

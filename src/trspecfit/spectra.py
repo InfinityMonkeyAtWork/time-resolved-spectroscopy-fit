@@ -27,9 +27,18 @@ The fitting workflow is:
 
 from trspecfit.mcp import Model
 from IPython.display import display 
+import numpy as np
+from typing import Sequence, Union
 
 #
-def fit_model_mcp(x, par, plot_ind, model, dim, debug):
+def fit_model_mcp(
+    x: Union[Sequence[float], np.ndarray],
+    par: Union[Sequence[float], np.ndarray],
+    plot_ind: bool,
+    model: Model,
+    dim: int,
+    debug: bool
+) -> Union[np.ndarray, list[np.ndarray]]:
     """
     Generate spectrum from mcp.Model for fitting or visualization.
     
@@ -43,20 +52,25 @@ def fit_model_mcp(x, par, plot_ind, model, dim, debug):
         Independent variable axis (energy or time). Not directly used here
         as model contains its own axes, but required for fitting interface
         compatibility.
+
     par : list or array-like
         Parameter values in same order as model.par_names. These are the
         current values proposed by the optimizer during fitting.
     plot_ind : bool
         Component return mode:
+
         - False: Return sum of all components (used during fitting)
         - True: Return list of individual component spectra (for visualization)
+
     model : mcp.Model
         Model instance containing components and parameter structure.
         Modified in-place to reflect current parameter values.
     dim : int
         Dimensionality of spectrum to generate:
+
         - 1: Generate 1D spectrum (energy-resolved or time-resolved)
         - 2: Generate 2D spectrum (time- and energy-resolved)
+
     debug : bool
         If True, print parameter values and detailed model info to console.
         Useful for debugging optimization issues.
@@ -106,7 +120,12 @@ def fit_model_mcp(x, par, plot_ind, model, dim, debug):
     - Using fit_SliceBySlice for quasi-independent time points
     - Implementing parallel evaluation (model.create_value2D_parallel)
     """
-    model.update_value(new_par_values=par)  # Update lmfit parameters
+    par_values: Union[list[float], np.ndarray]
+    if isinstance(par, np.ndarray):
+        par_values = par
+    else:
+        par_values = list(par)
+    model.update_value(new_par_values=par_values)  # Update lmfit parameters
     
     if debug: 
         display(model.lmfit_pars)
@@ -119,8 +138,14 @@ def fit_model_mcp(x, par, plot_ind, model, dim, debug):
             return model.component_spectra
         else:  # Return sum of all components
             model.create_value1D()
+            if model.value1D is None:
+                raise RuntimeError("Model evaluation did not produce value1D")
             return model.value1D
         
     elif dim == 2:  # 2D
         model.create_value2D()
+        if model.value2D is None:
+            raise RuntimeError("Model evaluation did not produce value2D")
         return model.value2D
+    else:
+        raise ValueError(f"Unsupported dim={dim}; expected 1 or 2")

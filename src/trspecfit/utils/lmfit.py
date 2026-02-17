@@ -12,13 +12,20 @@ This module provides utilities for:
 import lmfit
 import numpy as np
 import pandas as pd
+from typing import Any, Literal, Optional, Union
 
 #
 # lmfit parameter creation and extraction
 #
 
 #
-def par_create(par_name, par_info, prefix='', suffix='', debug=False):
+def par_create(
+    par_name: str,
+    par_info: list[Any],
+    prefix: str = '',
+    suffix: str = '',
+    debug: bool = False
+) -> lmfit.Parameter:
     """
     Create lmfit.Parameter object with optional name modifiers.
     
@@ -75,7 +82,10 @@ def par_create(par_name, par_info, prefix='', suffix='', debug=False):
     return lmf_par
 
 #
-def par_extract(lmfit_pars, return_type='list'):
+def par_extract(
+    lmfit_pars: Any,
+    return_type: Literal['list', 'par.x'] = 'list'
+) -> Union[list[Any], 'par_dummy']:
     """
     Extract parameter values from lmfit objects.
     
@@ -158,9 +168,11 @@ def par_extract(lmfit_pars, return_type='list'):
         pars_scipy = par_dummy()
         pars_scipy.x = pars
         return pars_scipy
+    else:
+        raise ValueError(f"return_type must be 'list' or 'par.x', got '{return_type}'")
     
 #
-def par_construct(par_names, par_info):
+def par_construct(par_names: list[str], par_info: list[list[Any]]) -> lmfit.Parameters:
     """
     Construct lmfit.Parameters object from lists.
     
@@ -201,7 +213,7 @@ def par_construct(par_names, par_info):
 #
 
 #
-def conf_interval2df(ci, CI_cols):
+def conf_interval2df(ci: dict[str, Any], CI_cols: list[str]) -> pd.DataFrame:
     """
     Convert lmfit confidence interval results to pandas DataFrame.
     
@@ -247,7 +259,11 @@ def conf_interval2df(ci, CI_cols):
     return pd.DataFrame(data=conf_CIs_list, columns=CI_cols)
 
 #
-def par2df(lmfit_params, col_type, par_names=None):
+def par2df(
+    lmfit_params: Any,
+    col_type: Union[str, list[str]],
+    par_names: Optional[list[str]] = None
+) -> pd.DataFrame:
     """
     Convert lmfit.Parameters object to pandas DataFrame.
     
@@ -306,7 +322,10 @@ def par2df(lmfit_params, col_type, par_names=None):
     elif col_type == 'min':
         cols = ['name', 'value', 'stderr', 'init_value', 'min', 'max', 'vary', 'expr']
     else:
-        cols = col_type
+        if isinstance(col_type, list):
+            cols = col_type
+        else:
+            raise ValueError("col_type must be 'ini', 'min', or a list of column names")
     
     # Extract parameter attributes
     par_info_list = []
@@ -319,7 +338,7 @@ def par2df(lmfit_params, col_type, par_names=None):
     return pd.DataFrame(data=par_info_list, columns=cols)
 
 #
-def list_of_par2df(results):
+def list_of_par2df(results: list[Any]) -> pd.DataFrame:
     """
     Extract parameter values from multiple fit results into DataFrame.
     
@@ -448,8 +467,17 @@ class MC:
     emcee : Underlying MCMC library
     """
     #
-    def __init__(self, useMC=0, steps=5000, nwalkers=1, burn=0, thin=1,
-                 ntemps=1, workers=1, is_weighted=False):
+    def __init__(
+        self,
+        useMC: int = 0,
+        steps: int = 5000,
+        nwalkers: int = 1,
+        burn: int = 0,
+        thin: int = 1,
+        ntemps: int = 1,
+        workers: int = 1,
+        is_weighted: bool = False
+    ) -> None:
         self.use_emcee = useMC
         self.steps = steps
         self.nwalkers = nwalkers
@@ -501,7 +529,7 @@ class par_dummy:
     >>> plot_parameters(result)        # Fit result
     """
     #
-    def __init__(self):
+    def __init__(self) -> None:
         self.final_simplex = None
         self.fun = None
         self.message = None
@@ -509,4 +537,4 @@ class par_dummy:
         self.nit = None
         self.status = None
         self.success = True
-        self.x = None
+        self.x: Optional[list[Any]] = None

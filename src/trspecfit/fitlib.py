@@ -1,5 +1,5 @@
 """
-1D and 2D peak fitting functions with lmfit integration.
+1D and 2D peak fitting functions based on lmfit.
 
 This module provides the complete fitting workflow for spectroscopy data:
 - Residual calculation for optimization
@@ -31,9 +31,13 @@ import copy
 import time
 from IPython.display import display, display_pretty
 import matplotlib.pyplot as plt
-from matplotlib.cm import get_cmap
 from trspecfit.utils import plot as uplt
 from trspecfit.config.plot import PlotConfig
+from typing import Any, Optional, Sequence, Union, cast
+import pathlib
+from numpy.typing import ArrayLike
+
+PathLike = Union[str, pathlib.Path]
 
 # Changes:
 # - residual_fun: pass function instead of package + function 
@@ -41,8 +45,18 @@ from trspecfit.config.plot import PlotConfig
 # - move from 0/1 to False/True whereever there are only 2 options
 
 #
-def residual_fun(par, x, data, package, fit_fun_str, unpack=0, e_lim=[],
-                 t_lim=[], res_type='lmfit', args=[]):
+def residual_fun(
+    par: Any,
+    x: ArrayLike,
+    data: np.ndarray,
+    package: Any,
+    fit_fun_str: str,
+    unpack: int = 0,
+    e_lim: Optional[list[int]] = None,
+    t_lim: Optional[list[int]] = None,
+    res_type: str = 'lmfit',
+    args: Optional[Sequence[Any]] = None
+) -> Union[np.ndarray, float]:
     """
     Compute residual (data - fit) for optimization and analysis.
     
@@ -61,16 +75,20 @@ def residual_fun(par, x, data, package, fit_fun_str, unpack=0, e_lim=[],
         but may not be used if function has its own axes.
     data : ndarray (1D or 2D)
         Experimental data to fit. Shape determines dimensionality:
+
         - 1D: [n_energy] for energy-resolved fits
         - 2D: [n_time, n_energy] for time- and energy-resolved fits
+
     package : module
         Python module containing the fit function (typically trspecfit.spectra)
     fit_fun_str : str
         Name of fit function within package (e.g., 'fit_model_mcp')
     unpack : {0, 1}, default=0
         Parameter passing mode:
-        - 0: Pass parameters as list: fit_fun(x, par, ...)
-        - 1: Unpack parameters: fit_fun(x, *par, ...)
+
+        - 0: Pass parameters as list: ``fit_fun(x, par, ...)``
+        - 1: Unpack parameters: ``fit_fun(x, *par, ...)``
+
     e_lim : list of int, default=[]
         Energy axis limits [left, right] for residual calculation.
         Uses slice notation: data[e_lim[0]:-e_lim[1]]
@@ -81,13 +99,15 @@ def residual_fun(par, x, data, package, fit_fun_str, unpack=0, e_lim=[],
         Empty list uses full time range.
     res_type : {'lmfit', 'RSS', 'abs', 'res', 'fit'}, default='lmfit'
         Return type:
+
         - 'lmfit': Residual array (1D) or flattened residual (2D) for lmfit
         - 'RSS': Residual sum of squares (scalar, for scipy.optimize)
         - 'abs': Sum of absolute residuals (scalar, L1 norm)
         - 'res': Raw residual array (data - fit)
         - 'fit': Return fit itself instead of residual
+
     args : tuple, default=()
-        Additional arguments for fit function, passed via *args
+        Additional arguments for fit function, passed via ``*args``
     
     Returns
     -------
@@ -98,6 +118,13 @@ def residual_fun(par, x, data, package, fit_fun_str, unpack=0, e_lim=[],
         - 'res': ndarray (same shape as data)
         - 'fit': ndarray (same shape as data)
     """
+    if e_lim is None:
+        e_lim = []
+    if t_lim is None:
+        t_lim = []
+    if args is None:
+        args = ()
+
     # define the fit function
     fit_fun = getattr(package, fit_fun_str)
     
@@ -107,43 +134,53 @@ def residual_fun(par, x, data, package, fit_fun_str, unpack=0, e_lim=[],
     par = ulmfit.par_extract(par, return_type='list')
     
     # compute the fit curve [plot_ind has to be hardcoded as False/0 here]
-    if unpack == 1: fit = fit_fun(x, *par, 0, *args)
-    elif unpack == 0: fit = fit_fun(x, par, 0, *args)
+    if unpack == 1:
+        fit = fit_fun(x, *par, 0, *args)
+    elif unpack == 0:
+        fit = fit_fun(x, par, 0, *args)
+    else:
+        raise ValueError("unpack must be 0 or 1")
+    fit_arr = np.asarray(fit)
+    data_arr = np.asarray(data)
     
     # select user-defined region to consider for residual computation
-    if len(data.shape) == 1: # 1D data
+    if len(data_arr.shape) == 1: # 1D data
         if len(e_lim) != 0:
-            residual = data[e_lim[0]:-e_lim[1]] -fit[e_lim[0]:-e_lim[1]]
+            residual = data_arr[e_lim[0]:-e_lim[1]] - fit_arr[e_lim[0]:-e_lim[1]]
         else: # use entire data and fit array to compute RSS 
-            residual = data -fit
-    elif len(data.shape) == 2: # 2D data
+            residual = data_arr - fit_arr
+    elif len(data_arr.shape) == 2: # 2D data
         if (len(e_lim) != 0) and (len(t_lim) == 0):
-            residual = data[:, e_lim[0]:-e_lim[1]] -fit[:, e_lim[0]:-e_lim[1]]
+            residual = data_arr[:, e_lim[0]:-e_lim[1]] - fit_arr[:, e_lim[0]:-e_lim[1]]
         elif (len(e_lim) == 0) and (len(t_lim) != 0):
-            residual = data[t_lim[0]:t_lim[1], :] -fit[t_lim[0]:t_lim[1], :]
+            residual = data_arr[t_lim[0]:t_lim[1], :] - fit_arr[t_lim[0]:t_lim[1], :]
         elif (len(e_lim) != 0) and (len(t_lim) != 0):
-            residual = data[t_lim[0]:t_lim[1], e_lim[0]:-e_lim[1]] \
-                       -fit[t_lim[0]:t_lim[1], e_lim[0]:-e_lim[1]]
+            residual = data_arr[t_lim[0]:t_lim[1], e_lim[0]:-e_lim[1]] \
+                       - fit_arr[t_lim[0]:t_lim[1], e_lim[0]:-e_lim[1]]
         # or use entire data and fit array to compute RSS
-        else: residual = data -fit
+        else:
+            residual = data_arr - fit_arr
+    else:
+        raise ValueError("data must be 1D or 2D")
     
     # type of residual to return
     if res_type == 'RSS':
-        return np.sum(residual**2)
+        return float(np.sum(residual**2))
     elif res_type == 'abs':
-        return np.sum(np.abs(residual))
+        return float(np.sum(np.abs(residual)))
     elif res_type == 'res':
-        return residual
+        return np.asarray(residual)
     elif res_type == 'lmfit':
-        if len(data.shape) == 1: # 1D data
-            return residual
-        elif len(data.shape) == 2: # 2D data
-            return residual.flatten()
+        if len(data_arr.shape) == 1: # 1D data
+            return np.asarray(residual)
+        elif len(data_arr.shape) == 2: # 2D data
+            return np.asarray(residual).flatten()
     elif res_type == 'fit':
-        return fit
+        return fit_arr
+    raise ValueError(f"Unknown res_type '{res_type}'")
 
 #
-def time_display(t_start, print_str='', return_delta_seconds=False):
+def time_display(t_start: float, print_str: str = '', return_delta_seconds: bool = False) -> Optional[float]:
     """
     Display elapsed time in human-readable format.
     
@@ -159,7 +196,7 @@ def time_display(t_start, print_str='', return_delta_seconds=False):
         Prefix string for display (e.g., 'Fitting completed in: ')
     return_delta_seconds : bool, default=False
         If True, also return elapsed seconds as float
-    
+
     Returns
     -------
     None or float
@@ -204,7 +241,7 @@ def time_display(t_start, print_str='', return_delta_seconds=False):
 #
 # error estimation helper functions
 #
-def sigma_dict():
+def sigma_dict() -> dict[str, float]:
     """
     Get percentage of distribution within N-sigma intervals.
     
@@ -231,7 +268,7 @@ def sigma_dict():
     return sigma_dict
 
 #
-def sigma_start_stop_percent(sigma_list):
+def sigma_start_stop_percent(sigma_list: Sequence[float]) -> list[list[float]]:
     """
     Calculate percentile bounds for symmetric confidence intervals.
     
@@ -267,14 +304,15 @@ def sigma_start_stop_percent(sigma_list):
     >>> print(f"1σ interval: [{ci[0]:.2f}, {ci[1]:.2f}]")
     1σ interval: [-1.01, 1.02]
     """
-    borders_pc = [] # low/high borders in percent
+    borders_pc: list[list[float]] = []  # low/high borders in percent
     for sigma in sigma_list:
-        A2A_total = sigma_dict().get("{:.1f}".format(sigma),
-                                     "sigma value not supported")
-        if type(A2A_total) == str:
-            print(A2A_total); borders_pc = []
+        a2a_total_raw = sigma_dict().get("{:.1f}".format(sigma), "sigma value not supported")
+        if isinstance(a2a_total_raw, str):
+            print(a2a_total_raw)
+            borders_pc = []
         else:
-            A_exclude2A_total = 100 -A2A_total
+            a2a_total = float(a2a_total_raw)
+            A_exclude2A_total = 100 - a2a_total
             borders_pc.append([A_exclude2A_total/2, 100 -A_exclude2A_total/2])
     #
     return borders_pc
@@ -282,11 +320,27 @@ def sigma_start_stop_percent(sigma_list):
 #
 # wrapper for lmfit fit, confidence interval, and lmfit.emcee functions
 #
-def fit_wrapper(const, args, par_names, par, fit_type, sigmas=[1,2,3], 
-                try_CI=1, MCsettings=ulmfit.MC(),
-                fit_alg_1='Nelder', fit_alg_2='leastsq',
-                show_info=0, save_output=0, save_path=''):
+def fit_wrapper(
+    const: tuple[Any, ...],
+    args: tuple[Any, ...],
+    par_names: list[str],
+    par: Any,
+    fit_type: int,
+    sigmas: Optional[list[float]] = None,
+    try_CI: int = 1,
+    MCsettings: Optional[ulmfit.MC] = None,
+    fit_alg_1: str = 'Nelder',
+    fit_alg_2: str = 'leastsq',
+    show_info: float = 0,
+    save_output: int = 0,
+    save_path: PathLike = ''
+) -> list[Any]:
     """
+    if sigmas is None:
+        sigmas = [1, 2, 3]
+    if MCsettings is None:
+        MCsettings = ulmfit.MC()
+
     Comprehensive fitting wrapper with optimization, CI, and MCMC.
     
     This is the main fitting function in trspecfit. It handles:
@@ -311,47 +365,61 @@ def fit_wrapper(const, args, par_names, par, fit_type, sigmas=[1,2,3],
         Parameter names in order (for display and export)
     par : lmfit.Parameters or list
         Initial parameter guess:
+
         - lmfit.Parameters: Use directly
-        - list: Convert to lmfit.Parameters using par_names
-          Each element: [value, vary, min, max] or ['expression']
+        - list: Convert to lmfit.Parameters using par_names.
+          Each element: ``[value, vary, min, max]`` or ``['expression']``
+
     fit_type : {0, 1, 2}
         Fitting strategy:
+
         - 0: No fit (return initial guess only, for debugging)
         - 1: Single fit with fit_alg_1
         - 2: Two-stage fit (global with fit_alg_1, local with fit_alg_2)
+
     sigmas : list of int or float, default=[1,2,3]
         Confidence levels for CI and MCMC (e.g., [1,2,3] for 1σ, 2σ, 3σ)
     try_CI : {0, 1}, default=1
         Confidence interval estimation:
+
         - 0: Skip CI calculation
         - 1: Calculate CI if error bars available (result.errorbars=True)
+
     MCsettings : ulmfit.MC, default=ulmfit.MC()
         MCMC configuration object:
+
         - use_emcee: 0 (skip), 1 (always), 2 (if CI fails)
         - steps: Number of MCMC steps per walker
         - nwalkers: Number of MCMC walkers
         - burn, thin, ntemps, workers, is_weighted: MCMC parameters
+
         See ulmfit.MC class for details
     fit_alg_1 : str, default='Nelder'
         First/only optimization method. Common options:
+
         - 'Nelder': Nelder-Mead (robust, no gradients, slower)
         - 'powell': Powell (robust, no gradients)
         - 'leastsq': Levenberg-Marquardt (fast, needs good initial guess)
+
         See lmfit documentation for full list
     fit_alg_2 : str, default='leastsq'
         Second optimization method (fit_type=2 only).
         Typically 'leastsq' for accurate local optimization and error bars.
     show_info : {0, 1, 2, 3}, default=0
         Verbosity level:
+
         - 0: Silent
         - 1: Basic timing and final results
         - 1.5: Also show initial parameters
         - 2: Also show constants and arguments
+
     save_output : {-1, 0, 1}, default=0
         Save results to files:
+
         - 0: Don't save
         - 1: Save all results (parameters, CIs, MCMC, plots)
         - -1: Same as 1 (for compatibility)
+
     save_path : str or Path, default=''
         Base path for saved files (without extension).
         Files saved: _par_ini.csv, _par_fin.txt, _par_fin.csv,
@@ -464,6 +532,11 @@ def fit_wrapper(const, args, par_names, par, fit_type, sigmas=[1,2,3],
     - TXT files: Human-readable lmfit.fit_report format
     - PNG files: High-resolution plots for documentation
     """
+    if sigmas is None:
+        sigmas = [1.0, 2.0, 3.0]
+    if MCsettings is None:
+        MCsettings = ulmfit.MC()
+
     # construct the lmfit parameters if necessary
     if isinstance(par, lmfit.parameter.Parameters):
         par_ini = copy.deepcopy(par); prnt_str = 'passed in '
@@ -476,7 +549,7 @@ def fit_wrapper(const, args, par_names, par, fit_type, sigmas=[1,2,3],
     # convert par_ini to pandas dataframe and save all lmfit info
     df_par_ini = ulmfit.par2df(par_ini, 'ini', par_names)
     
-    if show_info >= 2: # (optionally) show <constants> and <args> input
+    if show_info >= 2: # (optionally) show constants and args input
         print(); print('Constants input to residual function:')
         display_pretty(const)
         print('Arguments input to fit function:')
@@ -620,7 +693,7 @@ def fit_wrapper(const, args, par_names, par, fit_type, sigmas=[1,2,3],
         # lmfit.emcee() confidence intervals
         emcee_CIs_list = [] # initialize results
         for par_name in par_names+['__lnsigma']:
-            emcee_par_CIs = [par_name] # initialize results for this parameter
+            emcee_par_CIs: list[Any] = [par_name] # initialize results for this parameter
             if par_name in emcee_fin.var_names:
                 # get quantiles if fit parameter is variable
                 for s, sigma_b in enumerate(sigma_borders):
@@ -676,7 +749,7 @@ def fit_wrapper(const, args, par_names, par, fit_type, sigmas=[1,2,3],
 #
 # plotting fit results for Slice-by-Slice methods
 #
-def results_select(data, skip=-1, N=-1, dim=1):
+def results_select(data: Any, skip: int = -1, N: int = -1, dim: int = 1) -> Any:
     """
     Select slice of results array for partial fitting analysis.
     
@@ -721,13 +794,22 @@ def results_select(data, skip=-1, N=-1, dim=1):
                 out = data[:N+1]
             else:
                 out = data[skip:N+1]
-    #
+    else:
+        raise ValueError(f"Unsupported dim={dim}; only dim=1 is implemented")
+
     return out
 
 #
-def results2df(results, x=None, index=None, config=None,
-               first_N_spec_only=-1, skip_first_N_spec=-1, 
-               save_df=0, save_path=''):
+def results2df(
+    results: list[Any],
+    x: Optional[ArrayLike] = None,
+    index: Optional[ArrayLike] = None,
+    config: Optional[PlotConfig] = None,
+    first_N_spec_only: int = -1,
+    skip_first_N_spec: int = -1,
+    save_df: int = 0,
+    save_path: PathLike = ''
+) -> pd.DataFrame:
     """
     Convert Slice-by-Slice fit results to DataFrame with parameter plots.
     
@@ -752,13 +834,15 @@ def results2df(results, x=None, index=None, config=None,
         If != -1, skip first N results (for partial fitting).
     save_df : {-1, 0, 1}, default=0
         Save outputs:
+        
         - 0: Don't save
         - 1: Save DataFrame and parameter plots
         - -1: Same as 1
+        
         When save_df != 0, plots only varied (not fixed) parameters
     save_path : str or Path, default=''
         Directory path for saving files (not full filename) (created if not exists).
-        Files saved: 'fit_pars.csv', '<param_name>.png' for each parameter
+        Files saved: 'fit_pars.csv', '{param_name}.png' for each parameter
     
     Returns
     -------
@@ -777,7 +861,7 @@ def results2df(results, x=None, index=None, config=None,
     # get columns names for plot before adding x/index
     cols_plt = df.columns
     
-    # select <x> (time) and <index> data if passed
+    # select x (time) and index data if passed
     if x is not None:
         x_save = results_select(data=x,
                                 skip=skip_first_N_spec,
@@ -805,8 +889,15 @@ def results2df(results, x=None, index=None, config=None,
     return df
 
 #
-def results2fit2D(results, const, args, num_fmt='%.6e', delim=',',
-                  save_2D=0, save_path=''):
+def results2fit2D(
+    results: Union[list[Any], pd.DataFrame],
+    const: tuple[Any, ...],
+    args: tuple[Any, ...],
+    num_fmt: str = '%.6e',
+    delim: str = ',',
+    save_2D: int = 0,
+    save_path: PathLike = ''
+) -> np.ndarray:
     """
     Reconstruct 2D fit spectrum from Slice-by-Slice fit results.
     
@@ -818,9 +909,11 @@ def results2fit2D(results, const, args, num_fmt='%.6e', delim=',',
     ----------
     results : list or pd.DataFrame
         Fit results, either:
-        - list: Output from fit_wrapper for each slice
-          Each element: [par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs]
+
+        - list: Output from fit_wrapper for each slice.
+          Each element: ``[par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs]``
         - pd.DataFrame: From results2df() with parameters as columns
+
     const : tuple
         Constants for residual_fun:
         (x, data, package, function_str, unpack, e_lim, t_lim)
@@ -834,9 +927,11 @@ def results2fit2D(results, const, args, num_fmt='%.6e', delim=',',
         Delimiter for CSV output
     save_2D : {-1, 0, 1}, default=0
         Save 2D fit to file:
+
         - 0: Don't save
         - 1: Save to CSV
         - -1: Save to CSV (same as 1)
+
     save_path : str or Path, default=''
         Directory path for saving. File saved as: save_path/fit2D.csv
         Directory created if doesn't exist.
@@ -847,14 +942,41 @@ def results2fit2D(results, const, args, num_fmt='%.6e', delim=',',
         2D fit array (shape: [n_time, n_energy])
         Each row is the fitted spectrum for one time slice
     """
+    x_const, data_const, package_const, fit_fun_const, unpack_const, e_lim_const, t_lim_const = const
     lst = [] # intialize
     for N in range(len(results)):
         # list of lmfit_wrapper fit results
         if isinstance(results, list):
-            lst.append(residual_fun(results[N][1].params, *const, 'fit', args))
+            lst.append(
+                residual_fun(
+                    results[N][1].params,
+                    x_const,
+                    np.asarray(data_const),
+                    package_const,
+                    fit_fun_const,
+                    unpack=cast(int, unpack_const),
+                    e_lim=cast(list[int], e_lim_const),
+                    t_lim=cast(list[int], t_lim_const),
+                    res_type='fit',
+                    args=args,
+                )
+            )
         # pandas dataframe containing parameters as columns
         elif isinstance(results, pd.DataFrame):
-            lst.append(residual_fun(results.iloc[N].values, *const, 'fit', args))
+            lst.append(
+                residual_fun(
+                    results.iloc[N].values,
+                    x_const,
+                    np.asarray(data_const),
+                    package_const,
+                    fit_fun_const,
+                    unpack=cast(int, unpack_const),
+                    e_lim=cast(list[int], e_lim_const),
+                    t_lim=cast(list[int], t_lim_const),
+                    res_type='fit',
+                    args=args,
+                )
+            )
     fit2D = np.asarray(lst)
     #
     if abs(save_2D) == 1:
@@ -866,9 +988,22 @@ def results2fit2D(results, const, args, num_fmt='%.6e', delim=',',
 #
 # Plot fit results 1D and 2D functions
 #
-def plt_fit_res_1D(x, y, fit_fun_str, package, par_init, par_fin, args=None, 
-                   plot_ind=True, show_init=True, title='', fit_lim=None, 
-                   config=None, legend=None, **kwargs):
+def plt_fit_res_1D(
+    x: ArrayLike,
+    y: ArrayLike,
+    fit_fun_str: str,
+    package: Any,
+    par_init: Any,
+    par_fin: Any,
+    args: Optional[tuple[Any, ...]] = None,
+    plot_ind: bool = True,
+    show_init: bool = True,
+    title: str = '',
+    fit_lim: Optional[list[int]] = None,
+    config: Optional[PlotConfig] = None,
+    legend: Optional[list[str]] = None,
+    **kwargs: Any
+) -> None:
     """
     Plot 1D fit results: data, initial guess, final fit, components, and residual.
     
@@ -890,20 +1025,26 @@ def plt_fit_res_1D(x, y, fit_fun_str, package, par_init, par_fin, args=None,
         Initial parameter guess. Can be empty list [] if show_init=False.
     par_fin : lmfit.MinimizerResult or lmfit.Parameters or list
         Final fit parameters:
+
         - lmfit.MinimizerResult: From fit_wrapper result[1]
         - lmfit.Parameters: Manual parameter object
         - list: Empty list shows initial guess only (no final fit)
+
     args : tuple, optional
         Additional arguments for fit function (model, dim, debug).
         If None, defaults to empty tuple.
     plot_ind : bool, default=True
         Plot individual components:
+
         - True: Show each component separately (colored + filled)
         - False: Show only total fit (faster, cleaner for many components)
+
     show_init : bool, default=True
         Show initial parameter guess:
+
         - True: Plot initial guess as dotted gold line
         - False: Skip initial guess (cleaner when guess is far off)
+
     title : str, default=''
         Plot title. Use for file/model identification.
     fit_lim : list of int, optional
@@ -928,7 +1069,7 @@ def plt_fit_res_1D(x, y, fit_fun_str, package, par_init, par_fin, args=None,
         config = PlotConfig()
     
     if args is None:
-        args = []
+        args = ()
     
     # Extract settings from config
     x_label = kwargs.get('x_label', config.x_label)
@@ -946,20 +1087,23 @@ def plt_fit_res_1D(x, y, fit_fun_str, package, par_init, par_fin, args=None,
     
     # Get fit function
     fit_fun = getattr(package, fit_fun_str)
+
+    x_arr = np.asarray(x, dtype=float)
+    y_arr = np.asarray(y, dtype=float)
     
     # Get standard colors
-    colors = get_cmap('tab10').colors
+    colors: list[str] = list(plt.rcParams['axes.prop_cycle'].by_key().get('color', ['#1f77b4']))
     
     # Create figure
     fig, ax = plt.subplots(1, 1, dpi=dpi_plot)
     
     # Plot data
-    plt.plot(x, y, color=colors[0], linewidth=2, label='data')
+    plt.plot(x_arr, y_arr, color=colors[0], linewidth=2, label='data')
     
     # Plot initial guess if requested
     if show_init: 
         par_ini = ulmfit.par_extract(par_init, return_type='list')
-        plt.plot(x, fit_fun(x, par_ini, 0, *args), color='#FFD700',
+        plt.plot(x_arr, fit_fun(x_arr, par_ini, 0, *args), color='#FFD700',
                 linestyle=':', linewidth=2, label='initial guess')
     
     # Plot final fit (components and/or sum)
@@ -968,26 +1112,27 @@ def plt_fit_res_1D(x, y, fit_fun_str, package, par_init, par_fin, args=None,
         
         # Plot individual components if requested
         if plot_ind:
-            peaks = fit_fun(x, par_fin_vals, 1, *args)
+            peaks = fit_fun(x_arr, par_fin_vals, 1, *args)
             for p, peak in enumerate(peaks):
                 label = legend[p] if legend and p < len(legend) else f'component {p}'
-                plt.plot(x, peak, color=colors[p+1], linestyle='-', 
+                color_idx = (p + 1) % len(colors)
+                plt.plot(x_arr, peak, color=colors[color_idx], linestyle='-', 
                         linewidth=2, label=label)
-                ax.fill_between(x, 0, peak, facecolor=colors[p+1], alpha=0.5)
+                ax.fill_between(x_arr, 0, peak, facecolor=colors[color_idx], alpha=0.5)
         
         # Plot final fit sum
-        plt.plot(x, fit_fun(x, par_fin_vals, 0, *args), color='#000000',
+        plt.plot(x_arr, fit_fun(x_arr, par_fin_vals, 0, *args), color='#000000',
                 linestyle='-', linewidth=1, label='final fit')
         
         # Calculate residual
-        res = y - fit_fun(x, par_fin_vals, 0, *args)
+        res = y_arr - fit_fun(x_arr, par_fin_vals, 0, *args)
     else:
         # Initial guess only
         par_ini = ulmfit.par_extract(par_init, return_type='list')
-        res = y - fit_fun(x, par_ini, 0, *args)
+        res = y_arr - fit_fun(x_arr, par_ini, 0, *args)
     
     # Plot residual (scaled for visibility)
-    plt.plot(x, res * res_mult, color='#808080',
+    plt.plot(x_arr, res * res_mult, color='#808080',
             linestyle='-', linewidth=2, label=f'{res_mult}*residual')
     
     # Set axis labels and title
@@ -1012,13 +1157,13 @@ def plt_fit_res_1D(x, y, fit_fun_str, package, par_init, par_fin, args=None,
         ax.hlines(y=0, xmin=x_lim[0], xmax=x_lim[1],
                  color='#A9A9A9', linestyle=':')
     else:
-        ax.hlines(y=0, xmin=np.min(x), xmax=np.max(x),
+        ax.hlines(y=0, xmin=np.min(x_arr), xmax=np.max(x_arr),
                  color='#A9A9A9', linestyle=':')
     
     # Draw vertical lines showing fit limits
     if fit_lim is not None and len(fit_lim) == 2:
-        ax.vlines(x=[x[fit_lim[0]], x[-fit_lim[1]] if fit_lim[1] > 0 else x[-1]],
-                 ymin=np.min(res), ymax=np.max(y),
+        ax.vlines(x=[x_arr[fit_lim[0]], x_arr[-fit_lim[1]] if fit_lim[1] > 0 else x_arr[-1]],
+                 ymin=np.min(res), ymax=np.max(y_arr),
                  colors='#A9A9A9', linestyle='--')
     
     # Legend
@@ -1034,11 +1179,18 @@ def plt_fit_res_1D(x, y, fit_fun_str, package, par_init, par_fin, args=None,
         plt.show()
     else:
         plt.close()
-    
+    #
     return None
 
 #
-def plt_fit_res_2D(data, fit, x=None, y=None, config=None, **kwargs):
+def plt_fit_res_2D(
+    data: np.ndarray,
+    fit: np.ndarray,
+    x: Optional[ArrayLike] = None,
+    y: Optional[ArrayLike] = None,
+    config: Optional[PlotConfig] = None,
+    **kwargs: Any
+) -> None:
     """
     Plot 2D fit results: data, fit, and residual maps.
     
@@ -1059,14 +1211,16 @@ def plt_fit_res_2D(data, fit, x=None, y=None, config=None, **kwargs):
     config : PlotConfig, optional
         Plot configuration object. If None, uses defaults.
     **kwargs : dict
-        Override config attributes for this plot. 
+        Override config attributes for this plot.
+
         Common options:
+
         - x_label, y_label : Axis labels (z_label used for colorbar title)
-        - x_lim, y_lim : Fit limit indices [left, right] or [start, stop]
+        - x_lim, y_lim : Fit limit indices ``[left, right]`` or ``[start, stop]``.
           Used for both slicing residual and drawing limit lines
-        - z_lim_top : Color scale [min, max] for data and fit panels
+        - z_lim_top : Color scale ``[min, max]`` for data and fit panels.
           Synchronized scale enables direct comparison
-        - z_lim_res : Color scale [min, max] for residual panel
+        - z_lim_res : Color scale ``[min, max]`` for residual panel.
           Independent scale optimizes residual visibility
         - z_colormap : Colormap name (default 'viridis')
         - x_dir, y_dir : 'def' or 'rev' for axis direction
@@ -1114,9 +1268,13 @@ def plt_fit_res_2D(data, fit, x=None, y=None, config=None, **kwargs):
     
     # Create default axes if not provided
     if x is None:
-        x = np.arange(0, np.shape(data)[1], 1)
+        x_arr = np.arange(0, np.shape(data)[1], 1, dtype=float)
+    else:
+        x_arr = np.asarray(x, dtype=float)
     if y is None:
-        y = np.arange(0, np.shape(data)[0], 1)
+        y_arr = np.arange(0, np.shape(data)[0], 1, dtype=float)
+    else:
+        y_arr = np.asarray(y, dtype=float)
     
     # Determine color scale ranges
     # Data and fit share the same scale for comparison
@@ -1139,21 +1297,21 @@ def plt_fit_res_2D(data, fit, x=None, y=None, config=None, **kwargs):
                                   constrained_layout=True, figsize=(9, 12))
     
     # Data panel (uses shared scale)
-    pc_dat = axs['left'].pcolormesh(x, y, data, cmap=z_colormap,
+    pc_dat = axs['left'].pcolormesh(x_arr, y_arr, data, cmap=z_colormap,
                                     vmin=range_dat_fit[0], vmax=range_dat_fit[1],
                                     shading='nearest')
     axs['left'].set_title('Data [min: ' + str('{0:.3E}'.format(np.min(data))) +
                           ', max: ' + str('{0:.3E}'.format(np.max(data))) + ']')
     
     # Fit panel (uses shared scale)
-    pc_fit = axs['right'].pcolormesh(x, y, fit, cmap=z_colormap,
+    pc_fit = axs['right'].pcolormesh(x_arr, y_arr, fit, cmap=z_colormap,
                                      vmin=range_dat_fit[0], vmax=range_dat_fit[1],
                                      shading='nearest')
     axs['right'].set_title('Fit [min: ' + str('{0:.3E}'.format(np.min(fit))) +
                            ', max: ' + str('{0:.3E}'.format(np.max(fit))) + ']')
     
     # Residual panel (independent scale)
-    pc_res = axs['bottom'].pcolormesh(x, y, res, cmap=z_colormap,
+    pc_res = axs['bottom'].pcolormesh(x_arr, y_arr, res, cmap=z_colormap,
                                       vmin=range_res[0], vmax=range_res[1],
                                       shading='nearest')
     axs['bottom'].set_title('Residual (Data-Fit) [min: ' +
@@ -1173,14 +1331,14 @@ def plt_fit_res_2D(data, fit, x=None, y=None, config=None, **kwargs):
     
     # Draw horizontal and vertical lines showing fit limits
     if y_lim is not None:
-        axs['bottom'].axhline(y=y[y_lim[0]], xmin=0, xmax=1,
+        axs['bottom'].axhline(y=float(y_arr[y_lim[0]]), xmin=0, xmax=1,
                              color='#000000', linestyle=':')
-        axs['bottom'].axhline(y=y[y_lim[1]], xmin=0, xmax=1,
+        axs['bottom'].axhline(y=float(y_arr[y_lim[1]]), xmin=0, xmax=1,
                              color='#000000', linestyle=':')
     if x_lim is not None:
-        axs['bottom'].axvline(x=x[x_lim[0]], ymin=0, ymax=1,
+        axs['bottom'].axvline(x=float(x_arr[x_lim[0]]), ymin=0, ymax=1,
                              color='#000000', linestyle=':')
-        axs['bottom'].axvline(x=x[np.shape(res)[1]-x_lim[1]], ymin=0, ymax=1,
+        axs['bottom'].axvline(x=float(x_arr[np.shape(res)[1]-x_lim[1]]), ymin=0, ymax=1,
                              color='#000000', linestyle=':')
     
     # Apply axis settings to all three plots
@@ -1210,11 +1368,17 @@ def plt_fit_res_2D(data, fit, x=None, y=None, config=None, **kwargs):
         plt.show()
     else:
         plt.close()
-    
+    #
     return None
 
 #
-def plt_fit_res_pars(df, x=None, config=None, save_img=0, save_path=''):
+def plt_fit_res_pars(
+    df: pd.DataFrame,
+    x: Optional[ArrayLike] = None,
+    config: Optional[PlotConfig] = None,
+    save_img: Union[int, list[int]] = 0,
+    save_path: PathLike = ''
+) -> None:
     """
     Plot fit parameters individually as functions of time/index.
     
@@ -1232,24 +1396,30 @@ def plt_fit_res_pars(df, x=None, config=None, save_img=0, save_path=''):
         Plot configuration object. If None, uses defaults.
     save_img : int or list, default=0
         Save/display control for each plot:
+
         - int: Apply same setting to all parameters
+
           - 0: Display only
           - 1: Display and save
           - -1: Save only (no display)
-        - list: One element per parameter (per row in df)
+
+        - list: One element per parameter (per row in df).
           Allows selective saving (e.g., save only varied parameters)
+          
     save_path : str or Path, default=''
         Directory path for saving plots.
-        Each plot saved as: save_path/<parameter_name>.png
+        Each plot saved as: save_path/{parameter_name}.png
         Directory created if doesn't exist.
     """
     # Use default config if none provided
     if config is None:
         config = PlotConfig()
     
-    # if save_img is passed as int, make array of length = rows in df
+    # if save_img is passed as int, make array of length = number of parameters
     if isinstance(save_img, int):
-        save_img = np.shape(df)[0]*[save_img]
+        save_img_list = len(df.columns) * [save_img]
+    else:
+        save_img_list = save_img
     
     # plot all parameters as function of time
     for c, col in enumerate(df.columns):
@@ -1262,7 +1432,7 @@ def plt_fit_res_pars(df, x=None, config=None, save_img=0, save_path=''):
             x_type=config.y_type,
             x_label=config.y_label,
             y_label=col,
-            save_img=save_img[c],
+            save_img=save_img_list[c],
             save_path=os.path.join(save_path, col)
         )
     #
