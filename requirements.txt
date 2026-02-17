@@ -1,0 +1,6 @@
+# Docs-only dependencies for Read the Docs/Sphinx builds
+sphinx>=7,<8
+sphinx-rtd-theme
+myst-parser
+nbsphinx
+ipykernel
