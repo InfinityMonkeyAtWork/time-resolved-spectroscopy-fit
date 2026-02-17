@@ -395,7 +395,7 @@ class TestSimulatorParameterSweep:
         sim_photon = Simulator(
             model=simple_model,
             detection='photon_counting',
-            counts_per_cycle=5000,
+            counts_per_delay=5000,
             seed=42
         )
         
@@ -411,7 +411,7 @@ class TestSimulatorParameterSweep:
             
             with h5py.File(filepath, 'r') as f:
                 assert f['metadata'].attrs['detection'] == 'photon_counting'
-                assert f['metadata'].attrs['counts_per_cycle'] == 5000
+                assert f['metadata'].attrs['counts_per_delay'] == 5000
 
 
 if __name__ == '__main__':
