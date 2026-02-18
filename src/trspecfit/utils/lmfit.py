@@ -10,9 +10,10 @@ This module provides utilities for:
 """
 
 import lmfit
+from lmfit.minimizer import MinimizerResult
 import numpy as np
 import pandas as pd
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal, Optional, Union, overload
 
 #
 # lmfit parameter creation and extraction
@@ -82,10 +83,22 @@ def par_create(
     return lmf_par
 
 #
+_ParExtractInput = Union[
+    lmfit.Parameters,
+    MinimizerResult,
+    list[float],
+    dict[str, list[Any]],
+    np.ndarray,
+]
+
+@overload
+def par_extract(lmfit_pars: _ParExtractInput, return_type: Literal['list'] = ...) -> list[float]: ...
+@overload
+def par_extract(lmfit_pars: _ParExtractInput, return_type: Literal['par.x']) -> 'par_dummy': ...
 def par_extract(
-    lmfit_pars: Any,
+    lmfit_pars: _ParExtractInput,
     return_type: Literal['list', 'par.x'] = 'list'
-) -> Union[list[Any], 'par_dummy']:
+) -> Union[list[float], 'par_dummy']:
     """
     Extract parameter values from lmfit objects.
     
@@ -144,22 +157,28 @@ def par_extract(
     if isinstance(lmfit_pars, lmfit.parameter.Parameters):
         pars_dict = lmfit_pars.valuesdict()
         pars = [v for k, v in pars_dict.items()]
-    
+
     # List of values (passthrough)
     elif isinstance(lmfit_pars, list):
         pars = lmfit_pars
-    
+
     # Initial guess dictionary: {name: [value, vary, min, max]}
     elif isinstance(lmfit_pars, dict):
         pars = [v[0] for k, v in lmfit_pars.items()]
-    
+
     # Numpy array
     elif isinstance(lmfit_pars, np.ndarray):
         pars = lmfit_pars.tolist()
-    
+
     # lmfit.MinimizerResult object
-    else:
+    elif isinstance(lmfit_pars, MinimizerResult):
         pars = [lmfit_pars.params[p].value for p in lmfit_pars.params]
+
+    else:
+        raise TypeError(
+            f"par_extract: unsupported type {type(lmfit_pars).__name__}. "
+            f"Expected Parameters, MinimizerResult, list, dict, or ndarray."
+        )
     
     # Return in requested format
     if return_type == 'list':
@@ -260,25 +279,25 @@ def conf_interval2df(ci: dict[str, Any], CI_cols: list[str]) -> pd.DataFrame:
 
 #
 def par2df(
-    lmfit_params: Any,
-    col_type: Union[str, list[str]],
+    lmfit_params: lmfit.Parameters,
+    col_type: Union[Literal['ini', 'min'], list[str]],
     par_names: Optional[list[str]] = None
 ) -> pd.DataFrame:
     """
     Convert lmfit.Parameters object to pandas DataFrame.
-    
+
     Extracts parameter information into tabular format for easy display,
     analysis, and saving. Supports different column sets for initial
     guesses vs. fit results.
-    
+
     Parameters
     ----------
-    lmfit_params : lmfit.Parameters or lmfit.MinimizerResult
-        Parameters object or fit result to convert
-    col_type : str or list of str
+    lmfit_params : lmfit.Parameters
+        Parameters object to convert. For fit results, pass ``result.params``.
+    col_type : {'ini', 'min'} or list of str
         Column selection:
         - 'ini': Initial guess columns ['name', 'value', 'vary', 'min', 'max', 'expr']
-        - 'min': Fit result columns ['name', 'value', 'stderr', 'init_value', 
+        - 'min': Fit result columns ['name', 'value', 'stderr', 'init_value',
           'min', 'max', 'vary', 'expr']
         - list: Custom list of attribute names to extract
     par_names : list of str, optional
@@ -322,10 +341,7 @@ def par2df(
     elif col_type == 'min':
         cols = ['name', 'value', 'stderr', 'init_value', 'min', 'max', 'vary', 'expr']
     else:
-        if isinstance(col_type, list):
-            cols = col_type
-        else:
-            raise ValueError("col_type must be 'ini', 'min', or a list of column names")
+        cols = col_type  # list[str] custom columns
     
     # Extract parameter attributes
     par_info_list = []

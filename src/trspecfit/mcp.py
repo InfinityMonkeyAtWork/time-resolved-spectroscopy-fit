@@ -922,7 +922,7 @@ class Component:
         self.comp_name: str = comp_name
         # parse the component name into function string and component number
         self.fct_str: str
-        self.N: int
+        self.N: Optional[int]
         self.fct_str, self.N = uparsing.parse_component_name(comp_name)       
         # determine component type: 'add', 'conv', 'back', or 'none'
         if self.fct_str in background_functions():

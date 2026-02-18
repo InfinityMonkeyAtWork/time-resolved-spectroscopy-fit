@@ -567,7 +567,7 @@ class File:
         model_info_dict = uparsing.load_and_number_yaml_components(
             model_yaml_path=model_yaml_path,
             model_info=model_info,
-            par_name=par_name,
+            is_dynamics=par_name != '',
             debug=debug
         )
 
