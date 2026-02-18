@@ -277,9 +277,24 @@ class Test2DModelParsing:
         assert file.model_active.components[3].par_dict['F'] == [1.0, True, 0.75, 2.5]
         assert file.model_active.components[3].par_dict['m'] == [0.3, True, 0, 1]
         
-    #$%
-    # make sure that time-dependence added to a dependent energy parameter throws an error!
-    # e.g. GLP_02_x0 depends on GLP_01_x0 and then the user adds time-dependence to GLP_02_x0
+    #
+    def test_time_dependence_on_expression_parameter_raises(self):
+        """Adding dynamics to expression-linked parameter should fail."""
+        project = Project(path='tests')
+        file = File(parent_project=project)
+        file.load_model(
+            model_yaml='test_models_energy.yaml',
+            model_info=['energy_expression'],
+            debug=False
+        )
+        file.time = np.linspace(-10, 100, 111)
+
+        with pytest.raises(ValueError, match='Cannot add time dependence to expression parameter'):
+            file.add_time_dependence(
+                model_yaml='test_models_time.yaml',
+                model_info=['MonoExpPosIRF'],
+                par_name='GLP_02_x0'
+            )
 
 
 if __name__ == '__main__':
