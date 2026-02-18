@@ -77,6 +77,9 @@ source .venv/bin/activate
 pip install -U pip
 pip install -e ".[dev]"
 python -m pre_commit install --install-hooks
+
+# Commit changes (same on all platforms)
+pytest
 python -m pre_commit run --all-files
 ```
 
