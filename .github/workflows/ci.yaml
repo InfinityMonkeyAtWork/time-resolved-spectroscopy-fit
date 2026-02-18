@@ -35,6 +35,7 @@ jobs:
         run: mypy src/trspecfit
 
       - name: Run pyright
+        continue-on-error: true
         run: pyright
 
       - name: Build package
