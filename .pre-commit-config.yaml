@@ -3,14 +3,18 @@ repos:
   hooks:
   - id: mypy-trspecfit
     name: mypy (trspecfit)
-    entry: python -m mypy --cache-dir=nul src/trspecfit
-    language: system
+    entry: mypy --no-incremental src/trspecfit
+    language: python
+    additional_dependencies:
+      - .[dev]
     pass_filenames: false
     stages: [pre-commit]
 
   - id: pytest
     name: pytest
-    entry: python -m pytest -q
-    language: system
+    entry: pytest -q
+    language: python
+    additional_dependencies:
+      - .[dev]
     pass_filenames: false
     stages: [pre-commit]

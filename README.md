@@ -1,6 +1,7 @@
 # trspecfit — 2D Time- and Energy-resolved Spectroscopy Fitting
 
 [![Documentation Status](https://readthedocs.org/projects/time-resolved-spectroscopy-fit/badge/?version=latest)](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/?badge=latest)
+[![PyPI version](https://img.shields.io/pypi/v/trspecfit.svg)](https://pypi.org/project/trspecfit/)
 
 **A Python library for fitting multi-component spectral models to time-resolved spectroscopy data.**
 
