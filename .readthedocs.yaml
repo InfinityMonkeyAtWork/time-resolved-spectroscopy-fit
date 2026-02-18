@@ -7,15 +7,8 @@ build:
 
 sphinx:
   configuration: docs/conf.py
-  fail_on_warning: false
-
-formats:
-  - htmlzip
-  - epub
 
 python:
   install:
-    - method: pip
-      path: .
-    - method: pip
-      requirements: docs/requirements.txt
+    - requirements: docs/requirements.txt
+    - path: .
