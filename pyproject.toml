@@ -62,3 +62,7 @@ ignore_missing_imports = true
 include = ["src"]
 reportMissingImports = true
 typeCheckingMode = "basic"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -6,15 +6,7 @@ repos:
     entry: mypy --no-incremental src/trspecfit
     language: python
     additional_dependencies:
-      - .[dev]
-    pass_filenames: false
-    stages: [pre-commit]
-
-  - id: pytest
-    name: pytest
-    entry: pytest -q
-    language: python
-    additional_dependencies:
-      - .[dev]
+      - .
+      - mypy
     pass_filenames: false
     stages: [pre-commit]
