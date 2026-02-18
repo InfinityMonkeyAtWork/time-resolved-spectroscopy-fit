@@ -478,9 +478,19 @@ class Model:
         ci, pi = self.find_par_by_name(dynamics_model.name)
         if ci is None or pi is None:
             raise ValueError(f'Parameter "{dynamics_model.name}" not found in model {self.name}')
+        target_par = self.components[ci].pars[pi]
+
+        # Disallow adding dynamics to expression-linked parameters.
+        # Their value is already constrained by the expression.
+        if len(target_par.info) == 1 and isinstance(target_par.info[0], str):
+            raise ValueError(
+                f'Cannot add time dependence to expression parameter "{dynamics_model.name}" '
+                f'(expression: {target_par.info[0]}). '
+                'Add dynamics to the referenced base parameter instead.'
+            )
         
         # add Dynamics model and update corresponding parameter
-        self.components[ci].pars[pi].update(dynamics_model)
+        target_par.update(dynamics_model)
         # update model lmfit_par_list, par_names and components
         self.update(debug=debug)
         
