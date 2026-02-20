@@ -106,7 +106,7 @@ class TestMCPComponent:
         comp = Component('GLP')
         
         assert comp.fct_str == 'GLP'
-        assert comp.N == -1  # Not numbered initially
+        assert comp.N is None  # Not numbered initially
         assert comp.par_dict == {}
         assert comp.pars == []
     

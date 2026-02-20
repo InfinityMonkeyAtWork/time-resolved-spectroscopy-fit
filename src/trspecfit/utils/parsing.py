@@ -7,7 +7,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.constructor import SafeConstructor
 from ruamel.yaml.error import YAMLError
 from pathlib import Path
-from typing import Dict, List, Tuple, Any, Generator, Set
+from typing import Dict, List, Optional, Tuple, Any, Generator, Set
 import numpy as np
 import re
 
@@ -84,38 +84,38 @@ SafeConstructor.add_constructor(u'tag:yaml.org,2002:map', construct_yaml_map)
 yaml = YAML(typ='safe')
 
 #
-def parse_component_name(comp_name: str) -> Tuple[str, int]:
+def parse_component_name(comp_name: str) -> Tuple[str, Optional[int]]:
     """
     Parse a component name into base function name and number.
     Component names follow the pattern: function_name or function_name_NN
     where NN is a two-digit number. This function extracts both parts.
-    
+
     Parameters
     ----------
     comp_name : str
         Component name to parse (e.g., 'GLP_01', 'expFun_02', 'Offset')
-    
+
     Returns
     -------
     base_name : str
         Function name without number (e.g., 'GLP', 'expFun', 'Offset')
-    number : int
-        Component number (e.g., 1, 2) or -1 if unnumbered
+    number : int or None
+        Component number (e.g., 1, 2) or None if unnumbered
     """
     # numbered component
     if '_' in comp_name and comp_name.split('_')[-1].isdigit():
         parts = comp_name.split('_')
         if len(parts) >= 2 and parts[-1].isdigit():
             base_name = '_'.join(parts[:-1])
-            number = int(parts[-1])
+            number: Optional[int] = int(parts[-1])
         else:
             base_name = comp_name
-            number = -1
+            number = None
     # unnumbered component (see config/functions.py numbering_exceptions)
     else:
         base_name = comp_name
-        number = -1
-    
+        number = None
+
     return base_name, number
 
 #
@@ -272,26 +272,26 @@ def validate_model_components(
 def load_and_number_yaml_components(
     model_yaml_path: Path,
     model_info: List[str],
-    par_name: str = '',
+    is_dynamics: bool = False,
     debug: bool = False
 ) -> Dict[str, Dict[str, Dict[str, Any]]]:
     """
     Load model YAML file and apply appropriate component numbering strategy.
-    
-    For energy models (par_name=''), component numbering is applied by
+
+    For energy models (is_dynamics=False), component numbering is applied by
     construct_yaml_map during parsing.
-    For dynamics models (par_name!=''), additional conflict resolution is
+    For dynamics models (is_dynamics=True), additional conflict resolution is
     performed to ensure unique numbering across subcycles.
-    
+
     Parameters
     ----------
     model_yaml_path : Path or str
         Full path to model YAML file
     model_info : list of str
         Model names to load from the YAML file
-    par_name : str, default=''
-        Parameter name for dynamics models. If empty string, treats as energy model.
-        If non-empty, treats as dynamics model and applies conflict resolution.
+    is_dynamics : bool, default=False
+        If True, applies dynamics numbering conflict resolution across subcycles.
+        If False, treats as energy model (numbering already complete after parsing).
     debug : bool, default=False
         If True, print detailed information during loading and numbering
     
@@ -344,8 +344,8 @@ def load_and_number_yaml_components(
                 print(model_info_dict)
             
             # Apply appropriate numbering strategy
-            if par_name != '':
-                # This is a dynamics model - resolve numbering conflicts across subcycles
+            if is_dynamics:
+                # Resolve numbering conflicts across subcycles
                 model_info_dict = resolve_dynamics_numbering_conflicts(model_info_dict, model_info, debug)
 
             # Validate the loaded model structure
@@ -439,9 +439,9 @@ def resolve_dynamics_numbering_conflicts(
             base_name, number = parse_component_name(comp_name)
             
             if base_name in available_functions and base_name not in exceptions:
-                if number == -1:
+                if number is None:
                     number = 1  # Default numbering
-                    
+
                 # Track used numbers
                 if base_name not in used_numbers:
                     used_numbers[base_name] = set()
@@ -468,7 +468,7 @@ def resolve_dynamics_numbering_conflicts(
             base_name, current_number = parse_component_name(comp_name)
             
             if base_name in available_functions and base_name not in exceptions:
-                if current_number == -1:
+                if current_number is None:
                     current_number = 1  # Default numbering
             
                 # Initialize tracking for this base name

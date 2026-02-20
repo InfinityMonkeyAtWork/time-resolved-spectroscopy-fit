@@ -20,6 +20,7 @@ plt_fit_res_2D : Plot 2D fit results with residual maps
 """
 
 import lmfit
+from lmfit.minimizer import MinimizerResult
 from trspecfit.utils import lmfit as ulmfit
 #import emcee
 import corner
@@ -38,6 +39,21 @@ import pathlib
 from numpy.typing import ArrayLike
 
 PathLike = Union[str, pathlib.Path]
+
+def _result_params(result: MinimizerResult) -> lmfit.parameter.Parameters:
+    """Return typed lmfit parameters from a MinimizerResult-like object."""
+    params = getattr(result, "params", None)
+    if not isinstance(params, lmfit.parameter.Parameters):
+        raise TypeError(
+            f"Expected lmfit.Parameters in result.params, got {type(params).__name__}"
+        )
+    return params
+
+
+def _result_errorbars(result: MinimizerResult) -> bool:
+    """Safely read MinimizerResult.errorbars with fallback."""
+    return bool(getattr(result, "errorbars", False))
+
 
 # Changes:
 # - residual_fun: pass function instead of package + function 
@@ -578,25 +594,28 @@ def fit_wrapper(
     #
     if fit_type == 1: # one fit only
         par_fin = mini.minimize(method=fit_alg_1)
+        par_fin_params = _result_params(par_fin)
         if show_info >= 1:
             print(); print(f'Results fit (method={fit_alg_1}): ') 
-            lmfit.report_fit(par_fin.params)
+            lmfit.report_fit(par_fin_params)
             t_fit = time.time(); print(f'Time fit: {t_fit -t_ini} s')
     #
     if fit_type == 2: # find global minimum + local optimization
         par_fin_GM = mini.minimize(method=fit_alg_1)
+        par_fin_GM_params = _result_params(par_fin_GM)
         if show_info >= 1:
             print()
             print(f'Results global minumum fit (method={fit_alg_1}): ')
-            lmfit.report_fit(par_fin_GM.params)
+            lmfit.report_fit(par_fin_GM_params)
             t_fit0 = time.time()
             print(f'Time fit (global minimum): {t_fit0 -t_ini} s')
         #
-        par_fin = mini.minimize(method=fit_alg_2, params=par_fin_GM.params)
+        par_fin = mini.minimize(method=fit_alg_2, params=par_fin_GM_params)
+        par_fin_params = _result_params(par_fin)
         if show_info >= 1:
             print()
             print(f'Results local optimization fit (method={fit_alg_2}): ')
-            lmfit.report_fit(par_fin.params)
+            lmfit.report_fit(par_fin_params)
             t_fit = time.time()
             print(f'Time fit (local optimization): {t_fit -t_fit0} s')
     
@@ -612,7 +631,7 @@ def fit_wrapper(
     
     # conf_interval (https://lmfit.github.io/lmfit-py/confidence.html)
     if try_CI == 1:
-        if par_fin.errorbars:
+        if _result_errorbars(par_fin):
             ci_fin, trace_fin = lmfit.conf_interval(mini,
                                                     par_fin,
                                                     sigmas=sigmas,
@@ -635,9 +654,10 @@ def fit_wrapper(
     # lmfit.emcee() [not a fit, it is a way to sample the parameter space!]
     if MCsettings.use_emcee == 1:
         t_emcee0 = time.time()
+        par_fin_params = _result_params(par_fin)
         # make optional for user to pass value and min/max
         #$% rely on defaults here instead?
-        par_fin.params.add('__lnsigma', value=np.log(0.1),
+        par_fin_params.add('__lnsigma', value=np.log(0.1),
                            min=np.log(0.001), max=np.log(2))
         # always print progress bar
         print()
@@ -645,7 +665,7 @@ def fit_wrapper(
         print('(based on Markov chain Monte Carlo parameter space sampling):')
         # burn necessary if starting point not close to max(probability distribution)
         # i.e. not close to the optimized parameter set, so burn=0 is ok here!
-        emcee_fin = mini.emcee(params=par_fin.params, 
+        emcee_fin = mini.emcee(params=par_fin_params, 
                                steps=MCsettings.steps,
                                nwalkers=MCsettings.nwalkers, 
                                burn=MCsettings.burn,
@@ -655,16 +675,24 @@ def fit_wrapper(
                                is_weighted=MCsettings.is_weighted, 
                                progress=True
                                )
+        emcee_fin_params = _result_params(emcee_fin)
+        emcee_flatchain = cast(pd.DataFrame, getattr(emcee_fin, "flatchain", pd.DataFrame()))
+        emcee_var_names = cast(list[str], getattr(emcee_fin, "var_names", []))
+        emcee_lnprob = np.asarray(getattr(emcee_fin, "lnprob", np.array([])))
+        emcee_chain = np.asarray(getattr(emcee_fin, "chain", np.array([])))
+        emcee_acceptance_fraction = np.asarray(
+            getattr(emcee_fin, "acceptance_fraction", np.array([]))
+        )
         # lmfit.emcee() results
         if show_info >= 1:
             print()
             print('Results lmfit.emcee() confidence interval determination:')
-            lmfit.report_fit(emcee_fin.params)
+            lmfit.report_fit(emcee_fin_params)
             t_emcee1 = time.time()
             print(f'Time lmfit.emcee: {t_emcee1-t_emcee0} s')
         # acceptence fraction of all walkers (plot)
         fig_emcee_walker, ax = plt.subplots(1, 1, dpi=75)
-        plt.plot(emcee_fin.acceptance_fraction, 'o')
+        plt.plot(emcee_acceptance_fraction, 'o')
         plt.xlabel('Walker number'); plt.ylabel('Acceptance fraction')
         if abs(save_output)==1:
             uplt.img_save(f'{save_path}_emcee_walker_acceptance_ratio.png')
@@ -672,11 +700,11 @@ def fit_wrapper(
         else: plt.close(fig_emcee_walker)
         # draw all combinations of the typically ellipsoidal chi plot
         # [<x=par1, y=par2, z=chi2> plot]
-        emcee_truths = [emcee_fin.params.valuesdict().get(par_name) \
-                        for par_name in emcee_fin.var_names]
+        emcee_truths = [emcee_fin_params.valuesdict().get(par_name)
+                        for par_name in emcee_var_names]
         fig_emcee_corner = plt.figure(figsize=(10,10))
-        emcee_corner = corner.corner(emcee_fin.flatchain, 
-                                     labels=emcee_fin.var_names,
+        emcee_corner = corner.corner(emcee_flatchain,
+                                     labels=emcee_var_names,
                                      truths=emcee_truths,
                                      fig=fig_emcee_corner)
         if abs(save_output) == 1:
@@ -684,9 +712,9 @@ def fit_wrapper(
         if show_info >= 1: plt.show()
         else: plt.close(fig_emcee_corner)
         # find highest probability parameter combination
-        highest_prob = np.argmax(emcee_fin.lnprob)
-        hp_loc = np.unravel_index(highest_prob, emcee_fin.lnprob.shape)
-        mle_soln = emcee_fin.chain[hp_loc]
+        highest_prob = np.argmax(emcee_lnprob)
+        hp_loc = np.unravel_index(highest_prob, emcee_lnprob.shape)
+        mle_soln = emcee_chain[hp_loc]
         # get percentage borders to categorize emcee.flatchain data
         sigma_borders = sigma_start_stop_percent(sigmas)
         # go through all combinations of parameters and sigmas to find
@@ -694,11 +722,11 @@ def fit_wrapper(
         emcee_CIs_list = [] # initialize results
         for par_name in par_names+['__lnsigma']:
             emcee_par_CIs: list[Any] = [par_name] # initialize results for this parameter
-            if par_name in emcee_fin.var_names:
+            if par_name in emcee_var_names:
                 # get quantiles if fit parameter is variable
                 for s, sigma_b in enumerate(sigma_borders):
                     # get cutoff values that meet this sigma threshold (+/-)
-                    quantiles = np.percentile(emcee_fin.flatchain[par_name],
+                    quantiles = np.percentile(emcee_flatchain[par_name],
                                               sigma_b)
                     # lower threshold; 0 is par_name
                     emcee_par_CIs.insert(1, quantiles[0])
@@ -712,12 +740,12 @@ def fit_wrapper(
         # and add the "best fit result" in the middle
         emcee_CIs = pd.DataFrame(data=emcee_CIs_list) 
         emcee_CIs.insert(loc=len(sigmas)+1, column='bla',
-                         value=list(emcee_fin.params.valuesdict().values()))
+                         value=list(emcee_fin_params.valuesdict().values()))
         emcee_CIs.columns = CI_cols
         if show_info >= 1:
             print(display(emcee_CIs))
     else: # use_emcee equal to 0, or equal to 2 and conf_interval worked
-        emcee_fin = []; emcee_CIs = pd.DataFrame()
+        emcee_fin = None; emcee_CIs = pd.DataFrame()
     
     # optional save (figures are saved above)
     # [if statements check for empty list/dataframe]
@@ -729,17 +757,20 @@ def fit_wrapper(
             with open(str(save_path) +'_par_fin.txt', 'w') as par_fin_file:
                 par_fin_file.write(lmfit.fit_report(par_fin))
         # par_fin variables as csv file
-        df_par_fin = ulmfit.par2df(par_fin.params, 'min', par_names)
+        df_par_fin = ulmfit.par2df(_result_params(par_fin), 'min', par_names)
         df_par_fin.to_csv(str(save_path) +'_par_fin.csv', index=False)
         # conf_CIs using pandas as it is a pd.DataFrame
         if not conf_CIs.empty:
             conf_CIs.to_csv(str(save_path) +'_conf_CIs.csv', index=False)
         # emcee_fin (fit_report) as text dump, emcee flatchain as csv
-        if emcee_fin:
+        if emcee_fin is not None:
             with open(str(save_path) +'_emcee_fin.txt', 'w') as emcee_fin_file:
                 emcee_fin_file.write(lmfit.fit_report(emcee_fin))
-            emcee_fin.flatchain.to_csv(f'{save_path}_emcee_flatchain.csv',
-                                       index=False)
+            emcee_flatchain = cast(
+                pd.DataFrame, getattr(emcee_fin, "flatchain", pd.DataFrame())
+            )
+            emcee_flatchain.to_csv(f'{save_path}_emcee_flatchain.csv',
+                                   index=False)
         # emcee_CIs using pandas as it is a pd.DataFrame
         if not emcee_CIs.empty:
             emcee_CIs.to_csv(str(save_path) +'_emcee_CIs.csv', index=False)
@@ -883,7 +914,7 @@ def results2df(
         # save the dataframe (index, x axis, parameter1, parameter2, ...
         df.to_csv(os.path.join(save_path, 'fit_pars.csv'))
         # plot individual parameters as a function of time (s)
-        plt_fit_res_pars(df=df[cols_plt], x=x_save if x is not None else None,
+        plt_fit_res_pars(df=df.loc[:, list(cols_plt)], x=x_save if x is not None else None,
                          config=config, save_img=save_array, save_path=save_path)
     #
     return df

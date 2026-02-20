@@ -567,7 +567,7 @@ class File:
         model_info_dict = uparsing.load_and_number_yaml_components(
             model_yaml_path=model_yaml_path,
             model_info=model_info,
-            par_name=par_name,
+            is_dynamics=par_name != '',
             debug=debug
         )
 
@@ -1208,8 +1208,9 @@ class File:
             display(df_SbS)
         
         # get slice-by-slice fit spectra as a 2D map
+        df_SbS_pars = df_SbS.loc[:, self.model_SbS.par_names]
         fit2D_SbS = fitlib.results2fit2D(
-            results=df_SbS[self.model_SbS.par_names],
+            results=df_SbS_pars,
             const=self.model_SbS.const, 
             args=self.model_SbS.args,
             save_2D=-1 if self.p.show_info==0 else 1,

@@ -15,7 +15,7 @@ from decimal import Decimal
 import pandas as pd
 import numpy as np
 from scipy.signal import convolve
-from typing import Literal, Union, cast
+from typing import Literal, Union, cast, overload
 from numpy.typing import ArrayLike, NDArray
 
 #
@@ -99,18 +99,24 @@ def OoM(x: float) -> int:
 #
 
 #
+@overload
+def get_item(df: pd.DataFrame, row: Union[int, list], col: Union[str, int], astype: Literal['series'] = ...) -> pd.Series: ...
+@overload
+def get_item(df: pd.DataFrame, row: Union[int, list], col: Union[str, int], astype: Literal['float']) -> float: ...
+@overload
+def get_item(df: pd.DataFrame, row: Union[int, list], col: Union[str, int], astype: Literal['bool']) -> bool: ...
 def get_item(
     df: pd.DataFrame,
     row: Union[int, list],
     col: Union[str, int],
     astype: Literal['series', 'float', 'bool'] = 'series'
-) -> Union[pd.Series, float, bool, int]:
+) -> Union[pd.Series, float, bool]:
     """
     Extract item from pandas DataFrame with flexible row/column selection.
-    
+
     Provides a unified interface for accessing DataFrame elements with
     multiple selection modes for both rows and columns.
-    
+
     Parameters
     ----------
     df : pd.DataFrame
@@ -126,12 +132,17 @@ def get_item(
         - int: Column index
     astype : {'series', 'float', 'bool'}, default='series'
         Return type for the extracted item
-    
+
     Returns
     -------
-    series, float, or bool
-        Extracted item in requested format, or -1 if DataFrame is empty
-    
+    pd.Series, float, or bool
+        Extracted item in requested format.
+
+    Raises
+    ------
+    ValueError
+        If df is empty.
+
     Examples
     --------
     >>> df = pd.DataFrame({'name': ['A', 'B', 'C'], 'value': [1, 2, 3]})
@@ -142,10 +153,9 @@ def get_item(
     2    3
     Name: value, dtype: int64
     """
-    # Check for empty dataframe
     if df.empty:
-        return -1
-    
+        raise ValueError("get_item called on an empty DataFrame")
+
     # Row selection
     if isinstance(row, int):
         series = df.iloc[row]
@@ -153,7 +163,7 @@ def get_item(
         series = df.loc[df[row[0]].isin(row[1])]
     else:
         raise TypeError("row must be int or list")
-    
+
     # Column selection
     if isinstance(col, str):
         item = series[col]
@@ -161,7 +171,7 @@ def get_item(
         item = series[series.columns[col]]
     else:
         raise TypeError("col must be str or int")
-    
+
     # Type conversion
     if astype == 'series':
         return item
