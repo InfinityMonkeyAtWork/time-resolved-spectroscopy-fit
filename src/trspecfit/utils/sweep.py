@@ -13,8 +13,8 @@ import numpy as np
 import itertools
 from typing import Dict, Generator, Any, Optional, List, Tuple, cast
 import h5py
-import json
 import pandas as pd
+from trspecfit.utils.hdf5 import json_loads_attr, require_dataset, require_group
 
 #
 #
@@ -465,7 +465,7 @@ class SweepDataset:
             
             # Parse JSON strings
             if 'parameter_space' in meta:
-                meta['parameter_space'] = json.loads(meta['parameter_space'])
+                meta['parameter_space'] = json_loads_attr(meta['parameter_space'])
             #
             return meta
     
@@ -488,8 +488,10 @@ class SweepDataset:
         >>> print(f"Energy: {len(energy)} points")
         """
         with h5py.File(self.filepath, 'r') as f:
-            energy = np.asarray(f['energy'][:], dtype=float)
-            time = np.asarray(f['time'][:], dtype=float)
+            energy_ds = require_dataset(f['energy'], 'energy')
+            time_ds = require_dataset(f['time'], 'time')
+            energy = np.asarray(energy_ds[:], dtype=float)
+            time = np.asarray(time_ds[:], dtype=float)
             if energy.ndim != 1 or time.ndim != 1:
                 raise ValueError("HDF5 axes 'energy' and 'time' must be 1D arrays")
             return energy, time
@@ -517,9 +519,13 @@ class SweepDataset:
         # Collect all parameter values
         param_data = []
         with h5py.File(self.filepath, 'r') as f:
+            configs_group = require_group(f['parameter_configs'], 'parameter_configs')
             for config_idx in range(n_configs):
                 config_name = f'config_{config_idx:06d}'
-                config_group = f['parameter_configs'][config_name]
+                config_group = require_group(
+                    configs_group[config_name],
+                    f'parameter_configs/{config_name}'
+                )
                 
                 # Get swept parameters (exclude 'all_parameters')
                 parameters = {}
@@ -574,7 +580,11 @@ class SweepDataset:
         
         with h5py.File(self.filepath, 'r') as f:
             # Load parameter values
-            config_group = f['parameter_configs'][config_name]
+            configs_group = require_group(f['parameter_configs'], 'parameter_configs')
+            config_group = require_group(
+                configs_group[config_name],
+                f'parameter_configs/{config_name}'
+            )
             
             # Get swept parameters (all attributes except 'all_parameters')
             parameters = {}
@@ -585,20 +595,32 @@ class SweepDataset:
             
             # Get all parameters (JSON)
             if 'all_parameters' in config_group.attrs:
-                result['all_parameters'] = json.loads(
+                result['all_parameters'] = json_loads_attr(
                     config_group.attrs['all_parameters']
                 )
             
             # Load clean data
             if load_clean and 'clean' in config_group:
-                result['clean'] = config_group['clean'][:]
+                clean_ds = require_dataset(
+                    config_group['clean'],
+                    f'parameter_configs/{config_name}/clean'
+                )
+                result['clean'] = clean_ds[:]
             
             # Load noisy realizations
             if load_noisy:
-                data_group = f['simulated_data'][config_name]
+                simulated_group = require_group(f['simulated_data'], 'simulated_data')
+                data_group = require_group(
+                    simulated_group[config_name],
+                    f'simulated_data/{config_name}'
+                )
                 noisy_list = []
                 for key in sorted(data_group.keys()):
-                    noisy_list.append(data_group[key][:])
+                    noisy_ds = require_dataset(
+                        data_group[key],
+                        f'simulated_data/{config_name}/{key}'
+                    )
+                    noisy_list.append(noisy_ds[:])
                 result['noisy'] = noisy_list
         
         return result

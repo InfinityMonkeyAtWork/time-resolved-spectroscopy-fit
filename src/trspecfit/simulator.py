@@ -64,6 +64,7 @@ import h5py
 import pandas as pd
 from typing import Dict, List, Optional, Tuple, cast
 from trspecfit.mcp import Model
+from trspecfit.utils.hdf5 import require_group
 from trspecfit.utils.sweep import ParameterSweep
 from trspecfit.utils import plot as uplt
 from trspecfit.config.plot import PlotConfig
@@ -1797,7 +1798,8 @@ class Simulator:
         with h5py.File(filepath, 'a') as f:
             # Create group for this configuration
             config_name = f'config_{config_idx:06d}'
-            config_group = f['parameter_configs'].create_group(config_name)
+            configs_group = require_group(f['parameter_configs'], 'parameter_configs')
+            config_group = configs_group.create_group(config_name)
             
             # Save swept parameters as attributes
             for par_name, value in param_config.items():
@@ -1817,7 +1819,8 @@ class Simulator:
             config_group.create_dataset('clean', data=clean)
             
             # Save noisy realizations
-            data_group = f['simulated_data'].create_group(config_name)
+            simulated_group = require_group(f['simulated_data'], 'simulated_data')
+            data_group = simulated_group.create_group(config_name)
             for real_idx, noisy_data in enumerate(noisy_list):
                 data_group.create_dataset(f'{real_idx:06d}', data=noisy_data)
                 

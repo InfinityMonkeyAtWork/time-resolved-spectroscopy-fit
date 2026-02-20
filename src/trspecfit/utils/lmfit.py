@@ -172,7 +172,13 @@ def par_extract(
 
     # lmfit.MinimizerResult object
     elif isinstance(lmfit_pars, MinimizerResult):
-        pars = [lmfit_pars.params[p].value for p in lmfit_pars.params]
+        result_params = getattr(lmfit_pars, "params", None)
+        if not isinstance(result_params, lmfit.parameter.Parameters):
+            raise TypeError(
+                "par_extract: MinimizerResult.params is missing or has unexpected type."
+            )
+        pars_dict = result_params.valuesdict()
+        pars = [v for _, v in pars_dict.items()]
 
     else:
         raise TypeError(
