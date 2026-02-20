@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trspecfit"
-version = "0.4.1"
+version = "0.4.2"
 authors = [
     {name = "Johannes Mahl", email = "johannes.a.mahl@gmail.com"},
 ]
@@ -43,6 +43,7 @@ dev = [
   "pre-commit",
   "mypy",
   "pytest",
+  "pyright",
 ]
 
 lab = [
@@ -63,6 +64,8 @@ ignore_missing_imports = true
 
 [tool.pyright]
 include = ["src"]
+venvPath = "."
+venv = ".venv"
 reportMissingImports = true
 typeCheckingMode = "basic"
 

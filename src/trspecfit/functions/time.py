@@ -404,7 +404,7 @@ def expRiseCONV(x, tau):
     ndarray
         One-sided exponential: exp(x/tau) for x≤0, 0 for x>0
     """
-    return np.concatenate((expSymCONV_kernel_width(x[x<=0], tau), \
+    return np.concatenate((expSymCONV(x[x<=0], tau), \
                            np.zeros(np.shape(x[x>0]))))
 
 def expRiseCONV_kernel_width():
