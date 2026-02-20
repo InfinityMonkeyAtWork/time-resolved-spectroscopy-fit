@@ -8,7 +8,7 @@ import h5py
 import tempfile
 from pathlib import Path
 
-from trspecfit.utils.sweep import ParameterSweep
+from trspecfit.utils.sweep import ParameterSweep, SweepDataset
 from trspecfit import Simulator, Project, File
 
 #
@@ -257,6 +257,61 @@ class TestSimulatorParameterSweep:
                 assert f['metadata'].attrs['n_configs'] == 4  # 2 × 2
                 assert f['metadata'].attrs['n_realizations_per_config'] == 2
                 assert f['metadata'].attrs['total_datasets'] == 8  # 4 × 2
+
+    #
+    def test_sweep_dataset_smoke(self, simple_model):
+        """Smoke test end-to-end SweepDataset reading from generated HDF5."""
+        sweep = ParameterSweep(strategy='grid', seed=42)
+        sweep.add_range('GLP_01_A', [15, 20])
+        sweep.add_range('GLP_01_x0', [8, 10])
+
+        sim = Simulator(
+            model=simple_model,
+            detection='analog',
+            noise_level=0.05,
+            seed=42
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = Path(tmpdir) / 'test_sweep_dataset.h5'
+
+            sim.simulate_parameter_sweep(
+                parameter_sweep=sweep,
+                N_realizations=2,
+                filepath=str(filepath),
+                show_progress=False
+            )
+
+            dataset = SweepDataset(str(filepath))
+
+            # Metadata and JSON attribute parsing
+            assert isinstance(dataset.meta, dict)
+            assert dataset.meta['n_configs'] == 4
+            assert dataset.meta['n_realizations_per_config'] == 2
+            assert isinstance(dataset.meta['parameter_space'], dict)
+
+            # Axes
+            energy, time = dataset.get_axes()
+            assert energy.ndim == 1
+            assert time.ndim == 1
+            assert energy.size > 0
+            assert time.size > 0
+
+            # Parameter table
+            summary = dataset.get_parameter_summary()
+            assert len(summary) == dataset.meta['n_configs']
+            assert 'GLP_01_A' in summary.columns
+            assert 'GLP_01_x0' in summary.columns
+
+            # Per-config access and JSON parsing for all_parameters
+            config = dataset.load_config(0)
+            assert 'parameters' in config
+            assert 'all_parameters' in config
+            assert isinstance(config['all_parameters'], dict)
+            assert 'clean' in config
+            assert config['clean'].shape == (time.size, energy.size)
+            assert 'noisy' in config
+            assert len(config['noisy']) == dataset.meta['n_realizations_per_config']
     
     #
     def test_hdf5_structure(self, simple_model):
