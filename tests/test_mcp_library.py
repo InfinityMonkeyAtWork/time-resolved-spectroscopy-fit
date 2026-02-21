@@ -4,13 +4,10 @@ Test MCP (Model/Component/Parameter) library functionality
 
 import pytest
 import numpy as np
-import matplotlib.pyplot as plt
-from pathlib import Path
-import copy
-from trspecfit import Project, File
 from trspecfit.mcp import Model, Component, Par
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import time as fcts_time
+#from trspecfit.functions import distribution as fcts_distribution  # To be implemented
 
 #
 #

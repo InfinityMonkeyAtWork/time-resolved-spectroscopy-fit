@@ -1,12 +1,23 @@
 repos:
 - repo: local
   hooks:
+  # - id: ruff-check
+  #   name: ruff (lint)
+  #   entry: .venv/bin/ruff check --fix
+  #   language: system
+  #   types: [python]
+  #   stages: [pre-commit]
+
+  # - id: black
+  #   name: black (format)
+  #   entry: .venv/bin/black
+  #   language: system
+  #   types: [python]
+  #   stages: [pre-commit]
+
   - id: mypy-trspecfit
     name: mypy (trspecfit)
-    entry: mypy --no-incremental src/trspecfit
-    language: python
-    additional_dependencies:
-      - .
-      - mypy
+    entry: .venv/bin/mypy --no-incremental src/trspecfit
+    language: system
     pass_filenames: false
     stages: [pre-commit]

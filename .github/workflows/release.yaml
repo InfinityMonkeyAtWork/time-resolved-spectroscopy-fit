@@ -14,15 +14,21 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-          pip install pyright build twine
-          pytest -q
-          mypy src/trspecfit
-          pyright || true
-          python -m build
-          twine check dist/*
+      - name: Install package + dev tools
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -e ".[dev]"
+      - name: Run tests
+        run: .venv/bin/pytest -q
+      - name: Run mypy
+        run: .venv/bin/mypy src/trspecfit
+      - name: Run pyright
+        run: .venv/bin/pyright
+      - name: Build package
+        run: .venv/bin/python -m build
+      - name: Check package metadata
+        run: .venv/bin/twine check dist/*
       - uses: actions/upload-artifact@v4
         with:
           name: dist

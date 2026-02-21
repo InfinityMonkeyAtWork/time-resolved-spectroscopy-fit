@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools", "setuptools-scm"]
+requires = ["setuptools",]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -44,6 +44,10 @@ dev = [
   "mypy",
   "pytest",
   "pyright",
+  "ruff",
+  "black",
+  "build",
+  "twine",
 ]
 
 lab = [
