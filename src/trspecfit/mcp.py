@@ -65,7 +65,7 @@ from asteval import Interpreter
 # function library for energy, time, and distribution components
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import time as fcts_time
-from trspecfit.functions import distribution as fcts_dist
+#from trspecfit.functions import distribution as fcts_dist
 # function configurations
 from trspecfit.config.functions import (
     background_functions,

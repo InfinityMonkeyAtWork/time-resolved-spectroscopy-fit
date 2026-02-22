@@ -66,7 +66,7 @@ from ruamel.yaml import YAML
 # function library for energy, time, and distribution components
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import time as fcts_time
-from trspecfit.functions import distribution as fcts_dist
+#from trspecfit.functions import distribution as fcts_dist
 # standardized plotting configuration
 from trspecfit.config.plot import PlotConfig
 from typing import Callable, Literal, Optional, Sequence, Union, overload, cast

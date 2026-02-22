@@ -14,7 +14,7 @@ import numpy as np
 from trspecfit.config.plot import PlotConfig
 from trspecfit.utils.arrays import OoM
 import pathlib
-from typing import Any, Optional, Sequence, Union, cast
+from typing import Any, Optional, Sequence, Union
 from numpy.typing import ArrayLike, NDArray
 
 PathLike = Union[str, pathlib.Path]

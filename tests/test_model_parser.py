@@ -4,7 +4,6 @@ Test parsing of models from YAML files passed by user
 
 import pytest
 import numpy as np
-from pathlib import Path
 # local imports
 from trspecfit import Project, File
 

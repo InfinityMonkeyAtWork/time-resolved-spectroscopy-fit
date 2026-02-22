@@ -3,8 +3,6 @@ name: CI
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
 
 jobs:
   checks:
@@ -27,7 +25,6 @@ jobs:
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/pip install -e ".[dev]"
-          .venv/bin/pip install build twine
 
       - name: Run tests
         run: .venv/bin/pytest -q
@@ -38,6 +35,9 @@ jobs:
       - name: Run pyright
         # continue-on-error: true
         run: .venv/bin/pyright
+
+      - name: Run deptry
+        run: .venv/bin/deptry .
 
       - name: Build package
         run: .venv/bin/python -m build

@@ -61,13 +61,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import json
 import h5py
-import pandas as pd
 from typing import Dict, List, Optional, Tuple, cast
 from trspecfit.mcp import Model
 from trspecfit.utils.hdf5 import require_group
 from trspecfit.utils.sweep import ParameterSweep
 from trspecfit.utils import plot as uplt
-from trspecfit.config.plot import PlotConfig
 
 #
 #
