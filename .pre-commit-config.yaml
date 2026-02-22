@@ -8,16 +8,16 @@ repos:
   #   types: [python]
   #   stages: [pre-commit]
 
-  # - id: black
-  #   name: black (format)
-  #   entry: .venv/bin/black
-  #   language: system
-  #   types: [python]
-  #   stages: [pre-commit]
-
   - id: mypy-trspecfit
     name: mypy (trspecfit)
     entry: .venv/bin/mypy --no-incremental src/trspecfit
+    language: system
+    pass_filenames: false
+    stages: [pre-commit]
+
+  - id: deptry
+    name: deptry
+    entry: .venv/bin/deptry .
     language: system
     pass_filenames: false
     stages: [pre-commit]

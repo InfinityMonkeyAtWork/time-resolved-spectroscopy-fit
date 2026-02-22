@@ -25,6 +25,7 @@ classifiers = [
 
 dependencies = [
 	"lmfit",
+	"asteval",
 	"numdifftools",
 	"emcee",
 	"tqdm",
@@ -41,11 +42,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pre-commit",
+  "deptry",
   "mypy",
   "pytest",
   "pyright",
   "ruff",
-  "black",
   "build",
   "twine",
 ]
@@ -70,9 +71,19 @@ ignore_missing_imports = true
 include = ["src"]
 venvPath = "."
 venv = ".venv"
+pythonVersion = "3.12"
 reportMissingImports = true
 typeCheckingMode = "basic"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.deptry]
+known_first_party = ["trspecfit"]
+ignore_notebooks = true
+pep621_dev_dependency_groups = ["dev", "lab"]
+# confidence interval estimation needs to work with standard install
+# keep these as runtime deps even though used indirectly via lmfit
+[tool.deptry.per_rule_ignores]
+DEP002 = ["numdifftools", "emcee", "tqdm"]

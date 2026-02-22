@@ -36,6 +36,9 @@ jobs:
         # continue-on-error: true
         run: .venv/bin/pyright
 
+      - name: Run deptry
+        run: .venv/bin/deptry .
+
       - name: Build package
         run: .venv/bin/python -m build
 

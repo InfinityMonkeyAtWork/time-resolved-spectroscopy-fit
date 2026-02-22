@@ -25,6 +25,8 @@ jobs:
         run: .venv/bin/mypy src/trspecfit
       - name: Run pyright
         run: .venv/bin/pyright
+      - name: Run deptry
+        run: .venv/bin/deptry .
       - name: Build package
         run: .venv/bin/python -m build
       - name: Check package metadata
