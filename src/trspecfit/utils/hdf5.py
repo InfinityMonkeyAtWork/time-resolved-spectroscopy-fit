@@ -20,7 +20,9 @@ def json_loads_attr(value: Any) -> Any:
     if isinstance(value, (bytes, bytearray)):
         value = value.decode("utf-8")
     if not isinstance(value, str):
-        raise TypeError(f"Expected JSON attribute as str/bytes, got {type(value).__name__}")
+        raise TypeError(
+            f"Expected JSON attribute as str/bytes, got {type(value).__name__}"
+        )
     return json.loads(value)
 
 

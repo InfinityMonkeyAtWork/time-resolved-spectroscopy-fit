@@ -272,7 +272,9 @@ class Simulator:
         
         # Validate detection type
         if self.detection not in ['analog', 'photon_counting']:
-            raise ValueError(f"detection must be 'analog' or 'photon_counting', got '{detection}'")
+            raise ValueError(
+                f"detection must be 'analog' or 'photon_counting', got '{detection}'"
+            )
         
         # Set random seed if provided
         if seed is not None:
@@ -294,7 +296,8 @@ class Simulator:
         if self.counts_per_delay is not None:
             # Direct specification takes precedence
             if self.count_rate is not None or self.integration_time is not None:
-                print("Warning: counts_per_delay specified directly. Ignoring count_rate and integration_time.")
+                print("Warning: counts_per_delay specified directly."
+                      " Ignoring count_rate and integration_time.")
         elif self.count_rate is not None and self.integration_time is not None:
             # Calculate from rate and time
             self.counts_per_delay = int(self.count_rate * self.integration_time)
@@ -310,7 +313,10 @@ class Simulator:
                 self.model.create_value1D()
                 clean_data = self.model.value1D
             if clean_data is None:
-                raise RuntimeError("Model evaluation did not produce clean data for photon counting estimation")
+                raise RuntimeError(
+                    "Model evaluation did not produce clean data"
+                    " for photon counting estimation"
+                )
             
             # Estimate counts_per_delay as the average total signal per time step
             # This assumes the model amplitudes are in a realistic count rate range
@@ -321,16 +327,21 @@ class Simulator:
             else:
                 self.counts_per_delay = int(np.sum(signal_positive))
 
-            print("WARNING: No photon count specified for photon_counting detection.")
-            print(f"Estimating from model: {self.counts_per_delay:.2e} counts/delay")
-            print("For accurate simulation, specify counts_per_delay or (count_rate, integration_time).")
-            print("This estimate assumes your model amplitudes represent realistic count rates.")
+            print(
+                f"WARNING: No photon count specified for photon_counting detection.\n"
+                f"Estimating from model: {self.counts_per_delay:.2e} counts/delay\n"
+                f"For accurate simulation, specify counts_per_delay"
+                f" or (count_rate, integration_time).\n"
+                f"This estimate assumes your model amplitudes"
+                f" represent realistic count rates."
+            )
         
         # Ensure counts_per_delay is positive
         if self.counts_per_delay <= 0:
             raise ValueError(
                 f"counts_per_delay must be positive, got {self.counts_per_delay}.\n"
-                f"Model may have negative or zero signal. Check your model or specify counts_per_delay manually."
+                f"Model may have negative or zero signal."
+                f" Check your model or specify counts_per_delay manually."
             )
     
     #
@@ -359,7 +370,9 @@ class Simulator:
         return self.data_clean
     
     #
-    def add_noise(self, clean_data: np.ndarray, dim: int = 2) -> tuple[np.ndarray, np.ndarray]:
+    def add_noise(
+        self, clean_data: np.ndarray, dim: int = 2
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Add noise to clean data based on detection technique
         
@@ -831,7 +844,9 @@ class Simulator:
         if total_signal == 0:
             return np.zeros_like(signal)
         if self.counts_per_delay is None:
-            raise ValueError("counts_per_delay must be defined for photon counting simulation")
+            raise ValueError(
+                "counts_per_delay must be defined for photon counting simulation"
+            )
 
         # Scale signal to expected photon counts
         # Total expected counts across all pixels = counts_per_delay
@@ -873,7 +888,9 @@ class Simulator:
         if mean_row_total == 0:
             return np.zeros_like(signal)
         if self.counts_per_delay is None:
-            raise ValueError("counts_per_delay must be defined for photon counting simulation")
+            raise ValueError(
+                "counts_per_delay must be defined for photon counting simulation"
+            )
 
         # Scale so the average row has counts_per_delay total expected counts
         scale_factor = self.counts_per_delay / mean_row_total
@@ -910,13 +927,16 @@ class Simulator:
         self.counts_per_delay = counts_per_delay
     
     #
-    def set_count_rate(self, count_rate: float, integration_time: float | None = None) -> None:
+    def set_count_rate(
+        self, count_rate: float, integration_time: float | None = None
+    ) -> None:
         """
         Update count rate (photon counting only)
         
         Parameters:
             count_rate: Photon rate in Hz
-            integration_time: Integration time per delay in seconds (if None, uses existing value)
+            integration_time: Integration time per delay in seconds
+                (if None, uses existing value)
         """
         if self.detection != 'photon_counting':
             print("Warning: count_rate only applies to photon_counting detection")
@@ -929,7 +949,10 @@ class Simulator:
         if self.integration_time is not None:
             self.counts_per_delay = int(self.count_rate * self.integration_time)
         else:
-            raise ValueError("integration_time must be set to calculate counts_per_delay from count_rate")
+            raise ValueError(
+                "integration_time must be set to calculate"
+                " counts_per_delay from count_rate"
+            )
     
     #
     def set_seed(self, seed: int | None) -> None:
@@ -1052,7 +1075,9 @@ class Simulator:
         plot_comparison : Shows SNR in title
         """
         if self.data_clean is None or self.noise is None:
-            raise ValueError("No simulated data available. Run simulate_1D or simulate_2D first.")
+            raise ValueError(
+                "No simulated data available. Run simulate_1D or simulate_2D first."
+            )
         #$% enable ROI input here
         signal_power = np.mean(self.data_clean**2)
         noise_power = np.mean(self.noise**2)
@@ -1068,7 +1093,9 @@ class Simulator:
             raise ValueError("scale must be either 'linear' or 'dB'")
     
     #
-    def plot_comparison(self, t_ind: int = 0, dim: int = 1, SNR_scale: str = 'linear') -> None:
+    def plot_comparison(
+        self, t_ind: int = 0, dim: int = 1, SNR_scale: str = 'linear'
+    ) -> None:
         """
         Plot comparison of clean vs noisy data.
         
@@ -1164,7 +1191,8 @@ class Simulator:
         get_SNR : SNR calculation shown in title
         """
         detection_str = f' [{self.detection}]'
-        plt_title = f'Simulated Data (SNR: {self.get_SNR(scale=SNR_scale):.1f} {SNR_scale}){detection_str}'
+        plt_title = (f'Simulated Data (SNR: {self.get_SNR(scale=SNR_scale):.1f}'
+                     f' {SNR_scale}){detection_str}')
 
         if dim == 1:
             if self.data_clean is None:
@@ -1334,18 +1362,18 @@ class Simulator:
             │   ├── 000000          (dataset: first noisy realization)
             │   ├── 000001          (dataset: second noisy realization)
             │   └── ...
-            └── metadata/           (group with attributes)
-                ├── detection       (attribute: 'analog' or 'photon_counting')
-                ├── noise_level     (attribute: analog noise level)
-                ├── noise_type      (attribute: analog noise type)
-                ├── counts_per_delay (attribute: photon counting counts)
-                ├── count_rate      (attribute: photon counting rate, if set)
-                ├── integration_time      (attribute: photon counting integration time, if set)
-                ├── seed            (attribute: random seed, if set)
-                ├── dimension       (attribute: 1 or 2)
-                ├── n_datasets      (attribute: number of noisy datasets)
-                ├── model_parameters (attribute: JSON string of all parameters)
-                └── model_name      (attribute: model name)
+            └── metadata/           (group with [optional]attributes)
+                ├── detection       ('analog' or 'photon_counting')
+                ├── noise_level     (analog noise level)
+                ├── noise_type      (analog noise type)
+                ├── counts_per_delay (photon counting counts)
+                ├── count_rate      ([optional] photon counting rate)
+                ├── integration_time      ([optional] photon counting integration time)
+                ├── seed            ([optional] random seed, if set)
+                ├── dimension       (1 or 2)
+                ├── n_datasets      (number of noisy datasets)
+                ├── model_parameters (JSON string of all parameters)
+                └── model_name      (model name)
 
         **Why HDF5?**
         
@@ -1422,7 +1450,10 @@ class Simulator:
         """
 
         if self.data_noisy is None and N_data is None:
-            raise ValueError("No simulated data available. Run simulate_1D, simulate_2D, or simulate_N first.")
+            raise ValueError(
+                "No simulated data available."
+                " Run simulate_1D, simulate_2D, or simulate_N first."
+            )
         
         # Create simulated_data directory if it doesn't exist
         sim_dir = os.path.join(os.getcwd(), 'simulated_data')
@@ -1668,7 +1699,8 @@ class Simulator:
             )
             
             if show_progress:
-                print(f'  ✓ Saved config {config_idx+1} with {N_realizations} realizations')
+                print(f'  ✓ Saved config {config_idx+1}'
+                      f' with {N_realizations} realizations')
         
         if show_progress:
             print(f'\n{"="*60}')
@@ -1755,7 +1787,9 @@ class Simulator:
             
             # Parameter sweep settings
             meta.attrs['sweep_strategy'] = parameter_sweep.strategy
-            meta.attrs['sweep_seed'] = parameter_sweep.seed if parameter_sweep.seed else 'None'
+            meta.attrs['sweep_seed'] = (
+                parameter_sweep.seed if parameter_sweep.seed else 'None'
+            )
             
             # Save parameter space definition as JSON
             param_space = {}

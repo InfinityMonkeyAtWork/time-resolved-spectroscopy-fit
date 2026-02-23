@@ -54,7 +54,7 @@ import time
 import types
 import warnings
 from collections.abc import Callable, Sequence
-from typing import Literal, Union, cast, overload
+from typing import Literal, cast, overload
 
 import numpy as np
 from IPython.display import display
@@ -74,13 +74,14 @@ from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import parsing as uparsing
 from trspecfit.utils import plot as uplt
 
-PathLike = Union[str, pathlib.Path]
-ModelRef = Union[str, int, list[str]]
+PathLike = str | pathlib.Path
+ModelRef = str | int | list[str]
 
 # what does show_info mean? convert to binary debug by True if show_info >=3 else False
 
-# multi-subcycle models allow for convolution only in the "0th subcycle" i.e. first model_info element
-# which affects all times t. "conv" functions in individual subcycles are currently ignored
+# multi-subcycle models allow for convolution only in the "0th subcycle" 
+# i.e. first model_info element which affects all times t. 
+# "conv" functions in individual subcycles are currently ignored
 
 #
 #
@@ -194,7 +195,7 @@ class Project:
     def _load_config(self, config_file: PathLike) -> None:
         """
         Load project configuration from YAML file.
-        Allow different users or types of spectroscopy to overwrite (a subset of) project attributes
+        Allow different users or types of spectroscopy to overwrite project attributes
         
         Parameters
         ----------
@@ -321,14 +322,13 @@ class File:
     def __init__(self, parent_project: Project | None = None, path: PathLike = 'test',
                  data: np.ndarray | None = None, energy: np.ndarray | None = None,
                  time: np.ndarray | None = None) -> None:
-        # pass parent project or (default) create a functioning test project environment 
+        # pass parent project or (default) create a functioning test project environment
         self.p = parent_project if parent_project is not None else Project(path=None)
         self.path = path # path to load/save [?] data from
         self.path_DA = self.p.path_run / path # path to save fit results to
-        self._plot_config: PlotConfig | None = None # create plot config from project (but File can customize it)
-        #
+        self._plot_config: PlotConfig | None = None # create plot config from project
         self.data = data # (time-[optional] and) energy-dependent data to fit
-        self.dim = 0 if data is None else len(np.shape(data)) # 1 for energy (1D) # 2 for energy+time (2D)
+        self.dim = 0 if data is None else len(np.shape(data)) # 1/2 D for energy/+time
         # take energy and time input or create a generic axis if None is passed
         if energy is not None or data is None:
             self.energy = energy
@@ -336,15 +336,18 @@ class File:
             self.energy = np.arange(0, np.shape(data)[0])
         else:
             self.energy = np.arange(0, np.shape(data)[1])
-        self.time = time if (time is not None or self.dim <= 1 or data is None) else np.arange(0, np.shape(data)[0])
+        if time is not None or self.dim <= 1 or data is None:
+            self.time = time
+        else:
+            self.time = np.arange(0, np.shape(data)[0])
         # keep track of models that are used to fit this file/data
-        self.models: list[mcp.Model] = [] # list for now, could do @property, setter, getter
-        self.model_active: mcp.Model | None = None # default model to work with [no need to pass same name again and again]
-        # [i.e. let user define models via file class attributes]
-        self.e_lim_abs: list[float] = [] # fitting: energy limits (low, high) user-defined
-        self.e_lim: list[int] = [] # index of energy limits (from left, from right: energy[left:-right])
-        self.t_lim_abs: list[float] = [] # fitting: time limits (low, high) user-defined
-        self.t_lim: list[int] = [] # index of time limits (left to right: time[left:right])
+        self.models: list[mcp.Model] = [] #$% could do @property, setter, getter here?
+        self.model_active: mcp.Model | None = None # default model to work with
+        # Energy and time limits for fitting methods
+        self.e_lim_abs: list[float] = [] # energy limits (low, high) user-defined
+        self.e_lim: list[int] = [] # index (from left, from right: energy[left:-right])
+        self.t_lim_abs: list[float] = [] # time limits (low, high) user-defined
+        self.t_lim: list[int] = [] # index (left to right: time[left:right])
         #
         self.base_t_abs: list[float] = [] # start and stop time of the baseline spectrum
         self.base_t_ind: list[int] = [] # index of the above start and stop time
@@ -353,7 +356,8 @@ class File:
         #
         self.model_SbS: mcp.Model | None = None
         self.model_2D: mcp.Model | None = None
-        self.results_SbS: list = [] # all Slice-by-Slice fit results (different from model_SbS.result)
+        # all Slice-by-Slice fit results (different from model_SbS.result)
+        self.results_SbS: list = []
         #
         return None
     
@@ -393,7 +397,7 @@ class File:
             warnings.warn("Energy axis missing; using index axis.", stacklevel=2)
         if self.dim == 2 and self.time is None:
             self.time = np.arange(np.shape(self.data)[0])
-            warnings.warn("Time axis missing for 2D data; using index axis.", stacklevel=2)
+            warnings.warn("Time axis missing; using index axis.", stacklevel=2)
         
         config = self.plot_config
         
@@ -434,7 +438,7 @@ class File:
         Returns
         -------
         str
-            Combined model name with underscores (e.g., ['model1', 'model2'] -> 'model1_model2')
+            Combined model name (e.g., ['model1', 'model2'] -> 'model1_model2')
         """
         #
         return '_'.join(model_list) # see str.join()
@@ -450,8 +454,9 @@ class File:
                      return_type: Literal['index'] = 'index') -> int | None:
         ...
 
-    def select_model(self, model_info: ModelRef,
-                     return_type: Literal['model', 'index'] = 'model') -> mcp.Model | int | None:
+    def select_model(
+            self, model_info: ModelRef, return_type: Literal['model', 'index'] = 'model'
+            ) -> mcp.Model | int | None:
         """
         Select model by name [type(model_info)=str] or position [type(model_info)=int].
 
@@ -498,8 +503,9 @@ class File:
         """
         Set model to be used as active model.
 
-        All functions requiring a model input will default to the currently active model unless
-        a model is specified as input to the respective function (via ``model_info``).
+        All functions requiring a model input will default to the currently active model
+        unless a model is specified as input to the respective function 
+        (via ``model_info``).
 
         Parameters
         ----------
@@ -523,8 +529,8 @@ class File:
         model_info : list of str
             Model name(s) to load:
 
-            - For energy-dependent models (1D or 2D): ``['model_name']`` (single element).
-              Model will be set as active model.
+            - For energy-dependent models (1D or 2D): ``['model_name']`` 
+              (single element). Model will be set as active model.
             - For standard time-dependent models: ``['model_name']``.
               Single element applies to entire time axis.
             - For multi-cycle time-dependent models: ``['model1', 'model2', ...]``.
@@ -555,14 +561,15 @@ class File:
             )
         if par_name == '' and len(model_info) != 1:
             raise ValueError(
-                'Energy-resolved data (par_name="") require a single model name in model_info.\n'
-                'Pass model name as the only element in the model_info list.\n'
-                'OR pass a non-empty par_name to define mcp.Dynamics model with one or more model names.'
+                'Energy-resolved data (par_name="") require a single model name in'
+                ' model_info.\nPass model name as the only element in the model_info'
+                ' list.\nOR pass a non-empty par_name to define mcp.Dynamics model'
+                ' with one or more model names.'
             )
         if self.select_model(model_info) is not None:
             raise ValueError(
-                f'Model with name "{self.model_list_to_name(model_info)}" already exists. '
-                'Delete the existing model or change the name of the new model.'
+                f'Model named "{self.model_list_to_name(model_info)}" already exists.'
+                ' Delete the existing model or change the name of the new model.'
             )
 
         # Load and process YAML file with appropriate numbering strategy
@@ -609,13 +616,13 @@ class File:
             # Get the section defined by model_info
             try:
                 submodel_info = model_info_dict[submodel]
-            except KeyError:
+            except KeyError as err:
                 available_models = list(model_info_dict.keys())
                 raise ValueError(
                     f'Model "{submodel}" not found in {model_yaml}\n'
                     f"Available models in this file: {available_models}\n"
                     f"Check for typos in model name."
-                )
+                ) from err
                     
             # Create components for this submodel using existing mcp.Component logic
             for c_name, c_info in submodel_info.items():
@@ -635,7 +642,9 @@ class File:
             return loaded_model
             
     #
-    def describe_model(self, model_info: ModelRef | None = None, detail: int = 0) -> None:
+    def describe_model(
+            self, model_info: ModelRef | None = None, detail: int = 0
+            ) -> None:
         """
         Display information about a specific model.
 
@@ -670,7 +679,10 @@ class File:
         
         if detail == 1 and mod.dim == 1:
             if self.energy is None or self.data_base is None:
-                warnings.warn("Energy axis or baseline data missing; cannot plot 1D model summary.", stacklevel=2)
+                warnings.warn("Energy axis or baseline data missing;"
+                              " cannot plot 1D model summary.",
+                              stacklevel=2,
+                )
                 return None
             mod.create_value1D(store1D=1) # update individual component spectra
             # plot initial guess (individual components), data, and residual
@@ -696,7 +708,10 @@ class File:
         if detail == 1 and mod.dim == 2:
             mod.create_value2D() # update spectrum
             if self.data is None or mod.value2D is None:
-                warnings.warn("2D data/model values missing; cannot plot 2D model summary.", stacklevel=2)
+                warnings.warn("2D data/model values missing;"
+                              " cannot plot 2D model summary.",
+                              stacklevel=2,
+                )
                 return None
             # plot data, fit, and residual 2D maps
             fitlib.plt_fit_res_2D(
@@ -786,7 +801,7 @@ class File:
         model_name : str
             Name of model (must exist in self.models)
         subfolders : list of str, default=[]
-            Additional subdirectories to create (e.g., ['slices'] for Slice-by-Slice fits)
+            Additional subdirs to create (e.g., ['slices'] for Slice-by-Slice fits)
 
         Returns
         -------
@@ -795,13 +810,19 @@ class File:
         """
         mod = self.select_model(model_name) # get model
         if mod is None:
-            warnings.warn(f"Model '{model_name}' not found; using fallback output path.", stacklevel=2)
+            warnings.warn(
+                f"Model '{model_name}' not found; using fallback output path.",
+                stacklevel=2,
+            )
             path_model = self.path_DA / "model_unknown" / model_name
         else:
-            yaml_name = mod.yaml_f_name if mod.yaml_f_name is not None else "model_unknown"
+            yaml_name = (
+                mod.yaml_f_name if mod.yaml_f_name is not None else "model_unknown"
+            )
             path_model = self.path_DA / yaml_name / model_name
         #path_model = self.path_DA / self.model_base.yaml_f_name / model_name
-        if self.p.show_info >= 3: print(path_model)
+        if self.p.show_info >= 3:
+            print(path_model)
         if not os.path.exists(path_model):
             os.makedirs(path_model)
         if subfolders is None:
@@ -809,8 +830,9 @@ class File:
         if len(subfolders) != 0:
             for subfolder in subfolders:
                 if not os.path.exists(path_model / subfolder):
-                    os.makedirs(path_model / subfolder) 
-                    if self.p.show_info >= 3: print(path_model / subfolder)
+                    os.makedirs(path_model / subfolder)
+                    if self.p.show_info >= 3:
+                        print(path_model / subfolder)
         #
         return path_model
     
@@ -846,12 +868,18 @@ class File:
             return None
         if self.time is None:
             self.time = np.arange(np.shape(self.data)[0])
-            warnings.warn("Time axis missing; using index axis for baseline definition.", stacklevel=2)
+            warnings.warn(
+                "Time axis missing; using index axis for baseline definition.",
+                stacklevel=2,
+            )
         if self.energy is None:
             self.energy = np.arange(np.shape(self.data)[1])
             warnings.warn("Energy axis missing; using index axis.", stacklevel=2)
         if time_type not in ('abs', 'ind'):
-            warnings.warn(f"Unknown time_type '{time_type}'. Expected 'abs' or 'ind'.", stacklevel=2)
+            warnings.warn(
+                f"Unknown time_type '{time_type}'. Expected 'abs' or 'ind'.",
+                stacklevel=2,
+            )
             return None
             
         if time_type == 'abs':
@@ -864,18 +892,23 @@ class File:
         self.base_t_abs = [self.time[t_ind_start], self.time[t_ind_stop]]
         
         # cut and average
-        self.data_base = np.mean(self.data[self.base_t_ind[0] : self.base_t_ind[1], :], axis=0)
+        self.data_base = np.mean(self.data[self.base_t_ind[0] : self.base_t_ind[1], :],
+                                 axis=0
+    )
         
         # plot
         if show_plot:
             if self.data_base is None:
-                warnings.warn("Baseline data is unavailable; skipping baseline plot.", stacklevel=2)
+                warnings.warn(
+                    "Baseline data is unavailable; skipping baseline plot.",
+                    stacklevel=2,
+                )
                 return None
             uplt.plot_1D(
                 data=[self.data_base,],
                 x=self.energy,
                 config=self.plot_config,
-                title=f"Baseline data: t in {self.base_t_abs} (index: {self.base_t_ind})"
+                title=f"Baseline data: t in {self.base_t_abs} (idx: {self.base_t_ind})"
             )
         #
         return None
@@ -901,13 +934,19 @@ class File:
             If True, plot data with fit limits indicated
         """
         if self.data is None and self.energy is None:
-            warnings.warn("No data/energy axis loaded; cannot set fit limits.", stacklevel=2)
+            warnings.warn(
+                "No data/energy axis loaded; cannot set fit limits.",
+                stacklevel=2,
+            )
             return None
         if self.energy is None and self.data is not None:
             self.energy = np.arange(np.shape(self.data)[-1])
             warnings.warn("Energy axis missing; using index axis.", stacklevel=2)
         if self.energy is None:
-            warnings.warn("Energy axis unavailable; cannot set fit limits.", stacklevel=2)
+            warnings.warn(
+                "Energy axis unavailable; cannot set fit limits.",
+                stacklevel=2,
+            )
             return None
         energy = self.energy
         if energy_limits is None:
@@ -915,7 +954,7 @@ class File:
         self.e_lim_abs = [np.min(energy_limits), np.max(energy_limits)]
         
         # convert energy and time limits to index values
-        # use actual data ordering (not plot direction) to ensure searchsorted gets ascending input
+        # use data ordering (not plot direction) to pass ascending input to searchsorted
         n_e = np.shape(energy)[0]
         if energy[0] > energy[-1]:  # descending energy
             E_ind_min = int(np.searchsorted(energy[::-1], np.min(energy_limits)))
@@ -929,10 +968,16 @@ class File:
         if time_limits is not None:
             if self.time is None:
                 if self.data is None or self.dim != 2:
-                    warnings.warn("Time axis missing; cannot apply time limits.", stacklevel=2)
+                    warnings.warn(
+                        "Time axis missing; cannot apply time limits.",
+                        stacklevel=2,
+                    )
                     return None
                 self.time = np.arange(np.shape(self.data)[0])
-                warnings.warn("Time axis missing; using index axis for time limits.", stacklevel=2)
+                warnings.warn(
+                    "Time axis missing; using index axis for time limits.",
+                    stacklevel=2,
+                )
             self.t_lim_abs = list(time_limits)
             t_ind_min = int(np.searchsorted(self.time, np.min(time_limits)))
             t_ind_max = int(np.searchsorted(self.time, np.max(time_limits)))
@@ -955,7 +1000,10 @@ class File:
                 )
             elif self.dim == 2:
                 if self.data is None:
-                    warnings.warn("Data missing; cannot plot 2D fit limits.", stacklevel=2)
+                    warnings.warn(
+                        "Data missing; cannot plot 2D fit limits.",
+                        stacklevel=2,
+                    )
                     return None
                 uplt.plot_2D(
                     data=self.data,
@@ -992,37 +1040,52 @@ class File:
         # find model with matching name from list
         self.model_base = self.select_model(model_info=model_name)
         if self.model_base is None:
-            warnings.warn(f"Model '{model_name}' not found; baseline fit skipped.", stacklevel=2)
+            warnings.warn(
+                f"Model '{model_name}' not found; baseline fit skipped.",
+                stacklevel=2,
+            )
             return None
         if self.energy is None or self.data_base is None:
-            warnings.warn("Baseline data/energy axis missing; baseline fit skipped.", stacklevel=2)
+            warnings.warn(
+                "Baseline data/energy axis missing; baseline fit skipped.",
+                stacklevel=2,
+            )
             return None
         
         # get initial guess
-        initial_guess = ulmfit.par_extract(self.model_base.lmfit_pars, return_type='list')
+        initial_guess = ulmfit.par_extract(
+            self.model_base.lmfit_pars, return_type='list'
+        )
         # define (and create) path where basline fit results will be saved to
         path_base_results = self.create_model_path(model_name)
         
-        # const = (x, data, package, function string, unpack, energy limits, time limits)
-        self.model_base.const = (self.energy, self.data_base, self.p.spec_lib, self.p.spec_fun_str, 0, self.e_lim, [])
+        # const = (x, data, package, fnctn string, unpack, energy limits, time limits)
+        self.model_base.const = (
+            self.energy, self.data_base, self.p.spec_lib, self.p.spec_fun_str, 0, 
+            self.e_lim, []
+        )
         # args [for fit function called in residual function]
         # model, dimension (dim =1 for baseline and SbS, =2 for 2D (global) fit), debug
         self.model_base.args = (self.model_base, 1, False)
         # fit (optionally) with confidence intervals
-        self.model_base.result = fitlib.fit_wrapper(const=self.model_base.const,
-                                                    args=self.model_base.args,
-                                                    par_names=self.model_base.par_names,
-                                                    par=self.model_base.lmfit_pars,
-                                                    fit_type=fit,
-                                                    show_info=1 if self.p.show_info>=2 else 0,
-                                                    save_output=1,
-                                                    save_path=path_base_results / model_name,
-                                                    **lmfit_wrapper_kwargs)
+        self.model_base.result = fitlib.fit_wrapper(
+            const=self.model_base.const,
+            args=self.model_base.args,
+            par_names=self.model_base.par_names,
+            par=self.model_base.lmfit_pars,
+            fit_type=fit,
+            show_info=1 if self.p.show_info>=2 else 0,
+            save_output=1,
+            save_path=path_base_results / model_name,
+            **lmfit_wrapper_kwargs
+            )
         
         # display/plot and save baseline fit summary
         #self.model_base.create_value1D(store1D=1) # update individual component spectra
-        title_base = f'File: {self.path}, ' +\
-                     f'Model: "{model_name}" (from "{self.model_base.yaml_f_name}.yaml")'
+        title_base = (
+            f'File: {self.path}, '
+            f'Model: "{model_name}" (from "{self.model_base.yaml_f_name}.yaml")'
+        )
         
         fitlib.plt_fit_res_1D(
             x=self.energy,
@@ -1043,8 +1106,10 @@ class File:
         )
 
         if fit >= 1:
-            fitlib.time_display(t_start=t_base, print_str='Time elapsed for baseline fit: ')
-            display(self.model_base.result[1].params) # display the final parameters below figure
+            fitlib.time_display(
+                t_start=t_base, print_str='Time elapsed for baseline fit: '
+            )
+            display(self.model_base.result[1].params) # display final pars below figure
         #
         return None
     
@@ -1082,21 +1147,36 @@ class File:
         Notes
         -----
         Note:
-        Currently the energy position guesses (x0) are shifted on a per slice basis according to
-        the position in energy (x) of the maximum value of the spectrum (NOT always a good idea!)
+        Currently the energy position guesses (x0) are shifted on a per slice basis
+        according to the position in energy (x) of the maximum value of the spectrum
+        (NOT always a good idea!)
         """
         t_SbS = time.time() # start timing for SbS fit
         
         # find model with matching name from list
         self.model_SbS = self.select_model(model_info=model_name)
         if self.model_SbS is None:
-            warnings.warn(f"Model '{model_name}' not found; Slice-by-Slice fit skipped.", stacklevel=2)
+            warnings.warn(
+                f"Model '{model_name}' not found; Slice-by-Slice fit skipped.",
+                stacklevel=2,
+            )
             return None
         if self.model_base is None:
-            warnings.warn("Baseline model is not fitted yet; run fit_baseline() first.", stacklevel=2)
+            warnings.warn(
+                "Baseline model is not fitted yet; run fit_baseline() first.",
+                stacklevel=2,
+            )
             return None
-        if self.data is None or self.time is None or self.energy is None or self.data_base is None:
-            warnings.warn("Data/axes/baseline missing; Slice-by-Slice fit skipped.", stacklevel=2)
+        if (
+            self.data is None
+            or self.time is None
+            or self.energy is None
+            or self.data_base is None
+        ):
+            warnings.warn(
+                "Data/axes/baseline missing; Slice-by-Slice fit skipped.",
+                stacklevel=2,
+            )
             return None
         
         # define (and create) path where SbS fit results will be saved to
@@ -1104,46 +1184,67 @@ class File:
                 
         # set all fixed SbS fit parameters equal to baseline model results
         base_df = ulmfit.par2df(self.model_base.lmfit_pars, col_type='min')
-        self.model_SbS.update_value(new_par_values=list(base_df['value']), par_select='all')
-        
-        # find all parameters with names ending in "x0" so they can be updated for every slice
+        self.model_SbS.update_value(
+            new_par_values=list(base_df['value']), par_select='all'
+        )
+
+        # find all parameters with names ending in "x0"
+        # so they can be updated for every slice
         e_pos_pars = [name for name in self.model_SbS.par_names if name.endswith('_x0')]
         # find their corresponding values
-        e_pos_vals = uarr.get_item(base_df, row=['name', e_pos_pars], col='value', astype='series')
+        e_pos_vals = uarr.get_item(
+            base_df, row=['name', e_pos_pars], col='value', astype='series'
+        )
         
         # cycle through all spectra and fit them
         self.results_SbS = [] # (re-)initialize placeholder for results
         for s_i, s in enumerate(self.data):
-            if self.p.show_info < 3: print(f'Analyzing slice number {s_i+1}/{len(self.time)}', end='\r')
-            if s_i < self.p.skip_first_N_spec: continue # skip past baseline spectra for debugging
-            if self.p.show_info >= 3: print(); print('Spectrum #' +str(s_i)) # print iteration info
+            if self.p.show_info < 3:
+                print(f'Analyzing slice number {s_i+1}/{len(self.time)}', end='\r')
+            if s_i < self.p.skip_first_N_spec:
+                continue  # skip past baseline spectra for debugging
+            if self.p.show_info >= 3:
+                print()
+                print('Spectrum #' + str(s_i))  # print iteration info
             # define path for files saved for this slice 
-            path_slice = os.path.join(path_SbS_results, 'slices', str(self.p.DA_slices_fmt%s_i))
+            path_slice = os.path.join(
+                path_SbS_results, 'slices', str(self.p.DA_slices_fmt%s_i)
+            )
 
-            # update the "x0" peak energy guess(es) using "max(baseline) -(max current slice)"
-            deltaMAX = self.energy[np.argmax(s)] -self.energy[np.argmax(self.data_base)] # in eV
-            if self.p.show_info >= 3: print(f'deltaMAX (spectrum with respect to baseline: {deltaMAX}')
+            # update the "x0" peak energy guess(es) using 
+            # "max(baseline) -(max current slice)" [ in eV]
+            deltaMAX = self.energy[np.argmax(s)] -self.energy[np.argmax(self.data_base)]
+            if self.p.show_info >= 3:
+                print(f'deltaMAX (spectrum with respect to baseline: {deltaMAX}')
             # update all guesses for parameters with names ending in "x0"
             new_e_vals = list(e_pos_vals.add(deltaMAX))
-            self.model_SbS.update_value(new_par_values=new_e_vals, par_select=e_pos_pars)
+            self.model_SbS.update_value(
+                new_par_values=new_e_vals, par_select=e_pos_pars
+            )
             # get initial guess
-            initial_guess = ulmfit.par_extract(self.model_SbS.lmfit_pars, return_type='list')
+            initial_guess = ulmfit.par_extract(
+                self.model_SbS.lmfit_pars, return_type='list'
+            )
         
-            # const = (x, data, package, function string, unpack, energy limits, time limits)
-            self.model_SbS.const = (self.energy, s, self.p.spec_lib, self.p.spec_fun_str, 0, self.e_lim, [])
-            # args (lmfit2D.Model, dimension, debug) [for fit function called in residual function]
+            # const = (x, data, package, fnctn str, unpack, energy limits, time limits)
+            self.model_SbS.const = (
+                self.energy, s, self.p.spec_lib, self.p.spec_fun_str, 0, self.e_lim, []
+            )
+            # args (lmfit2D.Model, dim, debug) [for fit fnctn called in residual fnctn]
             self.model_SbS.args = (self.model_SbS, 1, False)
 
             # fit with confidence intervals
-            result_SbS = fitlib.fit_wrapper(const=self.model_SbS.const,
-                                            args=self.model_SbS.args,
-                                            par_names=self.model_SbS.par_names,
-                                            par=self.model_SbS.lmfit_pars,
-                                            fit_type=fit,
-                                            show_info=1 if self.p.show_info>=3 else 0,
-                                            save_output=1,
-                                            save_path=path_slice,
-                                            **fit_wrapper_kwargs)
+            result_SbS = fitlib.fit_wrapper(
+                const=self.model_SbS.const,
+                args=self.model_SbS.args,
+                par_names=self.model_SbS.par_names,
+                par=self.model_SbS.lmfit_pars,
+                fit_type=fit,
+                show_info=1 if self.p.show_info>=3 else 0,
+                save_output=1,
+                save_path=path_slice,
+                **fit_wrapper_kwargs
+        )
 
             # add final fit parameters to list of fit parameters of all spectra
             self.results_SbS.append(result_SbS)
@@ -1165,11 +1266,14 @@ class File:
                 save_path=path_slice+'.png'
             )
             #
-            if s_i == self.p.first_N_spec_only: break # for debugging: only fit first N spectra
+            if s_i == self.p.first_N_spec_only:
+                break  # for debugging: only fit first N spectra
         
         if fit >= 1:
             self.save_SliceBySlice_fit(save_path=path_SbS_results)
-            fitlib.time_display(t_start=t_SbS, print_str='Time elapsed for Slice-by-Slice fit: ')
+            fitlib.time_display(
+                t_start=t_SbS, print_str='Time elapsed for Slice-by-Slice fit: '
+            )
         #
         return None
     
@@ -1187,13 +1291,19 @@ class File:
             Base directory for saving results
         """
         if self.model_SbS is None or self.time is None:
-            warnings.warn("Slice-by-Slice model/results are incomplete; nothing to save.", stacklevel=2)
+            warnings.warn(
+                "Slice-by-Slice model/results are incomplete; nothing to save.",
+                stacklevel=2,
+            )
             return None
         if self.data is None:
             warnings.warn("Data missing; cannot save Slice-by-Slice fit.", stacklevel=2)
             return None
         if self.model_SbS.const is None or self.model_SbS.args is None:
-            warnings.warn("Slice-by-Slice model constants/args missing; cannot reconstruct 2D fit.", stacklevel=2)
+            warnings.warn(
+                "Slice-by-Slice model const/args missing; cannot reconstruct 2D fit.",
+                stacklevel=2,
+            )
             return None
         # convert results, specifically par_fin to dataframe and save
         # this also plots all parameters as a function of time
@@ -1224,7 +1334,8 @@ class File:
         if self.p.show_info >= 3: 
             print(f'size SbS 2D map: {np.shape(fit2D_SbS)}')
         
-        # plot data, fit, and residual 2D maps (works if full 2D map is fitted/ no slices skipped)
+        # plot data, fit, and residual 2D maps
+        # (works if full 2D map is fitted/ no slices skipped)
         if self.p.first_N_spec_only == -1 and self.p.skip_first_N_spec == -1:
 
             fitlib.plt_fit_res_2D(
@@ -1264,10 +1375,16 @@ class File:
         t_mod = self.load_model(model_yaml, model_info, par_name, 
                                 debug=False if self.p.show_info<2 else True) # load
         if t_mod is None:
-            warnings.warn("Dynamics model could not be loaded; time dependence not added.", stacklevel=2)
+            warnings.warn(
+                "Dynamics model could not be loaded; time dependence not added.",
+                stacklevel=2,
+            )
             return None
         if self.model_active is None:
-            warnings.warn("No active model available; time dependence not added.", stacklevel=2)
+            warnings.warn(
+                "No active model available; time dependence not added.",
+                stacklevel=2,
+            )
             return None
         self.model_active.add_dynamics(cast(mcp.Dynamics, t_mod), frequency) # add
         self.model_active.dim = 2 # increase dimension of model to 2
@@ -1300,10 +1417,16 @@ class File:
         # find model with matching name from list
         self.model_2D = self.select_model(model_info=model_name)
         if self.model_2D is None:
-            warnings.warn(f"Model '{model_name}' not found; 2D fit skipped.", stacklevel=2)
+            warnings.warn(
+                f"Model '{model_name}' not found; 2D fit skipped.",
+                stacklevel=2,
+            )
             return None
         if self.model_base is None:
-            warnings.warn("Baseline model is not fitted yet; run fit_baseline() first.", stacklevel=2)
+            warnings.warn(
+                "Baseline model is not fitted yet; run fit_baseline() first.",
+                stacklevel=2,
+            )
             return None
         if self.energy is None or self.time is None or self.data is None:
             warnings.warn("Data/axes missing; 2D fit skipped.", stacklevel=2)
@@ -1317,25 +1440,30 @@ class File:
         self.model_2D.update_value(new_par_values = list(base_df['value']),
                                    par_select = list(base_df['name']))
         # const [x, data, package, function string, unpack, energy limits, time limits]
-        self.model_2D.const = (self.energy, self.data, self.p.spec_lib, self.p.spec_fun_str, 0, \
-                               self.e_lim, self.t_lim)
+        self.model_2D.const = (self.energy, self.data, self.p.spec_lib,
+                               self.p.spec_fun_str, 0, self.e_lim, self.t_lim
+    )
         # args [for fit function called in residual function]
         self.model_2D.args = (self.model_2D, 2, False) # model, dimension, debug
         
         # fit (with confidence intervals)
-        self.model_2D.result = fitlib.fit_wrapper(const=self.model_2D.const,
-                                                  args=self.model_2D.args,
-                                                  par_names=self.model_2D.par_names, 
-                                                  par=self.model_2D.lmfit_pars,
-                                                  fit_type=fit,
-                                                  show_info=1 if self.p.show_info>=2 else 0,
-                                                  save_output=1,
-                                                  save_path=path_2D_results / model_name,
-                                                  **fit_wrapper_kwargs)
+        self.model_2D.result = fitlib.fit_wrapper(
+            const=self.model_2D.const,
+            args=self.model_2D.args,
+            par_names=self.model_2D.par_names, 
+            par=self.model_2D.lmfit_pars,
+            fit_type=fit,
+            show_info=1 if self.p.show_info>=2 else 0,
+            save_output=1,
+            save_path=path_2D_results / model_name,
+            **fit_wrapper_kwargs
+        )
         if fit >= 1:
             self.save_2Dmodel_fit(save_path=path_2D_results)
-            fitlib.time_display(t_start=t_2D, print_str='Time elapsed for 2D model fit: ')
-            display(self.model_2D.result[1].params) # display the final parameters below figure
+            fitlib.time_display(
+                t_start=t_2D, print_str='Time elapsed for 2D model fit: '
+            )
+            display(self.model_2D.result[1].params) # display final pars below figure
         #
         return None
     
@@ -1352,12 +1480,23 @@ class File:
         save_path : str or Path
             Base directory for saving results
         """
-        if self.model_2D is None or self.energy is None or self.time is None or self.data is None:
-            warnings.warn("2D model/data/axes missing; nothing to save.", stacklevel=2)
+        if (
+            self.model_2D is None
+            or self.energy is None
+            or self.time is None
+            or self.data is None
+        ):
+            warnings.warn(
+                "2D model/data/axes missing; nothing to save.",
+                stacklevel=2,
+            )
             return None
         self.model_2D.create_value2D() # update 2D spectrum to final fit result
         if self.model_2D.value2D is None:
-            warnings.warn("2D model evaluation did not produce value2D; nothing to save.", stacklevel=2)
+            warnings.warn(
+                "2D model evaluation did not produce value2D; nothing to save.",
+                stacklevel=2,
+            )
             return None
         # plot data, fit, and residual 2D maps
         fitlib.plt_fit_res_2D(

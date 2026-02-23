@@ -295,7 +295,7 @@ class ParameterSweep:
         
         # Yield each combination
         for values in itertools.product(*value_lists):
-            yield dict(zip(par_names, values))
+            yield dict(zip(par_names, values, strict=True))
     
     #
     def _generate_random(self) -> Generator[dict[str, float], None, None]:
@@ -316,7 +316,7 @@ class ParameterSweep:
             for spec in self.parameter_specs.values()
         )
         
-        for i in range(n_configs):
+        for _ in range(n_configs):
             config = {}
             for par_name, spec in self.parameter_specs.items():
                 if spec['type'] == 'range':

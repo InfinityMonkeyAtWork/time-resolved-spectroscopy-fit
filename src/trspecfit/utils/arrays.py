@@ -24,7 +24,9 @@ from scipy.signal import convolve
 #
 
 #
-def format_float_scientific(number: float, exp_digits: int = 4, precision: int = 14) -> str:
+def format_float_scientific(
+    number: float, exp_digits: int = 4, precision: int = 14
+) -> str:
     """
     Format number in scientific notation with consistent string length.
     
@@ -101,11 +103,17 @@ def OoM(x: float) -> int:
 
 #
 @overload
-def get_item(df: pd.DataFrame, row: int | list, col: str | int, astype: Literal['series'] = ...) -> pd.Series: ...
+def get_item(
+    df: pd.DataFrame, row: int | list, col: str | int,
+    astype: Literal['series'] = ...) -> pd.Series: ...
 @overload
-def get_item(df: pd.DataFrame, row: int | list, col: str | int, astype: Literal['float']) -> float: ...
+def get_item(
+    df: pd.DataFrame, row: int | list, col: str | int,
+    astype: Literal['float']) -> float: ...
 @overload
-def get_item(df: pd.DataFrame, row: int | list, col: str | int, astype: Literal['bool']) -> bool: ...
+def get_item(
+    df: pd.DataFrame, row: int | list, col: str | int,
+    astype: Literal['bool']) -> bool: ...
 def get_item(
     df: pd.DataFrame,
     row: int | list,

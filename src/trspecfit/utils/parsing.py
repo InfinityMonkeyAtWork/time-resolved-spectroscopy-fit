@@ -171,7 +171,8 @@ def validate_model_components(
             # Check 1: Component type exists
             if base_comp_name not in available_functions:
                 raise ModelValidationError(
-                    f"Unknown component type '{base_comp_name}' in model '{model_name}' in {model_yaml_path}\n"
+                    f"Unknown component type '{base_comp_name}' in model "
+                    f"'{model_name}' in {model_yaml_path}\n"
                     f"Available components: {sorted(available_functions)}\n"
                     f"Check for typos in component name."
                 )
@@ -179,7 +180,8 @@ def validate_model_components(
             # Check 2: Parameters should be a dictionary
             if not isinstance(params, dict):
                 raise ModelValidationError(
-                    f"Parameters for '{comp_name}' in model '{model_name}' must be a dictionary.\n"
+                    f"Parameters for '{comp_name}' in model '{model_name}'"
+                    f" must be a dictionary.\n"
                     f"Found: {type(params).__name__}\n"
                     f"See 'models_energy.yaml' in example directory: {example_dir}"
                 )
@@ -190,7 +192,8 @@ def validate_model_components(
             # Check parameter count matches
             if len(params) != len(expected_params):
                 raise ModelValidationError(
-                    f"Component '{comp_name}' (type: {base_comp_name}) in model '{model_name}' has wrong number of parameters.\n"
+                    f"Component '{comp_name}' (type: {base_comp_name}) in model "
+                    f"'{model_name}' has wrong number of parameters.\n"
                     f"Expected {len(expected_params)} parameters: {expected_params}\n"
                     f"Got {len(params)} parameters: {list(params.keys())}\n"
                     f"Check {model_yaml_path}"
@@ -202,7 +205,9 @@ def validate_model_components(
                 # Check if parameter name is valid for this component
                 if param_name not in expected_params:
                     raise ModelValidationError(
-                        f"Invalid parameter '{param_name}' for component '{comp_name}' (type: {base_comp_name}) in model '{model_name}'.\n"
+                        f"Invalid parameter '{param_name}' for component "
+                        f"'{comp_name}' (type: {base_comp_name}) in model "
+                        f"'{model_name}'.\n"
                         f"Expected parameters: {expected_params}\n"
                         f"Check for typos or wrong component type."
                     )
@@ -212,7 +217,7 @@ def validate_model_components(
                 if isinstance(param_value, list):
                     
                     if (len(param_value) == 4) or (len(param_value) == 2):
-                        if len(param_value) == 4:  # Standard format: [value, vary, min, max]
+                        if len(param_value) == 4:  # Standard: [value, vary, min, max]
                             value, vary, min_val, max_val = param_value
                         elif len(param_value) == 2:  # Unbound format: [value, vary]
                             value, vary = param_value
@@ -222,16 +227,19 @@ def validate_model_components(
                         # Check that 'vary' is boolean
                         if not isinstance(vary, bool):
                             raise ModelValidationError(
-                                f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}'):\n"
+                                f"Parameter '{param_name}' in '{comp_name}'"
+                                f" (model '{model_name}'):\n"
                                 f"'vary' (2nd element) must be True or False.\n"
                                 f"Got: {vary} ({type(vary).__name__})"
                             )
                                                 
                         # Check bounds validity
-                        if isinstance(min_val, (int, float)) and isinstance(max_val, (int, float)):
+                        if (isinstance(min_val, (int, float))
+                                and isinstance(max_val, (int, float))):
                             if min_val > max_val:
                                 raise ModelValidationError(
-                                    f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}'):\n"
+                                    f"Parameter '{param_name}' in '{comp_name}'"
+                                    f" (model '{model_name}'):\n"
                                     f"min ({min_val}) is greater than max ({max_val})"
                                 )
                             
@@ -239,30 +247,39 @@ def validate_model_components(
                             if isinstance(value, (int, float)):
                                 if value < min_val or value > max_val:
                                     raise ModelValidationError(
-                                        f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}'):\n"
-                                        f"value ({value}) is outside bounds [{min_val}, {max_val}]"
+                                        f"Parameter '{param_name}' in"
+                                        f" '{comp_name}' (model '{model_name}'):\n"
+                                        f"value ({value}) is outside"
+                                        f" bounds [{min_val}, {max_val}]"
                                     )
                     
                     elif len(param_value) == 1:
                         # Expression format: ["expression"]
                         if not isinstance(param_value[0], str):
                             raise ModelValidationError(
-                                f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}'):\n"
-                                f"Single-element list must contain a string expression.\n"
-                                f"Got: {param_value[0]} ({type(param_value[0]).__name__})\n"
+                                f"Parameter '{param_name}' in '{comp_name}'"
+                                f" (model '{model_name}'):\n"
+                                f"Single-element list must contain"
+                                f" a string expression.\n"
+                                f"Got: {param_value[0]}"
+                                f" ({type(param_value[0]).__name__})\n"
                                 f'Example: ["GLP_01_x0 + 3.6"]'
                             )
                     else:
                         raise ModelValidationError(
-                            f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}') has invalid format.\n"
-                            f'Expected: [value, vary, min, max] or [value, vary] or ["expr"]\n'
+                            f"Parameter '{param_name}' in '{comp_name}'"
+                            f" (model '{model_name}') has invalid format.\n"
+                            f'Expected: [value, vary, min, max] or'
+                            f' [value, vary] or ["expr"]\n'
                             f"Got: {param_value} ({len(param_value)} elements)\n"
-                            f"See 'models_energy.yaml' in example directory: {example_dir}"
+                            f"See 'models_energy.yaml' in example directory:"
+                            f" {example_dir}"
                         )
                 
                 else:
                     raise ModelValidationError(
-                        f"Parameter '{param_name}' in '{comp_name}' (model '{model_name}') has invalid format.\n"
+                        f"Parameter '{param_name}' in '{comp_name}'"
+                        f" (model '{model_name}') has invalid format.\n"
                         f"Expected either:\n"
                         f"  - [value, vary, min, max] for standard parameters\n"
                         f"  - [value, vary] for unbound parameters\n"
@@ -332,12 +349,14 @@ def load_and_number_yaml_components(
                     if model_name in model_info_dict:
                         raise ValueError(f"Duplicate model name found: '{model_name}'")
                     # Convert components to dict format
-                    model_info_dict[model_name] = dict(components) if isinstance(components, list) else components
+                    model_info_dict[model_name] = (
+                        dict(components) if isinstance(components, list) else components
+                    )
                     # Convert parameters to dict format
                     for comp_name, params in model_info_dict[model_name].items():
                         if isinstance(params, list):
                             model_info_dict[model_name][comp_name] = dict(params)
-            else:  # should never happen unless something is wrong with construct_yaml_map
+            else:  # should never happen unless construct_yaml_map is broken
                 raise ValueError(f"Unexpected YAML structure in {model_yaml_path}")
             
             if debug:
@@ -349,7 +368,9 @@ def load_and_number_yaml_components(
             # Apply appropriate numbering strategy
             if is_dynamics:
                 # Resolve numbering conflicts across subcycles
-                model_info_dict = resolve_dynamics_numbering_conflicts(model_info_dict, model_info, debug)
+                model_info_dict = resolve_dynamics_numbering_conflicts(
+                    model_info_dict, model_info, debug
+                )
 
             # Validate the loaded model structure
             validate_model_components(model_info_dict, model_info, model_yaml_path)
@@ -362,7 +383,7 @@ def load_and_number_yaml_components(
             f"FileNotFound: model yaml file input\n"
             f"File should be located in: {model_yaml_path}\n"
             f"Check file name for typos"
-        )
+        ) from None
     except ModelValidationError:
         # Validator errors are already user-friendly, just pass through
         raise
@@ -386,7 +407,7 @@ def load_and_number_yaml_components(
             f"  - Matching brackets and quotes\n"
             f"  - Valid YAML syntax\n"
             f"Original error: {exc}"
-        )
+        ) from exc
 
 #
 def resolve_dynamics_numbering_conflicts(
@@ -438,9 +459,9 @@ def resolve_dynamics_numbering_conflicts(
         if submodel not in model_info_dict:
             continue
             
-        for comp_name, comp_params in model_info_dict[submodel].items():
+        for comp_name, _ in model_info_dict[submodel].items():
             base_name, number = parse_component_name(comp_name)
-            
+
             if base_name in available_functions and base_name not in exceptions:
                 if number is None:
                     number = 1  # Default numbering
@@ -451,7 +472,9 @@ def resolve_dynamics_numbering_conflicts(
                     global_next_available[base_name] = 1
                 
                 used_numbers[base_name].add(number)
-                global_next_available[base_name] = max(global_next_available[base_name], number + 1)
+                global_next_available[base_name] = max(
+                    global_next_available[base_name], number + 1
+                )
     
     if debug:
         print(f"\nAfter first pass - used_numbers: {used_numbers}")
@@ -459,7 +482,8 @@ def resolve_dynamics_numbering_conflicts(
 
     # Second pass: resolve conflicts by reassigning duplicate numbers
     processed_dict: dict[str, dict[str, Any]] = {}
-    assigned_numbers: dict[str, set[int]] = {}  # Track what we've already assigned in this pass
+    # Track what we've already assigned in this pass
+    assigned_numbers: dict[str, set[int]] = {}
     
     for submodel in model_info:
         if submodel not in model_info_dict:
@@ -481,13 +505,15 @@ def resolve_dynamics_numbering_conflicts(
                 # Check if this number is already assigned in this dynamics model
                 if current_number in assigned_numbers[base_name]:
                     # Conflict! Find next available number
-                    while global_next_available[base_name] in assigned_numbers[base_name]:
+                    while (global_next_available[base_name]
+                           in assigned_numbers[base_name]):
                         global_next_available[base_name] += 1
                     new_number = global_next_available[base_name]
                     global_next_available[base_name] += 1
                     
                     if debug:
-                        print(f"Conflict resolved: {comp_name} -> {base_name}_{new_number:02d} in {submodel}")
+                        print(f"Conflict resolved: {comp_name} -> "
+                              f"{base_name}_{new_number:02d} in {submodel}")
                 else:
                     # No conflict, use current number
                     new_number = current_number

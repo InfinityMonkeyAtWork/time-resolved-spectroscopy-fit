@@ -10,7 +10,7 @@ This module provides matplotlib-based plotting functions for:
 
 import pathlib
 from collections.abc import Sequence
-from typing import Any, Union
+from typing import Any
 
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
@@ -20,7 +20,7 @@ from numpy.typing import ArrayLike, NDArray
 from trspecfit.config.plot import PlotConfig
 from trspecfit.utils.arrays import OoM
 
-PathLike = Union[str, pathlib.Path]
+type PathLike = str | pathlib.Path
 
 #
 # Image display utilities
@@ -115,7 +115,7 @@ def plot_grid(images: Sequence[NDArray[np.generic]], columns: int = 3,
     axs = axs.flatten()
     
     # Display images
-    for image, ax in zip(images, axs):
+    for image, ax in zip(images, axs, strict=False):
         ax.imshow(image)
         ax.set_axis_off()
     
@@ -522,7 +522,8 @@ def plot_1D(
             y_plot = y_scale_arr[i] * y_data + i * waterfall
         
         # Plot
-        label = f'{y_scale_arr[i]}*{legend[i]}' if y_scale_arr[i] != 1 else str(legend[i])
+        label = (f'{y_scale_arr[i]}*{legend[i]}'
+                 if y_scale_arr[i] != 1 else str(legend[i]))
         ax.plot(x_plot, y_plot,
                 ls=linestyles[i],
                 c=colors[i % len(colors)],
@@ -555,8 +556,10 @@ def plot_1D(
             y_minmax = [0, 1]
         else:
             y_minmax = [
-                np.min([np.min(y_scale_arr[i] * data_series[i]) for i in range(N_plots)]),
-                np.max([np.max(y_scale_arr[i] * data_series[i]) for i in range(N_plots)]),
+                np.min([np.min(y_scale_arr[i] * data_series[i])
+                        for i in range(N_plots)]),
+                np.max([np.max(y_scale_arr[i] * data_series[i])
+                        for i in range(N_plots)]),
             ]
         plt.vlines(x=np.asarray(vlines),
                    ymin=y_minmax[0], ymax=y_minmax[1],

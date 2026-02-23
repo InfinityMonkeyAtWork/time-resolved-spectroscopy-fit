@@ -25,7 +25,7 @@ import os
 import pathlib
 import time
 from collections.abc import Sequence
-from typing import Any, Union, cast
+from typing import Any, cast
 
 #import emcee
 import corner
@@ -41,7 +41,7 @@ from trspecfit.config.plot import PlotConfig
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import plot as uplt
 
-PathLike = Union[str, pathlib.Path]
+type PathLike = str | pathlib.Path
 
 def _result_params(result: MinimizerResult) -> lmfit.parameter.Parameters:
     """Return typed lmfit parameters from a MinimizerResult-like object."""
@@ -579,7 +579,8 @@ def fit_wrapper(
         display_pretty(const)
         print('Arguments input to fit function:')
         display_pretty(args)
-    if show_info >= 1: t_0 = time.time() # start time
+    if show_info >= 1:
+        t_0 = time.time()  # start time
         
     if fit_type == 0: 
         #$% deprecated: use plt_fit_res_1D/2D to show data +initial guess +residual
@@ -691,8 +692,6 @@ def fit_wrapper(
             pd.DataFrame, getattr(emcee_fin, "flatchain", pd.DataFrame())
         )
         emcee_var_names = cast(list[str], getattr(emcee_fin, "var_names", []))
-        emcee_lnprob = np.asarray(getattr(emcee_fin, "lnprob", np.array([])))
-        emcee_chain = np.asarray(getattr(emcee_fin, "chain", np.array([])))
         emcee_acceptance_fraction = np.asarray(
             getattr(emcee_fin, "acceptance_fraction", np.array([]))
         )
@@ -710,25 +709,25 @@ def fit_wrapper(
         plt.ylabel('Acceptance fraction')
         if abs(save_output)==1:
             uplt.img_save(f'{save_path}_emcee_walker_acceptance_ratio.png')
-        if show_info >= 1: plt.show()
-        else: plt.close(fig_emcee_walker)
+        if show_info >= 1:
+            plt.show()
+        else:
+            plt.close(fig_emcee_walker)
         # draw all combinations of the typically ellipsoidal chi plot
         # [<x=par1, y=par2, z=chi2> plot]
         emcee_truths = [emcee_fin_params.valuesdict().get(par_name)
                         for par_name in emcee_var_names]
         fig_emcee_corner = plt.figure(figsize=(10,10))
-        emcee_corner = corner.corner(emcee_flatchain,
-                                     labels=emcee_var_names,
-                                     truths=emcee_truths,
-                                     fig=fig_emcee_corner)
+        corner.corner(emcee_flatchain,
+                      labels=emcee_var_names,
+                      truths=emcee_truths,
+                      fig=fig_emcee_corner)
         if abs(save_output) == 1:
             uplt.img_save(f'{save_path}_emcee_corner_plot.png')
-        if show_info >= 1: plt.show()
-        else: plt.close(fig_emcee_corner)
-        # find highest probability parameter combination
-        highest_prob = np.argmax(emcee_lnprob)
-        hp_loc = np.unravel_index(highest_prob, emcee_lnprob.shape)
-        mle_soln = emcee_chain[hp_loc]
+        if show_info >= 1:
+            plt.show()
+        else:
+            plt.close(fig_emcee_corner)
         # get percentage borders to categorize emcee.flatchain data
         sigma_borders = sigma_start_stop_percent(sigmas)
         # go through all combinations of parameters and sigmas to find
@@ -738,7 +737,7 @@ def fit_wrapper(
             emcee_par_CIs: list[Any] = [par_name]  # initialize results for parameter
             if par_name in emcee_var_names:
                 # get quantiles if fit parameter is variable
-                for s, sigma_b in enumerate(sigma_borders):
+                for sigma_b in sigma_borders:
                     # get cutoff values that meet this sigma threshold (+/-)
                     quantiles = np.percentile(emcee_flatchain[par_name],
                                               sigma_b)
@@ -1356,16 +1355,16 @@ def plt_fit_res_2D(
                                   constrained_layout=True, figsize=(9, 12))
     
     # Data panel (uses shared scale)
-    pc_dat = axs['left'].pcolormesh(x_arr, y_arr, data, cmap=z_colormap,
-                                    vmin=range_dat_fit[0], vmax=range_dat_fit[1],
-                                    shading='nearest')
+    axs['left'].pcolormesh(x_arr, y_arr, data, cmap=z_colormap,
+                           vmin=range_dat_fit[0], vmax=range_dat_fit[1],
+                           shading='nearest')
     axs['left'].set_title('Data [min: ' + str(f'{np.min(data):.3E}') +
                           ', max: ' + str(f'{np.max(data):.3E}') + ']')
     
     # Fit panel (uses shared scale)
-    pc_fit = axs['right'].pcolormesh(x_arr, y_arr, fit, cmap=z_colormap,
-                                     vmin=range_dat_fit[0], vmax=range_dat_fit[1],
-                                     shading='nearest')
+    axs['right'].pcolormesh(x_arr, y_arr, fit, cmap=z_colormap,
+                            vmin=range_dat_fit[0], vmax=range_dat_fit[1],
+                            shading='nearest')
     axs['right'].set_title('Fit [min: ' + str(f'{np.min(fit):.3E}') +
                            ', max: ' + str(f'{np.max(fit):.3E}') + ']')
     

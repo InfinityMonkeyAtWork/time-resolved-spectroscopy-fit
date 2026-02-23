@@ -9,7 +9,7 @@ This module provides utilities for:
 - Compatibility with scipy.optimize workflows
 """
 
-from typing import Any, Literal, Union, overload
+from typing import Any, Literal, overload
 
 import lmfit
 import numpy as np
@@ -84,22 +84,26 @@ def par_create(
     return lmf_par
 
 #
-_ParExtractInput = Union[
-    lmfit.Parameters,
-    MinimizerResult,
-    list[float],
-    dict[str, list[Any]],
-    np.ndarray,
-]
+type _ParExtractInput = (
+    lmfit.Parameters
+    | MinimizerResult
+    | list[float]
+    | dict[str, list[Any]]
+    | np.ndarray
+)
 
 @overload
-def par_extract(lmfit_pars: _ParExtractInput, return_type: Literal['list'] = ...) -> list[float]: ...
+def par_extract(
+    lmfit_pars: _ParExtractInput, return_type: Literal['list'] = ...,
+) -> list[float]: ...
 @overload
-def par_extract(lmfit_pars: _ParExtractInput, return_type: Literal['par.x']) -> 'par_dummy': ...
+def par_extract(
+    lmfit_pars: _ParExtractInput, return_type: Literal['par.x'],
+) -> 'par_dummy': ...
 def par_extract(
     lmfit_pars: _ParExtractInput,
     return_type: Literal['list', 'par.x'] = 'list'
-) -> Union[list[float], 'par_dummy']:
+) -> list[float] | 'par_dummy':
     """
     Extract parameter values from lmfit objects.
     
@@ -114,7 +118,8 @@ def par_extract(
         - lmfit.Parameters: Extract current values
         - lmfit.MinimizerResult: Extract optimized values
         - list: Pass through directly (list of values)
-        - dict: Extract first element of each value (format: {name: [val, vary, min, max]})
+        - dict: Extract first element of each value
+          (format: {name: [val, vary, min, max]})
         - ndarray: Convert to list
     return_type : {'list', 'par.x'}, default='list'
         Output format:
@@ -224,7 +229,7 @@ def par_construct(par_names: list[str], par_info: list[list[Any]]) -> lmfit.Para
     lmf_pars = lmfit.Parameters()
     
     # Add parameters one by one
-    for par_name, p_info in zip(par_names, par_info):
+    for par_name, p_info in zip(par_names, par_info, strict=True):
         if len(p_info) == 4:  # [value, vary, min, max]
             lmf_pars.add(par_name, *p_info)
         elif len(p_info) == 2: # [value, vary]
@@ -480,7 +485,8 @@ class MC:
     Notes
     -----
     - nwalkers should be at least 2 * n_parameters
-    - burn-in needed if starting point far from optimum (set burn=0 if starting from fit)
+    - burn-in needed if starting point far from optimum
+      (set burn=0 if starting from fit)
     - thin > 1 reduces autocorrelation in samples
     - workers > 1 enables parallel sampling (requires multiprocessing support)
     
