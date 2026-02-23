@@ -25,20 +25,23 @@ The fitting workflow is:
 4. Residual = data - model is computed and returned to optimizer
 """
 
-from trspecfit.mcp import Model
-from IPython.display import display 
+from collections.abc import Sequence
+
 import numpy as np
-from typing import Sequence, Union
+from IPython.display import display
+
+from trspecfit.mcp import Model
+
 
 #
 def fit_model_mcp(
-    x: Union[Sequence[float], np.ndarray],
-    par: Union[Sequence[float], np.ndarray],
+    x: Sequence[float] | np.ndarray,
+    par: Sequence[float] | np.ndarray,
     plot_ind: bool,
     model: Model,
     dim: int,
     debug: bool
-) -> Union[np.ndarray, list[np.ndarray]]:
+) -> np.ndarray | list[np.ndarray]:
     """
     Generate spectrum from mcp.Model for fitting or visualization.
     
@@ -120,7 +123,7 @@ def fit_model_mcp(
     - Using fit_SliceBySlice for quasi-independent time points
     - Implementing parallel evaluation (model.create_value2D_parallel)
     """
-    par_values: Union[list[float], np.ndarray]
+    par_values: list[float] | np.ndarray
     if isinstance(par, np.ndarray):
         par_values = par
     else:

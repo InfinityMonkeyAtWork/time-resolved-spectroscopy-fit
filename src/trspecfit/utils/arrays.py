@@ -12,11 +12,12 @@ This module provides utilities for:
 
 import math
 from decimal import Decimal
-import pandas as pd
+from typing import Literal, cast, overload
+
 import numpy as np
-from scipy.signal import convolve
-from typing import Literal, Union, cast, overload
+import pandas as pd
 from numpy.typing import ArrayLike, NDArray
+from scipy.signal import convolve
 
 #
 # General
@@ -100,17 +101,17 @@ def OoM(x: float) -> int:
 
 #
 @overload
-def get_item(df: pd.DataFrame, row: Union[int, list], col: Union[str, int], astype: Literal['series'] = ...) -> pd.Series: ...
+def get_item(df: pd.DataFrame, row: int | list, col: str | int, astype: Literal['series'] = ...) -> pd.Series: ...
 @overload
-def get_item(df: pd.DataFrame, row: Union[int, list], col: Union[str, int], astype: Literal['float']) -> float: ...
+def get_item(df: pd.DataFrame, row: int | list, col: str | int, astype: Literal['float']) -> float: ...
 @overload
-def get_item(df: pd.DataFrame, row: Union[int, list], col: Union[str, int], astype: Literal['bool']) -> bool: ...
+def get_item(df: pd.DataFrame, row: int | list, col: str | int, astype: Literal['bool']) -> bool: ...
 def get_item(
     df: pd.DataFrame,
-    row: Union[int, list],
-    col: Union[str, int],
+    row: int | list,
+    col: str | int,
     astype: Literal['series', 'float', 'bool'] = 'series'
-) -> Union[pd.Series, float, bool]:
+) -> pd.Series | float | bool:
     """
     Extract item from pandas DataFrame with flexible row/column selection.
 
@@ -234,7 +235,7 @@ def pad_x_y(
     x: ArrayLike,
     y: ArrayLike,
     x_step: float,
-    pad_size: Union[int, float]
+    pad_size: int | float
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """
     Pad x and y arrays for convolution with proper edge handling.

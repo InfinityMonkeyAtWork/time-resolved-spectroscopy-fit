@@ -19,24 +19,27 @@ plt_fit_res_1D : Plot 1D fit results with residuals
 plt_fit_res_2D : Plot 2D fit results with residual maps
 """
 
-import lmfit
-from lmfit.minimizer import MinimizerResult
-from trspecfit.utils import lmfit as ulmfit
+import copy
+import math
+import os
+import pathlib
+import time
+from collections.abc import Sequence
+from typing import Any, Union, cast
+
 #import emcee
 import corner
-import math
+import lmfit
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import os
-import copy
-import time
 from IPython.display import display, display_pretty
-import matplotlib.pyplot as plt
-from trspecfit.utils import plot as uplt
-from trspecfit.config.plot import PlotConfig
-from typing import Any, Optional, Sequence, Union, cast
-import pathlib
+from lmfit.minimizer import MinimizerResult
 from numpy.typing import ArrayLike
+
+from trspecfit.config.plot import PlotConfig
+from trspecfit.utils import lmfit as ulmfit
+from trspecfit.utils import plot as uplt
 
 PathLike = Union[str, pathlib.Path]
 
@@ -68,11 +71,11 @@ def residual_fun(
     package: Any,
     fit_fun_str: str,
     unpack: int = 0,
-    e_lim: Optional[list[int]] = None,
-    t_lim: Optional[list[int]] = None,
+    e_lim: list[int] | None = None,
+    t_lim: list[int] | None = None,
     res_type: str = 'lmfit',
-    args: Optional[Sequence[Any]] = None
-) -> Union[np.ndarray, float]:
+    args: Sequence[Any] | None = None
+) -> np.ndarray | float:
     """
     Compute residual (data - fit) for optimization and analysis.
     
@@ -196,7 +199,9 @@ def residual_fun(
     raise ValueError(f"Unknown res_type '{res_type}'")
 
 #
-def time_display(t_start: float, print_str: str = '', return_delta_seconds: bool = False) -> Optional[float]:
+def time_display(
+    t_start: float, print_str: str = '', return_delta_seconds: bool = False
+) -> float | None:
     """
     Display elapsed time in human-readable format.
     
@@ -322,7 +327,9 @@ def sigma_start_stop_percent(sigma_list: Sequence[float]) -> list[list[float]]:
     """
     borders_pc: list[list[float]] = []  # low/high borders in percent
     for sigma in sigma_list:
-        a2a_total_raw = sigma_dict().get("{:.1f}".format(sigma), "sigma value not supported")
+        a2a_total_raw = sigma_dict().get(
+            f"{sigma:.1f}", "sigma value not supported"
+        )
         if isinstance(a2a_total_raw, str):
             print(a2a_total_raw)
             borders_pc = []
@@ -342,9 +349,9 @@ def fit_wrapper(
     par_names: list[str],
     par: Any,
     fit_type: int,
-    sigmas: Optional[list[float]] = None,
+    sigmas: list[float] | None = None,
     try_CI: int = 1,
-    MCsettings: Optional[ulmfit.MC] = None,
+    MCsettings: ulmfit.MC | None = None,
     fit_alg_1: str = 'Nelder',
     fit_alg_2: str = 'leastsq',
     show_info: float = 0,
@@ -456,7 +463,8 @@ def fit_wrapper(
             Empty list if fit_type=0
         conf_CIs : pd.DataFrame or pd.DataFrame()
             Confidence intervals from lmfit.conf_interval
-            Columns: ['par[v]/sigma[>]', '-3σ', '-2σ', '-1σ', 'best', '+1σ', '+2σ', '+3σ']
+            Columns: ['par[v]/sigma[>]', '-3σ', '-2σ', '-1σ', 'best',
+                      '+1σ', '+2σ', '+3σ']
             Empty DataFrame if CI not calculated/failed
         emcee_fin : lmfit.MinimizerResult or []
             MCMC result from lmfit.emcee
@@ -555,7 +563,8 @@ def fit_wrapper(
 
     # construct the lmfit parameters if necessary
     if isinstance(par, lmfit.parameter.Parameters):
-        par_ini = copy.deepcopy(par); prnt_str = 'passed in '
+        par_ini = copy.deepcopy(par)
+        prnt_str = 'passed in '
     else:
         par_ini = ulmfit.par_construct(par_names=par_names, par_info=par)
         prnt_str = 'converted to '
@@ -566,7 +575,7 @@ def fit_wrapper(
     df_par_ini = ulmfit.par2df(par_ini, 'ini', par_names)
     
     if show_info >= 2: # (optionally) show constants and args input
-        print(); print('Constants input to residual function:')
+        print('\nConstants input to residual function:')
         display_pretty(const)
         print('Arguments input to fit function:')
         display_pretty(args)
@@ -576,7 +585,7 @@ def fit_wrapper(
         #$% deprecated: use plt_fit_res_1D/2D to show data +initial guess +residual
         # instead use file.model.describe() to see initial guess!
         if show_info >= 1:
-            print(); print('Deprecated. Option will be removed.')
+            print('\nDeprecated. Option will be removed.')
             print('Use file.model.describe() to see initial guess.')
             print('Returning initial parameters without fitting.')
         #
@@ -596,9 +605,10 @@ def fit_wrapper(
         par_fin = mini.minimize(method=fit_alg_1)
         par_fin_params = _result_params(par_fin)
         if show_info >= 1:
-            print(); print(f'Results fit (method={fit_alg_1}): ') 
+            print(f'\nResults fit (method={fit_alg_1}): ') 
             lmfit.report_fit(par_fin_params)
-            t_fit = time.time(); print(f'Time fit: {t_fit -t_ini} s')
+            t_fit = time.time()
+            print(f'Time fit: {t_fit -t_ini} s')
     #
     if fit_type == 2: # find global minimum + local optimization
         par_fin_GM = mini.minimize(method=fit_alg_1)
@@ -637,7 +647,8 @@ def fit_wrapper(
                                                     sigmas=sigmas,
                                                     trace=True)
             if show_info >= 1: 
-                print(); lmfit.printfuncs.report_ci(ci_fin)
+                print()
+                lmfit.printfuncs.report_ci(ci_fin)
             # convert ci_fin to standard CI dataframe
             conf_CIs = ulmfit.conf_interval2df(ci_fin, CI_cols)
         else: 
@@ -676,7 +687,9 @@ def fit_wrapper(
                                progress=True
                                )
         emcee_fin_params = _result_params(emcee_fin)
-        emcee_flatchain = cast(pd.DataFrame, getattr(emcee_fin, "flatchain", pd.DataFrame()))
+        emcee_flatchain = cast(
+            pd.DataFrame, getattr(emcee_fin, "flatchain", pd.DataFrame())
+        )
         emcee_var_names = cast(list[str], getattr(emcee_fin, "var_names", []))
         emcee_lnprob = np.asarray(getattr(emcee_fin, "lnprob", np.array([])))
         emcee_chain = np.asarray(getattr(emcee_fin, "chain", np.array([])))
@@ -693,7 +706,8 @@ def fit_wrapper(
         # acceptence fraction of all walkers (plot)
         fig_emcee_walker, ax = plt.subplots(1, 1, dpi=75)
         plt.plot(emcee_acceptance_fraction, 'o')
-        plt.xlabel('Walker number'); plt.ylabel('Acceptance fraction')
+        plt.xlabel('Walker number')
+        plt.ylabel('Acceptance fraction')
         if abs(save_output)==1:
             uplt.img_save(f'{save_path}_emcee_walker_acceptance_ratio.png')
         if show_info >= 1: plt.show()
@@ -721,14 +735,14 @@ def fit_wrapper(
         # lmfit.emcee() confidence intervals
         emcee_CIs_list = [] # initialize results
         for par_name in par_names+['__lnsigma']:
-            emcee_par_CIs: list[Any] = [par_name] # initialize results for this parameter
+            emcee_par_CIs: list[Any] = [par_name]  # initialize results for parameter
             if par_name in emcee_var_names:
                 # get quantiles if fit parameter is variable
                 for s, sigma_b in enumerate(sigma_borders):
                     # get cutoff values that meet this sigma threshold (+/-)
                     quantiles = np.percentile(emcee_flatchain[par_name],
                                               sigma_b)
-                    # lower threshold; 0 is par_name
+                    # lower threshold (0 is par_name)
                     emcee_par_CIs.insert(1, quantiles[0])
                     # upper threshold
                     emcee_par_CIs.insert(len(emcee_par_CIs), quantiles[1])
@@ -745,7 +759,8 @@ def fit_wrapper(
         if show_info >= 1:
             print(display(emcee_CIs))
     else: # use_emcee equal to 0, or equal to 2 and conf_interval worked
-        emcee_fin = None; emcee_CIs = pd.DataFrame()
+        emcee_fin = None
+        emcee_CIs = pd.DataFrame()
     
     # optional save (figures are saved above)
     # [if statements check for empty list/dataframe]
@@ -833,9 +848,9 @@ def results_select(data: Any, skip: int = -1, N: int = -1, dim: int = 1) -> Any:
 #
 def results2df(
     results: list[Any],
-    x: Optional[ArrayLike] = None,
-    index: Optional[ArrayLike] = None,
-    config: Optional[PlotConfig] = None,
+    x: ArrayLike | None = None,
+    index: ArrayLike | None = None,
+    config: PlotConfig | None = None,
     first_N_spec_only: int = -1,
     skip_first_N_spec: int = -1,
     save_df: int = 0,
@@ -908,20 +923,25 @@ def results2df(
     # (their "vary" attribute is the same for all)
     df_par_fin_slice0 = ulmfit.par2df(lmfit_params=results[0][1].params,
                                         col_type='min')
-    save_array = [-1 if vary==False else 1 for vary in df_par_fin_slice0['vary']]
+    save_array = [-1 if not vary else 1 for vary in df_par_fin_slice0['vary']]
     
     if save_df != 0:
         # save the dataframe (index, x axis, parameter1, parameter2, ...
         df.to_csv(os.path.join(save_path, 'fit_pars.csv'))
         # plot individual parameters as a function of time (s)
-        plt_fit_res_pars(df=df.loc[:, list(cols_plt)], x=x_save if x is not None else None,
-                         config=config, save_img=save_array, save_path=save_path)
+        plt_fit_res_pars(
+            df=df.loc[:, list(cols_plt)],
+            x=x_save if x is not None else None,
+            config=config,
+            save_img=save_array,
+            save_path=save_path,
+        )
     #
     return df
 
 #
 def results2fit2D(
-    results: Union[list[Any], pd.DataFrame],
+    results: list[Any] | pd.DataFrame,
     const: tuple[Any, ...],
     args: tuple[Any, ...],
     num_fmt: str = '%.6e',
@@ -973,7 +993,8 @@ def results2fit2D(
         2D fit array (shape: [n_time, n_energy])
         Each row is the fitted spectrum for one time slice
     """
-    x_const, data_const, package_const, fit_fun_const, unpack_const, e_lim_const, t_lim_const = const
+    (x_const, data_const, package_const,
+     fit_fun_const, unpack_const, e_lim_const, t_lim_const) = const
     lst = [] # intialize
     for N in range(len(results)):
         # list of lmfit_wrapper fit results
@@ -1026,13 +1047,13 @@ def plt_fit_res_1D(
     package: Any,
     par_init: Any,
     par_fin: Any,
-    args: Optional[tuple[Any, ...]] = None,
+    args: tuple[Any, ...] | None = None,
     plot_ind: bool = True,
     show_init: bool = True,
     title: str = '',
-    fit_lim: Optional[list[int]] = None,
-    config: Optional[PlotConfig] = None,
-    legend: Optional[list[str]] = None,
+    fit_lim: list[int] | None = None,
+    config: PlotConfig | None = None,
+    legend: list[str] | None = None,
     **kwargs: Any
 ) -> None:
     """
@@ -1123,7 +1144,9 @@ def plt_fit_res_1D(
     y_arr = np.asarray(y, dtype=float)
     
     # Get standard colors
-    colors: list[str] = list(plt.rcParams['axes.prop_cycle'].by_key().get('color', ['#1f77b4']))
+    colors: list[str] = list(
+        plt.rcParams['axes.prop_cycle'].by_key().get('color', ['#1f77b4'])
+    )
     
     # Create figure
     fig, ax = plt.subplots(1, 1, dpi=dpi_plot)
@@ -1138,7 +1161,9 @@ def plt_fit_res_1D(
                 linestyle=':', linewidth=2, label='initial guess')
     
     # Plot final fit (components and/or sum)
-    if isinstance(par_fin, (lmfit.minimizer.MinimizerResult, lmfit.parameter.Parameters)):
+    if isinstance(
+        par_fin, (lmfit.minimizer.MinimizerResult, lmfit.parameter.Parameters)
+    ):
         par_fin_vals = ulmfit.par_extract(par_fin, return_type='list')
         
         # Plot individual components if requested
@@ -1193,9 +1218,12 @@ def plt_fit_res_1D(
     
     # Draw vertical lines showing fit limits
     if fit_lim is not None and len(fit_lim) == 2:
-        ax.vlines(x=[x_arr[fit_lim[0]], x_arr[-fit_lim[1]] if fit_lim[1] > 0 else x_arr[-1]],
-                 ymin=np.min(res), ymax=np.max(y_arr),
-                 colors='#A9A9A9', linestyle='--')
+        x_end = x_arr[-fit_lim[1]] if fit_lim[1] > 0 else x_arr[-1]
+        ax.vlines(
+            x=[x_arr[fit_lim[0]], x_end],
+            ymin=np.min(res), ymax=np.max(y_arr),
+            colors='#A9A9A9', linestyle='--'
+        )
     
     # Legend
     plt.legend(bbox_to_anchor=(1.35, 1))
@@ -1217,9 +1245,9 @@ def plt_fit_res_1D(
 def plt_fit_res_2D(
     data: np.ndarray,
     fit: np.ndarray,
-    x: Optional[ArrayLike] = None,
-    y: Optional[ArrayLike] = None,
-    config: Optional[PlotConfig] = None,
+    x: ArrayLike | None = None,
+    y: ArrayLike | None = None,
+    config: PlotConfig | None = None,
     **kwargs: Any
 ) -> None:
     """
@@ -1331,27 +1359,27 @@ def plt_fit_res_2D(
     pc_dat = axs['left'].pcolormesh(x_arr, y_arr, data, cmap=z_colormap,
                                     vmin=range_dat_fit[0], vmax=range_dat_fit[1],
                                     shading='nearest')
-    axs['left'].set_title('Data [min: ' + str('{0:.3E}'.format(np.min(data))) +
-                          ', max: ' + str('{0:.3E}'.format(np.max(data))) + ']')
+    axs['left'].set_title('Data [min: ' + str(f'{np.min(data):.3E}') +
+                          ', max: ' + str(f'{np.max(data):.3E}') + ']')
     
     # Fit panel (uses shared scale)
     pc_fit = axs['right'].pcolormesh(x_arr, y_arr, fit, cmap=z_colormap,
                                      vmin=range_dat_fit[0], vmax=range_dat_fit[1],
                                      shading='nearest')
-    axs['right'].set_title('Fit [min: ' + str('{0:.3E}'.format(np.min(fit))) +
-                           ', max: ' + str('{0:.3E}'.format(np.max(fit))) + ']')
+    axs['right'].set_title('Fit [min: ' + str(f'{np.min(fit):.3E}') +
+                           ', max: ' + str(f'{np.max(fit):.3E}') + ']')
     
     # Residual panel (independent scale)
     pc_res = axs['bottom'].pcolormesh(x_arr, y_arr, res, cmap=z_colormap,
                                       vmin=range_res[0], vmax=range_res[1],
                                       shading='nearest')
     axs['bottom'].set_title('Residual (Data-Fit) [min: ' +
-                            str('{0:.3E}'.format(np.min(res_cut))) +
-                            ', max: ' + str('{0:.3E}'.format(np.max(res_cut))) +
-                            ']' + '\n' + 'total residual (sum within black dotted lines): ' +
-                            str('{0:.3E}'.format(res_sum)) + '\n' + str('per spectrum: ') +
-                            str('{0:.3E}'.format(res_sum/res_dim[0])) + str(', per pixel: ') +
-                            str('{0:.3E}'.format(res_sum/res_dim[0]/res_dim[1])))
+                            str(f'{np.min(res_cut):.3E}') +
+                            ', max: ' + str(f'{np.max(res_cut):.3E}') +
+                            ']' + '\n' + 'total residual (sum within black dotted lines): ' +  # noqa: E501
+                            str(f'{res_sum:.3E}') + '\n' + 'per spectrum: ' +  # noqa: E501
+                            str(f'{res_sum/res_dim[0]:.3E}') + ', per pixel: ' +  # noqa: E501
+                            str(f'{res_sum/res_dim[0]/res_dim[1]:.3E}'))
     
     # Colorbar only on residual map
     fig.colorbar(pc_res, orientation='vertical')
@@ -1405,9 +1433,9 @@ def plt_fit_res_2D(
 #
 def plt_fit_res_pars(
     df: pd.DataFrame,
-    x: Optional[ArrayLike] = None,
-    config: Optional[PlotConfig] = None,
-    save_img: Union[int, list[int]] = 0,
+    x: ArrayLike | None = None,
+    config: PlotConfig | None = None,
+    save_img: int | list[int] = 0,
     save_path: PathLike = ''
 ) -> None:
     """

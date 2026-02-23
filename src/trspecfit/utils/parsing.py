@@ -3,20 +3,23 @@ YAML parsing and mcp utilities for trspecfit.
 Model validation, Component naming and numbering, etc.
 """
 
+import re
+from collections.abc import Generator
+from pathlib import Path
+from typing import Any
+
+import numpy as np
 from ruamel.yaml import YAML
 from ruamel.yaml.constructor import SafeConstructor
 from ruamel.yaml.error import YAMLError
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any, Generator, Set
-import numpy as np
-import re
 
 from trspecfit.config.functions import (
-    numbering_exceptions,
     all_functions,
     energy_functions,
     get_function_parameters,
+    numbering_exceptions,
 )
+
 
 #
 #
@@ -25,7 +28,7 @@ class ModelValidationError(ValueError):
     pass
 
 #
-def construct_yaml_map(self, node) -> Generator[List[Tuple[str, Any]], None, None]:
+def construct_yaml_map(self, node) -> Generator[list[tuple[str, Any]], None, None]:
     """
     Enable multiple components of the same type with automatic numbering.
     
@@ -46,7 +49,7 @@ def construct_yaml_map(self, node) -> Generator[List[Tuple[str, Any]], None, Non
     list of tuple
         List of (component_name, parameters) tuples with automatic numbering applied
     """
-    data: List[Tuple[str, Any]] = []
+    data: list[tuple[str, Any]] = []
     yield data
 
     # Get all available function names
@@ -55,7 +58,7 @@ def construct_yaml_map(self, node) -> Generator[List[Tuple[str, Any]], None, Non
     exceptions = numbering_exceptions()
     
     # Track component names to handle duplicates
-    component_counts: Dict[str, int] = {}
+    component_counts: dict[str, int] = {}
     
     for key_node, value_node in node.value:
         key = self.construct_object(key_node, deep=True)
@@ -80,11 +83,11 @@ def construct_yaml_map(self, node) -> Generator[List[Tuple[str, Any]], None, Non
             # This is a model name or other key, don't number it
             data.append((key, val))
 
-SafeConstructor.add_constructor(u'tag:yaml.org,2002:map', construct_yaml_map)
+SafeConstructor.add_constructor('tag:yaml.org,2002:map', construct_yaml_map)
 yaml = YAML(typ='safe')
 
 #
-def parse_component_name(comp_name: str) -> Tuple[str, Optional[int]]:
+def parse_component_name(comp_name: str) -> tuple[str, int | None]:
     """
     Parse a component name into base function name and number.
     Component names follow the pattern: function_name or function_name_NN
@@ -107,7 +110,7 @@ def parse_component_name(comp_name: str) -> Tuple[str, Optional[int]]:
         parts = comp_name.split('_')
         if len(parts) >= 2 and parts[-1].isdigit():
             base_name = '_'.join(parts[:-1])
-            number: Optional[int] = int(parts[-1])
+            number: int | None = int(parts[-1])
         else:
             base_name = comp_name
             number = None
@@ -120,8 +123,8 @@ def parse_component_name(comp_name: str) -> Tuple[str, Optional[int]]:
 
 #
 def validate_model_components(
-    model_info_dict: Dict[str, Dict[str, Dict[str, Any]]],
-    model_info: List[str],
+    model_info_dict: dict[str, dict[str, dict[str, Any]]],
+    model_info: list[str],
     model_yaml_path: Path
 ) -> None:
     """
@@ -271,10 +274,10 @@ def validate_model_components(
 #
 def load_and_number_yaml_components(
     model_yaml_path: Path,
-    model_info: List[str],
+    model_info: list[str],
     is_dynamics: bool = False,
     debug: bool = False
-) -> Dict[str, Dict[str, Dict[str, Any]]]:
+) -> dict[str, dict[str, dict[str, Any]]]:
     """
     Load model YAML file and apply appropriate component numbering strategy.
 
@@ -387,10 +390,10 @@ def load_and_number_yaml_components(
 
 #
 def resolve_dynamics_numbering_conflicts(
-    model_info_dict: Dict[str, Dict[str, Dict[str, Any]]],
-    model_info: List[str],
+    model_info_dict: dict[str, dict[str, dict[str, Any]]],
+    model_info: list[str],
     debug: bool = False
-) -> Dict[str, Dict[str, Dict[str, Any]]]:
+) -> dict[str, dict[str, dict[str, Any]]]:
     """
     Resolve numbering conflicts for dynamics models across subcycles.
     
@@ -416,7 +419,7 @@ def resolve_dynamics_numbering_conflicts(
     if debug:
         print("=== STARTING CONFLICT RESOLUTION ===")
         print(f"model_info: {model_info}")
-        print(f"\nmodel_info_dict BEFORE resolution:")
+        print("\nmodel_info_dict BEFORE resolution:")
         for submodel, comps in model_info_dict.items():
             if submodel in model_info:
                 print(f"  {submodel}: {list(comps.keys())}")
@@ -426,9 +429,9 @@ def resolve_dynamics_numbering_conflicts(
     exceptions = numbering_exceptions()
     
     # Track the next available number for each function type globally
-    global_next_available: Dict[str, int] = {}
+    global_next_available: dict[str, int] = {}
     # Track all used numbers for each function type
-    used_numbers: Dict[str, Set[int]] = {}
+    used_numbers: dict[str, set[int]] = {}
 
     # First pass: collect all existing numbers and find conflicts
     for submodel in model_info:
@@ -455,8 +458,8 @@ def resolve_dynamics_numbering_conflicts(
         print(f"global_next_available: {global_next_available}")
 
     # Second pass: resolve conflicts by reassigning duplicate numbers
-    processed_dict: Dict[str, Dict[str, Any]] = {}
-    assigned_numbers: Dict[str, Set[int]] = {}  # Track what we've already assigned in this pass
+    processed_dict: dict[str, dict[str, Any]] = {}
+    assigned_numbers: dict[str, set[int]] = {}  # Track what we've already assigned in this pass
     
     for submodel in model_info:
         if submodel not in model_info_dict:
@@ -505,7 +508,7 @@ def resolve_dynamics_numbering_conflicts(
             print(f"  {submodel}: {list(processed_dict[submodel].keys())}")
     
     if debug:
-        print(f"\nFINAL processed_dict:")
+        print("\nFINAL processed_dict:")
         for submodel in model_info:
             if submodel in processed_dict:
                 print(f"  {submodel}: {list(processed_dict[submodel].keys())}")
@@ -513,7 +516,7 @@ def resolve_dynamics_numbering_conflicts(
     return processed_dict
 
 #
-def extract_expression_parameters(expr_string: str) -> List[str]:
+def extract_expression_parameters(expr_string: str) -> list[str]:
     """
     Extract parameter names referenced in an expression string.
     

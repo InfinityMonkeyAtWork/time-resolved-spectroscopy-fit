@@ -54,18 +54,21 @@ Examples
 See examples/simulator/ directory for complete workflows.
 """
 
+import copy
+import json
 import os
 from pathlib import Path
-import copy
-import numpy as np
-import matplotlib.pyplot as plt
-import json
+from typing import cast
+
 import h5py
-from typing import Dict, List, Optional, Tuple, cast
+import matplotlib.pyplot as plt
+import numpy as np
+
 from trspecfit.mcp import Model
+from trspecfit.utils import plot as uplt
 from trspecfit.utils.hdf5 import require_group
 from trspecfit.utils.sweep import ParameterSweep
-from trspecfit.utils import plot as uplt
+
 
 #
 #
@@ -197,10 +200,10 @@ class Simulator:
         detection: str = 'analog',
         noise_level: float = 0.05,
         noise_type: str = 'poisson',
-        counts_per_delay: Optional[int] = None,
-        count_rate: Optional[float] = None,
-        integration_time: Optional[float] = None,
-        seed: Optional[int] = None
+        counts_per_delay: int | None = None,
+        count_rate: float | None = None,
+        integration_time: float | None = None,
+        seed: int | None = None
     ) -> None:
         """
         Initialize simulator with a model and noise parameters.
@@ -259,9 +262,9 @@ class Simulator:
         self.noise_type = noise_type.lower()
         
         # Photon counting parameters
-        self.counts_per_delay: Optional[int] = counts_per_delay
-        self.count_rate: Optional[float] = count_rate
-        self.integration_time: Optional[float] = integration_time
+        self.counts_per_delay: int | None = counts_per_delay
+        self.count_rate: float | None = count_rate
+        self.integration_time: float | None = integration_time
         
         # Validate and resolve photon counting parameters
         if self.detection == 'photon_counting':
@@ -276,9 +279,9 @@ class Simulator:
             np.random.seed(seed)
         
         # Storage for simulated data
-        self.data_clean: Optional[np.ndarray] = None  # Without noise
-        self.data_noisy: Optional[np.ndarray] = None  # With noise
-        self.noise: Optional[np.ndarray] = None       # Just the noise component
+        self.data_clean: np.ndarray | None = None  # Without noise
+        self.data_noisy: np.ndarray | None = None  # With noise
+        self.noise: np.ndarray | None = None       # Just the noise component
     
     #
     def _resolve_photon_counting_params(self) -> None:
@@ -318,10 +321,10 @@ class Simulator:
             else:
                 self.counts_per_delay = int(np.sum(signal_positive))
 
-            print(f"WARNING: No photon count specified for photon_counting detection.")
+            print("WARNING: No photon count specified for photon_counting detection.")
             print(f"Estimating from model: {self.counts_per_delay:.2e} counts/delay")
-            print(f"For accurate simulation, specify counts_per_delay or (count_rate, integration_time).")
-            print(f"This estimate assumes your model amplitudes represent realistic count rates.")
+            print("For accurate simulation, specify counts_per_delay or (count_rate, integration_time).")
+            print("This estimate assumes your model amplitudes represent realistic count rates.")
         
         # Ensure counts_per_delay is positive
         if self.counts_per_delay <= 0:
@@ -356,7 +359,7 @@ class Simulator:
         return self.data_clean
     
     #
-    def add_noise(self, clean_data: np.ndarray, dim: int = 2) -> Tuple[np.ndarray, np.ndarray]:
+    def add_noise(self, clean_data: np.ndarray, dim: int = 2) -> tuple[np.ndarray, np.ndarray]:
         """
         Add noise to clean data based on detection technique
         
@@ -394,7 +397,7 @@ class Simulator:
         return noisy_data, noise
     
     #
-    def simulate_1D(self, t_ind: int = 0) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def simulate_1D(self, t_ind: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Simulate 1D spectrum (energy-resolved) at a specific time point.
         
@@ -469,7 +472,7 @@ class Simulator:
         return clean_data, noisy_data, noise
     
     #
-    def simulate_2D(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def simulate_2D(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Simulate 2D spectrum (time- and energy-resolved).
         
@@ -569,7 +572,7 @@ class Simulator:
         dim: int = 2,
         t_ind: int = 0,
         show_progress: bool = True
-    ) -> Tuple[np.ndarray, List[np.ndarray], List[np.ndarray]]:
+    ) -> tuple[np.ndarray, list[np.ndarray], list[np.ndarray]]:
         """
         Generate N simulated datasets with independent noise realizations.
         
@@ -907,7 +910,7 @@ class Simulator:
         self.counts_per_delay = counts_per_delay
     
     #
-    def set_count_rate(self, count_rate: float, integration_time: Optional[float] = None) -> None:
+    def set_count_rate(self, count_rate: float, integration_time: float | None = None) -> None:
         """
         Update count rate (photon counting only)
         
@@ -929,7 +932,7 @@ class Simulator:
             raise ValueError("integration_time must be set to calculate counts_per_delay from count_rate")
     
     #
-    def set_seed(self, seed: Optional[int]) -> None:
+    def set_seed(self, seed: int | None) -> None:
         """Update random seed"""
         self.seed = seed
         if seed is not None:
@@ -1248,9 +1251,9 @@ class Simulator:
     #
     def save_data(
         self,
-        filepath: Optional[str] = None,
+        filepath: str | None = None,
         save_format: str = 'hdf5',
-        N_data: Optional[List[np.ndarray]] = None,
+        N_data: list[np.ndarray] | None = None,
         overwrite: bool = True
     ) -> None:
         """
@@ -1455,7 +1458,7 @@ class Simulator:
         print(f"Data saved to: {filepath}")
 
     #
-    def _save_hdf5(self, filepath: str, N_data: Optional[List[np.ndarray]] = None) -> None:
+    def _save_hdf5(self, filepath: str, N_data: list[np.ndarray] | None = None) -> None:
         """
         Save data to HDF5 format with proper structure
         
@@ -1627,7 +1630,7 @@ class Simulator:
         n_configs = parameter_sweep.get_n_configs()
         
         if show_progress:
-            print(f"Starting parameter sweep:")
+            print("Starting parameter sweep:")
             print(f"  Total configurations: {n_configs}")
             print(f"  Realizations per config: {N_realizations}")
             print(f"  Total datasets: {n_configs * N_realizations}")
@@ -1669,7 +1672,7 @@ class Simulator:
         
         if show_progress:
             print(f'\n{"="*60}')
-            print(f'Parameter sweep complete!')
+            print('Parameter sweep complete!')
             print(f'Generated {n_configs} configs × {N_realizations} realizations')
             print(f'Total datasets: {n_configs * N_realizations}')
             print(f'Data saved to: {filepath}')
@@ -1774,9 +1777,9 @@ class Simulator:
     #
     def _append_config_to_hdf5(self, filepath: str, 
                                config_idx: int,
-                               param_config: Dict[str, float],
+                               param_config: dict[str, float],
                                clean: np.ndarray,
-                               noisy_list: List[np.ndarray]) -> None:
+                               noisy_list: list[np.ndarray]) -> None:
         """
         Append single parameter configuration and its realizations to HDF5.
         

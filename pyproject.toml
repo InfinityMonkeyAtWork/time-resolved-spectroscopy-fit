@@ -79,6 +79,12 @@ typeCheckingMode = "basic"
 pythonpath = ["src"]
 testpaths = ["tests"]
 
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "PD"]
+
 [tool.deptry]
 known_first_party = ["trspecfit"]
 ignore_notebooks = true

@@ -12,9 +12,11 @@ and how the mcp module constructs models from user input.
 """
 
 import inspect
+
+from trspecfit.functions import distribution as fcts_dist
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import time as fcts_time
-from trspecfit.functions import distribution as fcts_dist
+
 
 #
 def all_functions():

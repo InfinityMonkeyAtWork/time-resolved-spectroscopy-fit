@@ -2,9 +2,8 @@
 Configuration of trspecfit plotting functions
 """
 
-from dataclasses import dataclass
-from typing import Optional, List, Tuple
 import copy as cp
+from dataclasses import dataclass
 
 # Plot configuration hierarchy:
 #
@@ -121,8 +120,8 @@ class PlotConfig:
     y_type: str = 'lin'
     
     # Axis limits
-    x_lim: Optional[Tuple[float, float]] = None
-    y_lim: Optional[Tuple[float, float]] = None
+    x_lim: tuple[float, float] | None = None
+    y_lim: tuple[float, float] | None = None
     
     # Display settings
     dpi_plot: int = 100
@@ -135,26 +134,26 @@ class PlotConfig:
     z_colormap: str = 'viridis'
     z_colorbar: str = 'ver'  # 'ver' or 'hor'
     # 2D data handling
-    data_slice: Optional[List[List[int]]] = None
-    z_lim: Optional[Tuple[float, float]] = None
+    data_slice: list[list[int]] | None = None
+    z_lim: tuple[float, float] | None = None
     
     # Line plot styles
-    colors: Optional[List[str]] = None
-    linestyles: Optional[List[str]] = None
-    linewidths: Optional[List[float]] = None
-    markers: Optional[List[str]] = None
-    markersizes: Optional[List[float]] = None
+    colors: list[str] | None = None
+    linestyles: list[str] | None = None
+    linewidths: list[float] | None = None
+    markers: list[str] | None = None
+    markersizes: list[float] | None = None
     
     # Plot annotations
-    legend: Optional[List[str]] = None
+    legend: list[str] | None = None
     waterfall: float = 0
-    vlines: Optional[List[float]] = None
-    hlines: Optional[List[float]] = None
-    ticksize: Optional[float] = None
+    vlines: list[float] | None = None
+    hlines: list[float] | None = None
+    ticksize: float | None = None
     
     # Normalization
     y_norm: int = 0  # 0: no normalization, 1: normalize to [0,1]
-    y_scale: Optional[List[float]] = None
+    y_scale: list[float] | None = None
     
     @classmethod
     def from_project(cls, project, **overrides):

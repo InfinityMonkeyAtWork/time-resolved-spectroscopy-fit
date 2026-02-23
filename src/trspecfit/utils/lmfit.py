@@ -9,11 +9,12 @@ This module provides utilities for:
 - Compatibility with scipy.optimize workflows
 """
 
+from typing import Any, Literal, Union, overload
+
 import lmfit
-from lmfit.minimizer import MinimizerResult
 import numpy as np
 import pandas as pd
-from typing import Any, Literal, Optional, Union, overload
+from lmfit.minimizer import MinimizerResult
 
 #
 # lmfit parameter creation and extraction
@@ -286,8 +287,8 @@ def conf_interval2df(ci: dict[str, Any], CI_cols: list[str]) -> pd.DataFrame:
 #
 def par2df(
     lmfit_params: lmfit.Parameters,
-    col_type: Union[Literal['ini', 'min'], list[str]],
-    par_names: Optional[list[str]] = None
+    col_type: Literal['ini', 'min'] | list[str],
+    par_names: list[str] | None = None
 ) -> pd.DataFrame:
     """
     Convert lmfit.Parameters object to pandas DataFrame.
@@ -559,4 +560,4 @@ class par_dummy:
         self.nit = None
         self.status = None
         self.success = True
-        self.x: Optional[list[Any]] = None
+        self.x: list[Any] | None = None

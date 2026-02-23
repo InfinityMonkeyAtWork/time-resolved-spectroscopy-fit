@@ -21,6 +21,10 @@ jobs:
           .venv/bin/pip install -e ".[dev]"
       - name: Run tests
         run: .venv/bin/pytest -q
+      - name: Run ruff
+        run: |
+          .venv/bin/ruff check src/
+          .venv/bin/ruff format --check src/
       - name: Run mypy
         run: .venv/bin/mypy src/trspecfit
       - name: Run pyright

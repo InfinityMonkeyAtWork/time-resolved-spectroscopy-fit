@@ -44,6 +44,7 @@ To add a new peak or background function:
 import numpy as np
 from scipy.special import wofz
 
+
 #
 def Offset(x, y0, spectrum):
     """

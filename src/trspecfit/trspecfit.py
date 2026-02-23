@@ -47,29 +47,32 @@ Examples
 See examples/ directory for complete workflows.
 """
 
-from trspecfit import mcp
-from trspecfit import fitlib
-from trspecfit import spectra
-from trspecfit.utils import lmfit as ulmfit
-from trspecfit.utils import arrays as uarr
-from trspecfit.utils import plot as uplt
-from trspecfit.utils import parsing as uparsing
-import numpy as np
-import os # replace os.join with "pathlib path /"subfolder" /"file name"
-import pathlib
 import copy
+import os  # replace os.join with "pathlib path /"subfolder" /"file name"
+import pathlib
 import time
 import types
 import warnings
+from collections.abc import Callable, Sequence
+from typing import Literal, Union, cast, overload
+
+import numpy as np
 from IPython.display import display
 from ruamel.yaml import YAML
-# function library for energy, time, and distribution components
-from trspecfit.functions import energy as fcts_energy
-from trspecfit.functions import time as fcts_time
+
+from trspecfit import fitlib, mcp, spectra
+
 #from trspecfit.functions import distribution as fcts_dist
 # standardized plotting configuration
 from trspecfit.config.plot import PlotConfig
-from typing import Callable, Literal, Optional, Sequence, Union, overload, cast
+
+# function library for energy, time, and distribution components
+from trspecfit.functions import energy as fcts_energy
+from trspecfit.functions import time as fcts_time
+from trspecfit.utils import arrays as uarr
+from trspecfit.utils import lmfit as ulmfit
+from trspecfit.utils import parsing as uparsing
+from trspecfit.utils import plot as uplt
 
 PathLike = Union[str, pathlib.Path]
 ModelRef = Union[str, int, list[str]]
@@ -136,8 +139,8 @@ class Project:
     export formats and can be customized per project via YAML or direct
     attribute assignment.
     """
-    def __init__(self, path: Optional[PathLike], name: str = 'test',
-                 config_file: Optional[PathLike] = 'project.yaml') -> None:
+    def __init__(self, path: PathLike | None, name: str = 'test',
+                 config_file: PathLike | None = 'project.yaml') -> None:
         self.path = pathlib.Path(path) if path is not None else pathlib.Path('test')
         self.path_results = pathlib.Path(f'{path}_fits')
         self.run = name
@@ -202,7 +205,7 @@ class Project:
         config_path = self.path / config_file
         
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path) as f:
                 config = yaml.load(f)
             
             if config is None:
@@ -315,14 +318,14 @@ class File:
     spectrum using define_baseline(). This is required before fitting
     time-dependent data.
     """
-    def __init__(self, parent_project: Optional[Project] = None, path: PathLike = 'test',
-                 data: Optional[np.ndarray] = None, energy: Optional[np.ndarray] = None,
-                 time: Optional[np.ndarray] = None) -> None:
+    def __init__(self, parent_project: Project | None = None, path: PathLike = 'test',
+                 data: np.ndarray | None = None, energy: np.ndarray | None = None,
+                 time: np.ndarray | None = None) -> None:
         # pass parent project or (default) create a functioning test project environment 
         self.p = parent_project if parent_project is not None else Project(path=None)
         self.path = path # path to load/save [?] data from
         self.path_DA = self.p.path_run / path # path to save fit results to
-        self._plot_config: Optional[PlotConfig] = None # create plot config from project (but File can customize it)
+        self._plot_config: PlotConfig | None = None # create plot config from project (but File can customize it)
         #
         self.data = data # (time-[optional] and) energy-dependent data to fit
         self.dim = 0 if data is None else len(np.shape(data)) # 1 for energy (1D) # 2 for energy+time (2D)
@@ -336,7 +339,7 @@ class File:
         self.time = time if (time is not None or self.dim <= 1 or data is None) else np.arange(0, np.shape(data)[0])
         # keep track of models that are used to fit this file/data
         self.models: list[mcp.Model] = [] # list for now, could do @property, setter, getter
-        self.model_active: Optional[mcp.Model] = None # default model to work with [no need to pass same name again and again]
+        self.model_active: mcp.Model | None = None # default model to work with [no need to pass same name again and again]
         # [i.e. let user define models via file class attributes]
         self.e_lim_abs: list[float] = [] # fitting: energy limits (low, high) user-defined
         self.e_lim: list[int] = [] # index of energy limits (from left, from right: energy[left:-right])
@@ -346,10 +349,10 @@ class File:
         self.base_t_abs: list[float] = [] # start and stop time of the baseline spectrum
         self.base_t_ind: list[int] = [] # index of the above start and stop time
         self.data_base = None # average spectrum between above indices 
-        self.model_base: Optional[mcp.Model] = None
+        self.model_base: mcp.Model | None = None
         #
-        self.model_SbS: Optional[mcp.Model] = None
-        self.model_2D: Optional[mcp.Model] = None
+        self.model_SbS: mcp.Model | None = None
+        self.model_2D: mcp.Model | None = None
         self.results_SbS: list = [] # all Slice-by-Slice fit results (different from model_SbS.result)
         #
         return None
@@ -439,16 +442,16 @@ class File:
     #
     @overload
     def select_model(self, model_info: ModelRef,
-                     return_type: Literal['model'] = 'model') -> Optional[mcp.Model]:
+                     return_type: Literal['model'] = 'model') -> mcp.Model | None:
         ...
 
     @overload
     def select_model(self, model_info: ModelRef,
-                     return_type: Literal['index'] = 'index') -> Optional[int]:
+                     return_type: Literal['index'] = 'index') -> int | None:
         ...
 
     def select_model(self, model_info: ModelRef,
-                     return_type: Literal['model', 'index'] = 'model') -> Optional[Union[mcp.Model, int]]:
+                     return_type: Literal['model', 'index'] = 'model') -> mcp.Model | int | None:
         """
         Select model by name [type(model_info)=str] or position [type(model_info)=int].
 
@@ -507,7 +510,7 @@ class File:
 
     #
     def load_model(self, model_yaml: PathLike, model_info: list[str],
-                   par_name: str = '', debug: bool = False) -> Optional[mcp.Model]:
+                   par_name: str = '', debug: bool = False) -> mcp.Model | None:
         """
         Load a model from YAML file.
 
@@ -593,7 +596,8 @@ class File:
         # Inherit necessary model attributes from function input, file, and project
         loaded_model.yaml_f_name = pathlib.Path(model_yaml).stem # yaml file name
         loaded_model.dim = 1 # start with 1, +1 when adding dynamics
-        setattr(loaded_model, 'subcycles', len(model_info)-1)
+        if isinstance(loaded_model, mcp.Dynamics):
+            loaded_model.subcycles = len(model_info) - 1
         loaded_model.energy = self.energy #$% remove redundancy?
         loaded_model.time = self.time #$% remove redundancy?
         
@@ -631,7 +635,7 @@ class File:
             return loaded_model
             
     #
-    def describe_model(self, model_info: Optional[ModelRef] = None, detail: int = 0) -> None:
+    def describe_model(self, model_info: ModelRef | None = None, detail: int = 0) -> None:
         """
         Display information about a specific model.
 
@@ -672,7 +676,7 @@ class File:
             # plot initial guess (individual components), data, and residual
             title_mod = f'File: {self.path}, ' +\
                         f'Model: "{model_info}" (from "{mod.yaml_f_name}.yaml")' +\
-                        f': initial guess'
+                        ': initial guess'
             fitlib.plt_fit_res_1D(
                 x=self.energy,
                 y=self.data_base,
@@ -708,7 +712,7 @@ class File:
         return None
     
     #
-    def delete_model(self, model_to_delete: Optional[Union[str, int]] = None) -> None:
+    def delete_model(self, model_to_delete: str | int | None = None) -> None:
         """
         Remove a model from this file's model list.
 
@@ -726,7 +730,7 @@ class File:
         After deletion, model_active may be invalid. Set a new active model
         if needed using set_active_model().
         """
-        mod_index_del: Optional[int] = None
+        mod_index_del: int | None = None
         if model_to_delete is None:
             if self.model_active is None:
                 warnings.warn("No active model to delete.", stacklevel=2)
@@ -770,7 +774,7 @@ class File:
     
     #
     def create_model_path(self, model_name: str,
-                          subfolders: Optional[list[str]] = None) -> pathlib.Path:
+                          subfolders: list[str] | None = None) -> pathlib.Path:
         """
         Create directory structure for saving model fit results.
 
@@ -811,7 +815,7 @@ class File:
         return path_model
     
     #
-    def define_baseline(self, time_start: Union[float, int], time_stop: Union[float, int],
+    def define_baseline(self, time_start: float | int, time_stop: float | int,
                         time_type: str = 'abs', show_plot: bool = True) -> None:
         """
         Define ground state/pre-trigger/baseline reference spectrum.
@@ -877,8 +881,8 @@ class File:
         return None
     
     #
-    def set_fit_limits(self, energy_limits: Optional[Sequence[float]],
-                       time_limits: Optional[Sequence[float]] = None,
+    def set_fit_limits(self, energy_limits: Sequence[float] | None,
+                       time_limits: Sequence[float] | None = None,
                        show_plot: bool = True) -> None:
         """
         Set energy (and time) limits for fits.

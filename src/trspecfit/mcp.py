@@ -46,35 +46,43 @@ Key Features
 - Automatic component combination (addition, convolution, backgrounds)
 """
 
-import lmfit
-from trspecfit.utils import lmfit as ulmfit
-from trspecfit.utils import arrays as uarr
-from trspecfit.utils import plot as uplt
-from trspecfit.utils import parsing as uparsing
-import math
-import numpy as np
-import re
-import inspect
 import copy
-from IPython.display import display
-#import concurrent.futures
-from typing import List, Optional, Tuple, Union, Dict, Any, Callable, cast
+import inspect
+import math
+import re
 import types
+from collections.abc import Callable
+
+#import concurrent.futures
+from typing import Any, Optional, cast
+
+import lmfit
+import numpy as np
+
 # asteval is used for expressions referencing time-dependent parameters
 from asteval import Interpreter
-# function library for energy, time, and distribution components
-from trspecfit.functions import energy as fcts_energy
-from trspecfit.functions import time as fcts_time
+from IPython.display import display
+
 #from trspecfit.functions import distribution as fcts_dist
 # function configurations
 from trspecfit.config.functions import (
     background_functions,
+    convolution_functions,
     energy_functions,
     time_functions,
-    convolution_functions,
 )
+
 # plot configuration
 from trspecfit.config.plot import PlotConfig
+
+# function library for energy, time, and distribution components
+from trspecfit.functions import energy as fcts_energy
+from trspecfit.functions import time as fcts_time
+from trspecfit.utils import arrays as uarr
+from trspecfit.utils import lmfit as ulmfit
+from trspecfit.utils import parsing as uparsing
+from trspecfit.utils import plot as uplt
+
 
 #
 #
@@ -159,33 +167,33 @@ class Model:
     def __init__(self, model_name: str = 'test') -> None:
         self.name: str = model_name
         # file name of yaml file containing model details
-        self.yaml_f_name: Optional[str] = None
+        self.yaml_f_name: str | None = None
         # functions of spectral components of fit
-        self.peak_fcts: List[Callable] = []
+        self.peak_fcts: list[Callable] = []
         # list of objects of type defined in Component class
-        self.components: List['Component'] = []
+        self.components: list[Component] = []
         # flattened lmfit parameters list (1D with time- and energy-components)
-        self.lmfit_par_list: List[lmfit.Parameter] = [] # (individual lmfit.Parameter objects)
+        self.lmfit_par_list: list[lmfit.Parameter] = [] # (individual lmfit.Parameter objects)
         # lmfit.Parameters object corresponding to lmfit_par_list attribute
         self.lmfit_pars: lmfit.Parameters = lmfit.Parameters()
         # list of all parameter names
-        self.par_names: List[str] = []
+        self.par_names: list[str] = []
         # list of component spectra (from last evaluation/ current parameters)
-        self.component_spectra: List[np.ndarray] = []
+        self.component_spectra: list[np.ndarray] = []
         # 1D spectrum (i.e. sum/ combination of all components)
-        self.value1D: Optional[np.ndarray] = None
+        self.value1D: np.ndarray | None = None
         # 2D spectrum (i.e. 1D spectra one per time step)
-        self.value2D: Optional[np.ndarray] = None # self.value2D = np.empty((len(self.time), len(self.energy)))
+        self.value2D: np.ndarray | None = None # self.value2D = np.empty((len(self.time), len(self.energy)))
         # fit parameters and results
-        self.const: Optional[Tuple] = None
-        self.args: Optional[Tuple] = None
-        self.result: List = []
+        self.const: tuple | None = None
+        self.args: tuple | None = None
+        self.result: list = []
         # ATTRIBUTES THAT SHOULD BE INHERITED FROM A PARENT ENTITY WHEN LOADING MODEL
-        self.parent_file: Optional[Any] = None  # parent reference (set by File when loading model)
+        self.parent_file: Any | None = None  # parent reference (set by File when loading model)
         #self.data = None # (currently) not necessary
-        self.dim: Optional[int] = None
-        self.energy: Optional[np.ndarray] = None # necessarry or should just point to file?
-        self.time: Optional[np.ndarray] = None # necessarry or should just point to file?
+        self.dim: int | None = None
+        self.energy: np.ndarray | None = None # necessarry or should just point to file?
+        self.time: np.ndarray | None = None # necessarry or should just point to file?
         #
         return None
     
@@ -246,7 +254,7 @@ class Model:
         return None
     
     #
-    def add_components(self, comps_list: List['Component'], debug: bool = False) -> None:
+    def add_components(self, comps_list: list['Component'], debug: bool = False) -> None:
         """
         Add components to model and initialize their parameters.
         
@@ -323,7 +331,7 @@ class Model:
         return None
     
     #
-    def find_par_by_name(self, par_name: str) -> Tuple[Optional[int], Optional[int]]:
+    def find_par_by_name(self, par_name: str) -> tuple[int | None, int | None]:
         """
         Find the component and parameter indices for a given parameter name.
         
@@ -343,16 +351,17 @@ class Model:
             Parameter index in component.pars, or None if not found
         """
         done = False
-        ci: Optional[int] = None
-        pi: Optional[int] = None
+        ci: int | None = None
+        pi: int | None = None
         for ci, comp in enumerate(self.components):
             for pi, par in enumerate(comp.pars):
                 if par.name == par_name:
                     done = True; break
-            if done == True: break
-        if done == False: #$% should this Raise?
+            if done: break
+        if not done: #$% should this Raise?
             print(f'parameter "{par_name}" not found in model {self.name}')
-            ci = None; pi = None
+            ci = None
+            pi = None
         #
         return ci, pi
     
@@ -406,8 +415,8 @@ class Model:
         return None
     
     #
-    def update_value(self, new_par_values: Union[List[float], np.ndarray], 
-                     par_select: Union[str, List[str]] = 'all') -> None:
+    def update_value(self, new_par_values: list[float] | np.ndarray, 
+                     par_select: str | list[str] = 'all') -> None:
         """
         Update model from top down: model → components → parameters.
         
@@ -521,7 +530,7 @@ class Model:
         return None
     
     #
-    def _get_all_parameters(self) -> List['Par']:
+    def _get_all_parameters(self) -> list['Par']:
         """
         Get all parameters from all components in this model.
         (Used internally for expression analysis and parameter searches)
@@ -588,7 +597,7 @@ class Model:
    
     #
     def create_value1D(self, t_ind: int = 0, store1D: int = 0, 
-                       return1D: int = 0, debug: bool = False) -> Optional[np.ndarray]:
+                       return1D: int = 0, debug: bool = False) -> np.ndarray | None:
         """
         Evaluate model to create 1D spectrum (energy or time).
         
@@ -661,7 +670,7 @@ class Model:
         else: return None
 
     #
-    def create_value2D(self, t_ind: List[int] = [], debug: bool = False) -> None:
+    def create_value2D(self, t_ind: list[int] = [], debug: bool = False) -> None:
         """
         Evaluate model to create 2D spectrum (time × energy).
         
@@ -719,8 +728,8 @@ class Model:
     
     #
     def plot_1D(self, t_ind: int = 0, plot_ind: bool = False, 
-                x_lim: Optional[Tuple[float, float]] = None, 
-                y_lim: Optional[Tuple[float, float]] = None, 
+                x_lim: tuple[float, float] | None = None, 
+                y_lim: tuple[float, float] | None = None, 
                 save_img: int = 0, save_path: str = '') -> None:
         """
         Plot 1D model spectrum (energy or time).
@@ -796,9 +805,9 @@ class Model:
 
     #
     def plot_2D(self, save_img: int = 0, save_path: str = '', 
-                x_lim: Optional[Tuple[float, float]] = None, 
-                y_lim: Optional[Tuple[float, float]] = None, 
-                z_lim: Optional[Tuple[float, float]] = None) -> None:
+                x_lim: tuple[float, float] | None = None, 
+                y_lim: tuple[float, float] | None = None, 
+                z_lim: tuple[float, float] | None = None) -> None:
         """
         Plot 2D time-and-energy spectrum as heatmap.
         
@@ -912,7 +921,7 @@ class Component:
     - ``name`` : str - Component display name
     """
     #
-    def __init__(self, comp_name: str, package: Optional[types.ModuleType] = None,
+    def __init__(self, comp_name: str, package: types.ModuleType | None = None,
                  comp_subcycle: int = 0) -> None:
         # package containing component (either fcts_energy or fcts_time)
         if package is None:
@@ -922,7 +931,7 @@ class Component:
         self.comp_name: str = comp_name
         # parse the component name into function string and component number
         self.fct_str: str
-        self.N: Optional[int]
+        self.N: int | None
         self.fct_str, self.N = uparsing.parse_component_name(comp_name)       
         # determine component type: 'add', 'conv', 'back', or 'none'
         if self.fct_str in background_functions():
@@ -934,20 +943,20 @@ class Component:
         else:
             self.comp_type = 'add'
         # dict of par_name: par_info from yaml file passed by user
-        self.par_dict: Dict[str, List] = {}
+        self.par_dict: dict[str, list] = {}
         # (for self.package=fcts_time) which subcycle is this component part of 
         self.subcycle: int = comp_subcycle # see "t-dynamics.normalize_time" for more details
-        self.time_N_sub: Optional[np.ndarray] = None # 1 where model subcycle equals component subcycle
-        self.time_norm: Optional[np.ndarray] = None # restarts at zero for every subcycle
+        self.time_N_sub: np.ndarray | None = None # 1 where model subcycle equals component subcycle
+        self.time_norm: np.ndarray | None = None # restarts at zero for every subcycle
         # list of Par objects needed to construct component
-        self.pars: List['Par'] = [] # used to create component value during fit
+        self.pars: list[Par] = [] # used to create component value during fit
         # flattened list of all lmfit parameters defining this component
-        self.lmfit_par_list: List[lmfit.Parameter] = []
+        self.lmfit_par_list: list[lmfit.Parameter] = []
         # time and energy axis of component are inherited from model
-        self.time: Optional[np.ndarray] = None
-        self.energy: Optional[np.ndarray] = None
+        self.time: np.ndarray | None = None
+        self.energy: np.ndarray | None = None
         # parent model reference
-        self.parent_model: Optional[Model] = None
+        self.parent_model: Model | None = None
         #
         return None
     
@@ -983,7 +992,7 @@ class Component:
     
     # [automatic] and function arguments specifically
     @property 
-    def fct_args(self) -> List[str]:
+    def fct_args(self) -> list[str]:
         """
         Function argument names.
         
@@ -1085,7 +1094,7 @@ class Component:
         return re.sub(pattern, replace_with_prefix, expr)
 
     #
-    def add_pars(self, par_info_dict: Dict[str, List]) -> None:
+    def add_pars(self, par_info_dict: dict[str, list]) -> None:
         """
         Add parameter specifications to component.
         
@@ -1140,7 +1149,7 @@ class Component:
             prefix += '_'
 
         # First pass: create all Par objects, but do not set expressions
-        expr_params: List[Tuple['Par', str]] = []
+        expr_params: list[tuple[Par, str]] = []
         for p_name, p_info in self.par_dict.items():
             temp = Par(name=prefix + self.prefix + p_name)
             temp.info = p_info  # see Par class for details
@@ -1445,18 +1454,18 @@ class Par:
     - With time-dependence: N parameters (spectral + all from Dynamics model)
     """
     #
-    def __init__(self, name: str, info: Optional[list[Any]] = None) -> None:
+    def __init__(self, name: str, info: list[Any] | None = None) -> None:
         self.name = name
         self.info: list[Any] = [] if info is None else list(info)
         self.lmfit_par: lmfit.Parameters = lmfit.Parameters()
         self.t_vary: bool = False
         self.t_model: Model = Model(f'{name}_tModel')
-        self.lmfit_par_list: List[lmfit.Parameter] = []
+        self.lmfit_par_list: list[lmfit.Parameter] = []
         # Expression analysis attributes
         self.expr_refs_time_dep: bool = False  # flag for time-dependent references
-        self.expr_string: Optional[str] = None  # store original expression
-        self.expr_refs: List[str] = []          # list of referenced parameter names
-        self.parent_model: Optional[Model] = None  # reference to parent model
+        self.expr_string: str | None = None  # store original expression
+        self.expr_refs: list[str] = []          # list of referenced parameter names
+        self.parent_model: Model | None = None  # reference to parent model
         #
         return None
     
@@ -1477,9 +1486,9 @@ class Par:
             print('[this is not an lmfit.Parameter instance]')
             display(self.lmfit_par)
         #
-        if self.t_vary == False:
+        if not self.t_vary:
             print('parameter has no time dependence')
-        elif self.t_vary == True:
+        elif self.t_vary:
             print(f'parameter has time-dependence described by model {self.t_model.name}')
             if detail == 1:
                 self.t_model.describe()
@@ -1590,7 +1599,7 @@ class Par:
         For expressions referencing time-dependent parameters, the expression
         is evaluated with current values of all referenced parameters at t_ind.
         """
-        if self.t_vary == False:
+        if not self.t_vary:
             if self.expr_refs_time_dep:
                 # Custom evaluation for time-dependent expressions
                 all_parameters = self._get_all_parameters()
@@ -1599,8 +1608,8 @@ class Par:
                 # Standard lmfit evaluation
                 value = cast(list[Any], ulmfit.par_extract(self.lmfit_par))
 
-        elif self.t_vary == True:
-            if update_t_model == True:
+        elif self.t_vary:
+            if update_t_model:
                 self.t_model.create_value1D() # update t_model, specifically self.t_model.value1D
             base = cast(list[Any], ulmfit.par_extract(self.lmfit_par))
             if self.t_model.value1D is None:
@@ -1827,10 +1836,10 @@ class Dynamics(Model):
         # number of subcycles (within time = 1/frequency)
         self.subcycles: int = 0 # defined via "number of models -1" [model_info in file.load_model()]
         # "normalized time" attributes (all have same length as time axis)
-        self.time_norm: Optional[np.ndarray] = None # restart time (at 0) every 1/(freqency *number of subcycles)
-        self.N_sub: Optional[np.ndarray] = None # which subcycle is active at time step (t_i)
-        self.N_counter: Optional[np.ndarray] = None # cummulative counter of subcycles (at t_i)
-        self.parent_model: Optional[Model] = None
+        self.time_norm: np.ndarray | None = None # restart time (at 0) every 1/(freqency *number of subcycles)
+        self.N_sub: np.ndarray | None = None # which subcycle is active at time step (t_i)
+        self.N_counter: np.ndarray | None = None # cummulative counter of subcycles (at t_i)
+        self.parent_model: Model | None = None
         #
         return None
     

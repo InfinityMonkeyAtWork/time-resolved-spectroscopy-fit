@@ -8,14 +8,17 @@ This module provides matplotlib-based plotting functions for:
 - Matplotlib helper utilities for axis formatting
 """
 
-import matplotlib.pyplot as plt
+import pathlib
+from collections.abc import Sequence
+from typing import Any, Union
+
 import matplotlib.image as mpimg
+import matplotlib.pyplot as plt
 import numpy as np
+from numpy.typing import ArrayLike, NDArray
+
 from trspecfit.config.plot import PlotConfig
 from trspecfit.utils.arrays import OoM
-import pathlib
-from typing import Any, Optional, Sequence, Union
-from numpy.typing import ArrayLike, NDArray
 
 PathLike = Union[str, pathlib.Path]
 
@@ -130,9 +133,9 @@ def plot_grid(images: Sequence[NDArray[np.generic]], columns: int = 3,
 #
 def plot_2D(
     data: ArrayLike,
-    x: Optional[ArrayLike] = None,
-    y: Optional[ArrayLike] = None,
-    config: Optional[PlotConfig] = None,
+    x: ArrayLike | None = None,
+    y: ArrayLike | None = None,
+    config: PlotConfig | None = None,
     **kwargs: Any
 ) -> None:
     """
@@ -350,9 +353,9 @@ def plot_2D(
 
 #
 def plot_1D(
-    data: Union[Sequence[ArrayLike], ArrayLike],
-    x: Optional[Union[ArrayLike, list[ArrayLike]]] = None,
-    config: Optional[PlotConfig] = None,
+    data: Sequence[ArrayLike] | ArrayLike,
+    x: ArrayLike | list[ArrayLike] | None = None,
+    config: PlotConfig | None = None,
     **kwargs: Any
 ) -> None:
     """
@@ -481,7 +484,7 @@ def plot_1D(
         markersizes = N_plots * [6]
     if x is None:
         x_common = np.arange(0, data_series[0].shape[0], 1)
-        x_list: Optional[list[NDArray[np.float64]]] = None
+        x_list: list[NDArray[np.float64]] | None = None
     elif isinstance(x, list):
         x_common = None
         x_list = [np.asarray(xi, dtype=float) for xi in x]

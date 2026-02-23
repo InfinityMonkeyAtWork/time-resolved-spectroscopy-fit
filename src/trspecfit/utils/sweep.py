@@ -9,12 +9,16 @@ Parameter space exploration for ML dataset generation.
 Utilities for inspecting parameter sweep datasets.
 """
 
-import numpy as np
 import itertools
-from typing import Dict, Generator, Any, Optional, List, Tuple, cast
+from collections.abc import Generator
+from typing import Any, cast
+
 import h5py
+import numpy as np
 import pandas as pd
+
 from trspecfit.utils.hdf5 import json_loads_attr, require_dataset, require_group
+
 
 #
 #
@@ -63,7 +67,7 @@ class ParameterSweep:
     Simulator.simulate_parameter_sweep : Use sweep to generate datasets
     """
     #
-    def __init__(self, strategy: str = 'auto', seed: Optional[int] = None) -> None:
+    def __init__(self, strategy: str = 'auto', seed: int | None = None) -> None:
         """
         Initialize parameter sweep generator.
         
@@ -81,14 +85,14 @@ class ParameterSweep:
             )
         
         self.strategy = strategy
-        self.parameter_specs: Dict[str, Dict[str, Any]] = {}
+        self.parameter_specs: dict[str, dict[str, Any]] = {}
         self.seed = seed
         
         if seed is not None:
             np.random.seed(seed)
     
     #
-    def add_range(self, par_name: str, values: List[float]) -> None:
+    def add_range(self, par_name: str, values: list[float]) -> None:
         """
         Add discrete parameter values to sweep.
         
@@ -235,7 +239,7 @@ class ParameterSweep:
             return 'random'
     
     #
-    def _sample_distribution(self, spec: Dict[str, Any]) -> np.ndarray:
+    def _sample_distribution(self, spec: dict[str, Any]) -> np.ndarray:
         """
         Generate samples from a distribution specification.
         
@@ -261,7 +265,7 @@ class ParameterSweep:
             raise ValueError(f"Unknown distribution type: {spec['type']}")
     
     #
-    def _generate_grid(self) -> Generator[Dict[str, float], None, None]:
+    def _generate_grid(self) -> Generator[dict[str, float], None, None]:
         """
         Generate configurations using full combinatorial grid.
         
@@ -294,7 +298,7 @@ class ParameterSweep:
             yield dict(zip(par_names, values))
     
     #
-    def _generate_random(self) -> Generator[Dict[str, float], None, None]:
+    def _generate_random(self) -> Generator[dict[str, float], None, None]:
         """
         Generate configurations using independent random sampling.
         
@@ -333,7 +337,7 @@ class ParameterSweep:
             yield config
     
     #
-    def __iter__(self) -> Generator[Dict[str, float], None, None]:
+    def __iter__(self) -> Generator[dict[str, float], None, None]:
         """
         Iterate over parameter configurations.
         
@@ -451,7 +455,7 @@ class SweepDataset:
         self.meta = self._load_metadata()
     
     #
-    def _load_metadata(self) -> Dict:
+    def _load_metadata(self) -> dict:
         """
         Load metadata from HDF5 file.
         
@@ -470,7 +474,7 @@ class SweepDataset:
             return meta
     
     #
-    def get_axes(self) -> Tuple[np.ndarray, np.ndarray]:
+    def get_axes(self) -> tuple[np.ndarray, np.ndarray]:
         """
         Load energy and time axes.
         
@@ -543,7 +547,7 @@ class SweepDataset:
     #
     def load_config(self, config_idx: int, 
                    load_clean: bool = True,
-                   load_noisy: bool = True) -> Dict[str, Any]:
+                   load_noisy: bool = True) -> dict[str, Any]:
         """
         Load a single parameter configuration and its data.
         
@@ -576,7 +580,7 @@ class SweepDataset:
         >>> print(f"Data shape: {config['clean'].shape}")
         """
         config_name = f'config_{config_idx:06d}'
-        result: Dict[str, Any] = {}
+        result: dict[str, Any] = {}
         
         with h5py.File(self.filepath, 'r') as f:
             # Load parameter values
@@ -663,11 +667,11 @@ class SweepDataset:
         
         dimension = self.meta.get('dimension', 2)
         if dimension == 2:
-            print(f"Data dimensions: 2D (time × energy)")
+            print("Data dimensions: 2D (time × energy)")
             print(f"Energy points: {len(energy)}")
             print(f"Time points: {len(time)}")
         else:
-            print(f"Data dimensions: 1D (energy)")
+            print("Data dimensions: 1D (energy)")
             print(f"Energy points: {len(energy)}")
         print()
         

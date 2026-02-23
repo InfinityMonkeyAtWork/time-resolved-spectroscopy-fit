@@ -57,9 +57,9 @@ To add a new dynamics or convolution function:
 """
 
 import numpy as np
-from scipy.special import erf
-from scipy.special import wofz
 from scipy.signal import square
+from scipy.special import erf, wofz
+
 
 #
 def none(t):
