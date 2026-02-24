@@ -5,12 +5,13 @@ that should catch regressions in dependent/time-dependent parameter handling.
 """
 
 import numpy as np
-from trspecfit import Project, File
+
+from trspecfit import File, Project
 
 
 def _build_file_with_axes() -> File:
     """Create a test File with deterministic axes for model evaluation."""
-    project = Project(path='tests')
+    project = Project(path="tests")
     file = File(parent_project=project)
     file.energy = np.linspace(80, 90, 201)
     file.time = np.linspace(-10, 100, 111)
@@ -30,8 +31,8 @@ def test_eval_energy_expression_value1d():
     """Dependent expression parameters should evaluate correctly in 1D."""
     file = _build_file_with_axes()
     file.load_model(
-        model_yaml='test_models_energy.yaml',
-        model_info=['energy_expression'],
+        model_yaml="test_models_energy.yaml",
+        model_info=["energy_expression"],
         debug=False,
     )
 
@@ -43,8 +44,8 @@ def test_eval_energy_expression_value1d():
     assert value_1d.shape == file.energy.shape
     assert np.isfinite(value_1d).all()
 
-    p_x0_1 = _find_parameter(model, 'GLP_01_x0')
-    p_x0_2 = _find_parameter(model, 'GLP_02_x0')
+    p_x0_1 = _find_parameter(model, "GLP_01_x0")
+    p_x0_2 = _find_parameter(model, "GLP_02_x0")
 
     v1 = p_x0_1.value(t_ind=0)
     v2 = p_x0_2.value(t_ind=0)
@@ -57,22 +58,22 @@ def test_eval_time_dependent_expression_value2d():
     """Expressions depending on time-dependent parameters should evaluate in 2D."""
     file = _build_file_with_axes()
     file.load_model(
-        model_yaml='test_models_energy.yaml',
-        model_info=['energy_expression'],
+        model_yaml="test_models_energy.yaml",
+        model_info=["energy_expression"],
         debug=False,
     )
     file.add_time_dependence(
-        model_yaml='test_models_time.yaml',
-        model_info=['MonoExpPosIRF'],
-        par_name='GLP_01_x0',
+        model_yaml="test_models_time.yaml",
+        model_info=["MonoExpPosIRF"],
+        par_name="GLP_01_x0",
     )
 
     model = file.model_active
     assert model is not None
     assert model.dim == 2
 
-    p_x0_1 = _find_parameter(model, 'GLP_01_x0')
-    p_x0_2 = _find_parameter(model, 'GLP_02_x0')
+    p_x0_1 = _find_parameter(model, "GLP_01_x0")
+    p_x0_2 = _find_parameter(model, "GLP_02_x0")
 
     v1_t0 = p_x0_1.value(t_ind=0)
     v2_t0 = p_x0_2.value(t_ind=0)

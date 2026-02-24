@@ -1,3 +1,3 @@
 from . import distribution, energy, time
 
-__all__ = ["energy", "time", "distribution"]
+__all__ = ["distribution", "energy", "time"]
