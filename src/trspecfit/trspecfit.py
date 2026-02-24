@@ -50,10 +50,14 @@ See examples/ directory for complete workflows.
 import copy
 import pathlib
 import time
-import types
 import warnings
 from collections.abc import Callable, Sequence
-from typing import Literal, cast, overload
+from typing import TYPE_CHECKING, Literal, cast, overload
+
+# TYPE_CHECKING is False at runtime so this import is skipped during execution.
+# Exists only for type checkers (mypy/pyright) to resolve types.ModuleType annotations.
+if TYPE_CHECKING:
+    import types
 
 import numpy as np
 from IPython.display import display
@@ -514,6 +518,8 @@ class File:
                         return m_i
             return None  # no match found
 
+        return None
+
     #
     def set_active_model(self, model_info: ModelRef) -> None:
         """
@@ -684,11 +690,7 @@ class File:
             - 1: Show parameters and plot data/initial guess/residual
         """
 
-        if model_info is None:
-            mod = self.model_active
-            # model_info = FIND NAME
-        else:
-            mod = self.select_model(model_info)
+        mod = self.model_active if model_info is None else self.select_model(model_info)
         if mod is None:
             warnings.warn("Model not found; nothing to describe.", stacklevel=2)
             return

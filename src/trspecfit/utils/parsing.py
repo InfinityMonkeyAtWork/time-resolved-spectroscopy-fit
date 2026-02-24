@@ -111,7 +111,7 @@ def parse_component_name(comp_name: str) -> tuple[str, int | None]:
     """
 
     # numbered component
-    if "_" in comp_name and comp_name.split("_")[-1].isdigit():
+    if "_" in comp_name and comp_name.rsplit("_", maxsplit=1)[-1].isdigit():
         parts = comp_name.split("_")
         if len(parts) >= 2 and parts[-1].isdigit():
             base_name = "_".join(parts[:-1])
@@ -250,8 +250,9 @@ def validate_model_components(
                                 )
 
                             # Check if value is within bounds
-                            if isinstance(value, (int, float)):
-                                if value < min_val or value > max_val:
+                            if isinstance(value, (int, float)) and (
+                                value < min_val or value > max_val
+                            ):
                                     raise ModelValidationError(
                                         f"Parameter '{param_name}' in"
                                         f" '{comp_name}' (model '{model_name}'):\n"
@@ -469,7 +470,7 @@ def resolve_dynamics_numbering_conflicts(
         if submodel not in model_info_dict:
             continue
 
-        for comp_name in model_info_dict[submodel].keys():
+        for comp_name in model_info_dict[submodel]:
             base_name, number = parse_component_name(comp_name)
 
             if base_name in available_functions and base_name not in exceptions:

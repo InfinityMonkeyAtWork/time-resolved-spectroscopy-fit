@@ -616,7 +616,7 @@ def fit_wrapper(
         return [par_ini, [], pd.DataFrame(), [], pd.DataFrame()]
 
     # construct lmfit minimizer
-    mini = lmfit.Minimizer(residual_fun, par_ini, fcn_args=const + ("lmfit",) + (args,))
+    mini = lmfit.Minimizer(residual_fun, par_ini, fcn_args=(*const, "lmfit", args))
     # perform fit(s)
     if show_info >= 1:
         t_ini = time.time()
@@ -755,7 +755,7 @@ def fit_wrapper(
         # go through all combinations of parameters and sigmas to find
         # lmfit.emcee() confidence intervals
         emcee_CIs_list = []  # initialize results
-        for par_name in par_names + ["__lnsigma"]:
+        for par_name in [*par_names, "__lnsigma"]:
             emcee_par_CIs: list[Any] = [par_name]  # initialize results for parameter
             if par_name in emcee_var_names:
                 # get quantiles if fit parameter is variable
@@ -1422,10 +1422,7 @@ def plt_fit_res_2D(
         range_dat_fit = z_lim_top
 
     # Residual has independent scale
-    if z_lim_res is None:
-        range_res = [np.min(res_cut), np.max(res_cut)]
-    else:
-        range_res = z_lim_res
+    range_res = [np.min(res_cut), np.max(res_cut)] if z_lim_res is None else z_lim_res
 
     # Create figure layout
     fig, axs = plt.subplot_mosaic(

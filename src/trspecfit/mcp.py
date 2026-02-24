@@ -308,12 +308,8 @@ class Model:
         # add list to components attribute
         self.components = comps_list
 
-        # the model calling this method is describing temporal dynamics of a par
-        if isinstance(self, Dynamics):
-            prefix = self.name
-        # the model calling this method is a general model
-        else:
-            prefix = ""
+        # prefix is model name for Dynamics, empty string for general models
+        prefix = self.name if isinstance(self, Dynamics) else ""
 
         # assemble parameter list for all components
         # [components can be energy or time functions]
@@ -537,14 +533,14 @@ class Model:
         """
 
         # Get all parameters from all components
-        all_parameters = self._get_all_parameters()
+        all_parameters = self.get_all_parameters()
         # Analyze all expressions for time-dependent references
         for par in all_parameters:
             par.analyze_expression_dependencies(all_parameters)
 
 
     #
-    def _get_all_parameters(self) -> list["Par"]:
+    def get_all_parameters(self) -> list["Par"]:
         """
         Get all parameters from all components in this model.
         (Used internally for expression analysis and parameter searches)
@@ -1695,7 +1691,7 @@ class Par:
         if not self.t_vary:
             if self.expr_refs_time_dep:
                 # Custom evaluation for time-dependent expressions
-                all_parameters = self._get_all_parameters()
+                all_parameters = self.get_all_parameters()
                 return self._evaluate_time_dependent_expression(
                     t_ind, all_parameters, update_t_model
                 )
@@ -1851,7 +1847,7 @@ class Par:
             ) from e
 
     #
-    def _get_all_parameters(self) -> list["Par"]:
+    def get_all_parameters(self) -> list["Par"]:
         """
         Get all parameters from parent model.
 
@@ -1862,7 +1858,7 @@ class Par:
         """
 
         if hasattr(self, "parent_model") and self.parent_model:
-            return self.parent_model._get_all_parameters()
+            return self.parent_model.get_all_parameters()
         return []
 
 
