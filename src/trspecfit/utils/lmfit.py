@@ -291,8 +291,7 @@ def conf_interval2df(ci: dict[str, Any], CI_cols: list[str]) -> pd.DataFrame:
 
         # Extract parameter values at each sigma level
         # values is list of (sigma_percentage, param_value) tuples
-        for val in values:
-            conf_par_CIs.append(val[1])  # val[1] is the parameter value
+        conf_par_CIs.extend(val[1] for val in values)  # val[1] is the parameter value
 
         conf_CIs_list.append(conf_par_CIs)
 
@@ -369,9 +368,7 @@ def par2df(
     # Extract parameter attributes
     par_info_list = []
     for par_name in par_names:
-        par_info = []
-        for col in cols:
-            par_info.append(getattr(lmfit_params.get(par_name), col))
+        par_info = [getattr(lmfit_params.get(par_name), col) for col in cols]
         par_info_list.append(par_info)
 
     return pd.DataFrame(data=par_info_list, columns=cols)

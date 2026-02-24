@@ -26,7 +26,6 @@ from trspecfit.config.functions import (
 class ModelValidationError(ValueError):
     """Exception raised for errors in model YAML validation."""
 
-    pass
 
 
 #
@@ -470,7 +469,7 @@ def resolve_dynamics_numbering_conflicts(
         if submodel not in model_info_dict:
             continue
 
-        for comp_name, _ in model_info_dict[submodel].items():
+        for comp_name in model_info_dict[submodel].keys():
             base_name, number = parse_component_name(comp_name)
 
             if base_name in available_functions and base_name not in exceptions:

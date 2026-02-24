@@ -262,11 +262,11 @@ class ParameterSweep:
         n = int(spec.get("n_samples", 10))
 
         if spec["type"] == "uniform":
-            return cast(np.ndarray, np.random.uniform(spec["min"], spec["max"], n))
+            return cast("np.ndarray", np.random.uniform(spec["min"], spec["max"], n))
         if spec["type"] == "normal":
-            return cast(np.ndarray, np.random.normal(spec["mean"], spec["std"], n))
+            return cast("np.ndarray", np.random.normal(spec["mean"], spec["std"], n))
         if spec["type"] == "lognormal":
-            return cast(np.ndarray, np.random.lognormal(spec["mean"], spec["std"], n))
+            return cast("np.ndarray", np.random.lognormal(spec["mean"], spec["std"], n))
         raise ValueError(f"Unknown distribution type: {spec['type']}")
 
     #
@@ -542,10 +542,11 @@ class SweepDataset:
                 )
 
                 # Get swept parameters (exclude 'all_parameters')
-                parameters = {}
-                for key, value in config_group.attrs.items():
-                    if key != "all_parameters":
-                        parameters[key] = value
+                parameters = {
+                    key: value
+                    for key, value in config_group.attrs.items()
+                    if key != "all_parameters"
+                }
                 param_data.append(parameters)
 
         # Convert to DataFrame
@@ -601,10 +602,11 @@ class SweepDataset:
             )
 
             # Get swept parameters (all attributes except 'all_parameters')
-            parameters = {}
-            for key, value in config_group.attrs.items():
-                if key != "all_parameters":
-                    parameters[key] = value
+            parameters = {
+                key: value
+                for key, value in config_group.attrs.items()
+                if key != "all_parameters"
+            }
             result["parameters"] = parameters
 
             # Get all parameters (JSON)

@@ -215,7 +215,7 @@ class Model:
         """
 
         if hasattr(self, "parent_file") and self.parent_file is not None:
-            return cast(PlotConfig, self.parent_file.plot_config)
+            return cast("PlotConfig", self.parent_file.plot_config)
 
         # Fallback to defaults if no parent
         return PlotConfig()
@@ -591,11 +591,11 @@ class Model:
             return value
         # add a component to existing spectrum
         if comp.comp_type == "add":
-            return cast(np.ndarray, value + np.asarray(comp.value(t_ind)))
+            return cast("np.ndarray", value + np.asarray(comp.value(t_ind)))
         # add a background component to exisiting spectrum
         if comp.comp_type == "back":
             return cast(
-                np.ndarray, value + np.asarray(comp.value(t_ind, spectrum=value))
+                "np.ndarray", value + np.asarray(comp.value(t_ind, spectrum=value))
             )
         # convolute component with existing spectrum
         if comp.comp_type == "conv":
@@ -827,7 +827,7 @@ class Model:
 
         # Plot
         plot_data = (
-            self.component_spectra if plot_ind else [cast(np.ndarray, self.value1D)]
+            self.component_spectra if plot_ind else [cast("np.ndarray", self.value1D)]
         )
         uplt.plot_1D(
             data=plot_data,
@@ -1036,7 +1036,7 @@ class Component:
             Function object (e.g., fcts_energy.GLP, fcts_time.expFun)
         """
 
-        return cast(Callable, getattr(self.package, self.fct_str))
+        return cast("Callable", getattr(self.package, self.fct_str))
 
     # [automatic] do the same for function argument specs
     @property
@@ -1340,7 +1340,7 @@ class Component:
         """
 
         # get kernel parameters i.e. component parameters
-        parK = cast(list[Any], ulmfit.par_extract(self.par_dict, return_type="list"))
+        parK = cast("list[Any]", ulmfit.par_extract(self.par_dict, return_type="list"))
         if debug:
             print(f"component/kernel parameters as list: {parK}")
         # define kernel time axis
@@ -1353,9 +1353,8 @@ class Component:
         t_step = self.time[1] - self.time[0]
         if debug:
             print(f"delta time (from self.time): {t_step}")
-        t_kernel = np.arange(-t_range, t_range + t_step, t_step)
+        return np.arange(-t_range, t_range + t_step, t_step)
 
-        return t_kernel
 
     #
     def value(self, t_ind: int = 0, **kwargs) -> np.ndarray:
@@ -1403,7 +1402,7 @@ class Component:
         # this call from pars.extend(...) to pars.append(...).
         for p in self.pars:
             # $% slightly hacky to only update Par.t_model for t_ind=0, change?
-            pars.extend(p.value(t_ind, update_t_model=True if t_ind == 0 else False))
+            pars.extend(p.value(t_ind, update_t_model=t_ind == 0))
 
         # get x axis and create component function evaluation
         if self.package == fcts_energy:
@@ -1701,13 +1700,13 @@ class Par:
                     t_ind, all_parameters, update_t_model
                 )
             # Standard lmfit evaluation
-            value = cast(list[Any], ulmfit.par_extract(self.lmfit_par))
+            value = cast("list[Any]", ulmfit.par_extract(self.lmfit_par))
 
         elif self.t_vary:
             if update_t_model:
                 # update t_model, specifically self.t_model.value1D
                 self.t_model.create_value1D()
-            base = cast(list[Any], ulmfit.par_extract(self.lmfit_par))
+            base = cast("list[Any]", ulmfit.par_extract(self.lmfit_par))
             if self.t_model.value1D is None:
                 raise RuntimeError(
                     f'Dynamics model "{self.t_model.name}" has no value1D'
@@ -1836,7 +1835,7 @@ class Par:
             # (Interpreter.__call__ doesn't accept a namespace argument)
             for k, v in namespace.items():
                 aeval.symtable[k] = v
-            expr = cast(str, self.expr_string)
+            expr = cast("str", self.expr_string)
             result = aeval(expr)
             # HOTFIX: asteval may record errors and return None without raising.
             if aeval.error:

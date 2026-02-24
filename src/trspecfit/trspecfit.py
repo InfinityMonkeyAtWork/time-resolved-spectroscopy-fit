@@ -198,7 +198,7 @@ class Project:
         Dynamically get the spectrum fitting function.
         """
 
-        return cast(Callable, getattr(self.spec_lib, self.spec_fun_str))
+        return cast("Callable", getattr(self.spec_lib, self.spec_fun_str))
 
     #
     def _load_config(self, config_file: PathLike) -> None:
@@ -713,8 +713,8 @@ class File:
             # plot initial guess (individual components), data, and residual
             title_mod = (
                 f"File: {self.path}, "
-                + f'Model: "{model_info}" (from "{mod.yaml_f_name}.yaml")'
-                + ": initial guess"
+                 f'Model: "{model_info}" (from "{mod.yaml_f_name}.yaml")'
+                 ": initial guess"
             )
             fitlib.plt_fit_res_1D(
                 x=self.energy,
@@ -864,8 +864,8 @@ class File:
     #
     def define_baseline(
         self,
-        time_start: float | int,
-        time_stop: float | int,
+        time_start: float,
+        time_stop: float,
         time_type: str = "abs",
         show_plot: bool = True,
     ) -> None:
@@ -1431,7 +1431,7 @@ class File:
             model_yaml,
             model_info,
             par_name,
-            debug=False if self.p.show_info < 2 else True,
+            debug=not self.p.show_info < 2,
         )  # load
         if t_mod is None:
             warnings.warn(
@@ -1445,7 +1445,7 @@ class File:
                 stacklevel=2,
             )
             return
-        self.model_active.add_dynamics(cast(mcp.Dynamics, t_mod), frequency)  # add
+        self.model_active.add_dynamics(cast("mcp.Dynamics", t_mod), frequency)  # add
         self.model_active.dim = 2  # increase dimension of model to 2
 
     #

@@ -99,7 +99,7 @@ def OoM(x: float) -> int:
     if x == 0:
         raise ValueError("Order of magnitude undefined for zero")
 
-    return int(math.floor(math.log10(abs(x))))
+    return math.floor(math.log10(abs(x)))
 
 
 #
@@ -245,12 +245,12 @@ def sign_change(array: ArrayLike, ignore_zeros: bool = True) -> NDArray[np.int_]
     sign_change_arr = ((np.roll(asign, 1) - asign) != 0).astype(int)
     sign_change_arr[0] = 0
 
-    return cast(NDArray[np.int_], sign_change_arr)
+    return cast("NDArray[np.int_]", sign_change_arr)
 
 
 #
 def pad_x_y(
-    x: ArrayLike, y: ArrayLike, x_step: float, pad_size: int | float
+    x: ArrayLike, y: ArrayLike, x_step: float, pad_size: float
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """
     Pad x and y arrays for convolution with proper edge handling.
@@ -362,7 +362,7 @@ def my_conv(
         raise ValueError(f"Unknown method '{method}'")
 
     # Remove padding and return
-    return cast(NDArray[np.float64], y_conv_pad[pad_size:-pad_size])
+    return cast("NDArray[np.float64]", y_conv_pad[pad_size:-pad_size])
 
 
 #

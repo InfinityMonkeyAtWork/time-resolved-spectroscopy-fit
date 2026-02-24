@@ -762,8 +762,8 @@ class Simulator:
 
         if self.noise_type == "gaussian":
             # Gaussian noise with amplitude proportional to noise_level
-            noise_amplitude = self.noise_level * np.max(np.abs(signal))
-            return cast(np.ndarray, np.random.normal(0, noise_amplitude, signal.shape))
+            noise_amp = self.noise_level * np.max(np.abs(signal))
+            return cast("np.ndarray", np.random.normal(0, noise_amp, signal.shape))
 
         if self.noise_type == "poisson":
             # Poisson noise: scale signal to photon counts, add noise, scale back
@@ -782,7 +782,7 @@ class Simulator:
             noise = signal_noisy - signal_positive
 
             # Restore original sign
-            return cast(np.ndarray, noise * np.sign(signal))
+            return cast("np.ndarray", noise * np.sign(signal))
 
         raise ValueError(
             f"Unknown noise type: {self.noise_type}. "
@@ -806,8 +806,8 @@ class Simulator:
 
         if self.noise_type == "gaussian":
             # Gaussian noise with amplitude proportional to noise_level
-            noise_amplitude = self.noise_level * np.max(np.abs(signal))
-            return cast(np.ndarray, np.random.normal(0, noise_amplitude, signal.shape))
+            noise_amp = self.noise_level * np.max(np.abs(signal))
+            return cast("np.ndarray", np.random.normal(0, noise_amp, signal.shape))
 
         if self.noise_type == "poisson":
             # Poisson noise: scale signal to photon counts, add noise, scale back
@@ -825,7 +825,7 @@ class Simulator:
             noise = signal_noisy - signal_positive
 
             # Restore original sign
-            return cast(np.ndarray, noise * np.sign(signal))
+            return cast("np.ndarray", noise * np.sign(signal))
 
         raise ValueError(
             f"Unknown noise type: {self.noise_type}. "
@@ -871,7 +871,7 @@ class Simulator:
         # (negative signal = bleach/emission, positive = absorption)
         noisy_data = photon_counts / scale_factor * np.sign(signal)
 
-        return cast(np.ndarray, noisy_data)
+        return cast("np.ndarray", noisy_data)
 
     #
     def _sample_photons_2D(self, signal: np.ndarray) -> np.ndarray:
@@ -915,7 +915,7 @@ class Simulator:
         # (negative signal = bleach/emission, positive = absorption)
         noisy_data = photon_counts / scale_factor * np.sign(signal)
 
-        return cast(np.ndarray, noisy_data)
+        return cast("np.ndarray", noisy_data)
 
     #
     def set_noise_level(self, noise_level: float) -> None:
@@ -1594,7 +1594,7 @@ class Simulator:
                     "vary": bool(par.vary),
                     "min": float(par.min) if par.min is not None else None,
                     "max": float(par.max) if par.max is not None else None,
-                    "expr": par.expr if par.expr else None,
+                    "expr": par.expr or None,
                 }
 
             # Save as JSON string in metadata
@@ -1674,7 +1674,7 @@ class Simulator:
 
         # If filepath is just a filename (no directory component),
         # put it in simulated_data subdirectory
-        if filepath_obj.parent == Path("."):
+        if filepath_obj.parent == Path():
             sim_dir = Path.cwd() / "simulated_data"
             sim_dir.mkdir(parents=True, exist_ok=True)
             filepath = str(sim_dir / filepath_obj.name)
@@ -1824,7 +1824,7 @@ class Simulator:
             # Parameter sweep settings
             meta.attrs["sweep_strategy"] = parameter_sweep.strategy
             meta.attrs["sweep_seed"] = (
-                parameter_sweep.seed if parameter_sweep.seed else "None"
+                parameter_sweep.seed or "None"
             )
 
             # Save parameter space definition as JSON

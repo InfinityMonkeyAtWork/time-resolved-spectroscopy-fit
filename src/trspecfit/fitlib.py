@@ -295,7 +295,7 @@ def sigma_dict() -> dict[str, float]:
         Values: Percentage of distribution (float)
     """
 
-    sigma_dict = {
+    return {
         "0.5": 38.2924922548026,
         "1.0": 68.2689492137086,
         "1.5": 86.6385597462284,
@@ -307,7 +307,6 @@ def sigma_dict() -> dict[str, float]:
         "4.5": 99.9993204653751,
         "5.0": 99.9999426696856,
     }
-    return sigma_dict
 
 
 #
@@ -711,9 +710,9 @@ def fit_wrapper(
         )
         emcee_fin_params = _result_params(emcee_fin)
         emcee_flatchain = cast(
-            pd.DataFrame, getattr(emcee_fin, "flatchain", pd.DataFrame())
+            "pd.DataFrame", getattr(emcee_fin, "flatchain", pd.DataFrame())
         )
-        emcee_var_names = cast(list[str], getattr(emcee_fin, "var_names", []))
+        emcee_var_names = cast("list[str]", getattr(emcee_fin, "var_names", []))
         emcee_acceptance_fraction = np.asarray(
             getattr(emcee_fin, "acceptance_fraction", np.array([]))
         )
@@ -813,7 +812,7 @@ def fit_wrapper(
             with open(str(save_path) + "_emcee_fin.txt", "w") as emcee_fin_file:
                 emcee_fin_file.write(lmfit.fit_report(emcee_fin))
             emcee_flatchain = cast(
-                pd.DataFrame, getattr(emcee_fin, "flatchain", pd.DataFrame())
+                "pd.DataFrame", getattr(emcee_fin, "flatchain", pd.DataFrame())
             )
             emcee_flatchain.to_csv(f"{save_path}_emcee_flatchain.csv", index=False)
         # emcee_CIs using pandas as it is a pd.DataFrame
@@ -1048,9 +1047,9 @@ def results2fit2D(
                     np.asarray(data_const),
                     package_const,
                     fit_fun_const,
-                    unpack=cast(int, unpack_const),
-                    e_lim=cast(list[int], e_lim_const),
-                    t_lim=cast(list[int], t_lim_const),
+                    unpack=cast("int", unpack_const),
+                    e_lim=cast("list[int]", e_lim_const),
+                    t_lim=cast("list[int]", t_lim_const),
                     res_type="fit",
                     args=args,
                 )
@@ -1064,9 +1063,9 @@ def results2fit2D(
                     np.asarray(data_const),
                     package_const,
                     fit_fun_const,
-                    unpack=cast(int, unpack_const),
-                    e_lim=cast(list[int], e_lim_const),
-                    t_lim=cast(list[int], t_lim_const),
+                    unpack=cast("int", unpack_const),
+                    e_lim=cast("list[int]", e_lim_const),
+                    t_lim=cast("list[int]", t_lim_const),
                     res_type="fit",
                     args=args,
                 )
@@ -1383,12 +1382,12 @@ def plt_fit_res_2D(
     save_path = kwargs.get("save_path", "")
 
     # Fit limit indices
-    x_lim = kwargs.get("x_lim", None)
-    y_lim = kwargs.get("y_lim", None)
+    x_lim = kwargs.get("x_lim")
+    y_lim = kwargs.get("y_lim")
 
     # Color scale limits
-    z_lim_top = kwargs.get("z_lim_top", None)  # Shared for data and fit
-    z_lim_res = kwargs.get("z_lim_res", None)  # Independent for residual
+    z_lim_top = kwargs.get("z_lim_top")  # Shared for data and fit
+    z_lim_res = kwargs.get("z_lim_res")  # Independent for residual
 
     # Calculate residual
     res = data - fit
