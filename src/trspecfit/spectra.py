@@ -40,15 +40,15 @@ def fit_model_mcp(
     plot_ind: bool,
     model: Model,
     dim: int,
-    debug: bool
+    debug: bool,
 ) -> np.ndarray | list[np.ndarray]:
     """
     Generate spectrum from mcp.Model for fitting or visualization.
-    
+
     This is the default spectrum generation function used by trspecfit. It
     updates model parameters, evaluates the model, and returns either the
     complete spectrum or individual component spectra.
-    
+
     Parameters
     ----------
     x : array-like
@@ -77,7 +77,7 @@ def fit_model_mcp(
     debug : bool
         If True, print parameter values and detailed model info to console.
         Useful for debugging optimization issues.
-    
+
     Returns
     -------
     ndarray or list of ndarray
@@ -85,37 +85,37 @@ def fit_model_mcp(
         - If dim=1 and plot_ind=False: 1D array (sum of components)
         - If dim=1 and plot_ind=True: List of 1D arrays (individual components)
         - If dim=2: 2D array (time × energy), regardless of plot_ind
-    
+
     Examples
     --------
     >>> # During fitting (1D)
     >>> spectrum = fit_model_mcp(energy, par_values, False, model, 1, False)
     >>> residual = data - spectrum
-    
+
     >>> # For visualization (1D, individual components)
     >>> components = fit_model_mcp(energy, par_values, True, model, 1, False)
     >>> for i, comp in enumerate(components):
     ...     plt.plot(energy, comp, label=f'Component {i}')
-    
+
     >>> # During fitting (2D)
     >>> spectrum_2D = fit_model_mcp(energy, par_values, False, model, 2, False)
     >>> residual_2D = data_2D - spectrum_2D
-    
+
     Notes
     -----
     **Function Signature:**
     The signature follows the standard form [x, par, plot_ind, args] required
     by fitlib.residual_fun. The 'args' tuple contains (model, dim, debug).
-    
+
     **Parameter Update:**
     This function updates model.lmfit_pars in-place via model.update_value().
     The model retains these values after the function returns.
-    
+
     **2D Behavior:**
     For 2D models, plot_ind is ignored and the full 2D spectrum is always
     returned. Individual component plotting for 2D is typically done by
     examining time slices.
-    
+
     **Performance:**
     2D spectrum generation can be slow for large grids or complex models
     with many time-dependent parameters. Consider:
@@ -123,32 +123,32 @@ def fit_model_mcp(
     - Using fit_SliceBySlice for quasi-independent time points
     - Implementing parallel evaluation (model.create_value2D_parallel)
     """
+
     par_values: list[float] | np.ndarray
     if isinstance(par, np.ndarray):
         par_values = par
     else:
         par_values = list(par)
     model.update_value(new_par_values=par_values)  # Update lmfit parameters
-    
-    if debug: 
+
+    if debug:
         display(model.lmfit_pars)
         model.print_all_pars(detail=1)
-    
+
     # Create energy- (and time-)resolved spectrum/data
     if dim == 1:  # 1D
         if plot_ind:  # Return individual components
             model.create_value1D(store1D=1)
             return model.component_spectra
-        else:  # Return sum of all components
-            model.create_value1D()
-            if model.value1D is None:
-                raise RuntimeError("Model evaluation did not produce value1D")
-            return model.value1D
-        
-    elif dim == 2:  # 2D
+        # Return sum of all components
+        model.create_value1D()
+        if model.value1D is None:
+            raise RuntimeError("Model evaluation did not produce value1D")
+        return model.value1D
+
+    if dim == 2:  # 2D
         model.create_value2D()
         if model.value2D is None:
             raise RuntimeError("Model evaluation did not produce value2D")
         return model.value2D
-    else:
-        raise ValueError(f"Unsupported dim={dim}; expected 1 or 2")
+    raise ValueError(f"Unsupported dim={dim}; expected 1 or 2")
