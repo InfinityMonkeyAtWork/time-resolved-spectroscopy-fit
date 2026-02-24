@@ -24,6 +24,17 @@ Full docs are hosted on Read the Docs:
 
 For consistent, central plot behavior, set plotting defaults at `Project` creation (typically via `project.yaml`), and see PlotConfig details and override patterns here: https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/api/plot_config.html
 
+## Support and Community
+
+- Questions and usage help: GitHub Discussions (Q&A category)
+- Ideas and brainstorming: GitHub Discussions (Ideas category)
+- Reproducible bugs and trackable feature requests: GitHub Issues
+- Maintainer response target: within 7 days
+
+Links:
+- Discussions: https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/discussions
+- Issues: https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/issues
+
 ## Installation
 
 Install from PyPI:
