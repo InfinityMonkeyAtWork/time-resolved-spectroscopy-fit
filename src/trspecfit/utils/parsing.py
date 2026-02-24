@@ -343,7 +343,7 @@ def load_and_number_yaml_components(
     model_yaml_path = Path(model_yaml_path)  # Ensure Path object
 
     try:
-        with open(model_yaml_path) as f_yaml:
+        with model_yaml_path.open() as f_yaml:
             # Load YAML file with custom constructor for numbering
             model_info_ALL = yaml.load(f_yaml)
 

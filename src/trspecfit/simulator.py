@@ -56,7 +56,6 @@ See examples/simulator/ directory for complete workflows.
 
 import copy
 import json
-import os
 from pathlib import Path
 from typing import cast
 
@@ -1479,23 +1478,22 @@ class Simulator:
             )
 
         # Create simulated_data directory if it doesn't exist
-        sim_dir = os.path.join(os.getcwd(), "simulated_data")
-        if not os.path.exists(sim_dir):
-            os.makedirs(sim_dir)
+        sim_dir = Path.cwd() / "simulated_data"
+        sim_dir.mkdir(parents=True, exist_ok=True)
 
         # Set default filepath
         if filepath is None:
             if save_format == "hdf5":
-                filepath = os.path.join(sim_dir, "simulated_data.h5")
+                filepath = str(sim_dir / "simulated_data.h5")
         else:
             # User provided filepath - make sure it's in simulated_data directory
-            if not filepath.startswith(sim_dir):
-                filepath = os.path.join(sim_dir, os.path.basename(filepath))
+            if not Path(filepath).is_relative_to(sim_dir):
+                filepath = str(sim_dir / Path(filepath).name)
 
         # Check if file exists and handle overwrite
         if filepath is None:
             raise ValueError("filepath could not be resolved")
-        if os.path.exists(filepath) and not overwrite:
+        if Path(filepath).exists() and not overwrite:
             raise FileExistsError(
                 f"File already exists: {filepath}\n"
                 f"Set overwrite=True to overwrite, or provide a different filepath."

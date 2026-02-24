@@ -48,7 +48,6 @@ See examples/ directory for complete workflows.
 """
 
 import copy
-import os  # replace os.join with "pathlib path /"subfolder" /"file name"
 import pathlib
 import time
 import types
@@ -216,7 +215,7 @@ class Project:
         config_path = self.path / config_file
 
         try:
-            with open(config_path) as f:
+            with config_path.open() as f:
                 config = yaml.load(f)
 
             if config is None:
@@ -848,16 +847,14 @@ class File:
         # path_model = self.path_DA / self.model_base.yaml_f_name / model_name
         if self.p.show_info >= 3:
             print(path_model)
-        if not os.path.exists(path_model):
-            os.makedirs(path_model)
+        path_model.mkdir(parents=True, exist_ok=True)
         if subfolders is None:
             subfolders = []
         if len(subfolders) != 0:
             for subfolder in subfolders:
-                if not os.path.exists(path_model / subfolder):
-                    os.makedirs(path_model / subfolder)
-                    if self.p.show_info >= 3:
-                        print(path_model / subfolder)
+                (path_model / subfolder).mkdir(parents=True, exist_ok=True)
+                if self.p.show_info >= 3:
+                    print(path_model / subfolder)
 
         return path_model
 
@@ -1252,9 +1249,7 @@ class File:
                 print()
                 print("Spectrum #" + str(s_i))  # print iteration info
             # define path for files saved for this slice
-            path_slice = os.path.join(
-                path_SbS_results, "slices", str(self.p.DA_slices_fmt % s_i)
-            )
+            path_slice = path_SbS_results / "slices" / str(self.p.DA_slices_fmt % s_i)
 
             # update the "x0" peak energy guess(es) using
             # "max(baseline) -(max current slice)" [ in eV]

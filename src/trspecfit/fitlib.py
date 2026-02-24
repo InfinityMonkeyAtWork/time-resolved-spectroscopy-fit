@@ -21,7 +21,6 @@ plt_fit_res_2D : Plot 2D fit results with residual maps
 
 import copy
 import math
-import os
 import pathlib
 import time
 from collections.abc import Sequence
@@ -799,7 +798,7 @@ def fit_wrapper(
         df_par_ini.to_csv(str(save_path) + "_par_ini.csv", index=False)
         # par_fin as text dump
         if par_fin:
-            with open(str(save_path) + "_par_fin.txt", "w") as par_fin_file:
+            with pathlib.Path(f"{save_path}_par_fin.txt").open("w") as par_fin_file:
                 par_fin_file.write(lmfit.fit_report(par_fin))
         # par_fin variables as csv file
         df_par_fin = ulmfit.par2df(_result_params(par_fin), "min", par_names)
@@ -809,7 +808,7 @@ def fit_wrapper(
             conf_CIs.to_csv(str(save_path) + "_conf_CIs.csv", index=False)
         # emcee_fin (fit_report) as text dump, emcee flatchain as csv
         if emcee_fin is not None:
-            with open(str(save_path) + "_emcee_fin.txt", "w") as emcee_fin_file:
+            with pathlib.Path(f"{save_path}_emcee_fin.txt").open("w") as emcee_fin_file:
                 emcee_fin_file.write(lmfit.fit_report(emcee_fin))
             emcee_flatchain = cast(
                 "pd.DataFrame", getattr(emcee_fin, "flatchain", pd.DataFrame())
@@ -959,7 +958,7 @@ def results2df(
 
     if save_df != 0:
         # save the dataframe (index, x axis, parameter1, parameter2, ...
-        df.to_csv(os.path.join(save_path, "fit_pars.csv"))
+        df.to_csv(pathlib.Path(save_path) / "fit_pars.csv")
         # plot individual parameters as a function of time (s)
         plt_fit_res_pars(
             df=df.loc[:, list(cols_plt)],
@@ -1074,7 +1073,7 @@ def results2fit2D(
     #
     if abs(save_2D) == 1:
         np.savetxt(
-            os.path.join(save_path, "fit2D.csv"), fit2D, fmt=num_fmt, delimiter=delim
+            pathlib.Path(save_path) / "fit2D.csv", fit2D, fmt=num_fmt, delimiter=delim
         )
 
     return fit2D
@@ -1544,7 +1543,7 @@ def plt_fit_res_2D(
 
     # Save
     if abs(save_img) == 1:
-        uplt.img_save(os.path.join(save_path, "2D_data_fit_res.png"))
+        uplt.img_save(pathlib.Path(save_path) / "2D_data_fit_res.png")
 
     # Show or close
     if save_img >= 0:
@@ -1617,6 +1616,6 @@ def plt_fit_res_pars(
             x_label=config.y_label,
             y_label=col,
             save_img=save_img_list[c],
-            save_path=os.path.join(save_path, col),
+            save_path=pathlib.Path(save_path) / col,
         )
 
