@@ -81,7 +81,7 @@ def par_create(
             print("expr=" + par_info[0])
         try:
             lmf_par.set(expr=par_info[0])
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             print(
                 f"Exception while adding expression {par_info[0]} "
                 f"to parameter {par_str}: {e}"
@@ -250,6 +250,7 @@ def par_construct(par_names: list[str], par_info: list[list[Any]]) -> lmfit.Para
 #
 # Result conversion to pandas DataFrames
 #
+
 
 #
 def conf_interval2df(ci: dict[str, Any], CI_cols: list[str]) -> pd.DataFrame:

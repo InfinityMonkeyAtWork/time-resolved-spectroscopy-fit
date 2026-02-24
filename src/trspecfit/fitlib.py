@@ -63,7 +63,7 @@ def _result_errorbars(result: MinimizerResult) -> bool:
     return bool(getattr(result, "errorbars", False))
 
 
-#$% Changes:
+# $% Changes:
 # - residual_fun: pass function instead of package + function
 # - rewrite a peak finder using ML
 # - move from 0/1 to False/True whereever there are only 2 options
@@ -1318,7 +1318,6 @@ def plt_fit_res_1D(
         plt.close()
 
 
-
 #
 def plt_fit_res_2D(
     data: np.ndarray,
@@ -1549,7 +1548,6 @@ def plt_fit_res_2D(
         plt.close()
 
 
-
 #
 def plt_fit_res_pars(
     df: pd.DataFrame,
@@ -1615,4 +1613,3 @@ def plt_fit_res_pars(
             save_img=save_img_list[c],
             save_path=pathlib.Path(save_path) / col,
         )
-

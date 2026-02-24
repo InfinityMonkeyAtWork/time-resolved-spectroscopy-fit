@@ -28,6 +28,7 @@ def json_loads_attr(value: Any) -> Any:
 
     return json.loads(value)
 
+
 #
 def require_group(node: Any, path: str) -> h5py.Group:
     """Ensure an HDF5 node is a Group."""
@@ -35,6 +36,7 @@ def require_group(node: Any, path: str) -> h5py.Group:
     if not isinstance(node, h5py.Group):
         raise TypeError(f"Expected HDF5 group at '{path}', got {type(node).__name__}")
     return node
+
 
 #
 def require_dataset(node: Any, path: str) -> h5py.Dataset:

@@ -240,7 +240,7 @@ class Project:
         except FileNotFoundError:
             if self.show_info >= 1:
                 print(f"Config file {config_path} not found, using defaults")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             print(f"Error loading config: {e}")
             print("Using default settings")
 
@@ -714,8 +714,8 @@ class File:
             # plot initial guess (individual components), data, and residual
             title_mod = (
                 f"File: {self.path}, "
-                 f'Model: "{model_info}" (from "{mod.yaml_f_name}.yaml")'
-                 ": initial guess"
+                f'Model: "{model_info}" (from "{mod.yaml_f_name}.yaml")'
+                ": initial guess"
             )
             fitlib.plt_fit_res_1D(
                 x=self.energy,
@@ -1158,7 +1158,7 @@ class File:
         Probably needed to compare fits anyway!
         """
 
-        #$% implement loadging of fit results after refactoring saving to hdf5 output
+        # $% implement loadging of fit results after refactoring saving to hdf5 output
 
     #
     def fit_SliceBySlice(self, model_name: str, fit: int, **fit_wrapper_kwargs) -> None:
@@ -1313,7 +1313,7 @@ class File:
                 fit_lim=self.e_lim,
                 config=self.plot_config,
                 save_img=-1 if self.p.show_info < 3 else 1,
-                save_path=path_slice + ".png",
+                save_path=path_slice.with_suffix(".png"),
             )
             #
             if s_i == self.p.first_N_spec_only:
@@ -1588,4 +1588,4 @@ class File:
         This method is a placeholder for future development.
         """
 
-        #$% re-use (at least parts of) the loading fit results functionality
+        # $% re-use (at least parts of) the loading fit results functionality

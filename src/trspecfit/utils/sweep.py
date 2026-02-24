@@ -89,9 +89,7 @@ class ParameterSweep:
         self.strategy = strategy
         self.parameter_specs: dict[str, dict[str, Any]] = {}
         self.seed = seed
-
-        if seed is not None:
-            np.random.seed(seed)
+        self.rng = np.random.default_rng(seed)
 
     #
     def add_range(self, par_name: str, values: list[float]) -> None:
@@ -262,11 +260,11 @@ class ParameterSweep:
         n = int(spec.get("n_samples", 10))
 
         if spec["type"] == "uniform":
-            return cast("np.ndarray", np.random.uniform(spec["min"], spec["max"], n))
+            return cast("np.ndarray", self.rng.uniform(spec["min"], spec["max"], n))
         if spec["type"] == "normal":
-            return cast("np.ndarray", np.random.normal(spec["mean"], spec["std"], n))
+            return cast("np.ndarray", self.rng.normal(spec["mean"], spec["std"], n))
         if spec["type"] == "lognormal":
-            return cast("np.ndarray", np.random.lognormal(spec["mean"], spec["std"], n))
+            return cast("np.ndarray", self.rng.lognormal(spec["mean"], spec["std"], n))
         raise ValueError(f"Unknown distribution type: {spec['type']}")
 
     #
@@ -328,13 +326,13 @@ class ParameterSweep:
             for par_name, spec in self.parameter_specs.items():
                 if spec["type"] == "range":
                     # Random choice from discrete values
-                    config[par_name] = np.random.choice(spec["values"])
+                    config[par_name] = self.rng.choice(spec["values"])
                 elif spec["type"] == "uniform":
-                    config[par_name] = np.random.uniform(spec["min"], spec["max"])
+                    config[par_name] = self.rng.uniform(spec["min"], spec["max"])
                 elif spec["type"] == "normal":
-                    config[par_name] = np.random.normal(spec["mean"], spec["std"])
+                    config[par_name] = self.rng.normal(spec["mean"], spec["std"])
                 elif spec["type"] == "lognormal":
-                    config[par_name] = np.random.lognormal(spec["mean"], spec["std"])
+                    config[par_name] = self.rng.lognormal(spec["mean"], spec["std"])
             yield config
 
     #
@@ -350,7 +348,7 @@ class ParameterSweep:
 
         # Reset seed at start of iteration for reproducibility
         if self.seed is not None:
-            np.random.seed(self.seed)
+            self.rng = np.random.default_rng(self.seed)
 
         strategy = self._determine_strategy()
 

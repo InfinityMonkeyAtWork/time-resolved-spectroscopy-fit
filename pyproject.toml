@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trspecfit"
-version = "0.4.2"
+version = "0.4.3"
 authors = [
     {name = "Johannes Mahl", email = "johannes.a.mahl@gmail.com"},
 ]
@@ -62,6 +62,7 @@ Repository = "https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy
 Discussions = "https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/discussions"
 
 [tool.mypy]
+files = ["src/trspecfit"]
 python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
@@ -81,9 +82,11 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 88
+exclude = ["examples/"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "PD"]
+select = ["E", "F", "I", "UP", "B", "PD", "C90", "BLE", "NPY"]
+ignore = ["C901"]
 
 [tool.deptry]
 known_first_party = ["trspecfit"]

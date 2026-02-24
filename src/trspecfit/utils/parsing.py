@@ -27,7 +27,6 @@ class ModelValidationError(ValueError):
     """Exception raised for errors in model YAML validation."""
 
 
-
 #
 def construct_yaml_map(self, node) -> Generator[list[tuple[str, Any]], None, None]:
     """
@@ -253,12 +252,12 @@ def validate_model_components(
                             if isinstance(value, (int, float)) and (
                                 value < min_val or value > max_val
                             ):
-                                    raise ModelValidationError(
-                                        f"Parameter '{param_name}' in"
-                                        f" '{comp_name}' (model '{model_name}'):\n"
-                                        f"value ({value}) is outside"
-                                        f" bounds [{min_val}, {max_val}]"
-                                    )
+                                raise ModelValidationError(
+                                    f"Parameter '{param_name}' in"
+                                    f" '{comp_name}' (model '{model_name}'):\n"
+                                    f"value ({value}) is outside"
+                                    f" bounds [{min_val}, {max_val}]"
+                                )
 
                     elif len(param_value) == 1:
                         # Expression format: ["expression"]
@@ -366,7 +365,7 @@ def load_and_number_yaml_components(
                         if isinstance(params, list):
                             model_info_dict[model_name][comp_name] = dict(params)
             else:  # should never happen unless construct_yaml_map is broken
-                raise ValueError(f"Unexpected YAML structure in {model_yaml_path}")
+                raise TypeError(f"Unexpected YAML structure in {model_yaml_path}")
 
             if debug:
                 print("model_info_ALL:")

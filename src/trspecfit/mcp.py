@@ -199,7 +199,6 @@ class Model:
         )
         self.time: np.ndarray | None = None  # necessarry or should just point to file?
 
-
     @property
     def plot_config(self) -> PlotConfig:
         """
@@ -238,12 +237,12 @@ class Model:
         try:
             for comp in self.components:
                 comp.describe(detail=detail - 1)
-        except Exception:
+        except Exception:  # noqa: BLE001
             print("no elements in this model")
         print("all lmfit.Parameters() [flattened and sorted alphabetically]:")
         try:
             self.lmfit_pars.pretty_print()
-        except Exception:
+        except Exception:  # noqa: BLE001
             print("lmfit.Parameters() object is empty")
         print()
         # plot initial guess of model
@@ -258,7 +257,6 @@ class Model:
                 elif self.dim == 2:
                     self.create_value2D()
                     self.plot_2D()
-
 
     #
     def add_components(
@@ -337,7 +335,6 @@ class Model:
         if debug:
             self.lmfit_pars.pretty_print()
 
-
     #
     def find_par_by_name(self, par_name: str) -> tuple[int | None, int | None]:
         """
@@ -380,7 +377,6 @@ class Model:
             for p in c.pars:
                 p.describe(detail)
 
-
     #
     def update(self, debug: bool = False) -> None:
         """
@@ -415,7 +411,6 @@ class Model:
 
         # update list of all parameter names
         self.par_names = [par.name for par in self.lmfit_par_list]
-
 
     #
     def update_value(
@@ -459,7 +454,6 @@ class Model:
                 if self.lmfit_pars[p].name in par_select:
                     self.lmfit_pars[p].value = new_par_values[p_count]
                     p_count += 1
-
 
     #
     def add_dynamics(
@@ -517,7 +511,6 @@ class Model:
         # Re-analyze all expressions since time-dependence status may have changed
         self._analyze_expression_dependencies()
 
-
     #
     def _analyze_expression_dependencies(self) -> None:
         """
@@ -537,7 +530,6 @@ class Model:
         # Analyze all expressions for time-dependent references
         for par in all_parameters:
             par.analyze_expression_dependencies(all_parameters)
-
 
     #
     def get_all_parameters(self) -> list["Par"]:
@@ -698,7 +690,7 @@ class Model:
         return None
 
     #
-    def create_value2D(self, t_ind: list[int] = [], debug: bool = False) -> None:  # noqa: B006
+    def create_value2D(self, t_ind: list[int] = []) -> None:  # noqa: B006
         """
         Evaluate model to create 2D spectrum (time × energy).
 
@@ -754,7 +746,6 @@ class Model:
                 if val is None:
                     raise RuntimeError("create_value1D returned None during 2D eval")
                 self.value2D[ti, :] = val
-
 
     #
     def plot_1D(
@@ -843,7 +834,6 @@ class Model:
             save_img=save_img,
             save_path=save_path,
         )
-
 
     #
     def plot_2D(
@@ -1179,7 +1169,6 @@ class Component:
 
         self.par_dict = par_info_dict
 
-
     #
     def create_pars(self, prefix: str = "", debug: bool = False) -> None:
         """
@@ -1242,9 +1231,8 @@ class Component:
             par_name = temp.name
             try:
                 temp.lmfit_par[par_name].set(expr=expr)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 print(f"Failed to set expr '{expr}' for parameter '{par_name}': {e}")
-
 
     #
     def update_lmfit_par_list(self) -> None:
@@ -1270,7 +1258,6 @@ class Component:
         for p in self.pars:
             # ... and add their list of all lmfit.Parameter objects
             self.lmfit_par_list.extend(p.lmfit_par_list)
-
 
     #
     def describe(self, detail: int = 1) -> None:
@@ -1314,7 +1301,6 @@ class Component:
                 print("No parameter info passed!")
             print()
 
-
     #
     def create_t_kernel(self, debug: bool = False) -> np.ndarray:
         """
@@ -1350,7 +1336,6 @@ class Component:
         if debug:
             print(f"delta time (from self.time): {t_step}")
         return np.arange(-t_range, t_range + t_step, t_step)
-
 
     #
     def value(self, t_ind: int = 0, **kwargs) -> np.ndarray:
@@ -1564,7 +1549,7 @@ class Par:
         )
         try:
             self.lmfit_par.pretty_print()
-        except Exception:
+        except Exception:  # noqa: BLE001
             print("[this is not an lmfit.Parameter instance]")
             display(self.lmfit_par)
         #
@@ -1949,9 +1934,8 @@ class Dynamics(Model):
         self.N_counter: np.ndarray | None = None  # cummulative counter of subcycles
         self.parent_model: Model | None = None
 
-
     #
-    def set_frequency(self, frequency: float, time_unit: int = 0) -> None:
+    def set_frequency(self, frequency: float) -> None:
         """
         Set repetition frequency and update time normalization.
 
@@ -1964,9 +1948,6 @@ class Dynamics(Model):
             Repetition frequency in Hz:
             - -1: No repetition (single cycle)
             - >0: Repeat at this frequency
-        time_unit : int, default=0
-            Power of 10 for time axis units (e.g., 0 for seconds, -3 for ms).
-            Currently disabled/unused.
 
         Notes
         -----

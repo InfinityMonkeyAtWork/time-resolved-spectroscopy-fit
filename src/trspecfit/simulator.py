@@ -278,8 +278,7 @@ class Simulator:
             )
 
         # Set random seed if provided
-        if seed is not None:
-            np.random.seed(seed)
+        self.rng = np.random.default_rng(seed)
 
         # Storage for simulated data
         self.data_clean: np.ndarray | None = None  # Without noise
@@ -762,7 +761,7 @@ class Simulator:
         if self.noise_type == "gaussian":
             # Gaussian noise with amplitude proportional to noise_level
             noise_amp = self.noise_level * np.max(np.abs(signal))
-            return cast("np.ndarray", np.random.normal(0, noise_amp, signal.shape))
+            return cast("np.ndarray", self.rng.normal(0, noise_amp, signal.shape))
 
         if self.noise_type == "poisson":
             # Poisson noise: scale signal to photon counts, add noise, scale back
@@ -774,7 +773,7 @@ class Simulator:
             signal_scaled = signal_positive * scale_factor
 
             # Generate Poisson noise
-            noisy_scaled = np.random.poisson(signal_scaled)
+            noisy_scaled = self.rng.poisson(signal_scaled)
 
             # Scale back and compute noise component
             signal_noisy = noisy_scaled / scale_factor
@@ -806,7 +805,7 @@ class Simulator:
         if self.noise_type == "gaussian":
             # Gaussian noise with amplitude proportional to noise_level
             noise_amp = self.noise_level * np.max(np.abs(signal))
-            return cast("np.ndarray", np.random.normal(0, noise_amp, signal.shape))
+            return cast("np.ndarray", self.rng.normal(0, noise_amp, signal.shape))
 
         if self.noise_type == "poisson":
             # Poisson noise: scale signal to photon counts, add noise, scale back
@@ -817,7 +816,7 @@ class Simulator:
             signal_scaled = signal_positive * scale_factor
 
             # Generate Poisson noise
-            noisy_scaled = np.random.poisson(signal_scaled)
+            noisy_scaled = self.rng.poisson(signal_scaled)
 
             # Scale back and compute noise component
             signal_noisy = noisy_scaled / scale_factor
@@ -864,7 +863,7 @@ class Simulator:
         expected_counts = signal_positive * scale_factor
 
         # Independent Poisson draw per pixel
-        photon_counts = np.random.poisson(expected_counts)
+        photon_counts = self.rng.poisson(expected_counts)
 
         # Scale back to original signal units and restore sign
         # (negative signal = bleach/emission, positive = absorption)
@@ -908,7 +907,7 @@ class Simulator:
         expected_counts = signal_positive * scale_factor
 
         # Independent Poisson draw per pixel
-        photon_counts = np.random.poisson(expected_counts)
+        photon_counts = self.rng.poisson(expected_counts)
 
         # Scale back to original signal units and restore sign
         # (negative signal = bleach/emission, positive = absorption)
@@ -974,8 +973,7 @@ class Simulator:
         """Update random seed"""
 
         self.seed = seed
-        if seed is not None:
-            np.random.seed(seed)
+        self.rng = np.random.default_rng(seed)
 
     #
     def get_SNR(self, scale: str = "linear") -> float:
@@ -1821,9 +1819,7 @@ class Simulator:
 
             # Parameter sweep settings
             meta.attrs["sweep_strategy"] = parameter_sweep.strategy
-            meta.attrs["sweep_seed"] = (
-                parameter_sweep.seed or "None"
-            )
+            meta.attrs["sweep_seed"] = parameter_sweep.seed or "None"
 
             # Save parameter space definition as JSON
             param_space = {}

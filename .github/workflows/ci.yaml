@@ -31,11 +31,11 @@ jobs:
 
       - name: Run ruff
         run: |
-          .venv/bin/ruff check src/
-      #    .venv/bin/ruff format --check src/
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
 
       - name: Run mypy
-        run: .venv/bin/mypy src/trspecfit
+        run: .venv/bin/mypy
 
       - name: Run pyright
         # continue-on-error: true
