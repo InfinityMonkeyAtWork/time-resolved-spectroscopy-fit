@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Usage question (Q&A)
+    url: https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/discussions/categories/q-a
+    about: Ask usage and troubleshooting questions in Discussions.
+  - name: Idea or brainstorming
+    url: https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/discussions/categories/ideas
+    about: Propose and discuss ideas in Discussions.
+  - name: Show and tell
+    url: https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/discussions/categories/show-and-tell
+    about: Share examples, notebooks, and results in Discussions.
