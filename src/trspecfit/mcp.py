@@ -11,23 +11,29 @@ Model : Container for spectral components and parameters
     Represents a complete 1D or 2D spectral model built from components.
     Handles parameter management, model evaluation, and plotting.
 
-Component : Individual spectral or temporal function
-    Wraps functions from trspecfit.functions (energy/time) into model-ready
-    objects with parameter management and axis handling.
+Component : Individual spectral, temporal, or profile function
+    Wraps functions from trspecfit.functions (energy/time/profile) into
+    model-ready objects with parameter management and axis handling.
 
-Par : Parameter with optional time-dependence
+Par : Parameter with optional time-dependence and profile variation
     Extends lmfit.Parameter to support time-varying parameters through
-    the Dynamics system, and handles parameter expressions/constraints.
+    the Dynamics system, profile-varying parameters through the Profile
+    system, and handles parameter expressions/constraints.
 
 Dynamics : Model subclass for time-dependent behavior
     Special Model type that describes how parameters evolve over time,
     with support for multi-cycle dynamics and convolution kernels.
 
+Profile : Model subclass for auxiliary-axis parameter variation
+    Special Model type that describes how a parameter varies over an
+    auxiliary physical axis (e.g. depth, position, fluence). Used for
+    inhomogeneous averaging over the auxiliary dimension.
+
 Architecture
 ------------
 The MCP system uses composition to build models from bottom-up::
 
-    Par (values + time-dependence)
+    Par (values + time-dependence + profile variation)
       ↓
     Component (function + parameters)
       ↓
@@ -40,6 +46,7 @@ Key Features
 - Hierarchical model construction from reusable components
 - Automatic parameter naming and numbering for multi-component models
 - Time-dependent parameters via Dynamics models
+- Profile-varying parameters via Profile models (auxiliary-axis averaging)
 - Expression-based parameter constraints and relationships
 - Support for convolution with instrumental response functions
 - Multi-cycle dynamics with subcycle support
@@ -63,7 +70,6 @@ import numpy as np
 from asteval import Interpreter
 from IPython.display import display
 
-# from trspecfit.functions import distribution as fcts_dist
 # function configurations
 from trspecfit.config.functions import (
     background_functions,
@@ -75,8 +81,9 @@ from trspecfit.config.functions import (
 # plot configuration
 from trspecfit.config.plot import PlotConfig
 
-# function library for energy, time, and distribution components
+# function library for energy, time, and profile components
 from trspecfit.functions import energy as fcts_energy
+from trspecfit.functions import profile as fcts_profile
 from trspecfit.functions import time as fcts_time
 from trspecfit.utils import arrays as uarr
 from trspecfit.utils import lmfit as ulmfit
@@ -110,7 +117,7 @@ class Model:
     components : list of Component
         Component objects that define this model's behavior
     lmfit_par_list : list of lmfit.Parameter
-        Flattened list of all individual parameters (spectral + temporal)
+        Flattened list of all individual parameters (spectral + temporal + profile)
     lmfit_pars : lmfit.Parameters
         Complete parameter object for fitting (from lmfit_par_list)
     par_names : list of str
@@ -135,6 +142,8 @@ class Model:
         Energy axis for spectral components
     time : ndarray or None
         Time axis for temporal dynamics
+    aux_axis : ndarray or None
+        Auxiliary physical axis (e.g. depth, position) for Profile models
 
     Notes
     -----
@@ -148,19 +157,22 @@ class Model:
     **Parameter Management:**
     All parameters are stored in a flat lmfit.Parameters object for fitting.
     Time-dependent parameters add additional parameters from their Dynamics
-    models to this flat structure.
+    models to this flat structure. Profile-varying parameters add parameters
+    from their Profile models similarly.
 
     **Inheritance:**
-    Model attributes (energy, time, parent_file) are inherited by:
+    Model attributes (energy, time, aux_axis, parent_file) are inherited by:
     - Components (need axes for evaluation)
     - Parameters (need time axis for dynamics)
     - Dynamics models (need time axis and parent reference)
+    - Profile models (need aux_axis and parent reference)
 
     See Also
     --------
-    Component : Individual spectral/temporal components
-    Par : Parameters with optional time-dependence
+    Component : Individual spectral/temporal/profile components
+    Par : Parameters with optional time-dependence and profile variation
     Dynamics : Model subclass for time-dependent parameters
+    Profile : Model subclass for auxiliary-axis parameter variation
     File.load_model : Load models from YAML definitions
     """
 
@@ -198,6 +210,7 @@ class Model:
             None  # necessarry or should just point to file?
         )
         self.time: np.ndarray | None = None  # necessarry or should just point to file?
+        self.aux_axis: np.ndarray | None = None  # auxiliary physical axis (e.g. depth)
 
     @property
     def plot_config(self) -> PlotConfig:
@@ -306,17 +319,18 @@ class Model:
         # add list to components attribute
         self.components = comps_list
 
-        # prefix is model name for Dynamics, empty string for general models
-        prefix = self.name if isinstance(self, Dynamics) else ""
+        # prefix is model name for Dynamics and Profile, empty string for general models
+        prefix = self.name if isinstance(self, (Dynamics, Profile)) else ""
 
         # assemble parameter list for all components
         # [components can be energy or time functions]
         for comp in self.components:
             # add current component function to list of all functions
             self.peak_fcts.append(comp.fct)
-            # pass time and energy axis to the individual components
+            # pass time, energy, and aux axes to the individual components
             comp.energy = self.energy
             comp.time = self.time
+            comp.aux_axis = self.aux_axis
             # set parent model reference
             comp.parent_model = self
             # subcycle time axis [updated when using Dynamics.set_frequency]
@@ -385,7 +399,7 @@ class Model:
         Recompiles all parameters from all components and recreates the
         flattened lmfit parameter structures. Call this after modifying
         parameter structure.
-        (automatically called after add_components or add_dynamics)
+        (automatically called after add_components, add_profile, add_dynamics)
 
         Parameters
         ----------
@@ -510,6 +524,78 @@ class Model:
 
         # Re-analyze all expressions since time-dependence status may have changed
         self._analyze_expression_dependencies()
+
+    #
+    def add_profile(self, profile_model: "Profile", debug: bool = False) -> None:
+        """
+        Add a profile variation to a parameter over the auxiliary axis.
+
+        Makes a parameter vary over ``aux_axis`` by attaching a Profile model.
+        During Component.value(), the component is evaluated at every aux_axis
+        point with the profile value substituted for this parameter, and the
+        average is returned (uniform integration over the auxiliary dimension).
+
+        The Profile model name must match the target parameter name exactly,
+        using the same convention as Dynamics (e.g., ``'GLP_01_A'``).
+
+        Parameters
+        ----------
+        profile_model : Profile
+            Profile instance describing the parameter variation over aux_axis.
+            Its name must match a parameter in this model.
+        debug : bool, default=False
+            If True, print parameter structure after adding profile.
+
+        Raises
+        ------
+        ValueError
+            If the parameter is not found, is expression-linked, or if
+            ``aux_axis`` has not been set on this model.
+        """
+
+        # set this model as parent for the Profile
+        profile_model.parent_model = self
+
+        # find component and parameter index from Profile model name
+        ci, pi = self.find_par_by_name(profile_model.name)
+        if ci is None or pi is None:
+            raise ValueError(
+                f'Parameter "{profile_model.name}" not found in model {self.name}'
+            )
+        target_par = self.components[ci].pars[pi]
+
+        # Disallow adding profile to expression-linked parameters
+        if len(target_par.info) == 1 and isinstance(target_par.info[0], str):
+            raise ValueError(
+                f"Cannot add profile to expression parameter "
+                f'"{profile_model.name}" '
+                f"(expression: {target_par.info[0]}). "
+                "Add profile to the referenced base parameter instead."
+            )
+
+        # aux_axis must be set before adding a profile
+        if self.aux_axis is None:
+            raise ValueError(
+                f"Cannot add profile to model '{self.name}': aux_axis is not set. "
+                "Set File.aux_axis and reload the model, "
+                "or set model.aux_axis directly."
+            )
+
+        # propagate aux_axis to profile model and its components
+        profile_model.aux_axis = self.aux_axis
+        for comp in profile_model.components:
+            comp.aux_axis = self.aux_axis
+
+        # update target parameter
+        target_par.p_vary = True
+        target_par.p_model = profile_model
+        # evaluate profile to initialize value1D
+        profile_model.create_value1D()
+        # include profile parameters in this model's lmfit parameter list
+        target_par.lmfit_par_list.extend(profile_model.lmfit_par_list)
+
+        # update model lmfit_par_list, par_names and components
+        self.update(debug=debug)
 
     #
     def _analyze_expression_dependencies(self) -> None:
@@ -891,11 +977,11 @@ class Model:
 #
 class Component:
     """
-    Individual spectral or temporal component with parameter management.
+    Individual spectral, temporal, or profile component with parameter management.
 
-    Component wraps a function from trspecfit.functions (energy or time) into
-    a model-ready object with parameter management, axis handling, and
-    integration within the Model/Component/Parameter hierarchy.
+    Component wraps a function from trspecfit.functions (energy, time, or
+    profile) into a model-ready object with parameter management, axis handling,
+    and integration within the Model/Component/Parameter hierarchy.
 
     Parameters
     ----------
@@ -903,8 +989,8 @@ class Component:
         Component name, possibly with numbering (e.g., 'GLP_01', 'expFun_02').
         Numbering is typically assigned during YAML parsing.
     package : module, optional
-        Python module containing the component function (fcts_energy or fcts_time).
-        Defaults to fcts_energy (energy-resolved functions)
+        Python module containing the component function (fcts_energy,
+        fcts_time, or fcts_profile). Defaults to fcts_energy.
     comp_subcycle : int, default=0
         Subcycle number for multi-cycle Dynamics models:
         - 0: Active for entire time axis (default)
@@ -913,7 +999,7 @@ class Component:
     Attributes
     ----------
     package : module
-        Module containing the function (fcts_energy or fcts_time)
+        Module containing the function (fcts_energy, fcts_time, or fcts_profile)
     comp_name : str
         Full component name including any numbering
     fct_str : str
@@ -938,10 +1024,14 @@ class Component:
         Parameter objects for this component
     lmfit_par_list : list of lmfit.Parameter
         Flattened list of lmfit parameters
+    lmfit_pars : lmfit.Parameters
+        lmfit.Parameters object built from lmfit_par_list
     time : ndarray or None
         Time axis (inherited from model, or kernel axis for convolutions)
     energy : ndarray or None
         Energy axis (inherited from model)
+    aux_axis : ndarray or None
+        Auxiliary physical axis (inherited from model, used by Profile components)
     parent_model : Model or None
         Parent model reference (for parameter lookups)
 
@@ -958,6 +1048,7 @@ class Component:
     - ``prefix`` : str - Prefix for parameter names ('' for exceptions,
       comp_name+'_' otherwise)
     - ``name`` : str - Component display name
+    - ``package_name`` : str - Name of the package module (e.g. 'fcts_energy')
     """
 
     #
@@ -1000,9 +1091,11 @@ class Component:
         self.pars: list[Par] = []  # used to create component value during fit
         # flattened list of all lmfit parameters defining this component
         self.lmfit_par_list: list[lmfit.Parameter] = []
-        # time and energy axis of component are inherited from model
+        self.lmfit_pars: lmfit.Parameters = lmfit.Parameters()  # for describe() method
+        # time, energy, and aux axes are inherited from model
         self.time: np.ndarray | None = None
         self.energy: np.ndarray | None = None
+        self.aux_axis: np.ndarray | None = None
         # parent model reference
         self.parent_model: Model | None = None
 
@@ -1082,6 +1175,20 @@ class Component:
 
         # use the stored component name (which includes numbering if applicable)
         return self.comp_name
+
+    # [automatic] get name of package this component belongs to
+    @property
+    def package_name(self) -> str:
+        """
+        Name of the package this component belongs to.
+
+        Returns
+        -------
+        str
+            Package name (e.g., 'fcts_energy', 'fcts_time')
+        """
+
+        return getattr(self.package, "__name__", str(self.package))
 
     #
     def _add_prefix_to_expression(self, expr: str, prefix: str) -> str:
@@ -1237,11 +1344,11 @@ class Component:
     #
     def update_lmfit_par_list(self) -> None:
         """
-        Update flattened list of lmfit parameters.
+        Update flattened list of lmfit parameters and lmfit.Parameters object.
 
         Collects all lmfit.Parameter objects from all Par objects in this
         component and stores them in a flat list. This includes both spectral
-        and temporal parameters (if any Par has time-dependence).
+        and temporal parameters (if any Par has time-dependence or a profile).
 
         Notes
         -----
@@ -1252,12 +1359,15 @@ class Component:
         lmfit.Parameters object for fitting.
         """
 
-        # re-initialize the list
+        # re-initialize the list and lmfit.Parameters object
         self.lmfit_par_list = []
+        self.lmfit_pars = lmfit.Parameters()
         # go through all pars of this component ...
         for p in self.pars:
             # ... and add their list of all lmfit.Parameter objects
             self.lmfit_par_list.extend(p.lmfit_par_list)
+        # update lmfit.Parameters object from the lmfit_par_list
+        self.lmfit_pars.add_many(*self.lmfit_par_list)
 
     #
     def describe(self, detail: int = 1) -> None:
@@ -1273,7 +1383,7 @@ class Component:
         """
 
         # print info on function
-        print(f"function: {self.fct_str} from {self.package}")
+        print(f"function: {self.fct_str} from {self.package_name}")
         # detailed description
         if detail >= 1:
             # addition or convolution?
@@ -1291,14 +1401,13 @@ class Component:
             else:
                 subcycle_str = f"within subcycle {self.subcycle}"
             # print info
-            print(f"function will be {comp_type_str} [{subcycle_str}]")
+            print(f"function will be {comp_type_str} [{subcycle_str}]\n")
 
-            # print info on passed parameters
-            if hasattr(self, "par_dict") and self.par_dict:
-                for param_name, param_value in self.par_dict.items():
-                    display(f"{self.prefix}{param_name}", param_value)
-            else:
-                print("No parameter info passed!")
+            print("all lmfit.Parameters() [flattened and sorted alphabetically]:")
+            try:
+                self.lmfit_pars.pretty_print()
+            except Exception:  # noqa: BLE001
+                print("lmfit.Parameters() object is empty")
             print()
 
     #
@@ -1391,7 +1500,20 @@ class Component:
                 raise ValueError(
                     f"Energy axis not defined for component '{self.comp_name}'"
                 )
+            # Profile averaging: if any parameter has p_vary, loop over aux_axis
+            p_vary_pars = [p for p in self.pars if p.p_vary]
+            if p_vary_pars:
+                traces = self._value_profile_instances(t_ind=t_ind, **kwargs)
+                avg: np.ndarray = np.sum(np.asarray(traces), axis=0) / len(traces)
+                return avg
             return np.asarray(self.fct(self.energy, *pars, **kwargs))
+        if self.package == fcts_profile:
+            if self.aux_axis is None:
+                raise ValueError(
+                    f"Auxiliary axis not defined for profile "
+                    f"component '{self.comp_name}'"
+                )
+            return np.asarray(self.fct(self.aux_axis, *pars, **kwargs))
         if self.package == fcts_time:
             if self.time is None:
                 raise ValueError(
@@ -1414,7 +1536,70 @@ class Component:
         )
 
     #
-    def plot(self, t_ind: int = 0, **kwargs) -> None:
+    def _value_profile_instances(self, t_ind: int = 0, **kwargs) -> list[np.ndarray]:
+        """
+        Evaluate one energy trace per aux-axis point for profile-varying parameters.
+
+        Parameters
+        ----------
+        t_ind : int, default=0
+            Time index for evaluation
+        **kwargs : dict
+            Additional arguments passed to component function
+
+        Returns
+        -------
+        list of ndarray
+            One component trace per aux-axis index
+        """
+
+        if self.energy is None:
+            raise ValueError(
+                f"Energy axis not defined for component '{self.comp_name}'"
+            )
+
+        p_vary_pars = [p for p in self.pars if p.p_vary]
+        if not p_vary_pars:
+            return [np.asarray(self.value(t_ind, **kwargs))]
+
+        p_model_ref = p_vary_pars[0].p_model
+        if p_model_ref is None or p_model_ref.aux_axis is None:
+            raise ValueError(
+                f"Profile model not initialized for component '{self.comp_name}'. "
+                "Call model.add_profile() before evaluating."
+            )
+
+        n_aux = len(p_model_ref.aux_axis)
+        values: list[np.ndarray] = []
+
+        for i in range(n_aux):
+            pars_i: list[Any] = []
+            for p in self.pars:
+                if p.p_vary and p.p_model is not None:
+                    if i == 0:
+                        # update profile once per time step (handles t_vary profiles)
+                        p.p_model.create_value1D(t_ind=t_ind)
+                    if p.p_model.value1D is None:
+                        raise ValueError(f"Profile value1D is None for par '{p.name}'")
+                    base = cast("list[Any]", ulmfit.par_extract(p.lmfit_par))
+                    pars_i.append(base[0] + p.p_model.value1D[i])
+                else:
+                    pars_i.extend(
+                        p.value(t_ind, update_t_model=(t_ind == 0 and i == 0))
+                    )
+            values.append(np.asarray(self.fct(self.energy, *pars_i, **kwargs)))
+
+        return values
+
+    #
+    def plot(
+        self,
+        t_ind: int = 0,
+        plot_ind: bool = True,
+        plot_every: int = 1,
+        plot_max: int | None = None,
+        **kwargs,
+    ) -> None:
         """
         Plot component as standalone spectrum/dynamics.
 
@@ -1425,9 +1610,33 @@ class Component:
         ----------
         t_ind : int, default=0
             Time index for evaluation
+        plot_ind : bool, default=True
+            For components with profile-varying parameter(s) (p_vary=True):
+            - True: plot one trace per aux-axis point
+            - False: plot single combined trace (average over aux-axis traces)
+            For all other components, a single trace is plotted.
+        plot_every : int, default=1
+            When plotting individual aux-axis traces (plot_ind=True), show
+            every N-th curve (N=1 means show all curves).
+        plot_max : int or None, default=None
+            Optional hard cap on number of individual aux-axis curves to plot.
+            First plot_max traces are shown (spaced according to plot_every).
         **kwargs : dict
-            Additional arguments passed to component function
+            Additional arguments passed to component function.
+            Background components require ``spectrum`` to be provided.
         """
+
+        if plot_every < 1:
+            raise ValueError("plot_every must be >= 1")
+        if plot_max is not None and plot_max < 1:
+            raise ValueError("plot_max must be >= 1 when provided")
+
+        if self.fct_str in background_functions() and kwargs.get("spectrum") is None:
+            raise ValueError(
+                f"Background component '{self.comp_name}' requires keyword argument "
+                "'spectrum' for plotting. Call "
+                "component.plot(..., spectrum=<peak_sum_array>)."
+            )
 
         # get x axis and its label
         if self.package == fcts_energy:
@@ -1436,15 +1645,54 @@ class Component:
         elif self.package == fcts_time:
             x_axis = self.time
             x_name = "Time"
+        elif self.package == fcts_profile:
+            x_axis = self.aux_axis
+            x_name = "Auxiliary axis"
+        else:
+            x_axis = None
+            x_name = "x"
+
+        # For energy components with profile-varying parameters, optionally
+        # show all aux-axis contributions instead of only the combined value.
+        p_vary_present = any(p.p_vary for p in self.pars)
+        if self.package == fcts_energy and p_vary_present:
+            traces = self._value_profile_instances(t_ind=t_ind, **kwargs)
+            if plot_ind:
+                if x_axis is None:
+                    raise ValueError(
+                        f"Energy axis not defined for component '{self.comp_name}'"
+                    )
+                p_vary_pars = [p for p in self.pars if p.p_vary]
+                p_mod = p_vary_pars[0].p_model if p_vary_pars else None
+                aux_axis = p_mod.aux_axis if p_mod is not None else None
+                if aux_axis is None:
+                    raise ValueError(
+                        f"Auxiliary axis not defined for component '{self.comp_name}'"
+                    )
+                # Select curves to display (stride + optional hard cap).
+                indices = list(range(0, len(traces), plot_every))
+                if indices[-1] != len(traces) - 1:
+                    indices.append(len(traces) - 1)
+                if plot_max is not None and len(indices) > plot_max:
+                    indices = indices[:plot_max]
+
+                legend = [f"aux[{i}]={aux_axis[i]:g}" for i in indices]
+                plot_data = [traces[i] for i in indices]
+            else:
+                legend = ["avg(aux-axis instances)"]
+                plot_data = [np.mean(np.asarray(traces), axis=0)]
+        else:
+            plot_data = [self.value(t_ind, **kwargs)]
+            legend = [self.comp_name]
+
         #
         uplt.plot_1D(
-            data=[
-                self.value(t_ind, **kwargs),
-            ],
-            title=f"function: {self.fct_str} from {self.package}]",
+            data=plot_data,
+            title=f"function: {self.fct_str} from {self.package_name}",
             x=x_axis,
             x_label=x_name,
             y_label="Amplitude",
+            legend=legend,
         )
 
 
@@ -1452,10 +1700,11 @@ class Component:
 #
 class Par:
     """
-    Parameter with optional time-dependence and expression support.
+    Parameter with optional time-dependence, profile variation, and expression support.
 
     Par extends lmfit.Parameter to support:
     - Time-varying parameters via Dynamics models
+    - Profile-varying parameters via Profile models (auxiliary-axis averaging)
     - Expression-based constraints referencing other parameters
     - Tracking of time-dependent expression references
 
@@ -1478,10 +1727,14 @@ class Par:
         lmfit Parameters object (contains 1+ parameters)
     t_vary : bool
         Whether parameter has time-dependence (via Dynamics)
-    t_model : Model
+    t_model : Dynamics or None
         Dynamics model describing time evolution (if t_vary=True)
+    p_vary : bool
+        Whether parameter varies over the auxiliary axis (via Profile)
+    p_model : Profile or None
+        Profile model describing variation over aux_axis (if p_vary=True)
     lmfit_par_list : list
-        Flattened list of all lmfit parameters (spectral + temporal)
+        Flattened list of all lmfit parameters (spectral + temporal + profile)
     expr_refs_time_dep : bool
         Whether expression references time-dependent parameters
     expr_string : str or None
@@ -1499,6 +1752,12 @@ class Par:
 
         value(t) = base_value + dynamics_model.value1D[t]
 
+    **Profile Variation:**
+
+    When p_vary=True, Component.value() evaluates the component at every
+    aux_axis point with the profile value added to the base parameter value,
+    then returns the uniform average (integration over auxiliary dimension).
+
     **Expression Handling:**
 
     Expressions are evaluated using asteval (same as lmfit) for safety.
@@ -1514,8 +1773,10 @@ class Par:
 
     lmfit_par_list contains all parameters defining this Par:
 
-    - Without time-dependence: 1 parameter (the spectral one)
+    - Without time/profile-dependence: 1 parameter (the spectral one)
     - With time-dependence: N parameters (spectral + all from Dynamics model)
+    - With profile variation: M parameters (spectral + all from Profile model)
+    - Both: N + M - 1 parameters (spectral counted once)
     """
 
     #
@@ -1524,7 +1785,9 @@ class Par:
         self.info: list[Any] = [] if info is None else list(info)
         self.lmfit_par: lmfit.Parameters = lmfit.Parameters()
         self.t_vary: bool = False
-        self.t_model: Model = Model(f"{name}_tModel")
+        self.t_model: Dynamics | None = None  # set by add_dynamics()
+        self.p_vary: bool = False
+        self.p_model: Profile | None = None  # set by add_profile()
         self.lmfit_par_list: list[lmfit.Parameter] = []
         # Expression analysis attributes
         self.expr_refs_time_dep: bool = False  # flag for time-dependent references
@@ -1555,12 +1818,20 @@ class Par:
         #
         if not self.t_vary:
             print("parameter has no time dependence")
-        elif self.t_vary:
+        elif self.t_vary and self.t_model is not None:
             print(
                 f"parameter has time-dependence described by model {self.t_model.name}"
             )
             if detail == 1:
                 self.t_model.describe()
+        if not self.p_vary:
+            print("parameter has no profile (aux_axis) dependence")
+        else:
+            p_name = self.p_model.name if self.p_model is not None else "?"
+            print(f"parameter has profile described by model {p_name}")
+            if detail == 1 and self.p_model is not None:
+                self.p_model.describe()
+        print()
 
     #
     def create(
@@ -1683,7 +1954,7 @@ class Par:
             # Standard lmfit evaluation
             value = cast("list[Any]", ulmfit.par_extract(self.lmfit_par))
 
-        elif self.t_vary:
+        elif self.t_vary and self.t_model is not None:
             if update_t_model:
                 # update t_model, specifically self.t_model.value1D
                 self.t_model.create_value1D()
@@ -2097,3 +2368,49 @@ class Dynamics(Model):
                 y_type="log",
                 legend=legends,
             )
+
+
+#
+#
+class Profile(Model):
+    """
+    Profile model: parameter variation over an auxiliary physical axis.
+
+    A Profile model describes how one or more spectral parameters vary across
+    an auxiliary axis (e.g. depth, position, fluence). When a parameter has
+    ``p_vary=True``, Component.value() evaluates the component at every point
+    along aux_axis and returns the uniform average — physically representing
+    integration over the auxiliary dimension.
+
+    Analogous to ``Dynamics`` (which varies parameters over the time axis),
+    but simpler: no frequency or subcycles.
+
+    Parameters
+    ----------
+    model_name : str
+        Name of this Profile model. Must match the name of the parameter in
+        the parent model that it describes (same convention as Dynamics).
+
+    Attributes
+    ----------
+    parent_model : Model or None
+        Reference to the parent energy/2D model. Set by Model.add_profile().
+    aux_axis : ndarray or None
+        The auxiliary axis this profile is evaluated over. Inherited from
+        the parent model when add_profile() is called.
+
+    Notes
+    -----
+    Profile model components use functions from ``fcts_profile`` and are
+    evaluated with ``aux_axis`` as their x-axis.
+
+    Multiple p_vary parameters on the same component share the same aux_axis
+    and are evaluated jointly at each aux point (correlated variation).
+
+    Profile model parameters can themselves be time-dependent (``t_vary=True``),
+    enabling spectral diffusion: inhomogeneous broadening that evolves in time.
+    """
+
+    def __init__(self, model_name: str) -> None:
+        super().__init__(model_name)
+        self.parent_model: Model | None = None

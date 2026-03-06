@@ -24,7 +24,9 @@ class TestEnergyParsing:
             ],
             debug=False,
         )
-        return file
+        model = file.model_active
+        assert model is not None, "Model loading failed in setup"
+        return model
 
     #
     def test_simple_energy_model(self):
@@ -34,76 +36,76 @@ class TestEnergyParsing:
         """
 
         # import the model
-        file = self.setUp("simple_energy")
+        model = self.setUp("simple_energy")
 
         # check the model
-        assert file.model_active.name == "simple_energy"
-        assert file.model_active.dim == 1
-        assert len(file.model_active.components) == 4
+        assert model.name == "simple_energy"
+        assert model.dim == 1
+        assert len(model.components) == 4
 
         # check the components
         # Offset (should not be numbered)
-        assert file.model_active.components[0].fct_str == "Offset"
-        assert file.model_active.components[0].comp_name == "Offset"
-        assert file.model_active.components[0].par_dict["y0"] == [2, True, 0, 5]
+        assert model.components[0].fct_str == "Offset"
+        assert model.components[0].comp_name == "Offset"
+        assert model.components[0].par_dict["y0"] == [2, True, 0, 5]
 
         # Shirley (should not be numbered) - now uses [value, vary] format
-        assert file.model_active.components[1].fct_str == "Shirley"
-        assert file.model_active.components[1].comp_name == "Shirley"
-        assert file.model_active.components[1].par_dict["pShirley"] == [400, False]
+        assert model.components[1].fct_str == "Shirley"
+        assert model.components[1].comp_name == "Shirley"
+        assert model.components[1].par_dict["pShirley"] == [400, False]
         # Check that lmfit parameter was created with unbounded min/max
-        shirley_par = file.model_active.lmfit_pars["Shirley_pShirley"]
+        shirley_par = model.lmfit_pars["Shirley_pShirley"]
         assert shirley_par.value == 400
         assert not shirley_par.vary
         assert shirley_par.min == -np.inf
         assert shirley_par.max == np.inf
 
         # GLP_01 (should be numbered)
-        assert file.model_active.components[2].fct_str == "GLP"
-        assert file.model_active.components[2].comp_name == "GLP_01"
-        assert file.model_active.components[2].N == 1
-        assert file.model_active.components[2].par_dict["A"] == [20, True, 5, 25]
-        assert file.model_active.components[2].par_dict["x0"] == [84.5, True, 82, 88]
-        assert file.model_active.components[2].par_dict["F"] == [1.0, True, 0.75, 2.5]
-        assert file.model_active.components[2].par_dict["m"] == [0.3, True, 0, 1]
+        assert model.components[2].fct_str == "GLP"
+        assert model.components[2].comp_name == "GLP_01"
+        assert model.components[2].N == 1
+        assert model.components[2].par_dict["A"] == [20, True, 5, 25]
+        assert model.components[2].par_dict["x0"] == [84.5, True, 82, 88]
+        assert model.components[2].par_dict["F"] == [1.0, True, 0.75, 2.5]
+        assert model.components[2].par_dict["m"] == [0.3, True, 0, 1]
 
         # GLP_02 (should be numbered) - x0 now uses [value, vary] format
-        assert file.model_active.components[3].fct_str == "GLP"
-        assert file.model_active.components[3].comp_name == "GLP_02"
-        assert file.model_active.components[3].N == 2
-        assert file.model_active.components[3].par_dict["A"] == [17, True, 5, 25]
-        assert file.model_active.components[3].par_dict["x0"] == [88.1, True]
+        assert model.components[3].fct_str == "GLP"
+        assert model.components[3].comp_name == "GLP_02"
+        assert model.components[3].N == 2
+        assert model.components[3].par_dict["A"] == [17, True, 5, 25]
+        assert model.components[3].par_dict["x0"] == [88.1, True]
         # Check that lmfit parameter was created with unbounded min/max
-        x0_par = file.model_active.lmfit_pars["GLP_02_x0"]
+        x0_par = model.lmfit_pars["GLP_02_x0"]
         assert x0_par.value == 88.1
         assert x0_par.vary
         assert x0_par.min == -np.inf
         assert x0_par.max == np.inf
-        assert file.model_active.components[3].par_dict["F"] == [1.0, True, 0.75, 2.5]
-        assert file.model_active.components[3].par_dict["m"] == [0.3, True, 0, 1]
+        assert model.components[3].par_dict["F"] == [1.0, True, 0.75, 2.5]
+        assert model.components[3].par_dict["m"] == [0.3, True, 0, 1]
 
     #
     def test_energy_expression_model(self):
         """Test energy parameters with expressions"""
 
         # import the model
-        file = self.setUp("energy_expression")
+        model = self.setUp("energy_expression")
 
         # check the model
-        assert file.model_active.name == "energy_expression"
-        assert file.model_active.dim == 1
-        assert len(file.model_active.components) == 4
+        assert model.name == "energy_expression"
+        assert model.dim == 1
+        assert len(model.components) == 4
 
         # check components
         # Offset
-        assert file.model_active.components[0].fct_str == "Offset"
-        assert file.model_active.components[0].comp_name == "Offset"
-        assert "y0" in file.model_active.components[0].par_dict
+        assert model.components[0].fct_str == "Offset"
+        assert model.components[0].comp_name == "Offset"
+        assert "y0" in model.components[0].par_dict
 
         # Shirley
-        assert file.model_active.components[1].fct_str == "Shirley"
-        assert file.model_active.components[1].comp_name == "Shirley"
-        assert file.model_active.components[1].par_dict["pShirley"] == [
+        assert model.components[1].fct_str == "Shirley"
+        assert model.components[1].comp_name == "Shirley"
+        assert model.components[1].par_dict["pShirley"] == [
             400,
             True,
             1.0e-6,
@@ -111,41 +113,41 @@ class TestEnergyParsing:
         ]
 
         # GLP_01
-        assert file.model_active.components[2].fct_str == "GLP"
-        assert file.model_active.components[2].comp_name == "GLP_01"
-        assert file.model_active.components[2].N == 1
-        assert file.model_active.components[2].par_dict["A"] == [20, True, 5, 25]
-        assert file.model_active.components[2].par_dict["x0"] == [84.5, True, 82, 88]
-        assert file.model_active.components[2].par_dict["F"] == [1.0, True, 0.75, 2.5]
-        assert file.model_active.components[2].par_dict["m"] == [0.3, True, 0, 1]
+        assert model.components[2].fct_str == "GLP"
+        assert model.components[2].comp_name == "GLP_01"
+        assert model.components[2].N == 1
+        assert model.components[2].par_dict["A"] == [20, True, 5, 25]
+        assert model.components[2].par_dict["x0"] == [84.5, True, 82, 88]
+        assert model.components[2].par_dict["F"] == [1.0, True, 0.75, 2.5]
+        assert model.components[2].par_dict["m"] == [0.3, True, 0, 1]
 
         # GLP_02
-        assert file.model_active.components[3].fct_str == "GLP"
-        assert file.model_active.components[3].comp_name == "GLP_02"
-        assert file.model_active.components[3].N == 2
-        assert file.model_active.components[3].par_dict["A"] == ["3/4*GLP_01_A"]
-        assert file.model_active.components[3].par_dict["x0"] == ["GLP_01_x0 +3.6"]
-        assert file.model_active.components[3].par_dict["F"] == ["GLP_01_F"]
-        assert file.model_active.components[3].par_dict["m"] == ["GLP_01_m"]
+        assert model.components[3].fct_str == "GLP"
+        assert model.components[3].comp_name == "GLP_02"
+        assert model.components[3].N == 2
+        assert model.components[3].par_dict["A"] == ["3/4*GLP_01_A"]
+        assert model.components[3].par_dict["x0"] == ["GLP_01_x0 +3.6"]
+        assert model.components[3].par_dict["F"] == ["GLP_01_F"]
+        assert model.components[3].par_dict["m"] == ["GLP_01_m"]
 
     #
     def test_energy_expression_fwd_ref_model(self):
         """Test energy parameters with forward reference expressions"""
-        file = self.setUp("energy_expression_forward_reference")
-        assert file.model_active.name == "energy_expression_forward_reference"
-        assert file.model_active.dim == 1
-        assert len(file.model_active.components) == 4
+        model = self.setUp("energy_expression_forward_reference")
+        assert model.name == "energy_expression_forward_reference"
+        assert model.dim == 1
+        assert len(model.components) == 4
 
         # check components
         # Offset
-        assert file.model_active.components[0].fct_str == "Offset"
-        assert file.model_active.components[0].comp_name == "Offset"
-        assert "y0" in file.model_active.components[0].par_dict
+        assert model.components[0].fct_str == "Offset"
+        assert model.components[0].comp_name == "Offset"
+        assert "y0" in model.components[0].par_dict
 
         # Shirley
-        assert file.model_active.components[1].fct_str == "Shirley"
-        assert file.model_active.components[1].comp_name == "Shirley"
-        assert file.model_active.components[1].par_dict["pShirley"] == [
+        assert model.components[1].fct_str == "Shirley"
+        assert model.components[1].comp_name == "Shirley"
+        assert model.components[1].par_dict["pShirley"] == [
             400,
             True,
             1.0e-6,
@@ -153,22 +155,22 @@ class TestEnergyParsing:
         ]
 
         # GLP_01
-        assert file.model_active.components[2].fct_str == "GLP"
-        assert file.model_active.components[2].comp_name == "GLP_01"
-        assert file.model_active.components[2].N == 1
-        assert file.model_active.components[2].par_dict["A"] == ["3/4*GLP_02_A"]
-        assert file.model_active.components[2].par_dict["x0"] == ["GLP_02_x0 +3.6"]
-        assert file.model_active.components[2].par_dict["F"] == ["GLP_02_F"]
-        assert file.model_active.components[2].par_dict["m"] == ["GLP_02_m"]
+        assert model.components[2].fct_str == "GLP"
+        assert model.components[2].comp_name == "GLP_01"
+        assert model.components[2].N == 1
+        assert model.components[2].par_dict["A"] == ["3/4*GLP_02_A"]
+        assert model.components[2].par_dict["x0"] == ["GLP_02_x0 +3.6"]
+        assert model.components[2].par_dict["F"] == ["GLP_02_F"]
+        assert model.components[2].par_dict["m"] == ["GLP_02_m"]
 
         # GLP_02
-        assert file.model_active.components[3].fct_str == "GLP"
-        assert file.model_active.components[3].comp_name == "GLP_02"
-        assert file.model_active.components[3].N == 2
-        assert file.model_active.components[3].par_dict["A"] == [20, True, 5, 25]
-        assert file.model_active.components[3].par_dict["x0"] == [84.5, True, 82, 88]
-        assert file.model_active.components[3].par_dict["F"] == [1.0, True, 0.75, 2.5]
-        assert file.model_active.components[3].par_dict["m"] == [0.3, True, 0, 1]
+        assert model.components[3].fct_str == "GLP"
+        assert model.components[3].comp_name == "GLP_02"
+        assert model.components[3].N == 2
+        assert model.components[3].par_dict["A"] == [20, True, 5, 25]
+        assert model.components[3].par_dict["x0"] == [84.5, True, 82, 88]
+        assert model.components[3].par_dict["F"] == [1.0, True, 0.75, 2.5]
+        assert model.components[3].par_dict["m"] == [0.3, True, 0, 1]
 
 
 #
@@ -187,7 +189,9 @@ class TestTimeParsing:
             ],
             par_name="parTEST",  # this is the name of the time-dependent parameter
             debug=True,
+            model_type="dynamics",
         )
+        assert model is not None, "Model loading failed in setup"
         return model
 
     #
@@ -258,35 +262,37 @@ class Test2DModelParsing:
             ],
             par_name=par_name,
         )
-        return file
+        model = file.model_active
+        assert model is not None, "Model loading failed in setup"
+        return model
 
     #
     def test_simple_2D_model(self):
         """Add IRF+exp_decay time-dependence to the simple energy model"""
-        file = self.setUp(
+        model = self.setUp(
             model_energy="simple_energy",
             par_name="GLP_01_x0",
             model_time="MonoExpPosIRF",
         )
 
         # check the model
-        assert file.model_active.name == "simple_energy"
-        assert file.model_active.dim == 2
-        assert len(file.model_active.components) == 4
-        assert file.model_active.components[0].fct_str == "Offset"
-        assert file.model_active.components[0].comp_name == "Offset"
-        assert file.model_active.components[0].par_dict["y0"] == [2, True, 0, 5]
-        assert file.model_active.components[1].fct_str == "Shirley"
-        assert file.model_active.components[1].comp_name == "Shirley"
+        assert model.name == "simple_energy"
+        assert model.dim == 2
+        assert len(model.components) == 4
+        assert model.components[0].fct_str == "Offset"
+        assert model.components[0].comp_name == "Offset"
+        assert model.components[0].par_dict["y0"] == [2, True, 0, 5]
+        assert model.components[1].fct_str == "Shirley"
+        assert model.components[1].comp_name == "Shirley"
         # Updated to check [value, vary] format
-        assert file.model_active.components[1].par_dict["pShirley"] == [400, False]
+        assert model.components[1].par_dict["pShirley"] == [400, False]
         # GLP_01
-        assert file.model_active.components[2].fct_str == "GLP"
-        assert file.model_active.components[2].comp_name == "GLP_01"
-        assert file.model_active.components[2].par_dict["A"] == [20, True, 5, 25]
-        assert file.model_active.components[2].par_dict["x0"] == [84.5, True, 82, 88]
+        assert model.components[2].fct_str == "GLP"
+        assert model.components[2].comp_name == "GLP_01"
+        assert model.components[2].par_dict["A"] == [20, True, 5, 25]
+        assert model.components[2].par_dict["x0"] == [84.5, True, 82, 88]
         # x0 is the time-dependent parameter
-        td_par_model = file.model_active.components[2].pars[1].t_model
+        td_par_model = model.components[2].pars[1].t_model
         assert td_par_model.components[0].comp_name == "gaussCONV"
         assert td_par_model.components[0].par_dict["SD"] == [5.0e-2, True, 0, 1]
         assert td_par_model.components[1].fct_str == "expFun"
@@ -296,15 +302,15 @@ class Test2DModelParsing:
         assert td_par_model.components[1].par_dict["t0"] == [0, False, 0, 1]
         assert td_par_model.components[1].par_dict["y0"] == [0, False, 0, 1]
         # end of time-dependent parameter model
-        assert file.model_active.components[2].par_dict["F"] == [1.0, True, 0.75, 2.5]
-        assert file.model_active.components[2].par_dict["m"] == [0.3, True, 0, 1]
+        assert model.components[2].par_dict["F"] == [1.0, True, 0.75, 2.5]
+        assert model.components[2].par_dict["m"] == [0.3, True, 0, 1]
         # GLP_02 - x0 now uses [value, vary] format
-        assert file.model_active.components[3].fct_str == "GLP"
-        assert file.model_active.components[3].comp_name == "GLP_02"
-        assert file.model_active.components[3].par_dict["A"] == [17, True, 5, 25]
-        assert file.model_active.components[3].par_dict["x0"] == [88.1, True]
-        assert file.model_active.components[3].par_dict["F"] == [1.0, True, 0.75, 2.5]
-        assert file.model_active.components[3].par_dict["m"] == [0.3, True, 0, 1]
+        assert model.components[3].fct_str == "GLP"
+        assert model.components[3].comp_name == "GLP_02"
+        assert model.components[3].par_dict["A"] == [17, True, 5, 25]
+        assert model.components[3].par_dict["x0"] == [88.1, True]
+        assert model.components[3].par_dict["F"] == [1.0, True, 0.75, 2.5]
+        assert model.components[3].par_dict["m"] == [0.3, True, 0, 1]
 
     #
     def test_time_dependence_on_expression_parameter_raises(self):

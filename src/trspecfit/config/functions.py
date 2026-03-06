@@ -2,7 +2,7 @@
 Configuration for trspecfit function libraries.
 
 This module defines which functions are available for use as spectral components,
-time dynamics, and convolution kernels. It provides utilities for:
+time dynamics, profile functions, and convolution kernels. It provides utilities for:
 - Identifying function types (backgrounds, convolutions, regular components)
 - Managing component naming/numbering rules
 - Discovering available functions dynamically from function libraries
@@ -13,8 +13,8 @@ and how the mcp module constructs models from user input.
 
 import inspect
 
-from trspecfit.functions import distribution as fcts_dist
 from trspecfit.functions import energy as fcts_energy
+from trspecfit.functions import profile as fcts_profile
 from trspecfit.functions import time as fcts_time
 
 
@@ -28,7 +28,7 @@ def all_functions():
     function_names = set()
 
     # Get all function names from each module
-    for module in [fcts_energy, fcts_time, fcts_dist]:
+    for module in [fcts_energy, fcts_time, fcts_profile]:
         for name in dir(module):
             # Only include callable functions (not constants or classes)
             if callable(getattr(module, name)) and not name.startswith("_"):
@@ -166,7 +166,7 @@ def get_function_parameters(function_name):
 
     # Find which module contains this function
     func = None
-    for module in [fcts_energy, fcts_time, fcts_dist]:
+    for module in [fcts_energy, fcts_time, fcts_profile]:
         if hasattr(module, function_name):
             func = getattr(module, function_name)
             break

@@ -14,21 +14,24 @@ Project : Project configuration and directory management
 
 File : Data container with model fitting capabilities
     Represents a single spectroscopy dataset (1D or 2D) with its associated
-    energy/time axes. Manages multiple models for comparison, handles baseline
-    extraction, and provides methods for baseline fitting, Slice-by-Slice
-    fitting, and full 2D time- and energy-resolved fitting.
+    energy/time/auxiliary axes. Manages multiple models for comparison, handles
+    baseline extraction, and provides methods for baseline fitting, Slice-by-Slice
+    fitting, and full 2D time- and energy-resolved fitting. Supports parameter
+    profiles over an auxiliary axis via Profile models.
 
 Workflow
 --------
 1. **Setup**: Create Project with configuration settings
-2. **Load Data**: Create File object with data, energy, and time axes
+2. **Load Data**: Create File object with data, energy, time, and optionally aux_axis
 3. **Define Models**: Load models from YAML files using File.load_model()
-4. **Set Limits**: Define fitting regions with File.set_fit_limits()
-5. **Fit**: Execute appropriate fitting method:
+4. **Attach Profiles** (optional): Add parameter profiles with File.add_par_profile()
+5. **Add Dynamics** (optional): Add time-dependence with File.add_time_dependence()
+6. **Set Limits**: Define fitting regions with File.set_fit_limits()
+7. **Fit**: Execute appropriate fitting method:
    - File.fit_baseline() for ground state spectrum
    - File.fit_SliceBySlice() for time-independent analysis
    - File.fit_2Dmodel() for global time- and energy-resolved fitting
-6. **Export**: Results automatically saved to project directory structure
+8. **Export**: Results automatically saved to project directory structure
 
 Features
 --------
@@ -37,6 +40,7 @@ Features
 - YAML-based project and model configuration
 - Flexible plot customization via PlotConfig
 - Support for 1D (energy-only) and 2D (time + energy) datasets
+- Parameter profiles over auxiliary axis (e.g. depth) via Profile models
 - Baseline/pre-trigger spectrum extraction and fitting
 - Slice-by-Slice time-series fitting with parameter evolution tracking
 - Global 2D fitting with time-dependent parameters
@@ -65,12 +69,12 @@ from ruamel.yaml import YAML
 
 from trspecfit import fitlib, mcp, spectra
 
-# from trspecfit.functions import distribution as fcts_dist
 # standardized plotting configuration
 from trspecfit.config.plot import PlotConfig
 
-# function library for energy, time, and distribution components
+# function library for energy, time, and profile components
 from trspecfit.functions import energy as fcts_energy
+from trspecfit.functions import profile as fcts_profile
 from trspecfit.functions import time as fcts_time
 from trspecfit.utils import arrays as uarr
 from trspecfit.utils import lmfit as ulmfit
@@ -274,6 +278,9 @@ class File:
     time : array-like, optional
         Time axis values (for 2D data only). If None and 2D data provided,
         uses indices.
+    aux_axis : array-like, optional
+        Auxiliary physical axis (e.g. depth, position) for Profile models.
+        Propagated to models loaded via ``load_model()``.
 
     Attributes
     ----------
@@ -291,6 +298,8 @@ class File:
         Energy axis
     time : ndarray or None
         Time axis (None for 1D data)
+    aux_axis : ndarray or None
+        Auxiliary physical axis for Profile models (None if unused)
     models : list of Model
         All models loaded for this file
     model_active : Model or None
@@ -315,13 +324,15 @@ class File:
     Notes
     -----
     **Typical Workflow:**
-    1. Create File with data, energy, time
+    1. Create File with data, energy, time (and optionally aux_axis)
     2. Load model(s) with load_model()
     3. Set active model with set_active_model()
-    4. Define baseline with define_baseline() (for 2D data)
-    5. Set fit limits with set_fit_limits()
-    6. Fit baseline with fit_baseline()
-    7. Perform Slice-by-Slice or 2D fit with fit_SliceBySlice() or fit_2Dmodel()
+    4. Optionally attach Profile models with add_par_profile()
+    5. Optionally add time-dependence with add_time_dependence()
+    6. Define baseline with define_baseline() (for 2D data)
+    7. Set fit limits with set_fit_limits()
+    8. Fit baseline with fit_baseline()
+    9. Perform Slice-by-Slice or 2D fit with fit_SliceBySlice() or fit_2Dmodel()
 
     **Model Management:**
     File can manage multiple models simultaneously for comparison. Use
@@ -342,6 +353,7 @@ class File:
         data: np.ndarray | None = None,
         energy: np.ndarray | None = None,
         time: np.ndarray | None = None,
+        aux_axis: np.ndarray | None = None,
     ) -> None:
         # pass parent project or (default) create a functioning test project environment
         self.p = parent_project if parent_project is not None else Project(path=None)
@@ -361,6 +373,9 @@ class File:
             self.time = time
         else:
             self.time = np.arange(0, np.shape(data)[0])
+        self.aux_axis: np.ndarray | None = (
+            aux_axis  # auxiliary physical axis (e.g. depth)
+        )
         # keep track of models that are used to fit this file/data
         self.models: list[mcp.Model] = []  # $% could do @property, setter, getter here?
         self.model_active: mcp.Model | None = None  # default model to work with
@@ -544,6 +559,7 @@ class File:
         model_info: list[str],
         par_name: str = "",
         debug: bool = False,
+        model_type: Literal["energy", "dynamics", "profile"] = "energy",
     ) -> mcp.Model | None:
         """
         Load a model from YAML file.
@@ -564,20 +580,27 @@ class File:
             - For multi-cycle time-dependent models: ``['model1', 'model2', ...]``.
               Element 0 applies to entire time axis, elements 1+ apply to
               respective subcycles only.
+            - For profile models: ``['model_name']`` (single element).
 
         par_name : str, default=''
-            Parameter name for time-dependent models. Empty string (default)
-            indicates energy-dependent model. For Dynamics models, must match
-            the name of the 2D model parameter whose time-dependence is
-            described by the model being loaded.
+            Parameter name for dynamics and profile models. Empty string (default)
+            indicates an energy-dependent model. For ``"dynamics"`` and ``"profile"``
+            model types, must match the name of the energy model parameter that the
+            loaded model will be attached to.
         debug : bool, default=False
             If True, print detailed parameter information during loading
+        model_type : {'energy', 'dynamics', 'profile'}, default='energy'
+            Type of model to load:
+
+            - ``'energy'``: energy- (and time-)dependent spectral model
+            - ``'dynamics'``: time-dependence of a single model parameter
+            - ``'profile'``: spatial profile of a single model parameter over aux_axis
 
         Returns
         -------
         Model or None
-            Returns the loaded model for time-dependent models (when par_name is set),
-            None for energy-dependent models (which are set as active model).
+            Returns the loaded model for ``'dynamics'`` and ``'profile'`` types.
+            Returns ``None`` for ``'energy'`` models (which are set as active model).
         """
 
         # sanity checks
@@ -586,33 +609,41 @@ class File:
                 "model_info must be a list.\n"
                 "Usage:\n"
                 "  [name_model1,] for energy-dependent models\n"
-                "  [name_model1, name_model2 (optional), ...] for time-dependent models"
+                "  [name_model1, name_model2 (optional), ...]"
+                " for time-dependent models\n"
+                "  [name_model1,] for profile models"
             )
-        if par_name == "" and len(model_info) != 1:
+        if model_type == "energy" and len(model_info) != 1:
             raise ValueError(
-                'Energy-resolved data (par_name="") require a single model name in'
-                " model_info.\nPass model name as the only element in the model_info"
-                " list.\nOR pass a non-empty par_name to define mcp.Dynamics model"
-                " with one or more model names."
+                'Energy-resolved data (model_type="energy") require a single model'
+                " name in model_info.\nPass model name as the only element in the"
+                " model_info list."
             )
-        if self.select_model(model_info) is not None:
+        if model_type == "profile" and len(model_info) != 1:
             raise ValueError(
-                f'Model named "{self.model_list_to_name(model_info)}" already exists.'
-                " Delete the existing model or change the name of the new model."
+                'Profile models (model_type="profile") require a single model name'
+                " in model_info."
             )
+        if model_type == "energy":
+            if self.select_model(model_info) is not None:
+                raise ValueError(
+                    f'Model named "{self.model_list_to_name(model_info)}"'
+                    " already exists. Delete the existing model"
+                    " or change the name of the new model."
+                )
 
         # Load and process YAML file with appropriate numbering strategy
         model_yaml_path = self.p.path / pathlib.Path(model_yaml)
         model_info_dict = uparsing.load_and_number_yaml_components(
             model_yaml_path=model_yaml_path,
             model_info=model_info,
-            is_dynamics=par_name != "",
+            is_dynamics=model_type == "dynamics",
             debug=debug,
         )
 
         # Initialize model
         fcts_package: types.ModuleType
-        if par_name == "":
+        if model_type == "energy":
             if self.p.show_info >= 1:
                 print(
                     f"Loading model to describe energy- (and time-)dependent data: "
@@ -620,7 +651,7 @@ class File:
                 )
             fcts_package = fcts_energy
             loaded_model = mcp.Model(self.model_list_to_name(model_info))
-        else:
+        elif model_type == "dynamics":
             if self.p.show_info >= 1:
                 print(
                     f"Loading model to describe time-dependence of a model parameter: "
@@ -628,6 +659,19 @@ class File:
                 )
             fcts_package = fcts_time
             loaded_model = mcp.Dynamics(par_name)
+        elif model_type == "profile":
+            if self.p.show_info >= 1:
+                print(
+                    f"Loading profile model for parameter: "
+                    f"{par_name} of {self.model_list_to_name(model_info)} model"
+                )
+            fcts_package = fcts_profile
+            loaded_model = mcp.Profile(par_name)
+        else:
+            raise ValueError(
+                f'Model type "{model_type}" not recognized. Must be one of:'
+                ' "energy", "dynamics", or "profile".'
+            )
 
         # Inherit necessary model attributes from function input, file, and project
         loaded_model.yaml_f_name = pathlib.Path(model_yaml).stem  # yaml file name
@@ -636,6 +680,7 @@ class File:
             loaded_model.subcycles = len(model_info) - 1
         loaded_model.energy = self.energy  # $% remove redundancy?
         loaded_model.time = self.time  # $% remove redundancy?
+        loaded_model.aux_axis = self.aux_axis
 
         all_comps = []  # initialize component list
 
@@ -663,7 +708,7 @@ class File:
         loaded_model.add_components(all_comps)
 
         # Add model to file
-        if not isinstance(loaded_model, mcp.Dynamics):
+        if model_type == "energy":
             self.models.append(loaded_model)
             self.set_active_model(model_info)  # set as current active model
             return None
@@ -1410,6 +1455,8 @@ class File:
         Add time dependence for one parameter of currently active model.
 
         Loads a "Dynamics"-type model to describe time-dependent behavior.
+        The parameter can live either directly in the energy model or inside
+        a Profile model attached to an energy model parameter.
 
         Parameters
         ----------
@@ -1418,7 +1465,8 @@ class File:
         model_info : list of str
             Model name(s) for time-dependent behavior
         par_name : str
-            Name of parameter in active model to make time-dependent
+            Name of parameter to make time-dependent. Can be an energy model
+            parameter or a profile model parameter.
         frequency : float, default=-1
             Repetition frequency for time-dependent behavior.
             -1 (default) means no repetition (single cycle).
@@ -1429,6 +1477,7 @@ class File:
             model_info,
             par_name,
             debug=not self.p.show_info < 2,
+            model_type="dynamics",
         )  # load
         if t_mod is None:
             warnings.warn(
@@ -1442,8 +1491,84 @@ class File:
                 stacklevel=2,
             )
             return
-        self.model_active.add_dynamics(cast("mcp.Dynamics", t_mod), frequency)  # add
-        self.model_active.dim = 2  # increase dimension of model to 2
+
+        # Try energy model first
+        ci, _pi = self.model_active.find_par_by_name(par_name)
+        if ci is not None:
+            self.model_active.add_dynamics(cast("mcp.Dynamics", t_mod), frequency)
+            self.model_active.dim = 2
+            return
+
+        # Search profile models attached to energy model parameters
+        for comp in self.model_active.components:
+            for par in comp.pars:
+                if par.p_vary and par.p_model is not None:
+                    pci, _ppi = par.p_model.find_par_by_name(par_name)
+                    if pci is not None:
+                        # Add dynamics to the profile model
+                        par.p_model.add_dynamics(cast("mcp.Dynamics", t_mod), frequency)
+                        # Sync dynamics params into the energy model's parameter list
+                        par.lmfit_par_list.extend(t_mod.lmfit_par_list)
+                        self.model_active.update()
+                        self.model_active.dim = 2
+                        return
+
+        # Not found in energy model or any attached profile
+        raise ValueError(
+            f"Parameter '{par_name}' not found in model "
+            f"'{self.model_active.name}' or any attached profile models."
+        )
+
+    #
+    def add_par_profile(
+        self,
+        model_yaml: PathLike,
+        model_info: list[str],
+        par_name: str,
+    ) -> None:
+        """
+        Add a parameter profile over the auxiliary axis to the currently active model.
+
+        Loads a ``"profile"``-type model from a YAML file and attaches it to the
+        named parameter of the currently active model, so that the parameter varies
+        over ``aux_axis`` (uniform averaging over the auxiliary dimension).
+
+        If any parameters inside the profile model are time-dependent
+        (``t_vary=True``), ``model_active.dim`` is automatically set to 2.
+
+        Parameters
+        ----------
+        model_yaml : str or Path
+            YAML file name defining the Profile model
+        model_info : list of str
+            Model name(s) for the profile (single element)
+        par_name : str
+            Name of the parameter in the active model to attach the profile to
+            (e.g. ``'GLP_01_A'``)
+        """
+        p_mod = self.load_model(
+            model_yaml,
+            model_info,
+            par_name,
+            debug=not self.p.show_info < 2,
+            model_type="profile",
+        )
+        if p_mod is None:
+            warnings.warn(
+                "Profile model could not be loaded; profile not added.",
+                stacklevel=2,
+            )
+            return
+        if self.model_active is None:
+            warnings.warn(
+                "No active model available; profile not added.",
+                stacklevel=2,
+            )
+            return
+        self.model_active.add_profile(cast("mcp.Profile", p_mod))
+        # auto-promote to 2D if any parameter inside the profile is time-dependent
+        if any(p.t_vary for comp in p_mod.components for p in comp.pars):
+            self.model_active.dim = 2
 
     #
     def fit_2Dmodel(self, model_name: str, fit: int, **fit_wrapper_kwargs) -> None:

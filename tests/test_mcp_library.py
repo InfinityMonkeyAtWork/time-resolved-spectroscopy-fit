@@ -6,10 +6,9 @@ import numpy as np
 import pytest
 
 from trspecfit.functions import energy as fcts_energy
+from trspecfit.functions import profile as fcts_profile
 from trspecfit.functions import time as fcts_time
-from trspecfit.mcp import Component, Model, Par
-
-# from trspecfit.functions import distribution as fcts_distribution  # To be implemented
+from trspecfit.mcp import Component, Dynamics, Model, Par, Profile
 
 
 #
@@ -77,27 +76,41 @@ class TestMCPModel:
         assert mod2D.components[2].fct_str == "GLP"
         assert mod2D.components[3].fct_str == "GLP"
 
-    # $% parameter distributions to be implemented
-    # def test_model_parameter_distribution(self):
-    #     """Test parameter distribution functionality"""
-    #     # Create a simple model for testing
-    #     model = Model('test_dist')
-    #     model.energy = np.linspace(80, 90, 100)
-    #     model.time = np.linspace(0, 10, 50)
+    #
+    def test_model_parameter_profile(self):
+        """Profile model adds p_vary to par and produces averaged spectrum."""
+        mod = Model("test_profile")
+        mod.energy = np.linspace(80, 90, 100)
+        mod.aux_axis = np.linspace(0, 5, 20)
 
-    #     # Add a GLP component
-    #     c_peak = Component('GLP')
-    #     c_peak.add_pars({
-    #         'A': [10, True, 5, 15],
-    #         'x0': [85, True, 80, 90],
-    #         'F': [1.5, True, 1, 2],
-    #         'm': [0.3, False, 0, 1]
-    #     })
-    #     model.add_components([c_peak])
+        c_peak = Component("GLP_01")
+        c_peak.add_pars(
+            {
+                "A": [10, True, 1, 20],
+                "x0": [85, False],
+                "F": [1.5, False],
+                "m": [0, False],
+            }
+        )
+        mod.add_components([c_peak])
 
-    #     # Test parameter distribution
-    #     # ...
-    #     assert bla bla
+        p_model = Profile("GLP_01_A")
+        p_model.aux_axis = mod.aux_axis
+        c_prof = Component("exp_decay_01", fcts_profile)
+        c_prof.add_pars({"A": [1.0, False], "tau": [2.0, False]})
+        p_model.add_components([c_prof])
+
+        mod.add_profile(p_model)
+
+        a_par = mod.components[0].pars[0]
+        assert a_par.p_vary
+        assert a_par.p_model is p_model
+
+        val = mod.create_value1D(return1D=1)
+        assert val is not None
+        assert val.shape == mod.energy.shape
+        assert np.isfinite(val).all()
+        assert np.any(val > 0)
 
 
 #
@@ -194,7 +207,7 @@ class TestMCPParameter:
         assert par.name == "test_param"
         assert par.info == []
         assert not par.t_vary
-        assert par.t_model is not None
+        assert par.t_model is None
 
     #
     def test_parameter_with_info(self):
@@ -329,7 +342,7 @@ class TestMCPIntegration:
         mod2D.add_components([c_Offset, c_peak])
 
         # Create dynamics model for x0 parameter
-        t_mod = Model("GLP_01_x0")
+        t_mod = Dynamics("GLP_01_x0")
         t_mod.time = mod2D.time
 
         c_IRF = Component("gaussCONV", fcts_time)
@@ -470,7 +483,6 @@ class TestMCPNormalization:
     def test_time_normalization(self):
         """Test time normalization for multi-cycle dynamics"""
         # Create a dynamics model with frequency
-        from trspecfit.mcp import Dynamics
 
         t_mod = Dynamics("test_normalization")
         t_mod.time = np.linspace(0, 100, 1000)
@@ -485,6 +497,7 @@ class TestMCPNormalization:
 
         # Test that normalized time is calculated
         if hasattr(t_mod, "time_norm"):
+            assert t_mod.time_norm is not None
             assert len(t_mod.time_norm) == len(t_mod.time)
 
     #
@@ -496,6 +509,277 @@ class TestMCPNormalization:
 
         assert comp.subcycle == 1
         assert comp.comp_type == "add"  # Default for non-background functions
+
+
+#
+#
+class TestMCPProfile:
+    """Test Profile model functionality."""
+
+    def _make_model_with_peak(self, aux_axis=None):
+        """Helper: energy model with one GLP_01 component."""
+        mod = Model("test")
+        mod.energy = np.linspace(80, 90, 100)
+        mod.aux_axis = aux_axis if aux_axis is not None else np.linspace(0, 5, 20)
+
+        c_peak = Component("GLP_01")
+        c_peak.add_pars(
+            {
+                "A": [10, True, 1, 20],
+                "x0": [85, False],
+                "F": [1.5, False],
+                "m": [0, False],
+            }
+        )
+        mod.add_components([c_peak])
+        return mod
+
+    def _make_exp_profile(self, name, aux_axis):
+        """Helper: Profile model with a single exp_decay component."""
+        p_model = Profile(name)
+        p_model.aux_axis = aux_axis
+        c_prof = Component("exp_decay_01", fcts_profile)
+        c_prof.add_pars({"A": [1.0, False], "tau": [2.0, False]})
+        p_model.add_components([c_prof])
+        return p_model
+
+    def test_profile_class_creation(self):
+        """Profile should inherit from Model and carry parent_model."""
+        p = Profile("test_profile")
+        assert p.name == "test_profile"
+        assert p.parent_model is None
+        assert p.aux_axis is None
+
+    def test_add_profile_sets_p_vary(self):
+        """add_profile() should set p_vary=True on the target parameter."""
+        mod = self._make_model_with_peak()
+        p_model = self._make_exp_profile("GLP_01_A", mod.aux_axis)
+
+        mod.add_profile(p_model)
+
+        a_par = mod.components[0].pars[0]
+        assert a_par.p_vary is True
+        assert a_par.p_model is p_model
+
+    def test_add_profile_propagates_aux_axis(self):
+        """add_profile() propagates aux_axis to Profile and its components."""
+        mod = self._make_model_with_peak()
+        p_model = self._make_exp_profile("GLP_01_A", mod.aux_axis)
+        mod.add_profile(p_model)
+
+        assert p_model.aux_axis is not None
+        assert mod.aux_axis is not None
+
+        assert np.array_equal(p_model.aux_axis, mod.aux_axis)
+        for comp in p_model.components:
+            assert comp.aux_axis is not None
+            assert np.array_equal(comp.aux_axis, mod.aux_axis)
+
+    def test_add_profile_sets_parent_model(self):
+        """add_profile() should set parent_model on the Profile."""
+        mod = self._make_model_with_peak()
+        p_model = self._make_exp_profile("GLP_01_A", mod.aux_axis)
+        mod.add_profile(p_model)
+        assert p_model.parent_model is mod
+
+    def test_profile_value1D_initialized(self):
+        """Profile.value1D should be set after add_profile."""
+        mod = self._make_model_with_peak()
+        p_model = self._make_exp_profile("GLP_01_A", mod.aux_axis)
+        mod.add_profile(p_model)
+
+        assert p_model.value1D is not None
+        assert mod.aux_axis is not None
+        assert len(p_model.value1D) == len(mod.aux_axis)
+
+    def test_component_value_averaging(self):
+        """Component with p_vary should return uniform average over aux_axis."""
+        aux = np.linspace(0, 5, 20)
+        mod = self._make_model_with_peak(aux_axis=aux)
+        p_model = self._make_exp_profile("GLP_01_A", aux)
+        mod.add_profile(p_model)
+
+        # Evaluate: should be finite and match energy shape
+        val = mod.create_value1D(return1D=1)
+        assert val is not None
+        assert mod.energy is not None
+        assert val.shape == mod.energy.shape
+        assert np.isfinite(val).all()
+        assert np.any(val > 0)
+
+    def test_profile_differs_from_no_profile(self):
+        """Profile averaging should differ from the base parameter alone."""
+        aux = np.linspace(0, 5, 20)
+        energy = np.linspace(80, 90, 100)
+
+        # Model without profile: A = 10 (base)
+        mod_flat = Model("flat")
+        mod_flat.energy = energy
+        c1 = Component("GLP_01")
+        c1.add_pars(
+            {
+                "A": [10, True, 1, 20],
+                "x0": [85, False],
+                "F": [1.5, False],
+                "m": [0, False],
+            }
+        )
+        mod_flat.add_components([c1])
+        val_flat = mod_flat.create_value1D(return1D=1)
+
+        # Model with profile: base A=0, profile adds exp_decay(depth, A=10, tau=2)
+        mod_prof = Model("profiled")
+        mod_prof.energy = energy
+        mod_prof.aux_axis = aux
+        c2 = Component("GLP_01")
+        c2.add_pars(
+            {"A": [0, False], "x0": [85, False], "F": [1.5, False], "m": [0, False]}
+        )
+        mod_prof.add_components([c2])
+        p_model = self._make_exp_profile("GLP_01_A", aux)
+        mod_prof.add_profile(p_model)
+        val_prof = mod_prof.create_value1D(return1D=1)
+
+        assert val_flat is not None
+        assert val_prof is not None
+        # Profiles should NOT equal the flat case (different amplitudes)
+        assert not np.allclose(val_flat, val_prof)
+
+    def test_multiple_p_vary_pars_same_component(self):
+        """Two p_vary parameters on one component share the same aux_axis loop."""
+        aux = np.linspace(0, 5, 15)
+        mod = Model("multi_profile")
+        mod.energy = np.linspace(80, 90, 100)
+        mod.aux_axis = aux
+
+        c_peak = Component("GLP_01")
+        c_peak.add_pars(
+            {"A": [0, False], "x0": [0, False], "F": [1.5, False], "m": [0, False]}
+        )
+        mod.add_components([c_peak])
+
+        # Profile on A: exp_decay
+        p_A = Profile("GLP_01_A")
+        p_A.aux_axis = aux
+        c_A = Component("exp_decay_01", fcts_profile)
+        c_A.add_pars({"A": [10.0, False], "tau": [2.0, False]})
+        p_A.add_components([c_A])
+        mod.add_profile(p_A)
+
+        # Profile on x0: linear (band bending)
+        p_x0 = Profile("GLP_01_x0")
+        p_x0.aux_axis = aux
+        c_x0 = Component("linear_01", fcts_profile)
+        c_x0.add_pars({"m": [0.1, False], "b": [85.0, False]})
+        p_x0.add_components([c_x0])
+        mod.add_profile(p_x0)
+
+        val = mod.create_value1D(return1D=1)
+        assert val is not None
+        assert val.shape == mod.energy.shape
+        assert np.isfinite(val).all()
+
+    def test_add_profile_raises_without_aux_axis(self):
+        """add_profile() should raise ValueError if aux_axis is not set."""
+        mod = Model("no_aux")
+        mod.energy = np.linspace(80, 90, 100)
+        # No aux_axis set
+
+        c_peak = Component("GLP_01")
+        c_peak.add_pars(
+            {
+                "A": [10, True, 1, 20],
+                "x0": [85, False],
+                "F": [1.5, False],
+                "m": [0, False],
+            }
+        )
+        mod.add_components([c_peak])
+
+        p_model = Profile("GLP_01_A")
+        with pytest.raises(ValueError, match="aux_axis"):
+            mod.add_profile(p_model)
+
+    def test_add_profile_raises_for_expression_par(self):
+        """add_profile() should raise ValueError for expression parameters."""
+        mod = Model("expr_model")
+        mod.energy = np.linspace(80, 90, 100)
+        mod.aux_axis = np.linspace(0, 5, 20)
+
+        c1 = Component("GLP_01")
+        c1.add_pars(
+            {
+                "A": [10, True, 1, 20],
+                "x0": [85, False],
+                "F": [1.5, False],
+                "m": [0, False],
+            }
+        )
+        c2 = Component("GLP_02")
+        c2.add_pars(
+            {"A": ["GLP_01_A"], "x0": [85, False], "F": [1.5, False], "m": [0, False]}
+        )
+        mod.add_components([c1, c2])
+
+        p_model = Profile("GLP_02_A")
+        with pytest.raises(ValueError, match="expression"):
+            mod.add_profile(p_model)
+
+    def test_file_aux_axis_propagation(self):
+        """File.aux_axis should propagate to loaded Model via load_model()."""
+        from trspecfit import File, Project
+
+        project = Project(path="tests")
+        file = File(parent_project=project)
+        file.energy = np.linspace(80, 90, 100)
+        file.time = np.linspace(-10, 100, 50)
+        file.aux_axis = np.linspace(0, 5, 20)
+
+        file.load_model(
+            model_yaml="test_models_energy.yaml",
+            model_info=["energy_expression"],
+        )
+        assert file.model_active is not None
+        assert file.model_active.aux_axis is not None
+        assert np.array_equal(file.model_active.aux_axis, file.aux_axis)
+
+    def test_profile_with_dynamics(self):
+        """Profile on an amplitude parameter should work alongside time dynamics."""
+
+        aux = np.linspace(0, 5, 15)
+        energy = np.linspace(80, 90, 100)
+        time = np.linspace(-10, 50, 60)
+
+        mod = Model("combined")
+        mod.energy = energy
+        mod.time = time
+        mod.aux_axis = aux
+
+        c_peak = Component("GLP_01")
+        c_peak.add_pars(
+            {"A": [0, False], "x0": [85, False], "F": [1.5, False], "m": [0, False]}
+        )
+        mod.add_components([c_peak])
+
+        # Add exp_decay profile to A
+        p_model = self._make_exp_profile("GLP_01_A", aux)
+        mod.add_profile(p_model)
+
+        # Add dynamics to x0
+        t_mod = Dynamics("GLP_01_x0")
+        t_mod.time = time
+        c_exp = Component("expFun", fcts_time)
+        c_exp.add_pars(
+            {"A": [2, False], "tau": [20, False], "t0": [0, False], "y0": [0, False]}
+        )
+        t_mod.add_components([c_exp])
+        mod.add_dynamics(t_mod)
+
+        # Should evaluate at t_ind=5 without error
+        val = mod.create_value1D(t_ind=5, return1D=1)
+        assert val is not None
+        assert val.shape == energy.shape
+        assert np.isfinite(val).all()
 
 
 if __name__ == "__main__":
