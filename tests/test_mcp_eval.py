@@ -41,6 +41,7 @@ def test_eval_energy_expression_value1d():
 
     value_1d = model.create_value1D(return1D=1)
     assert value_1d is not None
+    assert file.energy is not None
     assert value_1d.shape == file.energy.shape
     assert np.isfinite(value_1d).all()
 
@@ -83,5 +84,7 @@ def test_eval_time_dependent_expression_value2d():
 
     model.create_value2D()
     assert model.value2D is not None
+    assert file.time is not None
+    assert file.energy is not None
     assert model.value2D.shape == (len(file.time), len(file.energy))
     assert np.isfinite(model.value2D).all()

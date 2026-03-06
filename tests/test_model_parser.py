@@ -293,6 +293,7 @@ class Test2DModelParsing:
         assert model.components[2].par_dict["x0"] == [84.5, True, 82, 88]
         # x0 is the time-dependent parameter
         td_par_model = model.components[2].pars[1].t_model
+        assert td_par_model is not None
         assert td_par_model.components[0].comp_name == "gaussCONV"
         assert td_par_model.components[0].par_dict["SD"] == [5.0e-2, True, 0, 1]
         assert td_par_model.components[1].fct_str == "expFun"

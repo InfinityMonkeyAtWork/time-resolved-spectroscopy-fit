@@ -254,9 +254,11 @@ class TestSimulatorParameterSweep:
                 assert "simulated_data" in f
 
                 # Check metadata
-                assert f["metadata"].attrs["n_configs"] == 4  # 2 × 2
-                assert f["metadata"].attrs["n_realizations_per_config"] == 2
-                assert f["metadata"].attrs["total_datasets"] == 8  # 4 × 2
+                metadata = f["metadata"]
+                assert isinstance(metadata, h5py.Group)
+                assert metadata.attrs["n_configs"] == 4  # 2 × 2
+                assert metadata.attrs["n_realizations_per_config"] == 2
+                assert metadata.attrs["total_datasets"] == 8  # 4 × 2
 
     #
     def test_sweep_dataset_smoke(self, simple_model):
@@ -332,24 +334,37 @@ class TestSimulatorParameterSweep:
 
             with h5py.File(filepath, "r") as f:
                 # Check axes
-                assert f["energy"].shape[0] > 0
-                assert f["time"].shape[0] > 0
+                energy_ds = f["energy"]
+                assert isinstance(energy_ds, h5py.Dataset)
+                assert energy_ds.shape[0] > 0
+
+                time_ds = f["time"]
+                assert isinstance(time_ds, h5py.Dataset)
+                assert time_ds.shape[0] > 0
 
                 # Check config structure
-                assert "config_000000" in f["parameter_configs"]
-                assert "config_000001" in f["parameter_configs"]
+                configs = f["parameter_configs"]
+                assert isinstance(configs, h5py.Group)
+                assert "config_000000" in configs
+                assert "config_000001" in configs
 
                 # Check config attributes
-                config = f["parameter_configs"]["config_000000"]
+                config = configs["config_000000"]
+                assert isinstance(config, h5py.Group)
                 assert "GLP_01_A" in config.attrs
                 assert "all_parameters" in config.attrs
 
                 # Check clean data exists
                 assert "clean" in config
-                assert config["clean"].shape == (len(f["time"][:]), len(f["energy"][:]))
+                clean_ds = config["clean"]
+                assert isinstance(clean_ds, h5py.Dataset)
+                assert clean_ds.shape == (len(time_ds[:]), len(energy_ds[:]))
 
                 # Check noisy data structure
-                data_group = f["simulated_data"]["config_000000"]
+                simulated = f["simulated_data"]
+                assert isinstance(simulated, h5py.Group)
+                data_group = simulated["config_000000"]
+                assert isinstance(data_group, h5py.Group)
                 assert "000000" in data_group
                 assert "000001" in data_group
                 assert "000002" in data_group
@@ -378,12 +393,15 @@ class TestSimulatorParameterSweep:
 
             with h5py.File(filepath, "r") as f:
                 # Check that all test values appear in configs
+                configs = f["parameter_configs"]
+                assert isinstance(configs, h5py.Group)
+
                 stored_values = []
                 for i in range(len(test_values)):
                     config_name = f"config_{i:06d}"
-                    stored_values.append(
-                        f["parameter_configs"][config_name].attrs["GLP_01_A"]
-                    )
+                    config = configs[config_name]
+                    assert isinstance(config, h5py.Group)
+                    stored_values.append(config.attrs["GLP_01_A"])
 
                 assert sorted(stored_values) == sorted(test_values)
 
@@ -408,13 +426,19 @@ class TestSimulatorParameterSweep:
             )
 
             with h5py.File(filepath, "r") as f:
-                assert f["metadata"].attrs["n_configs"] == 5
+                metadata = f["metadata"]
+                assert isinstance(metadata, h5py.Group)
+                assert metadata.attrs["n_configs"] == 5
 
                 # Check that parameter values are in expected range
+                configs = f["parameter_configs"]
+                assert isinstance(configs, h5py.Group)
                 for i in range(5):
                     config_name = f"config_{i:06d}"
-                    value = f["parameter_configs"][config_name].attrs["GLP_01_A"]
-                    assert 10 <= value <= 25
+                    config = configs[config_name]
+                    assert isinstance(config, h5py.Group)
+                    value = config.attrs["GLP_01_A"]
+                    assert 10 <= value <= 25  # type: ignore[operator]
 
     #
     def test_detector_settings_in_metadata(self, simple_model):
@@ -442,9 +466,11 @@ class TestSimulatorParameterSweep:
             )
 
             with h5py.File(filepath, "r") as f:
-                assert f["metadata"].attrs["detection"] == "analog"
-                assert f["metadata"].attrs["noise_level"] == 0.08
-                assert f["metadata"].attrs["noise_type"] == "gaussian"
+                metadata = f["metadata"]
+                assert isinstance(metadata, h5py.Group)
+                assert metadata.attrs["detection"] == "analog"
+                assert metadata.attrs["noise_level"] == 0.08
+                assert metadata.attrs["noise_type"] == "gaussian"
 
         # Test photon counting detector
         sim_photon = Simulator(
@@ -465,8 +491,10 @@ class TestSimulatorParameterSweep:
             )
 
             with h5py.File(filepath, "r") as f:
-                assert f["metadata"].attrs["detection"] == "photon_counting"
-                assert f["metadata"].attrs["counts_per_delay"] == 5000
+                metadata = f["metadata"]
+                assert isinstance(metadata, h5py.Group)
+                assert metadata.attrs["detection"] == "photon_counting"
+                assert metadata.attrs["counts_per_delay"] == 5000
 
 
 if __name__ == "__main__":
