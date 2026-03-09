@@ -202,9 +202,9 @@ class TestSimulatorParameterSweep:
     """Test Simulator.simulate_parameter_sweep() integration"""
 
     #
-    @pytest.fixture
-    def simple_model(self):
-        """Create a simple model for testing"""
+    def setUp(self):
+        """Setup function to create a simple 2D model for sweep testing."""
+
         project = Project(path="tests", name="test")
         file = File(
             parent_project=project,
@@ -219,17 +219,18 @@ class TestSimulatorParameterSweep:
             model_info=["MonoExpPosIRF"],
             par_name="GLP_01_x0",
         )
+        assert file.model_active is not None
         return file.model_active
 
     #
-    def test_simulate_parameter_sweep_basic(self, simple_model):
+    def test_simulate_parameter_sweep_basic(self):
         """Test basic parameter sweep simulation"""
         sweep = ParameterSweep(strategy="grid", seed=42)
         sweep.add_range("GLP_01_A", [15, 20])
         sweep.add_range("GLP_01_x0", [8, 10])
 
         sim = Simulator(
-            model=simple_model, detection="analog", noise_level=0.05, seed=42
+            model=self.setUp(), detection="analog", noise_level=0.05, seed=42
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -261,14 +262,14 @@ class TestSimulatorParameterSweep:
                 assert metadata.attrs["total_datasets"] == 8  # 4 × 2
 
     #
-    def test_sweep_dataset_smoke(self, simple_model):
+    def test_sweep_dataset_smoke(self):
         """Smoke test end-to-end SweepDataset reading from generated HDF5."""
         sweep = ParameterSweep(strategy="grid", seed=42)
         sweep.add_range("GLP_01_A", [15, 20])
         sweep.add_range("GLP_01_x0", [8, 10])
 
         sim = Simulator(
-            model=simple_model, detection="analog", noise_level=0.05, seed=42
+            model=self.setUp(), detection="analog", noise_level=0.05, seed=42
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -313,13 +314,13 @@ class TestSimulatorParameterSweep:
             assert len(config["noisy"]) == dataset.meta["n_realizations_per_config"]
 
     #
-    def test_hdf5_structure(self, simple_model):
+    def test_hdf5_structure(self):
         """Test detailed HDF5 file structure"""
         sweep = ParameterSweep(strategy="grid", seed=42)
         sweep.add_range("GLP_01_A", [15, 20])
 
         sim = Simulator(
-            model=simple_model, detection="analog", noise_level=0.05, seed=42
+            model=self.setUp(), detection="analog", noise_level=0.05, seed=42
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -371,14 +372,14 @@ class TestSimulatorParameterSweep:
                 assert len(data_group.keys()) == 3
 
     #
-    def test_parameter_values_in_hdf5(self, simple_model):
+    def test_parameter_values_in_hdf5(self):
         """Test that swept parameter values are correctly stored"""
         sweep = ParameterSweep(strategy="grid", seed=42)
         test_values = [15, 20, 25]
         sweep.add_range("GLP_01_A", test_values)
 
         sim = Simulator(
-            model=simple_model, detection="analog", noise_level=0.05, seed=42
+            model=self.setUp(), detection="analog", noise_level=0.05, seed=42
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -406,13 +407,13 @@ class TestSimulatorParameterSweep:
                 assert sorted(stored_values) == sorted(test_values)
 
     #
-    def test_random_strategy_sweep(self, simple_model):
+    def test_random_strategy_sweep(self):
         """Test parameter sweep with random strategy"""
         sweep = ParameterSweep(strategy="random", seed=42)
         sweep.add_uniform("GLP_01_A", 10, 25, n_samples=5)
 
         sim = Simulator(
-            model=simple_model, detection="analog", noise_level=0.05, seed=42
+            model=self.setUp(), detection="analog", noise_level=0.05, seed=42
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -441,14 +442,14 @@ class TestSimulatorParameterSweep:
                     assert 10 <= value <= 25  # type: ignore[operator]
 
     #
-    def test_detector_settings_in_metadata(self, simple_model):
+    def test_detector_settings_in_metadata(self):
         """Test that detector settings are stored in metadata"""
         sweep = ParameterSweep(strategy="grid", seed=42)
         sweep.add_range("GLP_01_A", [15, 20])
 
         # Test analog detector
         sim_analog = Simulator(
-            model=simple_model,
+            model=self.setUp(),
             detection="analog",
             noise_level=0.08,
             noise_type="gaussian",
@@ -474,7 +475,7 @@ class TestSimulatorParameterSweep:
 
         # Test photon counting detector
         sim_photon = Simulator(
-            model=simple_model,
+            model=self.setUp(),
             detection="photon_counting",
             counts_per_delay=5000,
             seed=42,

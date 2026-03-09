@@ -42,3 +42,17 @@ MonoExpPosIRF:
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
         y0: [0, False, 0, 1]
+
+# Empty subcycle placeholder (applies to all times in multi-cycle)
+ModelNone:
+    none: {}
+
+# Multi-cycle subcycle with expressions referencing MonoExpNeg's parameters.
+# expFun here gets renumbered to expFun_02 (MonoExpNeg's expFun is expFun_01).
+# Expressions reference expFun_01 params and get auto-prefixed with par_name.
+MonoExpPosExpr:
+    expFun:
+        A: ["-expFun_01_A"]
+        tau: ["expFun_01_tau"]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]

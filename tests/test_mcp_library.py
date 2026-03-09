@@ -5,7 +5,6 @@ Test MCP (Model/Component/Parameter) library functionality
 import numpy as np
 import pytest
 
-from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import profile as fcts_profile
 from trspecfit.functions import time as fcts_time
 from trspecfit.mcp import Component, Dynamics, Model, Par, Profile
@@ -412,70 +411,6 @@ class TestMCPIntegration:
 
 #
 #
-class TestEnergyFunctions:
-    """Test energy/spectral function functionality"""
-
-    #
-    def test_energy_function_imports(self):
-        """Test that energy functions can be imported and used"""
-        # Test that we can access energy functions
-        assert hasattr(fcts_energy, "Offset")
-        assert hasattr(fcts_energy, "Shirley")
-        assert hasattr(fcts_energy, "GLP")
-
-    #
-    def test_energy_function_evaluation(self):
-        """Test energy function evaluation"""
-        # Create test energy array
-        e = np.arange(150, 180, 0.1)
-
-        # Test Offset function - requires spectrum parameter
-        spectrum = np.zeros_like(e)
-        y_offset = fcts_energy.Offset(e, y0=2, spectrum=spectrum)
-        assert len(y_offset) == len(e)
-        assert np.allclose(y_offset, 2)
-
-        # Test GLP function
-        y_glp = fcts_energy.GLP(e, A=20, x0=165, F=1.5, m=0.3)
-        assert len(y_glp) == len(e)
-        assert np.max(y_glp) > 0  # Should have a peak
-
-
-#
-#
-class TestTimeFunctions:
-    """Test time/dynamics function functionality"""
-
-    #
-    def test_time_function_imports(self):
-        """Test that time functions can be imported and used"""
-        # Test that we can access time functions
-        assert hasattr(fcts_time, "expFun")
-        assert hasattr(fcts_time, "linFun")
-        assert hasattr(fcts_time, "gaussCONV")
-
-    #
-    def test_time_function_evaluation(self):
-        """Test time function evaluation"""
-        # Create test time array
-        t = np.arange(-50, 200, 0.1)
-
-        # Test exponential function
-        y_exp = fcts_time.expFun(t, A=12, tau=20, t0=10, y0=3)
-        assert len(y_exp) == len(t)
-        assert np.max(y_exp) > 0
-
-        # Test linear function
-        y_lin = fcts_time.linFun(t, m=-5e-4, t0=0, y0=-3)
-        assert len(y_lin) == len(t)
-
-        # Test Gaussian convolution - uses SD parameter
-        y_gauss = fcts_time.gaussCONV(t, SD=5)
-        assert len(y_gauss) == len(t)
-
-
-#
-#
 class TestMCPNormalization:
     """Test MCP time normalization functionality"""
 
@@ -516,6 +451,7 @@ class TestMCPNormalization:
 class TestMCPProfile:
     """Test Profile model functionality."""
 
+    #
     def _make_model_with_peak(self, aux_axis=None):
         """Helper: energy model with one GLP_01 component."""
         mod = Model("test")
@@ -534,6 +470,7 @@ class TestMCPProfile:
         mod.add_components([c_peak])
         return mod
 
+    #
     def _make_exp_profile(self, name, aux_axis):
         """Helper: Profile model with a single exp_decay component."""
         p_model = Profile(name)
@@ -543,6 +480,7 @@ class TestMCPProfile:
         p_model.add_components([c_prof])
         return p_model
 
+    #
     def test_profile_class_creation(self):
         """Profile should inherit from Model and carry parent_model."""
         p = Profile("test_profile")
@@ -550,6 +488,7 @@ class TestMCPProfile:
         assert p.parent_model is None
         assert p.aux_axis is None
 
+    #
     def test_add_profile_sets_p_vary(self):
         """add_profile() should set p_vary=True on the target parameter."""
         mod = self._make_model_with_peak()
@@ -561,6 +500,7 @@ class TestMCPProfile:
         assert a_par.p_vary is True
         assert a_par.p_model is p_model
 
+    #
     def test_add_profile_propagates_aux_axis(self):
         """add_profile() propagates aux_axis to Profile and its components."""
         mod = self._make_model_with_peak()
@@ -575,6 +515,7 @@ class TestMCPProfile:
             assert comp.aux_axis is not None
             assert np.array_equal(comp.aux_axis, mod.aux_axis)
 
+    #
     def test_add_profile_sets_parent_model(self):
         """add_profile() should set parent_model on the Profile."""
         mod = self._make_model_with_peak()
@@ -582,6 +523,7 @@ class TestMCPProfile:
         mod.add_profile(p_model)
         assert p_model.parent_model is mod
 
+    #
     def test_profile_value1D_initialized(self):
         """Profile.value1D should be set after add_profile."""
         mod = self._make_model_with_peak()
@@ -592,6 +534,7 @@ class TestMCPProfile:
         assert mod.aux_axis is not None
         assert len(p_model.value1D) == len(mod.aux_axis)
 
+    #
     def test_component_value_averaging(self):
         """Component with p_vary should return uniform average over aux_axis."""
         aux = np.linspace(0, 5, 20)
@@ -607,6 +550,7 @@ class TestMCPProfile:
         assert np.isfinite(val).all()
         assert np.any(val > 0)
 
+    #
     def test_profile_differs_from_no_profile(self):
         """Profile averaging should differ from the base parameter alone."""
         aux = np.linspace(0, 5, 20)
@@ -645,6 +589,7 @@ class TestMCPProfile:
         # Profiles should NOT equal the flat case (different amplitudes)
         assert not np.allclose(val_flat, val_prof)
 
+    #
     def test_multiple_p_vary_pars_same_component(self):
         """Two p_vary parameters on one component share the same aux_axis loop."""
         aux = np.linspace(0, 5, 15)
@@ -679,6 +624,7 @@ class TestMCPProfile:
         assert val.shape == mod.energy.shape
         assert np.isfinite(val).all()
 
+    #
     def test_add_profile_raises_without_aux_axis(self):
         """add_profile() should raise ValueError if aux_axis is not set."""
         mod = Model("no_aux")
@@ -700,6 +646,7 @@ class TestMCPProfile:
         with pytest.raises(ValueError, match="aux_axis"):
             mod.add_profile(p_model)
 
+    #
     def test_add_profile_raises_for_expression_par(self):
         """add_profile() should raise ValueError for expression parameters."""
         mod = Model("expr_model")
@@ -725,6 +672,7 @@ class TestMCPProfile:
         with pytest.raises(ValueError, match="expression"):
             mod.add_profile(p_model)
 
+    #
     def test_file_aux_axis_propagation(self):
         """File.aux_axis should propagate to loaded Model via load_model()."""
         from trspecfit import File, Project
@@ -743,6 +691,7 @@ class TestMCPProfile:
         assert file.model_active.aux_axis is not None
         assert np.array_equal(file.model_active.aux_axis, file.aux_axis)
 
+    #
     def test_profile_with_dynamics(self):
         """Profile on an amplitude parameter should work alongside time dynamics."""
 
