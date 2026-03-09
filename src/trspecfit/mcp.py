@@ -1822,7 +1822,7 @@ class Par:
             print(
                 f"parameter has time-dependence described by model {self.t_model.name}"
             )
-            if detail == 1:
+            if detail == 1 and self.t_model is not None:
                 self.t_model.describe()
         if not self.p_vary:
             print("parameter has no profile (aux_axis) dependence")
