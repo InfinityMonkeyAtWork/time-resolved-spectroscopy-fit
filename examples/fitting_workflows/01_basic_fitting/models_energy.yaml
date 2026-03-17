@@ -3,13 +3,11 @@
 
 # ground state (most parameters should be able to vary)
 base:
-    Offset:
-      y0: [3, True, 0, 5]
     LinBack:
-      m: [1E-3, True, -1, 1]
+      m: [1E-2, True, -1, 1]
       b: [0, True, -5, 5]
-      xStart: [3, False, 0, 20]
-      xStop: [15, False, 0, 20]
+      xStart: [0, False]
+      xStop: [20, False]
     GLP:
       A: [12, True, 5, 15]
       x0: [8, True, 5, 15]
@@ -18,13 +16,11 @@ base:
 
 # Slice-by-Slice model fit (pinned parameters will be set to "base" Model fit result values)
 SbS:
-    Offset:
-      y0: [3, False, 0, 5]
     LinBack:
-      m: [1E-3, False, -1, 1]
+      m: [1E-2, False, -1, 1]
       b: [0, False, -5, 5]
-      xStart: [3, False, 0, 20]
-      xStop: [15, False, 0, 20]
+      xStart: [0, False]
+      xStop: [20, False]
     GLP:
       A: [12, False, 5, 15]
       x0: [8, True, 5, 15]
@@ -33,13 +29,11 @@ SbS:
 
 # 2D model fit (pinned parameters will be set to "base" Model fit result values)
 2D:
-    Offset:
-      y0: [3, False, 0, 5]
     LinBack:
-      m: [1E-3, False, -1, 1]
+      m: [1E-2, False, -1, 1]
       b: [0, False, -5, 5]
-      xStart: [3, False, 0, 20]
-      xStop: [15, False, 0, 20]
+      xStart: [0, False]
+      xStop: [20, False]
     GLP:
       A: [12, False, 5, 15]
       x0: [8, True, 5, 15]
