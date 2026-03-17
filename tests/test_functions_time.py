@@ -182,6 +182,30 @@ class TestSinDivX:
         if len(peaks) >= 2:
             assert peaks[-1] < peaks[0]
 
+    #
+    def test_value_at_t0(self):
+        """At t=t0, sinc(0)=1 so value should be A + y0."""
+
+        t = setUp()
+        A = 1.5
+        y0 = 0.2
+        result = sinDivX(t, A=A, f=0.5, t0=0.0, y0=y0)
+        idx_t0 = np.argmin(np.abs(t - 0.0))
+        assert result[idx_t0] == pytest.approx(A + y0, abs=0.01)
+
+    #
+    def test_first_zero_location(self):
+        """First sinc zero after t0 occurs at t = t0 + 1/(2f)."""
+
+        t = setUp()
+        f = 0.5
+        t0 = 0.0
+        y0 = 0.3
+        result = sinDivX(t, A=1.0, f=f, t0=t0, y0=y0)
+        t_zero = t0 + 1.0 / (2.0 * f)
+        idx_zero = np.argmin(np.abs(t - t_zero))
+        assert result[idx_zero] == pytest.approx(y0, abs=0.01)
+
 
 #
 #

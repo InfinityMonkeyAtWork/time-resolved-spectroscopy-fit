@@ -219,7 +219,8 @@ def sinDivX(t, A, f, t0, y0):
         Sinc oscillation: 0 for t<t0, A*sin(2πf(t-t0))/(2πf(t-t0))+y0 for t>=t0
     """
 
-    x = f * (t - t0)
+    # np.sinc(u) = sin(pi*u)/(pi*u), so u=2*f*(t-t0) gives sin(2*pi*f*dt)/(2*pi*f*dt)
+    x = 2 * f * (t - t0)
     return np.concatenate(
         (np.zeros(np.shape(t[t < t0])[0]), (A * np.sinc(x) + y0)[t >= t0])
     )
