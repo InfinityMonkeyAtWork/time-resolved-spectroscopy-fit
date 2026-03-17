@@ -1458,6 +1458,11 @@ class File:
         The parameter can live either directly in the energy model or inside
         a Profile model attached to an energy model parameter.
 
+        To avoid strongly correlated fits, adding dynamics directly to an
+        energy-model parameter that already has a profile (``p_vary=True``)
+        is currently disallowed. In that case, add dynamics to a profile
+        parameter instead.
+
         Parameters
         ----------
         model_yaml : str or Path
@@ -1493,8 +1498,16 @@ class File:
             return
 
         # Try energy model first
-        ci, _pi = self.model_active.find_par_by_name(par_name)
-        if ci is not None:
+        ci, pi = self.model_active.find_par_by_name(par_name)
+        if ci is not None and pi is not None:
+            target_par = self.model_active.components[ci].pars[pi]
+            if target_par.p_vary:
+                raise ValueError(
+                    f"Cannot add time dependence to parameter '{par_name}' because "
+                    "it already has a profile (p_vary=True). This is currently "
+                    "disabled to avoid strongly correlated fits. Add dynamics to a "
+                    "profile parameter instead, or remove/fix the profile first."
+                )
             self.model_active.add_dynamics(cast("mcp.Dynamics", t_mod), frequency)
             self.model_active.dim = 2
             return
@@ -1536,6 +1549,10 @@ class File:
         If any parameters inside the profile model are time-dependent
         (``t_vary=True``), ``model_active.dim`` is automatically set to 2.
 
+        To avoid strongly correlated fits, adding a profile to an
+        energy-model parameter that already has time dependence
+        (``t_vary=True``) is currently disallowed.
+
         Parameters
         ----------
         model_yaml : str or Path
@@ -1565,6 +1582,20 @@ class File:
                 stacklevel=2,
             )
             return
+        ci, pi = self.model_active.find_par_by_name(par_name)
+        if ci is None or pi is None:
+            raise ValueError(
+                f"Parameter '{par_name}' not found in active model "
+                f"'{self.model_active.name}'."
+            )
+        target_par = self.model_active.components[ci].pars[pi]
+        if target_par.t_vary:
+            raise ValueError(
+                f"Cannot add profile to parameter '{par_name}' because it already "
+                "has time dependence (t_vary=True). This is currently disabled to "
+                "avoid strongly correlated fits. Add profile first and dynamics to "
+                "a profile parameter instead, or remove/fix time dependence first."
+            )
         self.model_active.add_profile(cast("mcp.Profile", p_mod))
         # auto-promote to 2D if any parameter inside the profile is time-dependent
         if any(p.t_vary for comp in p_mod.components for p in comp.pars):

@@ -293,33 +293,35 @@ class Test2DModelParsing:
     """Test parsing of 2D energy- and time-resolved models."""
 
     #
-    def setUp(self, model_energy, par_name, model_time):
-        """Setup function to create project, file, load model, and add dynamics"""
+    def setUp(
+        self,
+        model_energy: list[str],
+        aux_axis: np.ndarray | None = None,
+    ) -> File:
+        """Create a File with loaded energy model and time axis."""
+
         project = Project(path="tests")
-        file = File(parent_project=project)
+        file = File(parent_project=project, aux_axis=aux_axis)
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=model_energy,
             debug=False,
         )
         file.time = np.linspace(-10, 100, 111)  # needed for time-dependent models
-        file.add_time_dependence(
-            model_yaml="test_models_time.yaml",
-            model_info=model_time,
-            par_name=par_name,
-        )
-        model = file.model_active
-        assert model is not None, "Model loading failed in setup"
-        return model
+        return file
 
     #
     def test_simple_2D_model(self):
         """Add IRF+exp_decay time-dependence to the simple energy model"""
-        model = self.setUp(
-            model_energy=["simple_energy"],
+
+        file = self.setUp(model_energy=["simple_energy"])
+        file.add_time_dependence(
+            model_yaml="test_models_time.yaml",
+            model_info=["MonoExpPosIRF"],
             par_name="GLP_01_x0",
-            model_time=["MonoExpPosIRF"],
         )
+        model = file.model_active
+        assert model is not None, "Model loading failed in setup"
 
         # check the model
         assert model.name == "simple_energy"
@@ -362,14 +364,7 @@ class Test2DModelParsing:
     #
     def test_time_dependence_on_expression_parameter_raises(self):
         """Adding dynamics to expression-linked parameter should fail."""
-        project = Project(path="tests")
-        file = File(parent_project=project)
-        file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["energy_expression"],
-            debug=False,
-        )
-        file.time = np.linspace(-10, 100, 111)
+        file = self.setUp(model_energy=["energy_expression"])
 
         with pytest.raises(
             ValueError, match="Cannot add time dependence to expression parameter"
@@ -380,6 +375,23 @@ class Test2DModelParsing:
                 par_name="GLP_02_x0",
             )
 
+    #
+    def test_time_dependence_on_profiled_parameter_raises(self):
+        """Adding dynamics directly to a profiled parameter should fail."""
+        file = self.setUp(model_energy=["single_glp"], aux_axis=np.linspace(0, 10, 21))
+        file.add_par_profile(
+            model_yaml="test_models_profile.yaml",
+            model_info=["profile_pLinear"],
+            par_name="GLP_01_A",
+        )
+
+        with pytest.raises(ValueError, match="already has a profile"):
+            file.add_time_dependence(
+                model_yaml="test_models_time.yaml",
+                model_info=["MonoExpPos"],
+                par_name="GLP_01_A",
+            )
+
 
 #
 #
@@ -387,16 +399,28 @@ class TestProfileParsing:
     """Test parsing of profile models (mcp.Profile)."""
 
     #
-    def setUp(self, model_info, par_name):
-        """Setup function to create project, file with energy model, and load profile"""
+    def _make_file(
+        self,
+        model_energy: list[str],
+        aux_axis: np.ndarray | None = None,
+    ) -> File:
+        """Create a File with loaded energy model and optional aux axis."""
         project = Project(path="tests")
-        file = File(parent_project=project)
+        file = File(parent_project=project, aux_axis=aux_axis)
         file.energy = np.linspace(80, 90, 201)
-        file.aux_axis = np.linspace(0, 10, 21)
         file.load_model(
             model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
+            model_info=model_energy,
             debug=False,
+        )
+        return file
+
+    #
+    def setUp(self, model_info, par_name):
+        """Setup function to create project, file with energy model, and load profile"""
+        file = self._make_file(
+            model_energy=["simple_energy"],
+            aux_axis=np.linspace(0, 10, 21),
         )
         file.add_par_profile(
             model_yaml="test_models_profile.yaml",
@@ -474,14 +498,9 @@ class TestProfileParsing:
     #
     def test_profile_on_expression_parameter_raises(self):
         """Adding a profile to an expression-linked parameter should fail."""
-        project = Project(path="tests")
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 201)
-        file.aux_axis = np.linspace(0, 10, 21)
-        file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["energy_expression"],
-            debug=False,
+        file = self._make_file(
+            model_energy=["energy_expression"],
+            aux_axis=np.linspace(0, 10, 21),
         )
 
         with pytest.raises(ValueError):
@@ -489,6 +508,27 @@ class TestProfileParsing:
                 model_yaml="test_models_profile.yaml",
                 model_info=["profile_pExpDecay"],
                 par_name="GLP_02_A",
+            )
+
+    #
+    def test_profile_on_time_dependent_parameter_raises(self):
+        """Adding a profile to a time-dependent parameter should fail."""
+        file = self._make_file(
+            model_energy=["single_glp"],
+            aux_axis=np.linspace(0, 10, 21),
+        )
+        file.time = np.linspace(-10, 100, 111)
+        file.add_time_dependence(
+            model_yaml="test_models_time.yaml",
+            model_info=["MonoExpPos"],
+            par_name="GLP_01_A",
+        )
+
+        with pytest.raises(ValueError, match="already has time dependence"):
+            file.add_par_profile(
+                model_yaml="test_models_profile.yaml",
+                model_info=["profile_pExpDecay"],
+                par_name="GLP_01_A",
             )
 
 
