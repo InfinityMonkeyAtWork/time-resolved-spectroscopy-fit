@@ -1,13 +1,13 @@
 # load these models in test_model_parser.py to unit test loading profile yaml models
 
-# exp_decay profile for an amplitude parameter
-profile_exp_decay:
-    exp_decay:
+# pExpDecay profile for an amplitude parameter
+profile_pExpDecay:
+    pExpDecay:
         A:   [200, True, 10, 1000]
         tau: [2.0, True, 0.5, 10.0]
 
-# linear profile for a position parameter
-profile_linear:
-    linear:
+# pLinear profile for a position parameter
+profile_pLinear:
+    pLinear:
         m: [-0.5, True, -2, 2]
         b: [0.0, False, -1.0, 1.0]

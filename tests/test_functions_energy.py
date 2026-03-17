@@ -17,7 +17,6 @@ from trspecfit.functions.energy import (
     Gauss,
     GaussAsym,
     LinBack,
-    LinBackRev,
     Lorentz,
     Offset,
     Shirley,
@@ -97,46 +96,82 @@ class TestShirley:
 #
 #
 class TestLinBack:
-    #
-    def test_starts_at_spectrum_first(self):
-        x = setUp()
-        spectrum = setUpSpectrum(x)
-        result = LinBack(x, pLinear=0.5, spectrum=spectrum)
-        assert result[0] == pytest.approx(spectrum[0])
+    """Clamped linear background: linear between xStart/xStop, constant outside."""
 
     #
-    def test_linear_increase(self):
+    def test_zero_slope_is_constant(self):
         x = setUp()
         spectrum = setUpSpectrum(x)
-        result = LinBack(x, pLinear=1.0, spectrum=spectrum)
-        diffs = np.diff(result)
-        np.testing.assert_allclose(diffs, 1.0, atol=1e-12)
+        result = LinBack(x, m=0.0, b=5.0, xStart=-5, xStop=5, spectrum=spectrum)
+        np.testing.assert_allclose(result, 5.0)
 
     #
-    def test_zero_slope(self):
+    def test_positive_slope(self):
         x = setUp()
         spectrum = setUpSpectrum(x)
-        result = LinBack(x, pLinear=0.0, spectrum=spectrum)
-        np.testing.assert_allclose(result, spectrum[0])
-
-
-#
-#
-class TestLinBackRev:
-    #
-    def test_starts_at_spectrum_last(self):
-        x = setUp()
-        spectrum = setUpSpectrum(x)
-        result = LinBackRev(x, pLinear=0.5, spectrum=spectrum)
-        assert result[-1] == pytest.approx(spectrum[-1])
+        result = LinBack(x, m=2.0, b=1.0, xStart=-5, xStop=5, spectrum=spectrum)
+        idx = np.argmin(np.abs(x - 0.0))
+        # At x=0: m*(0 - (-5)) + b = 2*5 + 1 = 11
+        assert result[idx] == pytest.approx(11.0, abs=0.02)
 
     #
-    def test_linear_decrease(self):
+    def test_negative_slope(self):
         x = setUp()
         spectrum = setUpSpectrum(x)
-        result = LinBackRev(x, pLinear=1.0, spectrum=spectrum)
-        diffs = np.diff(result)
-        np.testing.assert_allclose(diffs, -1.0, atol=1e-12)
+        result = LinBack(x, m=-1.0, b=10.0, xStart=-5, xStop=5, spectrum=spectrum)
+        idx = np.argmin(np.abs(x - 0.0))
+        # At x=0: -1*(0 - (-5)) + 10 = -5 + 10 = 5
+        assert result[idx] == pytest.approx(5.0, abs=0.02)
+
+    #
+    def test_clamped_below_xStart(self):
+        x = setUp()
+        spectrum = setUpSpectrum(x)
+        result = LinBack(x, m=2.0, b=1.0, xStart=-3, xStop=3, spectrum=spectrum)
+        # All points below xStart should equal b
+        mask = x < -3
+        np.testing.assert_allclose(result[mask], 1.0)
+
+    #
+    def test_clamped_above_xStop(self):
+        x = setUp()
+        spectrum = setUpSpectrum(x)
+        result = LinBack(x, m=2.0, b=1.0, xStart=-3, xStop=3, spectrum=spectrum)
+        # All points above xStop should equal m*(xStop - xStart) + b = 2*6 + 1 = 13
+        mask = x > 3
+        np.testing.assert_allclose(result[mask], 13.0)
+
+    #
+    def test_full_range_no_clamping(self):
+        x = setUp()
+        spectrum = setUpSpectrum(x)
+        result = LinBack(x, m=0.5, b=0.0, xStart=x[0], xStop=x[-1], spectrum=spectrum)
+        expected = 0.5 * (x - x[0])
+        np.testing.assert_allclose(result, expected, atol=1e-12)
+
+    #
+    def test_xStart_ge_xStop_raises(self):
+        x = setUp()
+        spectrum = setUpSpectrum(x)
+        with pytest.raises(ValueError, match="xStart < xStop"):
+            LinBack(x, m=1.0, b=0.0, xStart=5, xStop=5, spectrum=spectrum)
+        with pytest.raises(ValueError, match="xStart < xStop"):
+            LinBack(x, m=1.0, b=0.0, xStart=5, xStop=3, spectrum=spectrum)
+
+    #
+    def test_declining_axis(self):
+        """Works correctly when energy axis is declining."""
+
+        x = np.linspace(10, -10, 2001)
+        spectrum = 10 * np.exp(-0.5 * (x / 2) ** 2)
+        result = LinBack(x, m=1.0, b=0.0, xStart=-3, xStop=3, spectrum=spectrum)
+        # At x=0: m*(0 - (-3)) + 0 = 3
+        idx = np.argmin(np.abs(x - 0.0))
+        assert result[idx] == pytest.approx(3.0, abs=0.02)
+        # Below xStart (x < -3): clamped at b = 0
+        np.testing.assert_allclose(result[x < -3], 0.0)
+        # Above xStop (x > 3): clamped at m*(3-(-3)) + 0 = 6
+        np.testing.assert_allclose(result[x > 3], 6.0)
 
 
 #

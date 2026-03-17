@@ -72,7 +72,7 @@ def background_functions():
         Background function names
     """
 
-    return ("Offset", "Shirley", "LinBack", "LinBackRev")
+    return ("Offset", "Shirley", "LinBack")
 
 
 #

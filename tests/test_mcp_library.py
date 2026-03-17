@@ -95,7 +95,7 @@ class TestMCPModel:
 
         p_model = Profile("GLP_01_A")
         p_model.aux_axis = mod.aux_axis
-        c_prof = Component("exp_decay_01", fcts_profile)
+        c_prof = Component("pExpDecay_01", fcts_profile)
         c_prof.add_pars({"A": [1.0, False], "tau": [2.0, False]})
         p_model.add_components([c_prof])
 
@@ -472,10 +472,10 @@ class TestMCPProfile:
 
     #
     def _make_exp_profile(self, name, aux_axis):
-        """Helper: Profile model with a single exp_decay component."""
+        """Helper: Profile model with a single pExpDecay component."""
         p_model = Profile(name)
         p_model.aux_axis = aux_axis
-        c_prof = Component("exp_decay_01", fcts_profile)
+        c_prof = Component("pExpDecay_01", fcts_profile)
         c_prof.add_pars({"A": [1.0, False], "tau": [2.0, False]})
         p_model.add_components([c_prof])
         return p_model
@@ -571,7 +571,7 @@ class TestMCPProfile:
         mod_flat.add_components([c1])
         val_flat = mod_flat.create_value1D(return1D=1)
 
-        # Model with profile: base A=0, profile adds exp_decay(depth, A=10, tau=2)
+        # Model with profile: base A=0, profile adds pExpDecay(depth, A=10, tau=2)
         mod_prof = Model("profiled")
         mod_prof.energy = energy
         mod_prof.aux_axis = aux
@@ -603,18 +603,18 @@ class TestMCPProfile:
         )
         mod.add_components([c_peak])
 
-        # Profile on A: exp_decay
+        # Profile on A: pExpDecay
         p_A = Profile("GLP_01_A")
         p_A.aux_axis = aux
-        c_A = Component("exp_decay_01", fcts_profile)
+        c_A = Component("pExpDecay_01", fcts_profile)
         c_A.add_pars({"A": [10.0, False], "tau": [2.0, False]})
         p_A.add_components([c_A])
         mod.add_profile(p_A)
 
-        # Profile on x0: linear (band bending)
+        # Profile on x0: pLinear (band bending)
         p_x0 = Profile("GLP_01_x0")
         p_x0.aux_axis = aux
-        c_x0 = Component("linear_01", fcts_profile)
+        c_x0 = Component("pLinear_01", fcts_profile)
         c_x0.add_pars({"m": [0.1, False], "b": [85.0, False]})
         p_x0.add_components([c_x0])
         mod.add_profile(p_x0)
@@ -710,7 +710,7 @@ class TestMCPProfile:
         )
         mod.add_components([c_peak])
 
-        # Add exp_decay profile to A
+        # Add pExpDecay profile to A
         p_model = self._make_exp_profile("GLP_01_A", aux)
         mod.add_profile(p_model)
 

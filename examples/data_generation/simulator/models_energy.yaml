@@ -5,7 +5,10 @@ single_peak:
     Offset:
       y0: [2, True, 0, 5]
     LinBack:
-      pLinear: [4E-3, True, 0, 1] 
+      m: [4E-3, True, -1, 1]
+      b: [0, True, -5, 5]
+      xStart: [3, False, 0, 20]
+      xStop: [15, False, 0, 20]
     GLP:
       A: [10, True, 5, 15]
       x0: [10, True, 5, 15]

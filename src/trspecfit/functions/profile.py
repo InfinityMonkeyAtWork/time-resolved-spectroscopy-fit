@@ -8,7 +8,7 @@ import numpy as np
 
 
 #
-def exp_decay(x: np.ndarray, A: float, tau: float) -> np.ndarray:
+def pExpDecay(x: np.ndarray, A: float, tau: float) -> np.ndarray:
     """
     Exponential decay profile.
 
@@ -31,7 +31,7 @@ def exp_decay(x: np.ndarray, A: float, tau: float) -> np.ndarray:
 
 
 #
-def linear(x: np.ndarray, m: float, b: float) -> np.ndarray:
+def pLinear(x: np.ndarray, m: float, b: float) -> np.ndarray:
     """
     Linear profile.
 
@@ -53,7 +53,7 @@ def linear(x: np.ndarray, m: float, b: float) -> np.ndarray:
 
 
 #
-def Gauss(x: np.ndarray, A: float, x0: float, w: float) -> np.ndarray:
+def pGauss(x: np.ndarray, A: float, x0: float, w: float) -> np.ndarray:
     """
     Gaussian profile.
 

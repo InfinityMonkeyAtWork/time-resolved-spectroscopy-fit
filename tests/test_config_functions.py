@@ -5,9 +5,12 @@ Tests that the parameter introspection correctly strips the axis argument
 only the user-facing parameter names that appear in YAML model definitions.
 """
 
+import inspect
+
 import pytest
 
 from trspecfit.config.functions import get_function_parameters
+from trspecfit.functions import energy, profile, time
 
 
 #
@@ -42,10 +45,7 @@ class TestGetFunctionParameters:
         assert get_function_parameters("Shirley") == ["pShirley"]
 
     def test_LinBack_strips_spectrum(self):
-        assert get_function_parameters("LinBack") == ["pLinear"]
-
-    def test_LinBackRev_strips_spectrum(self):
-        assert get_function_parameters("LinBackRev") == ["pLinear"]
+        assert get_function_parameters("LinBack") == ["m", "b", "xStart", "xStop"]
 
     #
     # time: dynamics functions — first arg (t) stripped
@@ -72,17 +72,68 @@ class TestGetFunctionParameters:
     #
     # profile functions — first arg (x) stripped
     #
-    def test_exp_decay(self):
-        assert get_function_parameters("exp_decay") == ["A", "tau"]
+    def test_pExpDecay(self):
+        assert get_function_parameters("pExpDecay") == ["A", "tau"]
 
-    def test_linear(self):
-        assert get_function_parameters("linear") == ["m", "b"]
+    def test_pLinear(self):
+        assert get_function_parameters("pLinear") == ["m", "b"]
 
     #
     # unknown function
     #
     def test_unknown_returns_empty(self):
         assert get_function_parameters("nonexistent_function_xyz") == []
+
+
+#
+#
+class TestNoUnderscoresInNames:
+    """Underscores are reserved as YAML separators (numbering, names, parameters).
+
+    No public function name or parameter name in any function module may
+    contain an underscore.
+    """
+
+    MODULES = [energy, time, profile]
+    INTERNAL_SUFFIXES = ("_kernel_width",)
+
+    #
+    def _public_callables(self):
+        """Yield (module, name, func) for every public callable."""
+
+        for mod in self.MODULES:
+            for name in dir(mod):
+                if name.startswith("_"):
+                    continue
+                obj = getattr(mod, name)
+                if callable(obj):
+                    yield mod, name, obj
+
+    #
+    def test_no_underscore_in_function_names(self):
+        for mod, name, _func in self._public_callables():
+            if any(name.endswith(s) for s in self.INTERNAL_SUFFIXES):
+                continue
+            assert "_" not in name, f"{mod.__name__}.{name} contains an underscore"
+
+    #
+    def test_profile_functions_start_with_p(self):
+        for _mod, name, _func in self._public_callables():
+            if _mod is not profile:
+                continue
+            assert name.startswith("p"), f"profile.{name} must start with 'p'"
+
+    #
+    def test_no_underscore_in_parameter_names(self):
+        for mod, name, func in self._public_callables():
+            if any(name.endswith(s) for s in self.INTERNAL_SUFFIXES):
+                continue
+            sig = inspect.signature(func)
+            for par_name in sig.parameters:
+                assert "_" not in par_name, (
+                    f"{mod.__name__}.{name}() parameter '{par_name}' "
+                    "contains an underscore"
+                )
 
 
 if __name__ == "__main__":

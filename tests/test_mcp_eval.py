@@ -192,9 +192,9 @@ class TestEvaluation:
         GLP(x, A, x0, F, m) = A * shape(x, x0, F, m), so averaging N traces
         with different A_i is the same as one trace at mean(A_i).
 
-        Setup: single GLP (A=20), linear profile (m=-0.5, b=0) on A,
+        Setup: single GLP (A=20), pLinear profile (m=-0.5, b=0) on A,
         aux_axis = [0, 1, 2, 3, 4].
-        Profile values: linear([0,1,2,3,4], -0.5, 0) = [0, -0.5, -1, -1.5, -2]
+        Profile values: pLinear([0,1,2,3,4], -0.5, 0) = [0, -0.5, -1, -1.5, -2]
         Effective A: [20, 19.5, 19, 18.5, 18] → mean = 19
         Expected: GLP(energy, 19, 85, 1, 0.3)
         """
@@ -211,10 +211,10 @@ class TestEvaluation:
         model = file.model_active
         assert model is not None
 
-        # Attach linear profile (m=-0.5, b=0) to GLP_01_A
+        # Attach pLinear profile (m=-0.5, b=0) to GLP_01_A
         file.add_par_profile(
             model_yaml="test_models_profile.yaml",
-            model_info=["profile_linear"],
+            model_info=["profile_pLinear"],
             par_name="GLP_01_A",
         )
 
@@ -226,7 +226,7 @@ class TestEvaluation:
         assert value_1d is not None
 
         # Analytical expectation: GLP at mean effective A
-        # profile = linear([0,1,2,3,4], m=-0.5, b=0) = [0, -0.5, -1, -1.5, -2]
+        # profile = pLinear([0,1,2,3,4], m=-0.5, b=0) = [0, -0.5, -1, -1.5, -2]
         # mean(A_eff) = 20 + mean([0, -0.5, -1, -1.5, -2]) = 20 + (-1) = 19
         expected = GLP(file.energy, 19.0, 85.0, 1.0, 0.3)
         np.testing.assert_allclose(value_1d, expected, rtol=1e-10)
@@ -259,17 +259,17 @@ class TestEvaluation:
         model = file.model_active
         assert model is not None
 
-        # Attach linear profile (m=-0.5, b=0) to GLP_01_A
+        # Attach pLinear profile (m=-0.5, b=0) to GLP_01_A
         file.add_par_profile(
             model_yaml="test_models_profile.yaml",
-            model_info=["profile_linear"],
+            model_info=["profile_pLinear"],
             par_name="GLP_01_A",
         )
         # Make the profile slope time-dependent
         file.add_time_dependence(
             model_yaml="test_models_time.yaml",
             model_info=["MonoExpPos"],
-            par_name="GLP_01_A_linear_01_m",
+            par_name="GLP_01_A_pLinear_01_m",
         )
 
         assert model.dim == 2

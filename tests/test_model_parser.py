@@ -408,9 +408,9 @@ class TestProfileParsing:
         return model, file
 
     #
-    def test_exp_decay_profile(self):
-        """Test exp_decay profile attached to GLP_01_A"""
-        model, file = self.setUp(["profile_exp_decay"], "GLP_01_A")
+    def test_pExpDecay_profile(self):
+        """Test pExpDecay profile attached to GLP_01_A"""
+        model, file = self.setUp(["profile_pExpDecay"], "GLP_01_A")
 
         # target parameter should have p_vary set
         ci, pi = model.find_par_by_name("GLP_01_A")
@@ -423,19 +423,19 @@ class TestProfileParsing:
         # profile model should be a Profile with correct components
         p_mod = par.p_model
         assert len(p_mod.components) == 1
-        assert p_mod.components[0].fct_str == "exp_decay"
-        assert p_mod.components[0].comp_name == "exp_decay_01"
+        assert p_mod.components[0].fct_str == "pExpDecay"
+        assert p_mod.components[0].comp_name == "pExpDecay_01"
         assert p_mod.components[0].par_dict["A"] == [200, True, 10, 1000]
         assert p_mod.components[0].par_dict["tau"] == [2.0, True, 0.5, 10.0]
 
         # profile lmfit par names follow convention: {par_name}_{comp}_{par}
-        assert "GLP_01_A_exp_decay_01_A" in model.lmfit_pars
-        assert "GLP_01_A_exp_decay_01_tau" in model.lmfit_pars
+        assert "GLP_01_A_pExpDecay_01_A" in model.lmfit_pars
+        assert "GLP_01_A_pExpDecay_01_tau" in model.lmfit_pars
 
     #
-    def test_linear_profile(self):
-        """Test linear profile attached to GLP_01_x0"""
-        model, file = self.setUp(["profile_linear"], "GLP_01_x0")
+    def test_pLinear_profile(self):
+        """Test pLinear profile attached to GLP_01_x0"""
+        model, file = self.setUp(["profile_pLinear"], "GLP_01_x0")
 
         # target parameter should have p_vary set
         ci, pi = model.find_par_by_name("GLP_01_x0")
@@ -448,19 +448,19 @@ class TestProfileParsing:
         p_mod = par.p_model
         assert p_mod is not None
         assert len(p_mod.components) == 1
-        assert p_mod.components[0].fct_str == "linear"
-        assert p_mod.components[0].comp_name == "linear_01"
+        assert p_mod.components[0].fct_str == "pLinear"
+        assert p_mod.components[0].comp_name == "pLinear_01"
         assert p_mod.components[0].par_dict["m"] == [-0.5, True, -2, 2]
         assert p_mod.components[0].par_dict["b"] == [0.0, False, -1.0, 1.0]
 
         # lmfit par names
-        assert "GLP_01_x0_linear_01_m" in model.lmfit_pars
-        assert "GLP_01_x0_linear_01_b" in model.lmfit_pars
+        assert "GLP_01_x0_pLinear_01_m" in model.lmfit_pars
+        assert "GLP_01_x0_pLinear_01_b" in model.lmfit_pars
 
     #
     def test_profile_aux_axis_propagated(self):
         """Profile model should carry the aux_axis from File"""
-        model, file = self.setUp(["profile_exp_decay"], "GLP_01_A")
+        model, file = self.setUp(["profile_pExpDecay"], "GLP_01_A")
 
         ci, pi = model.find_par_by_name("GLP_01_A")
         assert ci is not None
@@ -487,7 +487,7 @@ class TestProfileParsing:
         with pytest.raises(ValueError):
             file.add_par_profile(
                 model_yaml="test_models_profile.yaml",
-                model_info=["profile_exp_decay"],
+                model_info=["profile_pExpDecay"],
                 par_name="GLP_02_A",
             )
 

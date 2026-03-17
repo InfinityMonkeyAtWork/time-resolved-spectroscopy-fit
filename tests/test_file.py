@@ -95,7 +95,7 @@ class TestModelManagement:
         file = self.setUp()
         result = file.load_model(
             model_yaml="test_models_profile.yaml",
-            model_info=["profile_linear"],
+            model_info=["profile_pLinear"],
             par_name="GLP_01_A",
             model_type="profile",
             debug=False,

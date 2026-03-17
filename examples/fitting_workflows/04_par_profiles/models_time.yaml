@@ -7,7 +7,7 @@
 #   p_bb = file.load_model("models_profile.yaml", ["GLP_01_x0"],
 #                          par_name="GLP_01_x0", model_type="profile")
 #   t_bb = file.load_model("models_time.yaml", ["BandBendingRecovery"],
-#                          par_name="GLP_01_x0_linear_01_m", model_type="dynamics")
+#                          par_name="GLP_01_x0_pLinear_01_m", model_type="dynamics")
 #   p_bb.add_dynamics(t_bb)           # add to the PROFILE model
 #   file.model_active.add_profile(p_bb)
 #   file.model_active.dim = 2
@@ -15,16 +15,16 @@
 # This is the key difference from standard time dynamics: the Dynamics model is
 # attached to a parameter of the Profile model, not a parameter of the energy model.
 # The energy model's GLP_01_x0 stays with p_vary=True (profile); the profile's
-# GLP_01_x0_linear_01_m gains t_vary=True (dynamics).
+# GLP_01_x0_pLinear_01_m gains t_vary=True (dynamics).
 #
 # At each time step, Component.value() re-evaluates the profile with the
-# updated GLP_01_x0_linear_01_m value → the band bending gradient evolves in time.
+# updated GLP_01_x0_pLinear_01_m value → the band bending gradient evolves in time.
 
 # ----------------------------------------------------------------------------
-# Band bending recovery after laser excitation (applied to GLP_01_x0_linear_01_m)
+# Band bending recovery after laser excitation (applied to GLP_01_x0_pLinear_01_m)
 # Physical interpretation: photoexcitation generates a surface photovoltage that
 # partially collapses the equilibrium band bending. The band bending gradient
-# GLP_01_x0_linear_01_m recovers exponentially toward its equilibrium value.
+# GLP_01_x0_pLinear_01_m recovers exponentially toward its equilibrium value.
 #
 # total m(t) = equilibrium_m + A_collapse * IRF(t) * exp(-t / tau)
 #   A_collapse > 0  →  collapse of downward band bending (less negative m)

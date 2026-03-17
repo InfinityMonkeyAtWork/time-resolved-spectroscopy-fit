@@ -7,7 +7,7 @@
 #   - Components are named and numbered like energy/time components.
 #   - Resulting lmfit parameter names:
 #       <profile_model_name>_<component_name>_<par_name>
-#     e.g.  GLP_01_A_exp_decay_01_A,  GLP_01_x0_linear_01_m
+#     e.g.  GLP_01_A_pExpDecay_01_A,  GLP_01_x0_pLinear_01_m
 #
 # Load with:
 #   file.add_par_profile("models_profile.yaml", ["GLP_01_A"], "GLP_01_A")
@@ -17,25 +17,27 @@
 # IMFP-weighted amplitude profile (applied to GLP_01_A)
 # Physical meaning: the XPS signal from layer at depth z contributes with
 # weight exp(-z / tau_imfp), where tau_imfp is the inelastic mean free path.
-# A(z) = GLP_01_A_exp_decay_01_A * exp(-z / GLP_01_A_exp_decay_01_tau)
+# A(z) = GLP_01_A_pExpDecay_01_A * exp(-z / GLP_01_A_pExpDecay_01_tau)
 # ----------------------------------------------------------------------------
 GLP_01_A:
-    exp_decay:
+    pExpDecay:
         A:   [200, True, 10, 1000]    # surface spectral weight
         tau: [2.0, True, 0.5, 10.0]  # IMFP (nm); start near expected value
 
 # ----------------------------------------------------------------------------
 # Band bending depth profile (applied to GLP_01_x0)
-# Physical meaning: the core level binding energy shifts linearly with depth
-# due to the built-in electric field at the semiconductor surface.
-# x0(z) = x0_surface + GLP_01_x0_linear_01_m * z + GLP_01_x0_linear_01_b
-#   linear_01_m < 0  ->  higher BE near surface (upward band bending for n-type)
-#   linear_01_b = 0  ->  profile is a pure shift relative to the surface value
+# Physical meaning: the core level binding energy shifts with depth due to the
+# built-in electric field at the semiconductor surface. The linear dependence
+# is an approximation; the magnitude is exaggerated here to clearly illustrate
+# the effect in the data.
+# x0(z) = x0_surface + GLP_01_x0_pLinear_01_m * z + GLP_01_x0_pLinear_01_b
+#   pLinear_01_m < 0  ->  higher BE near surface (upward band bending for n-type)
+#   pLinear_01_b = 0  ->  profile is a pure shift relative to the surface value
 #
-# GLP_01_x0_linear_01_m is made time-dependent in the 2D model
+# GLP_01_x0_pLinear_01_m is made time-dependent in the 2D model
 # (BandBendingRecovery in models_time.yaml).
 # ----------------------------------------------------------------------------
 GLP_01_x0:
-    linear:
+    pLinear:
         m: [-0.5, True, -2, 2]   # band bending gradient (eV/nm)
         b: [0.0, False, -1.0, 1.0]    # intercept offset (fixed at 0)

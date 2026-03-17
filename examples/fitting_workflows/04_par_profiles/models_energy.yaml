@@ -1,7 +1,7 @@
 # Energy model for the par_profiles example
 # Physical scenario: semiconductor XPS core level (e.g. Si 2p) with
-#   - IMFP depth-weighted amplitude (GLP_01_A → exp_decay profile)
-#   - Band bending: core level position shifts linearly with depth (GLP_01_x0 → linear profile)
+#   - IMFP depth-weighted amplitude (GLP_01_A → pExpDecay profile)
+#   - Band bending: core level position shifts linearly with depth (GLP_01_x0 → pLinear profile)
 #   - Time-resolved: band bending collapses after laser excitation and recovers
 #
 # Naming convention:
@@ -26,8 +26,8 @@ base:
 
 # ----------------------------------------------------------------------------
 # Profile-aware baseline model
-# A = 0 (fixed): IMFP exp_decay profile provides the full depth-integrated amplitude.
-# x0 = surface value (free): band bending linear profile adds the depth-dependent shift.
+# A = 0 (fixed): IMFP pExpDecay profile provides the full depth-integrated amplitude.
+# x0 = surface value (free): band bending pLinear profile adds the depth-dependent shift.
 # Used as the reference for the 2D profile fit.
 # ----------------------------------------------------------------------------
 profile_base:
