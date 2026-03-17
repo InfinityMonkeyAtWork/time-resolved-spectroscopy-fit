@@ -25,6 +25,7 @@ Key Capabilities
 
 * Define modular spectral components (Gaussian, Voigt/GLP/GLS, Doniach–Sunjic, backgrounds, convolution kernels)
 * Build 1D (energy) and 2D (time × energy) spectra from components with time-dynamics
+* Attach auxiliary-axis parameter profiles (e.g. depth/position) and compose with dynamics
 * Fit models with lmfit and wrappers for confidence intervals and optional MCMC sampling
 * Simulate individual 1D/2D spectra to validate models
 * Generate ML training data via parameter space exploration

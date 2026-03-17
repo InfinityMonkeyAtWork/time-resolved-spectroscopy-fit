@@ -3,6 +3,8 @@ Spectral component functions for energy-resolved spectroscopy.
 
 Function Conventions
 --------------------
+Use CamelCase naming (UpperCamelCase or lowerCamelCase) for function names.
+
 **Peak Functions:**
 Signature: func(x, par1, par2, ...)
 - x: Energy axis (numpy array)

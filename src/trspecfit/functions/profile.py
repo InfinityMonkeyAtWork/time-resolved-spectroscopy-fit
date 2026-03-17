@@ -1,8 +1,44 @@
-#
-# functions defining parameter profiles
-#
-# e.g. [inelastic mean free path weighted-] depth-dependent profiles
-# of an amplitude of a peak in XPS (X-ray photoelectron spectroscopy)
+"""
+Parameter-profile functions for auxiliary-axis-resolved spectroscopy models.
+
+Function Conventions
+--------------------
+Use CamelCase naming (UpperCamelCase) for function names (with ``p`` prefix).
+Profile functions must be named ``pFunctionName`` (starting with ``p`` for profile)
+to distinguish them from energy- and time-domain functions.
+
+**Profile Functions:**
+Signature: func(x, par1, par2, ...)
+- x: Auxiliary axis (e.g. depth, position, fluence)
+- par1, par2, ...: Function-specific parameters
+- Returns: Profile values as numpy array (same shape as x)
+
+**Usage Context:**
+Profile functions are attached to an energy-model parameter via
+``File.add_par_profile(...)``. During evaluation, the profiled parameter is
+sampled across the auxiliary axis and the resulting component traces are
+uniformly averaged over that axis.
+
+Parameter Naming
+----------------
+Common parameter names:
+- A: Amplitude
+- tau: Decay length/constant
+- m: Slope
+- b: Intercept
+- x0: Center position
+- w: Width (standard deviation)
+
+Use descriptive names without underscores.
+
+Adding New Functions
+--------------------
+To add a new profile function:
+
+1. Implement a function named ``pFunctionName(x, ...)``
+2. Return an array matching the shape of ``x``
+3. Keep parameters physically meaningful and unit-consistent
+"""
 
 import numpy as np
 

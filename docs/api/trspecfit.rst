@@ -34,10 +34,18 @@ Model Management
 Fitting Workflow
 ~~~~~~~~~~~~~~~~
 
+.. note::
+   Recommended composition for profile-aware 2D models is serial:
+   attach a profile to a base parameter with ``add_par_profile()``, then
+   attach dynamics to a profile parameter with ``add_time_dependence()``.
+   Adding profile and dynamics directly to the same base parameter is
+   currently disabled to avoid strongly correlated fits.
+
 .. automethod:: trspecfit.trspecfit.File.define_baseline
 .. automethod:: trspecfit.trspecfit.File.set_fit_limits
 .. automethod:: trspecfit.trspecfit.File.fit_baseline
 .. automethod:: trspecfit.trspecfit.File.fit_SliceBySlice
+.. automethod:: trspecfit.trspecfit.File.add_par_profile
 .. automethod:: trspecfit.trspecfit.File.add_time_dependence
 .. automethod:: trspecfit.trspecfit.File.fit_2Dmodel
 

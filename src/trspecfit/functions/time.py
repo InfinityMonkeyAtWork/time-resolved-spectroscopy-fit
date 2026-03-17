@@ -3,6 +3,8 @@ Temporal dynamics functions for time-resolved spectroscopy.
 
 Function Conventions
 --------------------
+Use CamelCase naming (UpperCamelCase or lowerCamelCase) for function names.
+
 **Dynamics Functions:**
 Signature: func(t, par1, par2, ..., t0, y0)
 - t: Time axis (numpy array)
@@ -70,12 +72,10 @@ def none(t):
     adding any time-dependent behavior. This allows subcycle numbering to
     work correctly when some subcycles should have no dynamics.
 
-    Usage (in model yaml file)
-    ----------
-    ```
-    model_sub2:
-      none: {}
-    ```
+    Usage (in model YAML file)::
+
+        model_sub2:
+          none: {}
 
     Parameters
     ----------
@@ -381,7 +381,7 @@ def expSymCONV(x, tau):
     """
     Symmetric exponential kernel (double exponential).
     Exponential decay in both directions from center:
-    exp(-|x|/tau)
+    ``exp(-|x|/tau)``
 
     Parameters
     ----------

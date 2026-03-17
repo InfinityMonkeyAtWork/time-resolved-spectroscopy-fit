@@ -1,39 +1,87 @@
 # Quick Start
 
-This guide shows the basic workflow to:
-1. load an energy model,
-2. make one energy parameter time-dependent, and
-3. create a 2D (time x energy) model value.
+This guide shows three common patterns:
+1. basic energy-model loading,
+2. adding dynamics, and
+3. adding profiles (and recommended profile+dynamics composition).
 
-## Basic Usage
+## Basic
 ```python
 from trspecfit import Project, File
 
 # Create a project and file wrapper
-project = Project(path='examples/simulator', name='local-test')
-file = File(parent_project=project, path='simulated_dataset')
+project = Project(path='my_project', name='my_experiment')
+file = File(parent_project=project, path='my_dataset')
 
 # Load an energy model (this becomes file.model_active)
-file.load_model('models_energy.yaml', ['ModelName'])
+# models_energy.yaml can define generic components like:
+#   some_background_function, some_peak_function
+file.load_model('models_energy.yaml', ['some_energy_model'])
 
 # See which energy parameters are available in the loaded model
 file.describe_model()
+```
 
-# Add time dependence to one parameter in the active energy model.
-# par_name must exactly match a parameter name in the loaded energy model.
+## Dynamics
+```python
+# Fix well-known energy parameters via a baseline fit
+file.define_baseline(t_ind=0)
+file.fit_baseline()
+
+# Add time dependence to one parameter in the active energy model
+# par_name must match a loaded parameter name exactly
 file.add_time_dependence(
     model_yaml='models_time.yaml',
-    model_info=['TimeModelName'],
-    par_name='EnergyModelComponent_NN_par',
+    model_info=['some_dynamics_model'],
+    par_name='some_base_parameter',
 )
 
-# Check that time-dependent parameters were added correctly
+# Inspect updated parameters
 file.describe_model()
 
-# Create and retrieve the full 2D model value (shape: n_time x n_energy)
-file.model_active.create_value2D()
-value_2d = file.model_active.value2D
+# Global 2D fit
+file.fit_2Dmodel()
 ```
+
+## Profile
+```python
+import numpy as np
+from trspecfit import Project, File
+
+project = Project(path='my_project', name='my_experiment')
+file = File(
+    parent_project=project,
+    path='my_dataset',
+    aux_axis=np.linspace(0, 10, 21),  # required for profile models
+)
+
+file.load_model('models_energy.yaml', ['some_energy_model'])
+
+# Attach profile to a base parameter
+file.add_par_profile(
+    model_yaml='models_profile.yaml',
+    model_info=['some_profile_model'],   # profile model name
+    par_name='some_base_parameter',      # base parameter name
+)
+
+# Add dynamics to a base parameter (most common use case)
+file.add_time_dependence(
+    model_yaml='models_time.yaml',
+    model_info=['some_dynamics_model'],
+    par_name='some_base_parameter',
+)
+
+# Optionally: attach dynamics to a profile parameter (series composition)
+file.add_time_dependence(
+    model_yaml='models_time.yaml',
+    model_info=['another_dynamics_model'],
+    par_name='some_profile_parameter',
+)
+```
+
+## Supported and Disallowed Paths
+- Supported: `base parameter -> profile`, then `profile parameter -> dynamics`.
+- Disallowed: attaching both profile and dynamics directly to the same base parameter (disabled to avoid strongly correlated fits).
 
 ## Notes
 - `add_time_dependence(...)` must be called before `create_value2D()` if you want dynamics in one or more parameters.
@@ -42,4 +90,4 @@ value_2d = file.model_active.value2D
 
 ## Next Steps
 
-See the [Examples](examples/index.rst) section for detailed tutorials.
+See [Examples](examples/index.rst) and [API Reference](api/index.rst) for full workflows and parameter naming details.
