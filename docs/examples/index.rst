@@ -12,6 +12,8 @@ Fitting Workflows
   Parameter-linking workflows using expressions and physical constraints.
 - ``examples/fitting_workflows/03_multi_cycle/``
   Multi-cycle, time-dependent modeling workflows.
+- ``examples/fitting_workflows/04_par_profiles/``
+  Profile-aware fitting with auxiliary-axis parameter profiles and profile-parameter dynamics.
 
 Data Generation
 ---------------
@@ -27,5 +29,6 @@ Notebooks
 - `01 basic fitting notebook <../../examples/fitting_workflows/01_basic_fitting/example.ipynb>`_
 - `02 dependent parameters notebook <../../examples/fitting_workflows/02_dependent_parameters/example.ipynb>`_
 - `03 multi-cycle notebook <../../examples/fitting_workflows/03_multi_cycle/example.ipynb>`_
+- `04 parameter profiles notebook <../../examples/fitting_workflows/04_par_profiles/example.ipynb>`_
 - `Simulator data generation notebook <../../examples/data_generation/simulator/example.ipynb>`_
 - `ML training data generation notebook <../../examples/data_generation/ml_training/example.ipynb>`_

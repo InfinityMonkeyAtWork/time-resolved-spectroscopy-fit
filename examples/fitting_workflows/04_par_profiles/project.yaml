@@ -1,0 +1,20 @@
+# Project configuration for the par_profiles example (time-resolved XPS depth profiling)
+
+# Display settings (general verbosity)
+show_info: 1  # 0: no output, 1: important, 2: all, 3+: debugging
+
+# Axis labels
+e_label: 'Binding energy (eV)'  # x -> energy
+t_label: 'Time (ps)'            # y -> time
+z_label: 'Intensity (arb. units)'  # z -> intensity
+
+# Plot settings
+x_dir: 'rev'  # rev(erse): XPS convention plots high BE on the left
+x_type: 'lin'
+y_dir: 'def'
+y_type: 'lin'
+z_colormap: 'RdBu'
+z_type: 'lin'
+dpi_plt: 100
+dpi_save: 300
+res_mult: 5

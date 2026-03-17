@@ -3,6 +3,8 @@ Temporal dynamics functions for time-resolved spectroscopy.
 
 Function Conventions
 --------------------
+Use CamelCase naming (UpperCamelCase or lowerCamelCase) for function names.
+
 **Dynamics Functions:**
 Signature: func(t, par1, par2, ..., t0, y0)
 - t: Time axis (numpy array)
@@ -70,12 +72,10 @@ def none(t):
     adding any time-dependent behavior. This allows subcycle numbering to
     work correctly when some subcycles should have no dynamics.
 
-    Usage (in model yaml file)
-    ----------
-    ```
-    model_sub2:
-      none: {}
-    ```
+    Usage (in model YAML file)::
+
+        model_sub2:
+          none: {}
 
     Parameters
     ----------
@@ -219,9 +219,10 @@ def sinDivX(t, A, f, t0, y0):
         Sinc oscillation: 0 for t<t0, A*sin(2πf(t-t0))/(2πf(t-t0))+y0 for t>=t0
     """
 
-    x = 2 * np.pi * f * (t - t0)
+    # np.sinc(u) = sin(pi*u)/(pi*u), so u=2*f*(t-t0) gives sin(2*pi*f*dt)/(2*pi*f*dt)
+    x = 2 * f * (t - t0)
     return np.concatenate(
-        (np.zeros(np.shape(t[t < t0])[0]), (A * np.sin(x) / x + y0)[t >= t0])
+        (np.zeros(np.shape(t[t < t0])[0]), (A * np.sinc(x) + y0)[t >= t0])
     )
 
 
@@ -380,7 +381,7 @@ def expSymCONV(x, tau):
     """
     Symmetric exponential kernel (double exponential).
     Exponential decay in both directions from center:
-    exp(-|x|/tau)
+    ``exp(-|x|/tau)``
 
     Parameters
     ----------

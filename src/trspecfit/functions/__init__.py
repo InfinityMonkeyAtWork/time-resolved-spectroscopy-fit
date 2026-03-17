@@ -1,3 +1,3 @@
-from . import distribution, energy, time
+from . import energy, profile, time
 
-__all__ = ["distribution", "energy", "time"]
+__all__ = ["energy", "profile", "time"]

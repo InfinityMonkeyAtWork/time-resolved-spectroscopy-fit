@@ -1,0 +1,67 @@
+# Energy model for the par_profiles example
+# Physical scenario: semiconductor XPS core level (e.g. Si 2p) with
+#   - IMFP depth-weighted amplitude (GLP_01_A → pExpDecay profile)
+#   - Band bending: core level position shifts linearly with depth (GLP_01_x0 → pLinear profile)
+#   - Time-resolved: band bending collapses after laser excitation and recovers
+#
+# Naming convention:
+#   base          — standard fit, all parameters free (pedagogical: no profiles)
+#   profile_base  — profile-aware baseline fit; A=0 (profile provides amplitude)
+#   SbS           — profile-aware Slice-by-Slice; same as 2D but without time dynamics
+#   2D            — profile-aware global 2D fit; band bending is also time-dependent
+
+# ----------------------------------------------------------------------------
+# Standard baseline model (no depth profiles)
+# Fits the depth-averaged spectrum; parameters are effective / depth-averaged.
+# Used here for comparison — shows what we can extract WITHOUT physical profiles.
+# ----------------------------------------------------------------------------
+base:
+    Offset:
+        y0: [0.5, True, 0, 3.0]
+    GLP:
+        A:  [10, True, 5, 100]          # effective (depth-averaged) amplitude
+        x0: [99.5, True, 97, 102]       # effective (depth-averaged) peak position
+        F:  [1.2, True, 0.5, 5.0]       # FWHM (eV)
+        m:  [0.3, True, 0, 1]           # Lorentzian fraction
+
+# ----------------------------------------------------------------------------
+# Profile-aware baseline model
+# A = 0 (fixed): IMFP pExpDecay profile provides the full depth-integrated amplitude.
+# x0 = surface value (free): band bending pLinear profile adds the depth-dependent shift.
+# Used as the reference for the 2D profile fit.
+# ----------------------------------------------------------------------------
+profile_base:
+    Offset:
+        y0: [0.5, True, 0, 3.0]
+    GLP:
+        A:  [0, False]                  # fixed; IMFP profile handles amplitude entirely
+        x0: [99.5, True, 97, 102]       # surface binding energy (free)
+        F:  [1.2, True, 0.5, 3.0]
+        m:  [0.3, True, 0, 1]
+
+# ----------------------------------------------------------------------------
+# Profile-aware Slice-by-Slice model
+# Same parameter structure as 2D; time-dependence is NOT added (SbS fits each
+# time slice independently). Profiles are attached at runtime.
+# ----------------------------------------------------------------------------
+SbS:
+    Offset:
+        y0: [0.5, False, 0, 3.0]        # pinned from profile_base
+    GLP:
+        A:  [0, False]                  # fixed; IMFP profile handles amplitude
+        x0: [99.5, True, 97, 102]       # surface binding energy (free)
+        F:  [1.2, False, 0.5, 3.0]      # pinned from profile_base
+        m:  [0.3, False, 0, 1]          # pinned from profile_base
+
+# ----------------------------------------------------------------------------
+# Profile-aware 2D model (band bending + IMFP depth profiles + time dynamics)
+# Pinned parameters (vary=False) inherit values from the profile_base fit.
+# ----------------------------------------------------------------------------
+2D:
+    Offset:
+        y0: [0.5, False, 0, 3.0]        # pinned from profile_base
+    GLP:
+        A:  [0, False]                  # fixed; IMFP profile handles amplitude
+        x0: [99.5, True, 97, 102]       # surface binding energy (free)
+        F:  [1.2, False, 0.5, 3.0]      # pinned from profile_base
+        m:  [0.3, False, 0, 1]          # pinned from profile_base

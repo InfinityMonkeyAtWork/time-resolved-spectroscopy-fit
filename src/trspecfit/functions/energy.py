@@ -3,6 +3,8 @@ Spectral component functions for energy-resolved spectroscopy.
 
 Function Conventions
 --------------------
+Use CamelCase naming (UpperCamelCase or lowerCamelCase) for function names.
+
 **Peak Functions:**
 Signature: func(x, par1, par2, ...)
 - x: Energy axis (numpy array)
@@ -95,55 +97,47 @@ def Shirley(x, pShirley, spectrum):
 
 
 #
-def LinBack(x, pLinear, spectrum):
+def LinBack(x, m, b, xStart, xStop, spectrum):
     """
-    Linear background with positive slope.
+    Clamped linear background.
+
+    Linear between xStart and xStop, constant outside that range.
+    Works for both inclining and declining energy axes — xStart and xStop
+    refer to energy values (xStart < xStop required).
 
     Parameters
     ----------
     x : ndarray
-        Energy axis (not used in calculation, but required for signature)
-    pLinear : float
-        Slope of linear background (in intensity per index).
-        Positive values create increasing background.
+        Energy axis.
+    m : float
+        Slope (intensity per energy unit).
+    b : float
+        Y-value at xStart (intercept).
+    xStart : float
+        Left boundary of linear region (energy units, must be < xStop).
+    xStop : float
+        Right boundary of linear region (energy units, must be > xStart).
     spectrum : ndarray
-        Current peak sum. Used to determine starting point (spectrum[0])
-        and length of background array.
+        Current peak sum (background calling convention).
 
     Returns
     -------
     ndarray
-        Linear background starting at spectrum[0] with slope pLinear
+        Background: linear between xStart and xStop, clamped constant outside.
+
+    Raises
+    ------
+    ValueError
+        If xStart >= xStop.
     """
 
-    background = np.arange(0, np.shape(spectrum)[0], 1)
-    return pLinear * background + spectrum[0]
-
-
-#
-def LinBackRev(x, pLinear, spectrum):
-    """
-    Linear background with negative slope.
-
-    Parameters
-    ----------
-    x : ndarray
-        Energy axis (not used in calculation, but required for signature)
-    pLinear : float
-        Slope magnitude of linear background (in intensity per index).
-        Positive values create decreasing background (reversed).
-    spectrum : ndarray
-        Current peak sum. Used to determine starting point (spectrum[-1])
-        and length of background array.
-
-    Returns
-    -------
-    ndarray
-        Linear background starting at spectrum[-1] with negative slope
-    """
-
-    background = np.arange(0, np.shape(spectrum)[0], 1)
-    return pLinear * background[::-1] + spectrum[-1]
+    if xStart >= xStop:
+        raise ValueError(
+            f"LinBack requires xStart < xStop, got xStart={xStart}, xStop={xStop}"
+        )
+    y = m * (x - xStart) + b
+    yStop = m * (xStop - xStart) + b
+    return np.where(x < xStart, b, np.where(x > xStop, yStop, y))
 
 
 #

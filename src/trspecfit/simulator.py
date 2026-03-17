@@ -350,14 +350,19 @@ class Simulator:
     #
     def generate_clean_data(self, dim: int = 2, t_ind: int = 0) -> np.ndarray:
         """
-        Generate clean data from model (no noise)
+        Generate clean data from model (no noise).
 
-        Parameters:
-            dim: Dimension (1 for 1D, 2 for 2D)
-            t_ind: Time index for 1D simulations (ignored for 2D)
+        Parameters
+        ----------
+        dim : int
+            Dimension (1 for 1D, 2 for 2D).
+        t_ind : int
+            Time index for 1D simulations (ignored for 2D).
 
-        Returns:
-            Clean data array (1D or 2D depending on dim)
+        Returns
+        -------
+        ndarray
+            Clean data array (1D or 2D depending on dim).
         """
 
         if dim == 1:
@@ -378,14 +383,19 @@ class Simulator:
         self, clean_data: np.ndarray, dim: int = 2
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Add noise to clean data based on detection technique
+        Add noise to clean data based on detection technique.
 
-        Parameters:
-            clean_data: Clean data array (1D or 2D)
-            dim: Dimension (1 for 1D, 2 for 2D)
+        Parameters
+        ----------
+        clean_data : ndarray
+            Clean data array (1D or 2D).
+        dim : int
+            Dimension (1 for 1D, 2 for 2D).
 
-        Returns:
-            Tuple of (noisy_data, noise)
+        Returns
+        -------
+        tuple of (ndarray, ndarray)
+            Tuple of (noisy_data, noise).
         """
 
         if self.detection == "analog":
@@ -746,13 +756,17 @@ class Simulator:
     #
     def _generate_noise_analog_1D(self, signal: np.ndarray) -> np.ndarray:
         """
-        Generate 1D noise array for analog detectors
+        Generate 1D noise array for analog detectors.
 
-        Parameters:
-            signal: Clean signal array
+        Parameters
+        ----------
+        signal : ndarray
+            Clean signal array.
 
-        Returns:
-            Noise array with same shape as signal
+        Returns
+        -------
+        ndarray
+            Noise array with same shape as signal.
         """
 
         if self.noise_type == "none":
@@ -790,13 +804,17 @@ class Simulator:
     #
     def _generate_noise_analog_2D(self, signal: np.ndarray) -> np.ndarray:
         """
-        Generate 2D noise array for analog detectors
+        Generate 2D noise array for analog detectors.
 
-        Parameters:
-            signal: Clean 2D signal array
+        Parameters
+        ----------
+        signal : ndarray
+            Clean 2D signal array.
 
-        Returns:
-            2D noise array with same shape as signal
+        Returns
+        -------
+        ndarray
+            2D noise array with same shape as signal.
         """
 
         if self.noise_type == "none":
@@ -840,11 +858,15 @@ class Simulator:
         The signal is scaled so the total expected counts across all energy
         pixels equals counts_per_delay.
 
-        Parameters:
-            signal: Clean signal array (represents expected count rate)
+        Parameters
+        ----------
+        signal : ndarray
+            Clean signal array (represents expected count rate).
 
-        Returns:
-            Noisy data array in same units as input signal
+        Returns
+        -------
+        ndarray
+            Noisy data array in same units as input signal.
         """
 
         signal_positive = np.abs(signal)
@@ -882,11 +904,15 @@ class Simulator:
         accumulate more photons (better SNR), matching real experiments where
         each time delay is measured for the same integration time.
 
-        Parameters:
-            signal: Clean 2D signal array (shape: [n_time, n_energy])
+        Parameters
+        ----------
+        signal : ndarray
+            Clean 2D signal array (shape: [n_time, n_energy]).
 
-        Returns:
-            Noisy 2D data array in same units as input signal
+        Returns
+        -------
+        ndarray
+            Noisy 2D data array in same units as input signal.
         """
 
         signal_positive = np.abs(signal)
@@ -944,12 +970,15 @@ class Simulator:
         self, count_rate: float, integration_time: float | None = None
     ) -> None:
         """
-        Update count rate (photon counting only)
+        Update count rate (photon counting only).
 
-        Parameters:
-            count_rate: Photon rate in Hz
-            integration_time: Integration time per delay in seconds
-                (if None, uses existing value)
+        Parameters
+        ----------
+        count_rate : float
+            Photon rate in Hz.
+        integration_time : float | None
+            Integration time per delay in seconds.
+            If None, uses existing value.
         """
 
         if self.detection != "photon_counting":

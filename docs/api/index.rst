@@ -8,6 +8,9 @@ This section contains the auto-generated API documentation.
 
    trspecfit
    mcp
+   functions_energy
+   functions_time
+   functions_profile
    fitlib
    spectra
    simulator

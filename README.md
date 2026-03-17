@@ -9,9 +9,11 @@
 
 - Modular components (Gaussian, Voigt/GLP/GLS, Doniach-Sunjic, backgrounds, kernels)
 - 1D and 2D model construction with time-dependent parameters
+- Auxiliary-axis parameter profiles via `add_par_profile(...)`
 - Global fitting via `lmfit`, including CI and optional MCMC (`lmfit.emcee`)
 - Synthetic data generation (single spectra, 2D datasets, noisy realizations)
 - Parameter-sweep simulation for validation and ML training data generation
+- Centralized plot configuration via `PlotConfig` with per-plot overrides
 
 ## Documentation
 
@@ -21,8 +23,6 @@ Full docs are hosted on Read the Docs:
 - Quick start: https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/quickstart.html
 - Examples: https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/examples/index.html
 - API reference: https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/api/index.html
-
-For consistent, central plot behavior, set plotting defaults at `Project` creation (typically via `project.yaml`), and see PlotConfig details and override patterns here: https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/api/plot_config.html
 
 ## Support and Community
 
@@ -54,42 +54,39 @@ pip install git+https://github.com/InfinityMonkeyAtWork/time-resolved-spectrosco
 ```python
 from trspecfit import Project, File
 
-project = Project(path='examples/simulator', name='local-test')
-file = File(parent_project=project, path='simulated_dataset')
+project = Project(path='my_project', name='my_experiment')
+file = File(parent_project=project, path='my_dataset')
 
-file.load_model('models_energy.yaml', ['ModelName'])
+# Load an energy model defined in a YAML file
+file.load_model('models_energy.yaml', ['some_energy_model'])
 file.describe_model()
 
-file.add_time_dependence(
-    model_yaml='models_time.yaml',
-    model_info=['TimeModelName'],
-    par_name='EnergyModelComponent_NN_par',
-)
-
-file.model_active.create_value2D()
-value_2d = file.model_active.value2D
+# Fit each time slice individually
+file.fit_SliceBySlice()
 ```
 
-For full workflows, see the docs examples page and the notebooks in `examples/`.
+For global fits, dynamics, profiles, and advanced workflows see the
+[Quick Start](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/quickstart.html)
+and [Examples](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/examples/index.html).
 
 ## Development
 
 ```bash
-# Create env (same on all platforms)
-python -m venv .venv
-
-# Activate virtual environment
+# Create and activate virtual environment
 # Linux / macOS
+python3 -m venv .venv
 source .venv/bin/activate
-# OR Windows PowerShell
+# OR Windows (PowerShell)
+python -m venv .venv
 .\.venv\Scripts\Activate
 
-# Install and setup (same on all platforms)
+# [same commands for all platforms from here on]
+# Install and setup
 pip install -U pip
 pip install -e ".[dev]"
 python -m pre_commit install --install-hooks
 
-# Commit changes (same on all platforms)
+# Commit changes
 pytest
 python -m pre_commit run --all-files
 ```

@@ -10,7 +10,7 @@ Utilities for inspecting parameter sweep datasets.
 """
 
 import itertools
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from typing import Any, cast
 
 import h5py
@@ -92,7 +92,7 @@ class ParameterSweep:
         self.rng = np.random.default_rng(seed)
 
     #
-    def add_range(self, par_name: str, values: list[float]) -> None:
+    def add_range(self, par_name: str, values: Sequence[float]) -> None:
         """
         Add discrete parameter values to sweep.
 

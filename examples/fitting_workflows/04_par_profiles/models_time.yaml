@@ -1,0 +1,40 @@
+# Time-dynamics models for the par_profiles example
+# Applied to profile model parameters — not directly to energy model parameters.
+#
+# Usage: load with par_name matching the lmfit name of the profile parameter
+# to be made time-dependent, then add to the profile model (not the energy model):
+#
+#   p_bb = file.load_model("models_profile.yaml", ["GLP_01_x0"],
+#                          par_name="GLP_01_x0", model_type="profile")
+#   t_bb = file.load_model("models_time.yaml", ["BandBendingRecovery"],
+#                          par_name="GLP_01_x0_pLinear_01_m", model_type="dynamics")
+#   p_bb.add_dynamics(t_bb)           # add to the PROFILE model
+#   file.model_active.add_profile(p_bb)
+#   file.model_active.dim = 2
+#
+# This is the key difference from standard time dynamics: the Dynamics model is
+# attached to a parameter of the Profile model, not a parameter of the energy model.
+# The energy model's GLP_01_x0 stays with p_vary=True (profile); the profile's
+# GLP_01_x0_pLinear_01_m gains t_vary=True (dynamics).
+#
+# At each time step, Component.value() re-evaluates the profile with the
+# updated GLP_01_x0_pLinear_01_m value → the band bending gradient evolves in time.
+
+# ----------------------------------------------------------------------------
+# Band bending recovery after laser excitation (applied to GLP_01_x0_pLinear_01_m)
+# Physical interpretation: photoexcitation generates a surface photovoltage that
+# partially collapses the equilibrium band bending. The band bending gradient
+# GLP_01_x0_pLinear_01_m recovers exponentially toward its equilibrium value.
+#
+# total m(t) = equilibrium_m + A_collapse * IRF(t) * exp(-t / tau)
+#   A_collapse > 0  →  collapse of downward band bending (less negative m)
+#   tau           →  band bending recovery (photovoltage lifetime)
+# ----------------------------------------------------------------------------
+BandBendingRecovery:
+    gaussCONV:
+        SD:  [10, True, 1, 100]        # IRF width (ps); Gaussian instrument response
+    expFun:
+        A:   [0.02, True, 0, 0.1]      # amplitude of transient band bending collapse (eV/nm)
+        tau: [100, True, 10, 500]      # band bending recovery time constant (ps)
+        t0:  [0, False, 0, 1]
+        y0:  [0, False, 0, 1]

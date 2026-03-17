@@ -379,11 +379,6 @@ def fit_wrapper(
     save_path: PathLike = "",
 ) -> list[Any]:
     """
-    if sigmas is None:
-        sigmas = [1, 2, 3]
-    if MCsettings is None:
-        MCsettings = ulmfit.MC()
-
     Comprehensive fitting wrapper with optimization, CI, and MCMC.
 
     This is the main fitting function in trspecfit. It handles:
@@ -476,23 +471,18 @@ def fit_wrapper(
         Five-element list containing results:
         [par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs]
 
-        par_ini : lmfit.Parameters
-            Initial parameter guess
-        par_fin : lmfit.MinimizerResult or []
-            Final fit result from lmfit.minimize
-            Empty list if fit_type=0
-        conf_CIs : pd.DataFrame or pd.DataFrame()
-            Confidence intervals from lmfit.conf_interval
-            Columns: ['par[v]/sigma[>]', '-3σ', '-2σ', '-1σ', 'best',
-                      '+1σ', '+2σ', '+3σ']
-            Empty DataFrame if CI not calculated/failed
-        emcee_fin : lmfit.MinimizerResult or []
-            MCMC result from lmfit.emcee
-            Empty list if MCMC not used
-        emcee_CIs : pd.DataFrame or pd.DataFrame()
-            MCMC confidence intervals from quantiles of flatchain
-            Same column structure as conf_CIs
-            Empty DataFrame if MCMC not used
+        - **par_ini** (*lmfit.Parameters*) -- Initial parameter guess.
+        - **par_fin** (*lmfit.MinimizerResult or []*) -- Final fit result
+          from lmfit.minimize. Empty list if fit_type=0.
+        - **conf_CIs** (*pd.DataFrame*) -- Confidence intervals from
+          lmfit.conf_interval. Columns: ``['par[v]/sigma[>]', '-3σ',
+          '-2σ', '-1σ', 'best', '+1σ', '+2σ', '+3σ']``.
+          Empty DataFrame if CI not calculated/failed.
+        - **emcee_fin** (*lmfit.MinimizerResult or []*) -- MCMC result
+          from lmfit.emcee. Empty list if MCMC not used.
+        - **emcee_CIs** (*pd.DataFrame*) -- MCMC confidence intervals
+          from quantiles of flatchain. Same column structure as conf_CIs.
+          Empty DataFrame if MCMC not used.
 
     Examples
     --------
