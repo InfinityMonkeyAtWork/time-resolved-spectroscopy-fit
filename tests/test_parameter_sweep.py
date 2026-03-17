@@ -202,8 +202,8 @@ class TestSimulatorParameterSweep:
     """Test Simulator.simulate_parameter_sweep() integration"""
 
     #
-    def setUp(self):
-        """Setup function to create a simple 2D model for sweep testing."""
+    def _make_2d_model(self):
+        """Create a simple 2D model for sweep testing."""
 
         project = Project(path="tests", name="test")
         file = File(
@@ -230,7 +230,7 @@ class TestSimulatorParameterSweep:
         sweep.add_range("GLP_01_x0", [8, 10])
 
         sim = Simulator(
-            model=self.setUp(), detection="analog", noise_level=0.05, seed=42
+            model=self._make_2d_model(), detection="analog", noise_level=0.05, seed=42
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -269,7 +269,7 @@ class TestSimulatorParameterSweep:
         sweep.add_range("GLP_01_x0", [8, 10])
 
         sim = Simulator(
-            model=self.setUp(), detection="analog", noise_level=0.05, seed=42
+            model=self._make_2d_model(), detection="analog", noise_level=0.05, seed=42
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -320,7 +320,7 @@ class TestSimulatorParameterSweep:
         sweep.add_range("GLP_01_A", [15, 20])
 
         sim = Simulator(
-            model=self.setUp(), detection="analog", noise_level=0.05, seed=42
+            model=self._make_2d_model(), detection="analog", noise_level=0.05, seed=42
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -379,7 +379,7 @@ class TestSimulatorParameterSweep:
         sweep.add_range("GLP_01_A", test_values)
 
         sim = Simulator(
-            model=self.setUp(), detection="analog", noise_level=0.05, seed=42
+            model=self._make_2d_model(), detection="analog", noise_level=0.05, seed=42
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -413,7 +413,7 @@ class TestSimulatorParameterSweep:
         sweep.add_uniform("GLP_01_A", 10, 25, n_samples=5)
 
         sim = Simulator(
-            model=self.setUp(), detection="analog", noise_level=0.05, seed=42
+            model=self._make_2d_model(), detection="analog", noise_level=0.05, seed=42
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -449,7 +449,7 @@ class TestSimulatorParameterSweep:
 
         # Test analog detector
         sim_analog = Simulator(
-            model=self.setUp(),
+            model=self._make_2d_model(),
             detection="analog",
             noise_level=0.08,
             noise_type="gaussian",
@@ -475,7 +475,7 @@ class TestSimulatorParameterSweep:
 
         # Test photon counting detector
         sim_photon = Simulator(
-            model=self.setUp(),
+            model=self._make_2d_model(),
             detection="photon_counting",
             counts_per_delay=5000,
             seed=42,

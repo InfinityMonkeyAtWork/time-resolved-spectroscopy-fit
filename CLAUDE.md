@@ -8,7 +8,11 @@
 
 # Testing
 
-- Use `setUp` method (not `@pytest.fixture`) for setup tasks shared between multiple tests.
+- Plain pytest classes, no `unittest.TestCase`, no `@pytest.fixture`, no `setUp`/`setup_method`.
+  Shared setup lives in explicit helper methods called by each test:
+  module-level axis factories (`make_energy_axis`, `make_time_axis`, `make_kernel_axis`,
+  `make_aux_axis`) and class-level private builders/loaders (`_make_file_...`, `_load_..._model`,
+  `_make_2d_model`, etc.). Name helpers by intent, not lifecycle.
 - Test YAML files live in `tests/` (e.g. `test_models_energy.yaml`).
 - Always pass `show_plot=False` and `debug=False` in test calls.
 - Run tests: `pytest -q`

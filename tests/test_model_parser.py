@@ -16,8 +16,8 @@ class TestEnergyParsing:
     """Test parsing of 1D energy models."""
 
     #
-    def setUp(self, model_info):
-        """Setup function to create project, file, and load model"""
+    def _load_energy_model(self, model_info):
+        """Create project, file, and load energy model."""
         project = Project(path="tests")
         file = File(parent_project=project)
         file.load_model(
@@ -37,7 +37,7 @@ class TestEnergyParsing:
         """
 
         # import the model
-        model = self.setUp(["simple_energy"])
+        model = self._load_energy_model(["simple_energy"])
 
         # check the model
         assert model.name == "simple_energy"
@@ -90,7 +90,7 @@ class TestEnergyParsing:
         """Test energy parameters with expressions"""
 
         # import the model
-        model = self.setUp(["energy_expression"])
+        model = self._load_energy_model(["energy_expression"])
 
         # check the model
         assert model.name == "energy_expression"
@@ -134,7 +134,7 @@ class TestEnergyParsing:
     #
     def test_energy_expression_fwd_ref_model(self):
         """Test energy parameters with forward reference expressions"""
-        model = self.setUp(["energy_expression_forward_reference"])
+        model = self._load_energy_model(["energy_expression_forward_reference"])
         assert model.name == "energy_expression_forward_reference"
         assert model.dim == 1
         assert len(model.components) == 4
@@ -180,8 +180,8 @@ class TestTimeParsing:
     """Test parsing of 1D time models (mcp.Dynamics)."""
 
     #
-    def setUp(self, model_info):
-        """Setup function to create project, file, and load model"""
+    def _load_dynamics_model(self, model_info):
+        """Create project, file, and load dynamics model."""
         project = Project(path="tests")
         file = File(parent_project=project)
         file.time = np.linspace(-10, 100, 111)  # needed for time-dependent models
@@ -200,7 +200,7 @@ class TestTimeParsing:
         """Test simple time model"""
 
         # import the model
-        model = self.setUp(["MonoExpPos"])
+        model = self._load_dynamics_model(["MonoExpPos"])
 
         # check the model
         assert model.name == "parTEST"
@@ -220,7 +220,7 @@ class TestTimeParsing:
         """Test IRF model"""
 
         # import the model
-        model = self.setUp(["MonoExpPosIRF"])
+        model = self._load_dynamics_model(["MonoExpPosIRF"])
 
         # check the model
         assert model.name == "parTEST"
@@ -245,7 +245,7 @@ class TestTimeParsing:
 
         # import the model:
         # ModelNone (all times) + MonoExpNeg (sub1) + MonoExpPosExpr (sub2)
-        model = self.setUp(["ModelNone", "MonoExpNeg", "MonoExpPosExpr"])
+        model = self._load_dynamics_model(["ModelNone", "MonoExpNeg", "MonoExpPosExpr"])
 
         # check the model
         assert model.name == "parTEST"
@@ -293,7 +293,7 @@ class Test2DModelParsing:
     """Test parsing of 2D energy- and time-resolved models."""
 
     #
-    def setUp(
+    def _make_file_with_energy_model(
         self,
         model_energy: list[str],
         aux_axis: np.ndarray | None = None,
@@ -314,7 +314,7 @@ class Test2DModelParsing:
     def test_simple_2D_model(self):
         """Add IRF+exp_decay time-dependence to the simple energy model"""
 
-        file = self.setUp(model_energy=["simple_energy"])
+        file = self._make_file_with_energy_model(model_energy=["simple_energy"])
         file.add_time_dependence(
             model_yaml="test_models_time.yaml",
             model_info=["MonoExpPosIRF"],
@@ -364,7 +364,7 @@ class Test2DModelParsing:
     #
     def test_time_dependence_on_expression_parameter_raises(self):
         """Adding dynamics to expression-linked parameter should fail."""
-        file = self.setUp(model_energy=["energy_expression"])
+        file = self._make_file_with_energy_model(model_energy=["energy_expression"])
 
         with pytest.raises(
             ValueError, match="Cannot add time dependence to expression parameter"
@@ -378,7 +378,9 @@ class Test2DModelParsing:
     #
     def test_time_dependence_on_profiled_parameter_raises(self):
         """Adding dynamics directly to a profiled parameter should fail."""
-        file = self.setUp(model_energy=["single_glp"], aux_axis=np.linspace(0, 10, 21))
+        file = self._make_file_with_energy_model(
+            model_energy=["single_glp"], aux_axis=np.linspace(0, 10, 21)
+        )
         file.add_par_profile(
             model_yaml="test_models_profile.yaml",
             model_info=["profile_pLinear"],
@@ -416,8 +418,8 @@ class TestProfileParsing:
         return file
 
     #
-    def setUp(self, model_info, par_name):
-        """Setup function to create project, file with energy model, and load profile"""
+    def _load_profile_model(self, model_info, par_name):
+        """Create project, file with energy model, and load profile."""
         file = self._make_file(
             model_energy=["simple_energy"],
             aux_axis=np.linspace(0, 10, 21),
@@ -434,7 +436,7 @@ class TestProfileParsing:
     #
     def test_pExpDecay_profile(self):
         """Test pExpDecay profile attached to GLP_01_A"""
-        model, file = self.setUp(["profile_pExpDecay"], "GLP_01_A")
+        model, file = self._load_profile_model(["profile_pExpDecay"], "GLP_01_A")
 
         # target parameter should have p_vary set
         ci, pi = model.find_par_by_name("GLP_01_A")
@@ -459,7 +461,7 @@ class TestProfileParsing:
     #
     def test_pLinear_profile(self):
         """Test pLinear profile attached to GLP_01_x0"""
-        model, file = self.setUp(["profile_pLinear"], "GLP_01_x0")
+        model, file = self._load_profile_model(["profile_pLinear"], "GLP_01_x0")
 
         # target parameter should have p_vary set
         ci, pi = model.find_par_by_name("GLP_01_x0")
@@ -484,7 +486,7 @@ class TestProfileParsing:
     #
     def test_profile_aux_axis_propagated(self):
         """Profile model should carry the aux_axis from File"""
-        model, file = self.setUp(["profile_pExpDecay"], "GLP_01_A")
+        model, file = self._load_profile_model(["profile_pExpDecay"], "GLP_01_A")
 
         ci, pi = model.find_par_by_name("GLP_01_A")
         assert ci is not None

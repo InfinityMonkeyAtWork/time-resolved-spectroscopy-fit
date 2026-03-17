@@ -25,7 +25,7 @@ from trspecfit.functions.energy import (
 
 
 #
-def setUp():
+def make_energy_axis():
     """Standard energy axis for peak tests."""
 
     return np.linspace(-10, 10, 2001)
@@ -43,7 +43,7 @@ def setUpSpectrum(x):
 class TestOffset:
     #
     def test_constant_value(self):
-        x = setUp()
+        x = make_energy_axis()
         spectrum = setUpSpectrum(x)
         result = Offset(x, y0=3.0, spectrum=spectrum)
         assert result.shape == spectrum.shape
@@ -51,14 +51,14 @@ class TestOffset:
 
     #
     def test_zero_offset(self):
-        x = setUp()
+        x = make_energy_axis()
         spectrum = setUpSpectrum(x)
         result = Offset(x, y0=0.0, spectrum=spectrum)
         np.testing.assert_allclose(result, 0.0)
 
     #
     def test_negative_offset(self):
-        x = setUp()
+        x = make_energy_axis()
         spectrum = setUpSpectrum(x)
         result = Offset(x, y0=-2.5, spectrum=spectrum)
         np.testing.assert_allclose(result, -2.5)
@@ -71,7 +71,7 @@ class TestShirley:
     def test_monotonic_decreasing(self):
         """Shirley background should be monotonically non-increasing."""
 
-        x = setUp()
+        x = make_energy_axis()
         spectrum = setUpSpectrum(x)
         result = Shirley(x, pShirley=400, spectrum=spectrum)
         assert result.shape == spectrum.shape
@@ -79,14 +79,14 @@ class TestShirley:
 
     #
     def test_zero_scaling(self):
-        x = setUp()
+        x = make_energy_axis()
         spectrum = setUpSpectrum(x)
         result = Shirley(x, pShirley=0, spectrum=spectrum)
         np.testing.assert_allclose(result, 0.0)
 
     #
     def test_scales_linearly(self):
-        x = setUp()
+        x = make_energy_axis()
         spectrum = setUpSpectrum(x)
         r1 = Shirley(x, pShirley=100, spectrum=spectrum)
         r2 = Shirley(x, pShirley=200, spectrum=spectrum)
@@ -100,14 +100,14 @@ class TestLinBack:
 
     #
     def test_zero_slope_is_constant(self):
-        x = setUp()
+        x = make_energy_axis()
         spectrum = setUpSpectrum(x)
         result = LinBack(x, m=0.0, b=5.0, xStart=-5, xStop=5, spectrum=spectrum)
         np.testing.assert_allclose(result, 5.0)
 
     #
     def test_positive_slope(self):
-        x = setUp()
+        x = make_energy_axis()
         spectrum = setUpSpectrum(x)
         result = LinBack(x, m=2.0, b=1.0, xStart=-5, xStop=5, spectrum=spectrum)
         idx = np.argmin(np.abs(x - 0.0))
@@ -116,7 +116,7 @@ class TestLinBack:
 
     #
     def test_negative_slope(self):
-        x = setUp()
+        x = make_energy_axis()
         spectrum = setUpSpectrum(x)
         result = LinBack(x, m=-1.0, b=10.0, xStart=-5, xStop=5, spectrum=spectrum)
         idx = np.argmin(np.abs(x - 0.0))
@@ -125,7 +125,7 @@ class TestLinBack:
 
     #
     def test_clamped_below_xStart(self):
-        x = setUp()
+        x = make_energy_axis()
         spectrum = setUpSpectrum(x)
         result = LinBack(x, m=2.0, b=1.0, xStart=-3, xStop=3, spectrum=spectrum)
         # All points below xStart should equal b
@@ -134,7 +134,7 @@ class TestLinBack:
 
     #
     def test_clamped_above_xStop(self):
-        x = setUp()
+        x = make_energy_axis()
         spectrum = setUpSpectrum(x)
         result = LinBack(x, m=2.0, b=1.0, xStart=-3, xStop=3, spectrum=spectrum)
         # All points above xStop should equal m*(xStop - xStart) + b = 2*6 + 1 = 13
@@ -143,7 +143,7 @@ class TestLinBack:
 
     #
     def test_full_range_no_clamping(self):
-        x = setUp()
+        x = make_energy_axis()
         spectrum = setUpSpectrum(x)
         result = LinBack(x, m=0.5, b=0.0, xStart=x[0], xStop=x[-1], spectrum=spectrum)
         expected = 0.5 * (x - x[0])
@@ -151,7 +151,7 @@ class TestLinBack:
 
     #
     def test_xStart_ge_xStop_raises(self):
-        x = setUp()
+        x = make_energy_axis()
         spectrum = setUpSpectrum(x)
         with pytest.raises(ValueError, match="xStart < xStop"):
             LinBack(x, m=1.0, b=0.0, xStart=5, xStop=5, spectrum=spectrum)
@@ -179,13 +179,13 @@ class TestLinBack:
 class TestGauss:
     #
     def test_peak_at_center(self):
-        x = setUp()
+        x = make_energy_axis()
         result = Gauss(x, A=5.0, x0=0.0, SD=1.0)
         assert result[len(x) // 2] == pytest.approx(5.0, rel=1e-6)
 
     #
     def test_symmetry(self):
-        x = setUp()
+        x = make_energy_axis()
         result = Gauss(x, A=1.0, x0=0.0, SD=1.0)
         np.testing.assert_allclose(result, result[::-1], atol=1e-12)
 
@@ -193,7 +193,7 @@ class TestGauss:
     def test_fwhm(self):
         """FWHM = 2*sqrt(2*ln2) * SD ≈ 2.3548 * SD."""
 
-        x = setUp()
+        x = make_energy_axis()
         SD = 2.0
         result = Gauss(x, A=1.0, x0=0.0, SD=SD)
         half_max_indices = np.where(result >= 0.5)[0]
@@ -203,7 +203,7 @@ class TestGauss:
 
     #
     def test_offset_center(self):
-        x = setUp()
+        x = make_energy_axis()
         result = Gauss(x, A=3.0, x0=2.0, SD=1.0)
         peak_idx = np.argmax(result)
         assert x[peak_idx] == pytest.approx(2.0, abs=0.01)
@@ -212,7 +212,7 @@ class TestGauss:
     def test_value_at_one_sigma(self):
         """At x = x0 ± SD, value should be A * exp(-0.5) ≈ 0.6065*A."""
 
-        x = setUp()
+        x = make_energy_axis()
         SD = 1.0
         result = Gauss(x, A=1.0, x0=0.0, SD=SD)
         idx = np.argmin(np.abs(x - SD))
@@ -224,14 +224,14 @@ class TestGauss:
 class TestGaussAsym:
     #
     def test_symmetric_when_ratio_1(self):
-        x = setUp()
+        x = make_energy_axis()
         sym = Gauss(x, A=1.0, x0=0.0, SD=1.5)
         asym = GaussAsym(x, A=1.0, x0=0.0, SD=1.5, ratio=1.0)
         np.testing.assert_allclose(asym, sym, atol=1e-12)
 
     #
     def test_peak_at_center(self):
-        x = setUp()
+        x = make_energy_axis()
         result = GaussAsym(x, A=5.0, x0=0.0, SD=1.0, ratio=2.0)
         peak_idx = np.argmax(result)
         assert x[peak_idx] == pytest.approx(0.0, abs=0.01)
@@ -241,7 +241,7 @@ class TestGaussAsym:
     def test_asymmetry_direction(self):
         """Ratio > 1 means broader on high-energy side."""
 
-        x = setUp()
+        x = make_energy_axis()
         result = GaussAsym(x, A=1.0, x0=0.0, SD=1.0, ratio=2.0)
         center = len(x) // 2
         left_area = np.sum(result[:center])
@@ -254,13 +254,13 @@ class TestGaussAsym:
 class TestLorentz:
     #
     def test_peak_at_center(self):
-        x = setUp()
+        x = make_energy_axis()
         result = Lorentz(x, A=7.0, x0=0.0, W=2.0)
         assert result[len(x) // 2] == pytest.approx(7.0, rel=1e-6)
 
     #
     def test_symmetry(self):
-        x = setUp()
+        x = make_energy_axis()
         result = Lorentz(x, A=1.0, x0=0.0, W=2.0)
         np.testing.assert_allclose(result, result[::-1], atol=1e-12)
 
@@ -268,7 +268,7 @@ class TestLorentz:
     def test_half_max_at_W_over_2(self):
         """At x = x0 ± W/2, value should be A/2."""
 
-        x = setUp()
+        x = make_energy_axis()
         W = 2.0
         result = Lorentz(x, A=1.0, x0=0.0, W=W)
         idx = np.argmin(np.abs(x - W / 2))
@@ -278,7 +278,7 @@ class TestLorentz:
     def test_heavier_tails_than_gauss(self):
         """Lorentzian should have more intensity in the tails than Gaussian."""
 
-        x = setUp()
+        x = make_energy_axis()
         lorentz = Lorentz(x, A=1.0, x0=0.0, W=2.0)
         gauss = Gauss(x, A=1.0, x0=0.0, SD=2.0 / 2.3548)
         # Compare at 3*FWHM from center
@@ -291,7 +291,7 @@ class TestLorentz:
 class TestVoigt:
     #
     def test_peak_at_center(self):
-        x = setUp()
+        x = make_energy_axis()
         result = Voigt(x, A=4.0, x0=0.0, SD=1.0, W=1.0)
         peak_idx = np.argmax(result)
         assert x[peak_idx] == pytest.approx(0.0, abs=0.01)
@@ -299,7 +299,7 @@ class TestVoigt:
 
     #
     def test_symmetry(self):
-        x = setUp()
+        x = make_energy_axis()
         result = Voigt(x, A=1.0, x0=0.0, SD=1.0, W=1.0)
         np.testing.assert_allclose(result, result[::-1], atol=1e-10)
 
@@ -307,7 +307,7 @@ class TestVoigt:
     def test_wider_than_components(self):
         """Voigt FWHM > max(Gaussian FWHM, Lorentzian FWHM)."""
 
-        x = setUp()
+        x = make_energy_axis()
         SD, W = 1.0, 1.0
         voigt = Voigt(x, A=1.0, x0=0.0, SD=SD, W=W)
         half_max = np.where(voigt >= 0.5)[0]
@@ -322,7 +322,7 @@ class TestVoigt:
 class TestGLS:
     #
     def test_peak_at_center(self):
-        x = setUp()
+        x = make_energy_axis()
         result = GLS(x, A=3.0, x0=0.0, F=1.0, m=0.3)
         peak_idx = np.argmax(result)
         assert x[peak_idx] == pytest.approx(0.0, abs=0.01)
@@ -331,7 +331,7 @@ class TestGLS:
     def test_pure_gaussian_m0(self):
         """m=0 should give pure Gaussian shape."""
 
-        x = setUp()
+        x = make_energy_axis()
         result = GLS(x, A=5.0, x0=0.0, F=1.0, m=0.0)
         expected = 5.0 * np.exp(-((x / 1.0) ** 2) * 4 * np.log(2))
         np.testing.assert_allclose(result, expected, atol=1e-12)
@@ -340,13 +340,13 @@ class TestGLS:
     def test_peak_value_at_center_m0(self):
         """At x=x0 with m=0, value should be A."""
 
-        x = setUp()
+        x = make_energy_axis()
         result = GLS(x, A=5.0, x0=0.0, F=1.0, m=0.0)
         assert result[len(x) // 2] == pytest.approx(5.0, rel=1e-6)
 
     #
     def test_symmetry(self):
-        x = setUp()
+        x = make_energy_axis()
         result = GLS(x, A=1.0, x0=0.0, F=1.5, m=0.5)
         np.testing.assert_allclose(result, result[::-1], atol=1e-12)
 
@@ -356,7 +356,7 @@ class TestGLS:
 class TestGLP:
     #
     def test_peak_at_center(self):
-        x = setUp()
+        x = make_energy_axis()
         result = GLP(x, A=3.0, x0=0.0, F=1.0, m=0.3)
         assert result[len(x) // 2] == pytest.approx(3.0, rel=1e-6)
 
@@ -364,7 +364,7 @@ class TestGLP:
     def test_pure_gaussian_m0(self):
         """m=0 should give pure Gaussian shape."""
 
-        x = setUp()
+        x = make_energy_axis()
         result = GLP(x, A=5.0, x0=0.0, F=1.0, m=0.0)
         expected = 5.0 * np.exp(-((x / 1.0) ** 2) * 4 * np.log(2))
         np.testing.assert_allclose(result, expected, atol=1e-12)
@@ -373,20 +373,20 @@ class TestGLP:
     def test_pure_lorentzian_m1(self):
         """m=1 should give pure Lorentzian shape."""
 
-        x = setUp()
+        x = make_energy_axis()
         result = GLP(x, A=5.0, x0=0.0, F=1.0, m=1.0)
         expected = 5.0 / (1 + 4 * (x / 1.0) ** 2)
         np.testing.assert_allclose(result, expected, atol=1e-12)
 
     #
     def test_symmetry(self):
-        x = setUp()
+        x = make_energy_axis()
         result = GLP(x, A=1.0, x0=0.0, F=1.5, m=0.5)
         np.testing.assert_allclose(result, result[::-1], atol=1e-12)
 
     #
     def test_offset_center(self):
-        x = setUp()
+        x = make_energy_axis()
         result = GLP(x, A=2.0, x0=3.0, F=1.0, m=0.3)
         peak_idx = np.argmax(result)
         assert x[peak_idx] == pytest.approx(3.0, abs=0.01)
@@ -399,7 +399,7 @@ class TestDS:
     def test_lorentzian_at_alpha0(self):
         """Alpha=0 should reduce to a Lorentzian-like shape."""
 
-        x = setUp()
+        x = make_energy_axis()
         result = DS(x, A=1.0, x0=0.0, F=1.0, alpha=0.0)
         lorentz = 1.0 / (1.0 + (x / 1.0) ** 2)
         np.testing.assert_allclose(result, lorentz, atol=1e-12)
@@ -408,7 +408,7 @@ class TestDS:
     def test_asymmetry(self):
         """Nonzero alpha produces an asymmetric lineshape."""
 
-        x = setUp()
+        x = make_energy_axis()
         result = DS(x, A=1.0, x0=0.0, F=1.0, alpha=0.15)
         center = len(x) // 2
         # DS tail is on the high-binding-energy (low-KE) side = left side
@@ -419,7 +419,7 @@ class TestDS:
     def test_peak_near_center(self):
         """Peak should be near x0 for small alpha."""
 
-        x = setUp()
+        x = make_energy_axis()
         result = DS(x, A=1.0, x0=0.0, F=1.0, alpha=0.1)
         peak_idx = np.argmax(result)
         assert x[peak_idx] == pytest.approx(0.0, abs=0.2)
