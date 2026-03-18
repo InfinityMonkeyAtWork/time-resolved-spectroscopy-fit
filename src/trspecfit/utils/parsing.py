@@ -561,8 +561,14 @@ def extract_expression_parameters(expr_string: str) -> list[str]:
     Extract parameter names referenced in an expression string.
 
     Parses expression string to find parameter names by looking for strings that
-    start with known function names. Parameter naming follows the pattern
+    start with known energy function names. Parameter naming follows the pattern
     function_name_NN_paramname (e.g., GLP_01_A, expFun_02_tau).
+
+    Only matches energy-model parameter names. Expressions within Dynamics
+    or Profile models resolve internally via lmfit. This function populates
+    ``Par.expr_refs`` so that ``analyze_expression_dependencies`` can detect
+    when an energy-model expression references a t_vary or p_vary parameter
+    and needs custom evaluation instead of lmfit's native path.
 
     Parameters
     ----------
@@ -580,11 +586,8 @@ def extract_expression_parameters(expr_string: str) -> list[str]:
     pattern = r"\b[A-Za-z_][A-Za-z0-9_]*\b"
     matches = re.findall(pattern, expr_string)
 
-    # Filter to keep only strings that start with known function names
-    # This catches parameter names like GLP_01_A, GLP_02_x0, etc.
     parameter_refs = []
     for match in matches:
-        # $% Does not work for mcp.Dynamics Par referencing another mcp.Dynamics Par!
         for func_name in energy_functions():
             if match.startswith(func_name + "_"):
                 parameter_refs.append(match)

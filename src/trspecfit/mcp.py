@@ -597,25 +597,51 @@ class Model:
         # update model lmfit_par_list, par_names and components
         self.update(debug=debug)
 
+        # Re-analyze all expressions since profile status may have changed
+        self._analyze_expression_dependencies()
+
     #
     def _analyze_expression_dependencies(self) -> None:
         """
-        Analyze all parameter expressions for time-dependent references.
+        Analyze all parameter expressions for dynamic references.
 
-        Checks if any parameter expressions reference time-dependent parameters.
-        This is needed to handle cases like:
-        - Par1 = 10 (time-dependent via Dynamics)
-        - Par2 = Par1 + 5 (expression, should track Par1's time-dependence)
+        Single pass: sets ``expr_refs_time_dep`` / ``expr_refs_profile_dep``
+        for expressions that *directly* reference a t_vary / p_vary parameter.
+        Then checks for transitive chains (expression → expression → dynamic
+        parameter) and raises if any are found.  Pure expression chains
+        (no dynamics/profiles) are fine — lmfit resolves those natively.
 
-        Called automatically after add_dynamics() to update expression
-        dependency tracking.
+        Called automatically after add_dynamics() and add_profile().
         """
 
-        # Get all parameters from all components
         all_parameters = self.get_all_parameters()
-        # Analyze all expressions for time-dependent references
+
+        # Single pass: set direct flags only
         for par in all_parameters:
             par.analyze_expression_dependencies(all_parameters)
+
+        # Detect transitive chains through dynamic parameters.
+        for par in all_parameters:
+            if not par.expr_refs:
+                continue
+            for ref_name in par.expr_refs:
+                ref_par = par._find_parameter_by_name(ref_name, all_parameters)
+                if ref_par and ref_par.expr_refs_time_dep:
+                    raise ValueError(
+                        f"Parameter '{par.name}' indirectly references "
+                        f"time-varying parameter via '{ref_name}'. "
+                        f"Transitive expression chains are not supported. "
+                        f"Rewrite the expression to reference the "
+                        f"t_vary parameter directly."
+                    )
+                if ref_par and ref_par.expr_refs_profile_dep:
+                    raise ValueError(
+                        f"Parameter '{par.name}' indirectly references "
+                        f"profile-varying parameter via '{ref_name}'. "
+                        f"Transitive expression chains are not supported. "
+                        f"Rewrite the expression to reference the "
+                        f"p_vary parameter directly."
+                    )
 
     #
     def get_all_parameters(self) -> list["Par"]:
@@ -1491,7 +1517,6 @@ class Component:
         # Future cleanup: make Par.value() return scalar float and switch
         # this call from pars.extend(...) to pars.append(...).
         for p in self.pars:
-            # $% slightly hacky to only update Par.t_model for t_ind=0, change?
             pars.extend(p.value(t_ind, update_t_model=t_ind == 0))
 
         # get x axis and create component function evaluation
@@ -1500,8 +1525,9 @@ class Component:
                 raise ValueError(
                     f"Energy axis not defined for component '{self.comp_name}'"
                 )
-            # Profile averaging: if any parameter has p_vary, loop over aux_axis
-            p_vary_pars = [p for p in self.pars if p.p_vary]
+            # Profile averaging: if any parameter has p_vary or references
+            # a profiled parameter via expression, loop over aux_axis
+            p_vary_pars = [p for p in self.pars if p.p_vary or p.expr_refs_profile_dep]
             if p_vary_pars:
                 traces = self._value_profile_instances(t_ind=t_ind, **kwargs)
                 avg: np.ndarray = np.sum(np.asarray(traces), axis=0) / len(traces)
@@ -1559,17 +1585,28 @@ class Component:
             )
 
         p_vary_pars = [p for p in self.pars if p.p_vary]
-        if not p_vary_pars:
+        profile_expr_pars = [p for p in self.pars if p.expr_refs_profile_dep]
+        if not p_vary_pars and not profile_expr_pars:
             return [np.asarray(self.value(t_ind, **kwargs))]
 
-        p_model_ref = p_vary_pars[0].p_model
-        if p_model_ref is None or p_model_ref.aux_axis is None:
-            raise ValueError(
-                f"Profile model not initialized for component '{self.comp_name}'. "
-                "Call model.add_profile() before evaluating."
-            )
-
-        n_aux = len(p_model_ref.aux_axis)
+        # Get aux_axis length: prefer direct p_vary par, fall back to
+        # component's aux_axis (set for expr_refs_profile_dep components)
+        if p_vary_pars:
+            p_model_ref = p_vary_pars[0].p_model
+            if p_model_ref is None or p_model_ref.aux_axis is None:
+                raise ValueError(
+                    f"Profile model not initialized for component "
+                    f"'{self.comp_name}'. "
+                    "Call model.add_profile() before evaluating."
+                )
+            n_aux = len(p_model_ref.aux_axis)
+        else:
+            if self.aux_axis is None:
+                raise ValueError(
+                    f"aux_axis not set for component '{self.comp_name}'. "
+                    "Cannot evaluate profile-dependent expressions."
+                )
+            n_aux = len(self.aux_axis)
         values: list[np.ndarray] = []
 
         for i in range(n_aux):
@@ -1585,7 +1622,11 @@ class Component:
                     pars_i.append(base[0] + p.p_model.value1D[i])
                 else:
                     pars_i.extend(
-                        p.value(t_ind, update_t_model=(t_ind == 0 and i == 0))
+                        p.value(
+                            t_ind,
+                            update_t_model=(t_ind == 0 and i == 0),
+                            aux_ind=i if p.expr_refs_profile_dep else None,
+                        )
                     )
             values.append(np.asarray(self.fct(self.energy, *pars_i, **kwargs)))
 
@@ -1654,8 +1695,8 @@ class Component:
 
         # For energy components with profile-varying parameters, optionally
         # show all aux-axis contributions instead of only the combined value.
-        p_vary_present = any(p.p_vary for p in self.pars)
-        if self.package == fcts_energy and p_vary_present:
+        profile_dep = any(p.p_vary or p.expr_refs_profile_dep for p in self.pars)
+        if self.package == fcts_energy and profile_dep:
             traces = self._value_profile_instances(t_ind=t_ind, **kwargs)
             if plot_ind:
                 if x_axis is None:
@@ -1791,6 +1832,7 @@ class Par:
         self.lmfit_par_list: list[lmfit.Parameter] = []
         # Expression analysis attributes
         self.expr_refs_time_dep: bool = False  # flag for time-dependent references
+        self.expr_refs_profile_dep: bool = False  # flag for profile-dependent refs
         self.expr_string: str | None = None  # store original expression
         self.expr_refs: list[str] = []  # list of referenced parameter names
         self.parent_model: Model | None = None  # reference to parent model
@@ -1904,12 +1946,17 @@ class Par:
         self.lmfit_par_list.extend(self.t_model.lmfit_par_list)
 
     #
-    def value(self, t_ind: int = 0, update_t_model: bool = True) -> list[Any]:
+    def value(
+        self,
+        t_ind: int = 0,
+        update_t_model: bool = True,
+        aux_ind: int | None = None,
+    ) -> list[Any]:
         """
-        Get parameter value at specific time point.
+        Get parameter value at specific time point and aux-axis index.
 
-        Returns the parameter value, accounting for time-dependence and
-        expressions that may reference time-dependent parameters.
+        Returns the parameter value, accounting for time-dependence,
+        profile-dependence, and expressions that reference either.
 
         Parameters
         ----------
@@ -1918,39 +1965,34 @@ class Par:
         update_t_model : bool, default=True
             If True, recompute Dynamics model before evaluation.
             Set False when calling repeatedly during 2D model evaluation.
+        aux_ind : int or None, default=None
+            Auxiliary axis index for profile evaluation. When set,
+            p_vary parameters return base + profile.value1D[aux_ind],
+            and expressions referencing p_vary parameters are
+            re-evaluated with the profiled values.
 
         Returns
         -------
         float or list
             Parameter value(s) at time point t_ind
-
-        Notes
-        -----
-        **Return Type:**
-        Returns list to maintain compatibility with lmfit parameter extraction.
-        For single parameters, this is a one-element list.
-
-        **Update Control:**
-        The update_t_model flag optimizes 2D model evaluation:
-        - True (default): Recalculate dynamics (safe, slightly slower)
-        - False: Use cached dynamics (faster, assumes unchanged)
-
-        During 2D fitting:
-        - First time point (t_ind=0): update_t_model=True
-        - Subsequent points: update_t_model=False
-
-        **Expression Evaluation:**
-        For expressions referencing time-dependent parameters, the expression
-        is evaluated with current values of all referenced parameters at t_ind.
         """
 
         if not self.t_vary:
-            if self.expr_refs_time_dep:
-                # Custom evaluation for time-dependent expressions
+            if self.expr_refs_time_dep or (
+                self.expr_refs_profile_dep and aux_ind is not None
+            ):
                 all_parameters = self.get_all_parameters()
-                return self._evaluate_time_dependent_expression(
-                    t_ind, all_parameters, update_t_model
+                return self._evaluate_dynamic_expression(
+                    t_ind, all_parameters, update_t_model, aux_ind
                 )
+            # Profile-varying parameter with aux_ind
+            if self.p_vary and aux_ind is not None and self.p_model is not None:
+                base = cast("list[Any]", ulmfit.par_extract(self.lmfit_par))
+                if self.p_model.value1D is None:
+                    raise RuntimeError(
+                        f'Profile model "{self.p_model.name}" has no value1D'
+                    )
+                return [base[0] + self.p_model.value1D[aux_ind]]
             # Standard lmfit evaluation
             value = cast("list[Any]", ulmfit.par_extract(self.lmfit_par))
 
@@ -1989,15 +2031,19 @@ class Par:
 
         if len(self.info) == 1 and isinstance(self.info[0], str):
             self.expr_string = self.info[0]
-            # Parse expression to find referenced parameters
             self.expr_refs = uparsing.extract_expression_parameters(self.expr_string)
 
-            # Check if any referenced parameters are time-dependent
+            # Reset before re-analysis (handles removed dependencies)
+            self.expr_refs_time_dep = False
+            self.expr_refs_profile_dep = False
+
+            # Check direct dependencies only (chains detected at model level)
             for ref_name in self.expr_refs:
                 ref_par = self._find_parameter_by_name(ref_name, all_parameters)
                 if ref_par and ref_par.t_vary:
                     self.expr_refs_time_dep = True
-                    break
+                if ref_par and ref_par.p_vary:
+                    self.expr_refs_profile_dep = True
 
     #
     def _find_parameter_by_name(
@@ -2026,15 +2072,20 @@ class Par:
         return None
 
     #
-    def _evaluate_time_dependent_expression(
-        self, t_ind: int, all_parameters: list["Par"], update_t_model: bool = True
+    def _evaluate_dynamic_expression(
+        self,
+        t_ind: int,
+        all_parameters: list["Par"],
+        update_t_model: bool = True,
+        aux_ind: int | None = None,
     ) -> list[Any]:
         """
-        Evaluate expression with time-dependent parameter values.
+        Evaluate expression with time/profile-dependent parameter values.
 
-        For expressions that reference time-dependent parameters, this
-        evaluates the expression using the current values of all referenced
-        parameters at the specified time point.
+        For expressions that reference time-dependent or profile-varying
+        parameters, this evaluates the expression using the current values
+        of all referenced parameters at the specified time point and
+        aux-axis index.
 
         Parameters
         ----------
@@ -2044,22 +2095,8 @@ class Par:
             All parameters in model (to get current values)
         update_t_model : bool, default=True
             Whether to update Dynamics models before evaluation
-
-        Returns
-        -------
-        list
-            Evaluated expression value (as list for lmfit compatibility)
-
-        Notes
-        -----
-        Uses asteval for safe expression evaluation (same as lmfit).
-        All referenced parameters are evaluated at t_ind and passed to
-        the expression evaluator.
-
-        See Also
-        --------
-        value : Main evaluation method that calls this
-        analyze_expression_dependencies : Sets up for this evaluation
+        aux_ind : int or None, default=None
+            Auxiliary axis index for profile evaluation
         """
 
         # HOTFIX: use scalar values in asteval namespace.
@@ -2069,7 +2106,9 @@ class Par:
         for ref_name in self.expr_refs:
             ref_par = self._find_parameter_by_name(ref_name, all_parameters)
             if ref_par:
-                ref_val = ref_par.value(t_ind, update_t_model=update_t_model)
+                ref_val = ref_par.value(
+                    t_ind, update_t_model=update_t_model, aux_ind=aux_ind
+                )
                 if isinstance(ref_val, list):
                     if len(ref_val) == 0:
                         raise ValueError(
