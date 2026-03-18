@@ -1122,7 +1122,6 @@ class Simulator:
             raise ValueError(
                 "No simulated data available. Run simulate_1D or simulate_2D first."
             )
-        # $% enable ROI input here
         signal_power = np.mean(self.data_clean**2)
         noise_power = np.mean(self.noise**2)
 
@@ -1289,7 +1288,6 @@ class Simulator:
             axes[0].set_ylabel(config.y_label)
             if x_dir_reversed:
                 axes[0].invert_xaxis()
-            # $% add x_type and y_type (lin vs log) here
             plt.colorbar(im1, ax=axes[0])
 
             # Noisy data

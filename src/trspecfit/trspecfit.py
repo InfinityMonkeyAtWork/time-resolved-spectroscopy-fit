@@ -377,7 +377,7 @@ class File:
             aux_axis  # auxiliary physical axis (e.g. depth)
         )
         # keep track of models that are used to fit this file/data
-        self.models: list[mcp.Model] = []  # $% could do @property, setter, getter here?
+        self.models: list[mcp.Model] = []
         self.model_active: mcp.Model | None = None  # default model to work with
         # Energy and time limits for fitting methods
         self.e_lim_abs: list[float] = []  # energy limits (low, high) user-defined
@@ -678,8 +678,8 @@ class File:
         loaded_model.dim = 1  # start with 1, +1 when adding dynamics
         if isinstance(loaded_model, mcp.Dynamics):
             loaded_model.subcycles = len(model_info) - 1
-        loaded_model.energy = self.energy  # $% remove redundancy?
-        loaded_model.time = self.time  # $% remove redundancy?
+        loaded_model.energy = self.energy
+        loaded_model.time = self.time
         loaded_model.aux_axis = self.aux_axis
 
         all_comps = []  # initialize component list
@@ -1202,8 +1202,6 @@ class File:
         TODO: Do this instead of refitting to try out different models?
         Probably needed to compare fits anyway!
         """
-
-        # $% implement loadging of fit results after refactoring saving to hdf5 output
 
     #
     def fit_SliceBySlice(self, model_name: str, fit: int, **fit_wrapper_kwargs) -> None:
@@ -1743,5 +1741,3 @@ class File:
         -----
         This method is a placeholder for future development.
         """
-
-        # $% re-use (at least parts of) the loading fit results functionality
