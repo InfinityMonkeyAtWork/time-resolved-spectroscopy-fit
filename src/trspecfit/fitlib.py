@@ -63,12 +63,6 @@ def _result_errorbars(result: MinimizerResult) -> bool:
     return bool(getattr(result, "errorbars", False))
 
 
-# $% Changes:
-# - residual_fun: pass function instead of package + function
-# - rewrite a peak finder using ML
-# - move from 0/1 to False/True whereever there are only 2 options
-
-
 #
 def residual_fun(
     par: Any,
@@ -594,8 +588,7 @@ def fit_wrapper(
         t_0 = time.time()  # start time
 
     if fit_type == 0:
-        # $% deprecated: use plt_fit_res_1D/2D to show data +initial guess +residual
-        # instead use file.model.describe() to see initial guess!
+        # DEPRECATED: use plt_fit_res_1D/2D and file.model.describe() instead
         if show_info >= 1:
             print(
                 "\nDeprecated. Option will be removed.\n"
@@ -674,8 +667,6 @@ def fit_wrapper(
     if MCsettings.use_emcee == 1:
         t_emcee0 = time.time()
         par_fin_params = _result_params(par_fin)
-        # make optional for user to pass value and min/max
-        # $% rely on defaults here instead?
         par_fin_params.add(
             "__lnsigma", value=np.log(0.1), min=np.log(0.001), max=np.log(2)
         )

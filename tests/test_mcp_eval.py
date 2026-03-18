@@ -5,9 +5,11 @@ that should catch regressions in dependent/time-dependent parameter handling.
 """
 
 import numpy as np
+import pytest
 
 from trspecfit import File, Project
 from trspecfit.functions.energy import GLP
+from trspecfit.functions.profile import pLinear
 
 
 #
@@ -20,6 +22,24 @@ class TestEvaluation:
         """Create project, file, and load model."""
         project = Project(path="tests")
         file = File(parent_project=project)
+        file.energy = np.linspace(80, 90, 201)
+        file.time = np.linspace(-10, 100, 111)
+        file.load_model(
+            model_yaml="test_models_energy.yaml",
+            model_info=model_info,
+            debug=False,
+        )
+        model = file.model_active
+        assert model is not None, "Model loading failed in setup"
+        return file, model
+
+    #
+    def _make_file_with_profile_model(self, model_info):
+        """Create project, file with aux_axis, and load model."""
+
+        project = Project(path="tests")
+        aux_axis = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+        file = File(parent_project=project, aux_axis=aux_axis)
         file.energy = np.linspace(80, 90, 201)
         file.time = np.linspace(-10, 100, 111)
         file.load_model(
@@ -198,18 +218,7 @@ class TestEvaluation:
         Effective A: [20, 19.5, 19, 18.5, 18] → mean = 19
         Expected: GLP(energy, 19, 85, 1, 0.3)
         """
-        project = Project(path="tests")
-        aux_axis = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
-        file = File(parent_project=project, aux_axis=aux_axis)
-        file.energy = np.linspace(80, 90, 201)
-        file.time = np.linspace(-10, 100, 111)
-        file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["single_glp"],
-            debug=False,
-        )
-        model = file.model_active
-        assert model is not None
+        file, model = self._make_file_with_profile_model(["single_glp"])
 
         # Attach pLinear profile (m=-0.5, b=0) to GLP_01_A
         file.add_par_profile(
@@ -246,18 +255,7 @@ class TestEvaluation:
         We read the profile's value1D at each time step to get the exact
         analytical prediction.
         """
-        project = Project(path="tests")
-        aux_axis = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
-        file = File(parent_project=project, aux_axis=aux_axis)
-        file.energy = np.linspace(80, 90, 201)
-        file.time = np.linspace(-10, 100, 111)
-        file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["single_glp"],
-            debug=False,
-        )
-        model = file.model_active
-        assert model is not None
+        file, model = self._make_file_with_profile_model(["single_glp"])
 
         # Attach pLinear profile (m=-0.5, b=0) to GLP_01_A
         file.add_par_profile(
@@ -303,3 +301,69 @@ class TestEvaluation:
         assert model.value2D is not None
         assert model.value2D.shape == (len(file.time), len(file.energy))
         assert np.isfinite(model.value2D).all()
+
+    #
+    def test_eval_expression_inherits_profile(self):
+        """Expression referencing a profiled par should inherit depth variation.
+
+        Setup: two GLPs, GLP_02_A = GLP_01_A * 0.5.
+        pLinear profile (m=-0.5, b=0) attached to GLP_01_A.
+        aux_axis = [0, 1, 2, 3, 4].
+
+        Profile offsets: pLinear([0,1,2,3,4], -0.5, 0) = [0, -0.5, -1, -1.5, -2]
+
+        At each aux point i:
+          A1_eff[i] = 20 + offset[i]
+          A2_eff[i] = A1_eff[i] * 0.5   (expression must see profiled value)
+
+        Because GLP is linear in A, averaged spectrum should equal:
+          GLP(energy, mean(A1_eff), 85, 1, 0.3)
+          + GLP(energy, mean(A2_eff), 87, 1, 0.3)
+
+        If the bug is present, GLP_02 ignores the profile and uses the base
+        value (20 * 0.5 = 10) at every aux point, giving the wrong average.
+        """
+        file, model = self._make_file_with_profile_model(["two_glp_expr_amplitude"])
+
+        # Attach pLinear profile (m=-0.5, b=0) to GLP_01_A
+        file.add_par_profile(
+            model_yaml="test_models_profile.yaml",
+            model_info=["profile_pLinear"],
+            par_name="GLP_01_A",
+        )
+
+        p_A1 = self._par(model, "GLP_01_A")
+        assert p_A1.p_vary is True
+
+        # Evaluate
+        value_1d = model.create_value1D(return1D=1)
+        assert value_1d is not None
+
+        # Analytical expectation
+        offsets = pLinear(model.aux_axis, -0.5, 0.0)
+        A1_eff = 20.0 + offsets  # [20, 19.5, 19, 18.5, 18]
+        A2_eff = A1_eff * 0.5  # [10, 9.75, 9.5, 9.25, 9] — expression tracks profile
+
+        expected = GLP(file.energy, np.mean(A1_eff), 85.0, 1.0, 0.3) + GLP(
+            file.energy, np.mean(A2_eff), 87.0, 1.0, 0.3
+        )
+        np.testing.assert_allclose(value_1d, expected, rtol=1e-10)
+
+    #
+    def test_eval_expression_chain_profile_raises(self):
+        """Transitive chain A3->A2->A1 with profile on A1 must raise.
+
+        expression_chain: GLP_02_A=GLP_01_A*0.5, GLP_03_A=GLP_02_A*0.5
+        Adding a profile to GLP_01_A creates a transitive chain through
+        GLP_02_A that is not supported — users should reference the base
+        p_vary parameter directly.
+        """
+
+        file, model = self._make_file_with_profile_model(["expression_chain"])
+
+        with pytest.raises(ValueError, match="indirectly references"):
+            file.add_par_profile(
+                model_yaml="test_models_profile.yaml",
+                model_info=["profile_pLinear"],
+                par_name="GLP_01_A",
+            )

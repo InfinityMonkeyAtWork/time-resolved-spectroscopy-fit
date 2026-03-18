@@ -110,6 +110,20 @@ single_glp:
       F: [1.0, True, 0.75, 2.5]
       m: [0.3, True, 0, 1]
 
+# two GLPs, GLP_02_A is expression of GLP_01_A — for profile+expression tests
+# GLP is linear in A, so profile on GLP_01_A should propagate through expression
+two_glp_expr_amplitude:
+    GLP:
+      A: [20, True, 5, 25]
+      x0: [85.0, True, 82, 88]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+    GLP:
+      A: ["GLP_01_A * 0.5"]
+      x0: [87.0, True, 82, 90]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+
 #
 # all following models should fail
 #
