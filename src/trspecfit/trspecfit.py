@@ -161,6 +161,8 @@ class Project:
         self.run = name
         self.path_run = self.path_results / name
 
+        self._config_file: PathLike | None = None
+
         # Set defaults first
         self._set_defaults()
 
@@ -208,6 +210,50 @@ class Project:
         return cast("Callable", getattr(self.spec_lib, self.spec_fun_str))
 
     #
+    def describe(self, detail: int = 0) -> None:
+        """
+        Display project configuration summary.
+
+        Parameters
+        ----------
+        detail : int, default=0
+            Verbosity level.
+            0: project paths and config source.
+            1: also show plot and file I/O settings.
+        """
+
+        print("Project")
+        print(f"  path:         {self.path}")
+        print(f"  results:      {self.path_results}")
+        print(f"  run:          {self.run}")
+        if self._config_file is not None:
+            print(f"  config:       {self._config_file}")
+        else:
+            print("  config:       defaults (no YAML loaded)")
+
+        if detail >= 1:
+            print("\n  Plot settings:")
+            print(f"    e_label:    {self.e_label}")
+            print(f"    t_label:    {self.t_label}")
+            print(f"    z_label:    {self.z_label}")
+            print(f"    x_dir:      {self.x_dir}")
+            print(f"    x_type:     {self.x_type}")
+            print(f"    y_dir:      {self.y_dir}")
+            print(f"    y_type:     {self.y_type}")
+            print(f"    z_colormap: {self.z_colormap}")
+            print(f"    z_colorbar: {self.z_colorbar}")
+            print(f"    z_type:     {self.z_type}")
+            print(f"    dpi_plt:    {self.dpi_plt}")
+            print(f"    dpi_save:   {self.dpi_save}")
+            print(f"    res_mult:   {self.res_mult}")
+            print("\n  File I/O settings:")
+            print(f"    ext:        {self.ext}")
+            print(f"    fmt:        {self.fmt}")
+            print(f"    delim:      {repr(self.delim)}")
+            print(f"    DA_fmt:     {self.DA_fmt}")
+            print(f"    DA_slices:  {self.DA_slices_fmt}")
+
+    #
     def _load_config(self, config_file: PathLike) -> None:
         """
         Load project configuration from YAML file.
@@ -240,6 +286,8 @@ class Project:
                 else:
                     if self.show_info >= 1:
                         print(f"Warning: Unknown config key '{key}' ignored")
+
+            self._config_file = config_path
 
         except FileNotFoundError:
             if self.show_info >= 1:

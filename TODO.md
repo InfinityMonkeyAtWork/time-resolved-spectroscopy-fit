@@ -32,6 +32,10 @@
 - [ ] **HDF5 load**: implement `File.load_fit()` to restore fit results from HDF5. Only HDF5 format needs load support — file-based results are write-only legacy.
 - [ ] **Model comparison**: `File.compare_models()` uses loaded fit results to compare different models. Reuses the load infrastructure.
 
+## Project.describe() enhancements
+
+- [ ] **File inventory (detail=2)**: list all Files attached to the Project (path, dim, shape, models, fit status). Requires resolving attribute inheritance vs references (see Code quality).
+
 ## Cleanup
 
 - [ ] **Configurable `__lnsigma` for emcee**: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling. Allow users to pass these via `MCsettings`.
