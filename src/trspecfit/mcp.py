@@ -327,7 +327,9 @@ class Model:
         for comp in self.components:
             # add current component function to list of all functions
             self.peak_fcts.append(comp.fct)
-            # pass time, energy, and aux axes to the individual components
+            # Share axis references (not copies) with components.
+            # Contract: parent must not rebind these after propagation.
+            # Exception: conv components get a kernel time axis below.
             comp.energy = self.energy
             comp.time = self.time
             comp.aux_axis = self.aux_axis
@@ -1700,8 +1702,10 @@ class Component:
                         f"Energy axis not defined for component '{self.comp_name}'"
                     )
                 p_vary_pars = [p for p in self.pars if p.p_vary]
-                p_mod = p_vary_pars[0].p_model if p_vary_pars else None
-                aux_axis = p_mod.aux_axis if p_mod is not None else None
+                if p_vary_pars and p_vary_pars[0].p_model is not None:
+                    aux_axis = p_vary_pars[0].p_model.aux_axis
+                else:
+                    aux_axis = self.aux_axis
                 if aux_axis is None:
                     raise ValueError(
                         f"Auxiliary axis not defined for component '{self.comp_name}'"

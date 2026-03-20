@@ -43,7 +43,7 @@
 
 ## Code quality
 
-- [ ] **Attribute inheritance vs references**: Project→File→Model→Component all copy axes/attributes down the hierarchy. Decide whether to keep copying or use parent references (like `File.parent_project`). Affects `energy`, `time`, `aux_axis`, and config attributes. Note: `Component.plot(plot_ind=True)` currently breaks for components that inherit profile dependence only through expressions (`expr_refs_profile_dep`) because `aux_axis` is looked up from a local `p_vary` parameter's `p_model`, which doesn't exist on expression-only dependents. Fixing this properly depends on resolving where axes live.
+- [x] **Attribute inheritance vs references**: resolved (2026-03-19). Axis assignments (`comp.energy = self.energy`) are Python reference-sharing, not copies — no duplication problem. Properties would break conv components (kernel time axis). Decision: keep reference-sharing, document the contract, add `Project.files` for downward traversal. Fixed `Component.plot(plot_ind=True)` aux_axis bug for expression-only profile dependence.
 - [ ] **Replace 0/1 flags with enums**: codebase uses `0`/`1` where `True`/`False` or enums would be more readable and self-documenting. Audit and convert.
 - [ ] **Fix FBT001/FBT002 (boolean trap)**: functions like `debug` accept booleans as positional args, making call sites unclear. Consider keyword-only or enum alternatives.
 - [ ] **Optional dependency extras**: move `ipython` and `matplotlib` out of core into optional extras (e.g. `pip install trspecfit[lab]` or `trspecfit[all]` for notebook/plotting functionality). Keep base install light for programmatic use.

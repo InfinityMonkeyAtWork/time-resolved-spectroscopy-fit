@@ -123,6 +123,8 @@ class Project:
         Directory for this specific run (path_results / name)
     run : str
         Current run name
+    files : list of File
+        All File instances registered with this Project
     show_info : int
         Verbosity level (0=silent, 1=basic, 2=detailed, 3=debug)
     spec_lib : module
@@ -162,6 +164,7 @@ class Project:
         self.path_run = self.path_results / name
 
         self._config_file: PathLike | None = None
+        self.files: list[File] = []
 
         # Set defaults first
         self._set_defaults()
@@ -405,6 +408,7 @@ class File:
     ) -> None:
         # pass parent project or (default) create a functioning test project environment
         self.p = parent_project if parent_project is not None else Project(path=None)
+        self.p.files.append(self)  # register with parent project
         self.path = path  # path to load/save [?] data from
         self.path_DA = self.p.path_run / path  # path to save fit results to
         self._plot_config: PlotConfig | None = None  # create plot config from project
