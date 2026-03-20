@@ -12,6 +12,7 @@ import pathlib
 from collections.abc import Sequence
 from typing import Any
 
+import matplotlib.colors as mcolors
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 import numpy as np
@@ -180,6 +181,7 @@ def plot_2D(
         - x_dir, y_dir : 'def' or 'rev' for axis direction
         - x_type, y_type : 'lin' or 'log' for axis scale
         - z_colormap : Colormap name (default 'viridis')
+        - z_type : 'lin' or 'log' for color scale type
         - z_colorbar : 'ver' or 'hor' for colorbar orientation
         - data_slice : [[x_start, x_stop], [y_start, y_stop]] for slicing by index
         - vlines, hlines : List of coordinates for reference lines
@@ -241,6 +243,7 @@ def plot_2D(
     dpi_save = kwargs.get("dpi_save", config.dpi_save)
     z_colormap = kwargs.get("z_colormap", config.z_colormap)
     z_colorbar = kwargs.get("z_colorbar", config.z_colorbar)
+    z_type = kwargs.get("z_type", config.z_type)
     vlines = kwargs.get("vlines", config.vlines)
     hlines = kwargs.get("hlines", config.hlines)
     ticksize = kwargs.get("ticksize", config.ticksize)
@@ -314,15 +317,21 @@ def plot_2D(
         ax.set_ylabel(y_label)
 
     # Plot data
-    plt.pcolormesh(
-        x_plt,
-        y_plt,
-        data_plt,
-        cmap=z_colormap,
-        vmin=min2D,
-        vmax=max2D,
-        shading="nearest",
-    )
+    if z_type == "log":
+        norm = mcolors.LogNorm(vmin=min2D, vmax=max2D)
+        plt.pcolormesh(
+            x_plt, y_plt, data_plt, cmap=z_colormap, norm=norm, shading="nearest"
+        )
+    else:
+        plt.pcolormesh(
+            x_plt,
+            y_plt,
+            data_plt,
+            cmap=z_colormap,
+            vmin=min2D,
+            vmax=max2D,
+            shading="nearest",
+        )
 
     # Colorbar
     if z_colorbar == "ver":

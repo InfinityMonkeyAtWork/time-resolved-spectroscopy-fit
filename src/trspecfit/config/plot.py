@@ -46,6 +46,8 @@ class PlotConfig:
         X-axis limits (min, max)
     y_lim : Optional[Tuple[float, float]]
         Y-axis limits (min, max)
+    z_type : str
+        Color scale type: 'lin' (linear) or 'log' (logarithmic)
     z_lim : Optional[Tuple[float, float]]
         Color scale limits for 2D plots (min, max)
     dpi_plot : int
@@ -134,6 +136,7 @@ class PlotConfig:
     # 2D plot settings
     z_colormap: str = "viridis"
     z_colorbar: str = "ver"  # 'ver' or 'hor'
+    z_type: str = "lin"  # 'lin' or 'log' for color scale
     # 2D data handling
     data_slice: list[list[int]] | None = None
     z_lim: tuple[float, float] | None = None
@@ -186,6 +189,7 @@ class PlotConfig:
             "dpi_save": project.dpi_save,
             "z_colormap": project.z_colormap,
             "z_colorbar": project.z_colorbar,
+            "z_type": project.z_type,
             "res_mult": project.res_mult,
         }
 

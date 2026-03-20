@@ -68,6 +68,7 @@ class TestPlotConfig:
             assert config.x_label == project.e_label
             assert config.y_label == project.t_label
             assert config.dpi_plot == project.dpi_plt
+            assert config.z_type == project.z_type
 
     #
     def test_from_project_with_overrides(self):
@@ -295,6 +296,17 @@ class TestPlot2D:
         plot_2D(
             data, x=x, y=y, config=config, z_colormap="plasma", x_dir="rev", save_img=-2
         )
+        plt.close("all")
+
+    #
+    def test_plot_z_type_log(self):
+        """Test 2D plot with logarithmic color scale"""
+        x = np.linspace(0, 10, 50)
+        y = np.linspace(0, 5, 30)
+        data = np.abs(np.outer(y + 1, np.sin(x) + 2))
+        config = PlotConfig(z_type="log")
+
+        plot_2D(data, x=x, y=y, config=config, save_img=-2)
         plt.close("all")
 
     #
