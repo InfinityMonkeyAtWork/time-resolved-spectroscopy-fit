@@ -34,7 +34,7 @@
 
 ## Project.describe() enhancements
 
-- [ ] **File inventory (detail=2)**: list all Files attached to the Project (path, dim, shape, models, fit status). Requires resolving attribute inheritance vs references (see Code quality).
+- [x] **File inventory (detail=1)**: implemented (2026-03-19). Lists all Files (path, dim, shape, aux_axis, models, active model). Previous detail=1 (plot/IO settings) shifted to detail=2.
 
 ## Cleanup
 

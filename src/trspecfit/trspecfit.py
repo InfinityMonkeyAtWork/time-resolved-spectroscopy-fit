@@ -222,7 +222,8 @@ class Project:
         detail : int, default=0
             Verbosity level.
             0: project paths and config source.
-            1: also show plot and file I/O settings.
+            1: also list attached Files (path, dim, shape, models).
+            2: also show plot and file I/O settings.
         """
 
         print("Project")
@@ -235,6 +236,31 @@ class Project:
             print("  config:       defaults (no YAML loaded)")
 
         if detail >= 1:
+            print(f"\n  Files ({len(self.files)}):")
+            if not self.files:
+                print("    (none)")
+            for f in self.files:
+                shape = f"shape {f.data.shape}" if f.data is not None else "no data"
+                n_models = len(f.models)
+                model_names = (
+                    ", ".join(m.name for m in f.models) if n_models else "none"
+                )
+                active = (
+                    f" [active: {f.model_active.name}]"
+                    if f.model_active is not None
+                    else ""
+                )
+                aux = (
+                    f", aux_axis len {len(f.aux_axis)}"
+                    if f.aux_axis is not None
+                    else ""
+                )
+                print(
+                    f"    {f.path}: {f.dim}D {shape}{aux}, "
+                    f"models ({n_models}): {model_names}{active}"
+                )
+
+        if detail >= 2:
             print("\n  Plot settings:")
             print(f"    e_label:    {self.e_label}")
             print(f"    t_label:    {self.t_label}")
