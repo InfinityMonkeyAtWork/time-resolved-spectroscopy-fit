@@ -402,10 +402,9 @@ def fit_wrapper(
         - list: Convert to lmfit.Parameters using par_names.
           Each element: ``[value, vary, min, max]`` or ``['expression']``
 
-    fit_type : {0, 1, 2}
+    fit_type : {1, 2}
         Fitting strategy:
 
-        - 0: No fit (return initial guess only, for debugging)
         - 1: Single fit with fit_alg_1
         - 2: Two-stage fit (global with fit_alg_1, local with fit_alg_2)
 
@@ -467,7 +466,7 @@ def fit_wrapper(
 
         - **par_ini** (*lmfit.Parameters*) -- Initial parameter guess.
         - **par_fin** (*lmfit.MinimizerResult or []*) -- Final fit result
-          from lmfit.minimize. Empty list if fit_type=0.
+          from lmfit.minimize.
         - **conf_CIs** (*pd.DataFrame*) -- Confidence intervals from
           lmfit.conf_interval. Columns: ``['par[v]/sigma[>]', '-3σ',
           '-2σ', '-1σ', 'best', '+1σ', '+2σ', '+3σ']``.
@@ -518,15 +517,6 @@ def fit_wrapper(
     ...     try_CI=1,
     ...     MCsettings=mc,
     ...     show_info=1
-    ... )
-
-    >>> # Debug mode (no fitting, just show initial guess)
-    >>> results = fit_wrapper(
-    ...     const=const,
-    ...     args=args,
-    ...     par_names=model.par_names,
-    ...     par=model.lmfit_pars,
-    ...     fit_type=0
     ... )
 
     Notes
@@ -586,17 +576,6 @@ def fit_wrapper(
         display_pretty(args)
     if show_info >= 1:
         t_0 = time.time()  # start time
-
-    if fit_type == 0:
-        # DEPRECATED: use plt_fit_res_1D/2D and file.model.describe() instead
-        if show_info >= 1:
-            print(
-                "\nDeprecated. Option will be removed.\n"
-                "Use file.model.describe() to see initial guess.\n"
-                "Returning initial parameters without fitting."
-            )
-        #
-        return [par_ini, [], pd.DataFrame(), [], pd.DataFrame()]
 
     # construct lmfit minimizer
     mini = lmfit.Minimizer(residual_fun, par_ini, fcn_args=(*const, "lmfit", args))

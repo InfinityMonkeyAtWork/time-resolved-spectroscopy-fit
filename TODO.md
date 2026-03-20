@@ -11,7 +11,7 @@
 ## Profile feature gaps
 
 - [x] **Expression + profile inheritance**: direct refs work; transitive chains raise `ValueError` by design (2026-03-18).
-- [ ] **Par.value() return type cleanup**: `Par.value()` returns a one-element list for compatibility, causing three HOTFIX workarounds in `mcp.py` (lines ~1515, ~2107, ~2136). Change to return scalar float, update all callers (`pars.extend` → `pars.append`), and remove the asteval scalar-unwrapping and None-guarding hotfixes.
+- [x] **Par.value() return type cleanup**: `Par.value()` returns scalar float now. HOTFIX workarounds removed (2026-03-19).
 - [ ] **Weighted aux-axis integration**: aux-axis averaging uses uniform `sum/N`. User-configurable weights would cover non-uniform spacing (trapezoidal), importance weighting, etc.
 - [ ] **Smart autocorrect for profile names**: fuzzy match suggestions when YAML key doesn't match an energy parameter. Low priority.
 - [ ] **Performance: freeze non-profile pars**: non-varying pars re-evaluated at every aux-axis point; could evaluate once and reuse.
@@ -39,11 +39,10 @@
 ## Cleanup
 
 - [ ] **Configurable `__lnsigma` for emcee**: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling. Allow users to pass these via `MCsettings`.
-- [ ] **Remove deprecated `fit_type == 0` path**: `fitlib.py` still has the `fit_type == 0` branch that just prints a deprecation warning and returns without fitting. Remove it entirely.
+- [x] **Remove deprecated `fit_type == 0` path**: removed (2026-03-19).
 
 ## Code quality
 
-- [ ] **Dynamics `update_t_model` guard**: `Component.value()` uses `update_t_model=t_ind==0` to avoid recomputing `t_model.create_value1D()` at every time step. Works but assumes `t_ind=0` is called first. Consider computing dynamics curves once before the time loop instead.
 - [ ] **Attribute inheritance vs references**: Project→File→Model→Component all copy axes/attributes down the hierarchy. Decide whether to keep copying or use parent references (like `File.parent_project`). Affects `energy`, `time`, `aux_axis`, and config attributes. Note: `Component.plot(plot_ind=True)` currently breaks for components that inherit profile dependence only through expressions (`expr_refs_profile_dep`) because `aux_axis` is looked up from a local `p_vary` parameter's `p_model`, which doesn't exist on expression-only dependents. Fixing this properly depends on resolving where axes live.
 - [ ] **Replace 0/1 flags with enums**: codebase uses `0`/`1` where `True`/`False` or enums would be more readable and self-documenting. Audit and convert.
 - [ ] **Fix FBT001/FBT002 (boolean trap)**: functions like `debug` accept booleans as positional args, making call sites unclear. Consider keyword-only or enum alternatives.
