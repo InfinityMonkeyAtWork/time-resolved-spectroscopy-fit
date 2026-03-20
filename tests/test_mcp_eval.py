@@ -74,9 +74,9 @@ class TestEvaluation:
 
         v1 = p_x0_1.value(t_ind=0)
         v2 = p_x0_2.value(t_ind=0)
-        assert v1[0] is not None
-        assert v2[0] is not None
-        assert np.isclose(v2[0], v1[0] + 3.6)
+        assert v1 is not None
+        assert v2 is not None
+        assert np.isclose(v2, v1 + 3.6)
 
     #
     def test_eval_time_dependent_expression_value2d(self):
@@ -95,9 +95,9 @@ class TestEvaluation:
 
         v1_t0 = p_x0_1.value(t_ind=0)
         v2_t0 = p_x0_2.value(t_ind=0)
-        assert v1_t0[0] is not None
-        assert v2_t0[0] is not None
-        assert np.isclose(v2_t0[0], v1_t0[0] + 3.6)
+        assert v1_t0 is not None
+        assert v2_t0 is not None
+        assert np.isclose(v2_t0, v1_t0 + 3.6)
 
         model.create_value2D()
         assert model.value2D is not None
@@ -117,16 +117,16 @@ class TestEvaluation:
         assert np.isfinite(value_1d).all()
 
         # Check expression values: A
-        A1 = self._par(model, "GLP_01_A").value(t_ind=0)[0]
-        A2 = self._par(model, "GLP_02_A").value(t_ind=0)[0]
-        A3 = self._par(model, "GLP_03_A").value(t_ind=0)[0]
+        A1 = self._par(model, "GLP_01_A").value(t_ind=0)
+        A2 = self._par(model, "GLP_02_A").value(t_ind=0)
+        A3 = self._par(model, "GLP_03_A").value(t_ind=0)
         assert np.isclose(A2, A1 * 0.5)
         assert np.isclose(A3, A1 * 0.25)
 
         # Check expression values: x0
-        x01 = self._par(model, "GLP_01_x0").value(t_ind=0)[0]
-        x02 = self._par(model, "GLP_02_x0").value(t_ind=0)[0]
-        x03 = self._par(model, "GLP_03_x0").value(t_ind=0)[0]
+        x01 = self._par(model, "GLP_01_x0").value(t_ind=0)
+        x02 = self._par(model, "GLP_02_x0").value(t_ind=0)
+        x03 = self._par(model, "GLP_03_x0").value(t_ind=0)
         assert np.isclose(x02, x01 + 2.0)
         assert np.isclose(x03, x01 + 4.0)
 
@@ -141,9 +141,9 @@ class TestEvaluation:
         assert np.isfinite(value_1d).all()
 
         # Check chain resolves: A
-        A1 = self._par(model, "GLP_01_A").value(t_ind=0)[0]
-        A2 = self._par(model, "GLP_02_A").value(t_ind=0)[0]
-        A3 = self._par(model, "GLP_03_A").value(t_ind=0)[0]
+        A1 = self._par(model, "GLP_01_A").value(t_ind=0)
+        A2 = self._par(model, "GLP_02_A").value(t_ind=0)
+        A3 = self._par(model, "GLP_03_A").value(t_ind=0)
         # GLP_02_A = GLP_01_A * 0.5
         assert np.isclose(A2, A1 * 0.5)
         # GLP_03_A = GLP_02_A * 0.5 = GLP_01_A * 0.25
@@ -151,9 +151,9 @@ class TestEvaluation:
         assert np.isclose(A3, A1 * 0.25)
 
         # Check chain resolves: x0
-        x01 = self._par(model, "GLP_01_x0").value(t_ind=0)[0]
-        x02 = self._par(model, "GLP_02_x0").value(t_ind=0)[0]
-        x03 = self._par(model, "GLP_03_x0").value(t_ind=0)[0]
+        x01 = self._par(model, "GLP_01_x0").value(t_ind=0)
+        x02 = self._par(model, "GLP_02_x0").value(t_ind=0)
+        x03 = self._par(model, "GLP_03_x0").value(t_ind=0)
         # GLP_02_x0 = GLP_01_x0 + 2.0
         assert np.isclose(x02, x01 + 2.0)
         # GLP_03_x0 = GLP_02_x0 + 2.0 = GLP_01_x0 + 4.0
@@ -187,10 +187,10 @@ class TestEvaluation:
         assert p_x0.t_vary is True
 
         # Values should differ: t_ind=0 (t=-10, before t0) vs t_ind=15 (t=5, ~2*tau)
-        A_early = p_A.value(t_ind=0)[0]
-        A_mid = p_A.value(t_ind=15)[0]
-        x0_early = p_x0.value(t_ind=0)[0]
-        x0_mid = p_x0.value(t_ind=15)[0]
+        A_early = p_A.value(t_ind=0)
+        A_mid = p_A.value(t_ind=15)
+        x0_early = p_x0.value(t_ind=0)
+        x0_mid = p_x0.value(t_ind=15)
         assert A_early is not None and A_mid is not None
         assert x0_early is not None and x0_mid is not None
         # MonoExpPos drives A up, MonoExpNeg drives x0 down — both should change

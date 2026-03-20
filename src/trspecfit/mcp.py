@@ -1512,12 +1512,8 @@ class Component:
 
         # get component parameters as list
         pars = []
-        # HOTFIX NOTE:
-        # Par.value() currently returns a one-element list for compatibility.
-        # Future cleanup: make Par.value() return scalar float and switch
-        # this call from pars.extend(...) to pars.append(...).
         for p in self.pars:
-            pars.extend(p.value(t_ind, update_t_model=t_ind == 0))
+            pars.append(p.value(t_ind, update_t_model=t_ind == 0))
 
         # get x axis and create component function evaluation
         if self.package == fcts_energy:
@@ -1621,7 +1617,7 @@ class Component:
                     base = cast("list[Any]", ulmfit.par_extract(p.lmfit_par))
                     pars_i.append(base[0] + p.p_model.value1D[i])
                 else:
-                    pars_i.extend(
+                    pars_i.append(
                         p.value(
                             t_ind,
                             update_t_model=(t_ind == 0 and i == 0),
@@ -1951,7 +1947,7 @@ class Par:
         t_ind: int = 0,
         update_t_model: bool = True,
         aux_ind: int | None = None,
-    ) -> list[Any]:
+    ) -> float:
         """
         Get parameter value at specific time point and aux-axis index.
 
@@ -1973,8 +1969,8 @@ class Par:
 
         Returns
         -------
-        float or list
-            Parameter value(s) at time point t_ind
+        float
+            Parameter value at time point t_ind
         """
 
         if not self.t_vary:
@@ -1987,28 +1983,28 @@ class Par:
                 )
             # Profile-varying parameter with aux_ind
             if self.p_vary and aux_ind is not None and self.p_model is not None:
-                base = cast("list[Any]", ulmfit.par_extract(self.lmfit_par))
+                base = cast("list[float]", ulmfit.par_extract(self.lmfit_par))
                 if self.p_model.value1D is None:
                     raise RuntimeError(
                         f'Profile model "{self.p_model.name}" has no value1D'
                     )
-                return [base[0] + self.p_model.value1D[aux_ind]]
+                return float(base[0] + self.p_model.value1D[aux_ind])
             # Standard lmfit evaluation
-            value = cast("list[Any]", ulmfit.par_extract(self.lmfit_par))
+            value = cast("list[float]", ulmfit.par_extract(self.lmfit_par))[0]
 
         elif self.t_vary and self.t_model is not None:
             if update_t_model:
                 # update t_model, specifically self.t_model.value1D
                 self.t_model.create_value1D()
-            base = cast("list[Any]", ulmfit.par_extract(self.lmfit_par))
+            base = cast("list[float]", ulmfit.par_extract(self.lmfit_par))
             if self.t_model.value1D is None:
                 raise RuntimeError(
                     f'Dynamics model "{self.t_model.name}" has no value1D'
                 )
-            value = [base[0] + self.t_model.value1D[t_ind]]
+            value = float(base[0] + self.t_model.value1D[t_ind])
 
         else:
-            value = [-1]
+            value = -1.0
             print(f't_vary attribute of Par "{self.name}" is not valid')
 
         return value
@@ -2078,7 +2074,7 @@ class Par:
         all_parameters: list["Par"],
         update_t_model: bool = True,
         aux_ind: int | None = None,
-    ) -> list[Any]:
+    ) -> float:
         """
         Evaluate expression with time/profile-dependent parameter values.
 
@@ -2099,25 +2095,13 @@ class Par:
             Auxiliary axis index for profile evaluation
         """
 
-        # HOTFIX: use scalar values in asteval namespace.
-        # Passing one-element lists (from Par.value) can make expressions like
-        # "GLP_01_x0 + 3.6" evaluate to None inside asteval.
         namespace = {}
         for ref_name in self.expr_refs:
             ref_par = self._find_parameter_by_name(ref_name, all_parameters)
             if ref_par:
-                ref_val = ref_par.value(
+                namespace[ref_name] = ref_par.value(
                     t_ind, update_t_model=update_t_model, aux_ind=aux_ind
                 )
-                if isinstance(ref_val, list):
-                    if len(ref_val) == 0:
-                        raise ValueError(
-                            f"Referenced parameter '{ref_name}'"
-                            " returned empty value list"
-                        )
-                    namespace[ref_name] = ref_val[0]
-                else:
-                    namespace[ref_name] = ref_val
 
         # Evaluate expression using asteval (safe, same as lmfit uses)
         try:
@@ -2135,7 +2119,9 @@ class Par:
                     f"Asteval error while evaluating expression "
                     f"'{self.expr_string}': {msg}"
                 )
-            return result if isinstance(result, list) else [result]
+            if result is None:
+                raise ValueError(f"Expression '{self.expr_string}' evaluated to None")
+            return float(cast("float", result))
         except Exception as e:
             raise ValueError(
                 f"Error evaluating expression '{self.expr_string}': {e}"
