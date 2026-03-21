@@ -5,6 +5,8 @@
 - Add `#\n#\n` before class definitions.
 - Python 3.12+: use `X | Y` union syntax, not `Optional[X]` or `Union[X, Y]`.
 - Ruff is the formatter/linter. Line length 88.
+- Numpy: prefer `np.where` over `np.concatenate` for piecewise functions;
+  use `x.shape` not `np.shape(x)`.
 
 # Testing
 

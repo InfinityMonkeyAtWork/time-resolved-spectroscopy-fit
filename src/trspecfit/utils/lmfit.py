@@ -443,7 +443,7 @@ class MC:
 
     Parameters
     ----------
-    useMC : int, default=0
+    use_mc : int, default=0
         MCMC usage flag:
         - 0: Don't use MCMC
         - 1: Always use MCMC
@@ -485,15 +485,15 @@ class MC:
     Examples
     --------
     >>> # Basic MCMC settings
-    >>> mc_config = MC(useMC=1, steps=10000, nwalkers=50)
-    >>> result = fit_wrapper(..., MCsettings=mc_config)
+    >>> mc_config = MC(use_mc=1, steps=10000, nwalkers=50)
+    >>> result = fit_wrapper(..., mc_settings=mc_config)
 
     >>> # Parallel tempering with multiple workers
-    >>> mc_config = MC(useMC=1, steps=5000, nwalkers=100,
+    >>> mc_config = MC(use_mc=1, steps=5000, nwalkers=100,
     ...                ntemps=10, workers=4)
 
     >>> # Use MCMC as fallback if conf_interval fails
-    >>> mc_config = MC(useMC=2, steps=5000, nwalkers=50)
+    >>> mc_config = MC(use_mc=2, steps=5000, nwalkers=50)
 
     Notes
     -----
@@ -512,7 +512,7 @@ class MC:
     #
     def __init__(
         self,
-        useMC: int = 0,
+        use_mc: int = 0,
         steps: int = 5000,
         nwalkers: int = 1,
         burn: int = 0,
@@ -521,7 +521,7 @@ class MC:
         workers: int = 1,
         is_weighted: bool = False,
     ) -> None:
-        self.use_emcee = useMC
+        self.use_emcee = use_mc
         self.steps = steps
         self.nwalkers = nwalkers
         self.burn = burn

@@ -12,6 +12,7 @@ import pathlib
 from collections.abc import Sequence
 from typing import Any
 
+import matplotlib.axes
 import matplotlib.colors as mcolors
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
@@ -115,7 +116,7 @@ def plot_grid(
     rows = np.ceil(len(images) / columns).astype(int)
 
     # Calculate figure height to maintain aspect ratio
-    img_shape = np.shape(images[0])
+    img_shape = images[0].shape
     ratio = img_shape[1] / img_shape[0]  # width/height
     fig_height = fig_width * rows / (ratio * columns)
 
@@ -294,9 +295,9 @@ def plot_2D(
 
     # Create default axes if not provided
     if x_plt is None:
-        x_plt = np.arange(0, np.shape(data_plt)[1], 1)
+        x_plt = np.arange(data_plt.shape[1])
     if y_plt is None:
-        y_plt = np.arange(0, np.shape(data_plt)[0], 1)
+        y_plt = np.arange(data_plt.shape[0])
 
     # Create figure
     fig, ax = plt.subplots(1, 1, dpi=dpi_plot)
@@ -307,7 +308,7 @@ def plot_2D(
     plot_title = title
     if plot_title:
         plot_title += "\n"
-    plot_title += f"{scale_txt}\nsize 2D data set: {np.shape(data_plt)}"
+    plot_title += f"{scale_txt}\nsize 2D data set: {data_plt.shape}"
     plt.title(plot_title, loc="left", fontsize=10)
 
     # Set axis labels
@@ -348,18 +349,7 @@ def plot_2D(
             cbar.ax.tick_params(labelsize=ticksize)
 
     # Axis settings
-    if x_type == "log":
-        ax.set_xscale("log")
-    if x_lim is not None:
-        ax.set_xlim(x_lim[0], x_lim[1])
-    if x_dir == "rev":
-        plt.gca().invert_xaxis()
-    if y_type == "log":
-        ax.set_yscale("log")
-    if y_lim is not None:
-        ax.set_ylim(y_lim[0], y_lim[1])
-    if y_dir == "rev":
-        plt.gca().invert_yaxis()
+    _apply_axis_settings(ax, x_type, x_dir, y_type, y_dir, x_lim, y_lim)
 
     # Reference lines
     if hlines is not None:
@@ -380,15 +370,8 @@ def plot_2D(
             linestyle=":",
         )
 
-    # Save figure
-    if abs(save_img) == 1:
-        img_save(save_path, dpi_save)
-
-    # Show/close plot
-    if save_img >= 0:
-        plt.show()
-    else:
-        plt.close()
+    # Save/show/close
+    _finalize_plot(save_img, save_path, dpi_save)
 
 
 #
@@ -621,18 +604,7 @@ def plot_1D(
         )
 
     # Axis settings
-    if x_type == "log":
-        ax.set_xscale("log")
-    if x_lim is not None:
-        ax.set_xlim(x_lim[0], x_lim[1])
-    if x_dir == "rev":
-        plt.gca().invert_xaxis()
-    if y_type == "log":
-        ax.set_yscale("log")
-    if y_lim is not None:
-        ax.set_ylim(y_lim[0], y_lim[1])
-    if y_dir == "rev":
-        plt.gca().invert_yaxis()
+    _apply_axis_settings(ax, x_type, x_dir, y_type, y_dir, x_lim, y_lim)
 
     # Tick size
     if ticksize is not None:
@@ -641,11 +613,48 @@ def plot_1D(
     # Legend
     plt.legend(bbox_to_anchor=(1, 1))
 
-    # Save
+    # Save/show/close
+    _finalize_plot(save_img, save_path, dpi_save)
+
+
+#
+def _apply_axis_settings(
+    ax: matplotlib.axes.Axes,
+    x_type: str | None = None,
+    x_dir: str | None = None,
+    y_type: str | None = None,
+    y_dir: str | None = None,
+    x_lim: Sequence[float] | None = None,
+    y_lim: Sequence[float] | None = None,
+) -> None:
+    """Apply scale, limits, and direction settings to a matplotlib axes."""
+
+    if x_type == "log":
+        ax.set_xscale("log")
+    if x_lim is not None:
+        ax.set_xlim(x_lim[0], x_lim[1])
+    if x_dir == "rev":
+        ax.invert_xaxis()
+    if y_type == "log":
+        ax.set_yscale("log")
+    if y_lim is not None:
+        ax.set_ylim(y_lim[0], y_lim[1])
+    if y_dir == "rev":
+        ax.invert_yaxis()
+
+
+#
+def _finalize_plot(
+    save_img: int, save_path: PathLike = "", dpi_save: int = 300
+) -> None:
+    """Save, show, or close the current figure.
+
+    When saving, uses tight bounding box, 0.05-inch padding,
+    white facecolor, and auto edgecolor (same defaults as ``img_save``).
+    """
+
     if abs(save_img) == 1:
         img_save(save_path, dpi_save)
-
-    # Show/close
     if save_img >= 0:
         plt.show()
     else:

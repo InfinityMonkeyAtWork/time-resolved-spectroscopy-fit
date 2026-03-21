@@ -64,7 +64,7 @@ from scipy.special import erf, wofz
 
 
 #
-def none(t):
+def none(t: np.ndarray) -> np.ndarray:
     """
     Placeholder function to define empty subcycles in a mcp.Dynamics model.
 
@@ -94,7 +94,7 @@ def none(t):
 
 
 #
-def linFun(t, m, t0, y0):
+def linFun(t: np.ndarray, m: float, t0: float, y0: float) -> np.ndarray:
     """
     Linear dynamics (constant rate of change).
 
@@ -117,13 +117,11 @@ def linFun(t, m, t0, y0):
         Linear function: 0 for t<t0, m*(t-t0)+y0 for t>=t0
     """
 
-    return np.concatenate(
-        (np.zeros(np.shape(t[t < t0])[0]), (m * (t - t0) + y0)[t >= t0])
-    )
+    return np.where(t < t0, 0.0, m * (t - t0) + y0)
 
 
 #
-def expFun(t, A, tau, t0, y0):
+def expFun(t: np.ndarray, A: float, tau: float, t0: float, y0: float) -> np.ndarray:
     """
     Exponential decay or rise dynamics.
 
@@ -149,16 +147,13 @@ def expFun(t, A, tau, t0, y0):
         Exponential: 0 for t<t0, A*exp(-(t-t0)/tau)+y0 for t>=t0
     """
 
-    return np.concatenate(
-        (
-            np.zeros(np.shape(t[t < t0])[0]),
-            (A * np.exp(-1 / tau * (t - t0)) + y0)[t >= t0],
-        )
-    )
+    return np.where(t < t0, 0.0, A * np.exp(-1 / tau * (t - t0)) + y0)
 
 
 #
-def sinFun(t, A, f, phi, t0, y0):
+def sinFun(
+    t: np.ndarray, A: float, f: float, phi: float, t0: float, y0: float
+) -> np.ndarray:
     """
     Sinusoidal oscillations (coherent dynamics).
 
@@ -187,16 +182,11 @@ def sinFun(t, A, f, phi, t0, y0):
         Sinusoid: 0 for t<t0, A*sin(2πf(t-t0)+phi)+y0 for t>=t0
     """
 
-    return np.concatenate(
-        (
-            np.zeros(np.shape(t[t < t0])[0]),
-            (A * np.sin(2 * np.pi * f * (t - t0) + phi) + y0)[t >= t0],
-        )
-    )
+    return np.where(t < t0, 0.0, A * np.sin(2 * np.pi * f * (t - t0) + phi) + y0)
 
 
 #
-def sinDivX(t, A, f, t0, y0):
+def sinDivX(t: np.ndarray, A: float, f: float, t0: float, y0: float) -> np.ndarray:
     """
     Damped sinc function: sin(x)/x oscillation.
 
@@ -220,14 +210,11 @@ def sinDivX(t, A, f, t0, y0):
     """
 
     # np.sinc(u) = sin(pi*u)/(pi*u), so u=2*f*(t-t0) gives sin(2*pi*f*dt)/(2*pi*f*dt)
-    x = 2 * f * (t - t0)
-    return np.concatenate(
-        (np.zeros(np.shape(t[t < t0])[0]), (A * np.sinc(x) + y0)[t >= t0])
-    )
+    return np.where(t < t0, 0.0, A * np.sinc(2 * f * (t - t0)) + y0)
 
 
 #
-def erfFun(t, A, SD, t0, y0):
+def erfFun(t: np.ndarray, A: float, SD: float, t0: float, y0: float) -> np.ndarray:
     """
     Error function rise (step with Gaussian broadening).
     erfFun ≈ step ⊗ Gaussian(SD)
@@ -252,11 +239,11 @@ def erfFun(t, A, SD, t0, y0):
         Error function: A/2 * (1 + erf((t-t0)/(SD*√2))) + y0
     """
 
-    return A / 2 * (1 + erf((t - t0) / (SD * np.sqrt(2)))) + y0
+    return np.asarray(A / 2 * (1 + erf((t - t0) / (SD * np.sqrt(2)))) + y0)
 
 
 #
-def sqrtFun(t, A, t0, y0):
+def sqrtFun(t: np.ndarray, A: float, t0: float, y0: float) -> np.ndarray:
     """
     Square root rise (diffusion dynamics).
 
@@ -278,7 +265,7 @@ def sqrtFun(t, A, t0, y0):
     """
 
     # numpy array .clip sets all t<t0 to zero
-    return A * np.sqrt((t - t0).clip(0)) + y0
+    return np.asarray(A * np.sqrt((t - t0).clip(0)) + y0)
 
 
 #
@@ -288,7 +275,7 @@ def sqrtFun(t, A, t0, y0):
 
 
 #
-def gaussCONV(x, SD):
+def gaussCONV(x: np.ndarray, SD: float) -> np.ndarray:
     """
     Gaussian convolution kernel (instrumental response function).
 
@@ -309,7 +296,7 @@ def gaussCONV(x, SD):
     return np.exp(-1 / 2 * (x / SD) ** 2)
 
 
-def gaussCONV_kernel_width():
+def gaussCONV_kernel_width() -> int:
     """
     Kernel width multiplier for Gaussian convolution.
     Kernel extends to ±4*SD from center.
@@ -320,7 +307,7 @@ def gaussCONV_kernel_width():
 
 
 #
-def lorentzCONV(x, W):
+def lorentzCONV(x: np.ndarray, W: float) -> np.ndarray:
     """
     Lorentzian convolution kernel.
 
@@ -340,14 +327,14 @@ def lorentzCONV(x, W):
     return 1 / (1 + (x / W / 2) ** 2)
 
 
-def lorentzCONV_kernel_width():
+def lorentzCONV_kernel_width() -> int:
     """Kernel width multiplier for Lorentzian (12×W)."""
 
     return 12
 
 
 #
-def voigtCONV(x, SD, W):
+def voigtCONV(x: np.ndarray, SD: float, W: float) -> np.ndarray:
     """
     Voigt convolution kernel (Gaussian and Lorentzian combined).
 
@@ -367,17 +354,17 @@ def voigtCONV(x, SD, W):
     """
 
     voigt = np.real(wofz((x + 1j * (W / 2)) / SD / np.sqrt(2)))
-    return voigt / np.max(voigt)
+    return np.asarray(voigt / np.max(voigt))
 
 
-def voigtCONV_kernel_width():
+def voigtCONV_kernel_width() -> int:
     """Kernel width multiplier for Voigt (12)."""
 
     return 12
 
 
 #
-def expSymCONV(x, tau):
+def expSymCONV(x: np.ndarray, tau: float) -> np.ndarray:
     """
     Symmetric exponential kernel (double exponential).
     Exponential decay in both directions from center:
@@ -396,17 +383,17 @@ def expSymCONV(x, tau):
         Symmetric exponential kernel
     """
 
-    return np.exp(-1 / tau * np.abs(x))
+    return np.asarray(np.exp(-1 / tau * np.abs(x)))
 
 
-def expSymCONV_kernel_width():
+def expSymCONV_kernel_width() -> int:
     """Kernel width multiplier for symmetric exponential (6×tau)."""
 
     return 6
 
 
 #
-def expDecayCONV(x, tau):
+def expDecayCONV(x: np.ndarray, tau: float) -> np.ndarray:
     """
     Causal exponential kernel (one-sided decay).
 
@@ -423,17 +410,17 @@ def expDecayCONV(x, tau):
         One-sided exponential: 0 for x<0, exp(-x/tau) for x≥0
     """
 
-    return np.concatenate((np.zeros(np.shape(x[x < 0])), expSymCONV(x[x >= 0], tau)))
+    return np.where(x < 0, 0.0, expSymCONV(x, tau))
 
 
-def expDecayCONV_kernel_width():
+def expDecayCONV_kernel_width() -> int:
     """Kernel width multiplier for decay exponential (6×tau)."""
 
     return 6
 
 
 #
-def expRiseCONV(x, tau):
+def expRiseCONV(x: np.ndarray, tau: float) -> np.ndarray:
     """
     Causal exponential rise kernel.
 
@@ -450,17 +437,17 @@ def expRiseCONV(x, tau):
         One-sided exponential: exp(x/tau) for x≤0, 0 for x>0
     """
 
-    return np.concatenate((expSymCONV(x[x <= 0], tau), np.zeros(np.shape(x[x > 0]))))
+    return np.where(x > 0, 0.0, expSymCONV(x, tau))
 
 
-def expRiseCONV_kernel_width():
+def expRiseCONV_kernel_width() -> int:
     """Kernel width multiplier for rise exponential (6×tau)."""
 
     return 6
 
 
 #
-def boxCONV(x, width):
+def boxCONV(x: np.ndarray, width: float) -> np.ndarray:
     """
     Box (rectangular) convolution kernel.
 
@@ -477,10 +464,10 @@ def boxCONV(x, width):
         Rectangular function: 1 inside width, 0 outside (with smooth edges)
     """
 
-    return (square(x - np.min(x) / 2, duty=width / (2 * np.pi)) + 1) / 2
+    return np.asarray((square(x - np.min(x) / 2, duty=width / (2 * np.pi)) + 1) / 2)
 
 
-def boxCONV_kernel_width():
+def boxCONV_kernel_width() -> int:
     """Kernel width multiplier for box (1×width)."""
 
     return 1

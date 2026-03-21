@@ -286,6 +286,10 @@ class Simulator:
         self.noise: np.ndarray | None = None  # Just the noise component
 
     #
+    def __repr__(self) -> str:
+        return f"Simulator(model='{self.model.name}', detection='{self.detection}')"
+
+    #
     def _resolve_photon_counting_params(self) -> None:
         """
         Resolve photon counting parameters. User can specify either:
@@ -366,7 +370,7 @@ class Simulator:
         """
 
         if dim == 1:
-            self.model.create_value1D(t_ind=t_ind, return1D=False)
+            self.model.create_value1D(t_ind=t_ind, return_1d=False)
             self.data_clean = copy.deepcopy(self.model.value1D)
         elif dim == 2:
             self.model.create_value2D()

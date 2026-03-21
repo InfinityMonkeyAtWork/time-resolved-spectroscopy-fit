@@ -66,7 +66,7 @@ class TestEvaluation:
 
         file, model = self._make_file_with_model(["energy_expression"])
 
-        value_1d = model.create_value1D(return1D=1)
+        value_1d = model.create_value1D(return_1d=1)
         assert value_1d is not None
         assert file.energy is not None
         assert value_1d.shape == file.energy.shape
@@ -117,7 +117,7 @@ class TestEvaluation:
         file, model = self._make_file_with_model(["expression_fan_out"])
 
         # Evaluate 1D spectrum
-        value_1d = model.create_value1D(return1D=1)
+        value_1d = model.create_value1D(return_1d=1)
         assert value_1d is not None
         assert np.isfinite(value_1d).all()
 
@@ -142,7 +142,7 @@ class TestEvaluation:
         file, model = self._make_file_with_model(["expression_chain"])
 
         # Evaluate 1D spectrum
-        value_1d = model.create_value1D(return1D=1)
+        value_1d = model.create_value1D(return_1d=1)
         assert value_1d is not None
         assert np.isfinite(value_1d).all()
 
@@ -238,7 +238,7 @@ class TestEvaluation:
         assert p_A.p_vary is True
 
         # Evaluate via the model
-        value_1d = model.create_value1D(return1D=1)
+        value_1d = model.create_value1D(return_1d=1)
         assert value_1d is not None
 
         # Analytical expectation: GLP at mean effective A
@@ -284,7 +284,7 @@ class TestEvaluation:
         assert profile is not None
 
         # --- t_ind=0 (t=-10, before t0): dynamics = 0, static profile ---
-        spec_early = model.create_value1D(t_ind=0, return1D=1)
+        spec_early = model.create_value1D(t_ind=0, return_1d=1)
         assert spec_early is not None
         # profile value1D was evaluated at t_ind=0; read it for prediction
         assert profile.value1D is not None
@@ -293,7 +293,7 @@ class TestEvaluation:
         np.testing.assert_allclose(spec_early, expected_early, rtol=1e-10)
 
         # --- t_ind=10 (t=0, at t0): dynamics nonzero, profile changes ---
-        spec_at_t0 = model.create_value1D(t_ind=10, return1D=1)
+        spec_at_t0 = model.create_value1D(t_ind=10, return_1d=1)
         assert spec_at_t0 is not None
         assert profile.value1D is not None
         mean_A_at_t0 = 20.0 + np.mean(profile.value1D)
@@ -343,7 +343,7 @@ class TestEvaluation:
         assert p_A1.p_vary is True
 
         # Evaluate
-        value_1d = model.create_value1D(return1D=1)
+        value_1d = model.create_value1D(return_1d=1)
         assert value_1d is not None
 
         # Analytical expectation

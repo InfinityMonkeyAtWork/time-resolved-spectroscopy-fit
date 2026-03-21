@@ -48,7 +48,7 @@ from scipy.special import wofz
 
 
 #
-def Offset(x, y0, spectrum):
+def Offset(x: np.ndarray, y0: float, spectrum: np.ndarray) -> np.ndarray:
     """
     Constant offset background.
 
@@ -67,11 +67,11 @@ def Offset(x, y0, spectrum):
         Constant array of shape len(x) with value y0
     """
 
-    return y0 * np.ones(np.shape(spectrum)[0])
+    return np.full_like(spectrum, y0, dtype=float)
 
 
 #
-def Shirley(x, pShirley, spectrum):
+def Shirley(x: np.ndarray, pShirley: float, spectrum: np.ndarray) -> np.ndarray:
     """
     Shirley background for inelastic electron scattering.
 
@@ -97,7 +97,9 @@ def Shirley(x, pShirley, spectrum):
 
 
 #
-def LinBack(x, m, b, xStart, xStop, spectrum):
+def LinBack(
+    x: np.ndarray, m: float, b: float, xStart: float, xStop: float, spectrum: np.ndarray
+) -> np.ndarray:
     """
     Clamped linear background.
 
@@ -146,7 +148,7 @@ def LinBack(x, m, b, xStart, xStop, spectrum):
 
 
 #
-def Gauss(x, A, x0, SD):
+def Gauss(x: np.ndarray, A: float, x0: float, SD: float) -> np.ndarray:
     """
     Gaussian (normal) distribution peak.
 
@@ -172,7 +174,9 @@ def Gauss(x, A, x0, SD):
 
 
 #
-def GaussAsym(x, A, x0, SD, ratio):
+def GaussAsym(
+    x: np.ndarray, A: float, x0: float, SD: float, ratio: float
+) -> np.ndarray:
     """
     Asymmetric Gaussian peak with different widths on each side.
 
@@ -198,16 +202,11 @@ def GaussAsym(x, A, x0, SD, ratio):
         Asymmetric Gaussian peak spectrum
     """
 
-    # define two Gaussians different SDs
-    lo_x0 = Gauss(x, A, x0, SD)
-    hi_x0 = Gauss(x, A, x0, SD * ratio)
-    # merge the two Gaussians at x=x0
-    # they have the same amplitude at x0 by definition
-    return np.concatenate([lo_x0[x < x0], hi_x0[x >= x0]], axis=0)
+    return np.where(x < x0, Gauss(x, A, x0, SD), Gauss(x, A, x0, SD * ratio))
 
 
 #
-def Lorentz(x, A, x0, W):
+def Lorentz(x: np.ndarray, A: float, x0: float, W: float) -> np.ndarray:
     """
     Lorentzian (Cauchy) distribution peak.
 
@@ -233,7 +232,7 @@ def Lorentz(x, A, x0, W):
 
 
 #
-def Voigt(x, A, x0, SD, W):
+def Voigt(x: np.ndarray, A: float, x0: float, SD: float, W: float) -> np.ndarray:
     """
     Voigt profile (convolution of Gaussian and Lorentzian).
     [Use GLP or GLS (pseudo-Voigt) for ~10x speedup]
@@ -257,16 +256,12 @@ def Voigt(x, A, x0, SD, W):
         Voigt profile spectrum
     """
 
-    # scipy version
-    # voigt = np.real(wofz(((x-x0) + 1j*(W/2)) \
-    #        /SD /np.sqrt(2))) /SD /np.sqrt(2*np.pi)
-    # return A *voigt +y0
     voigt = np.real(wofz(((x - x0) + 1j * (W / 2)) / SD / np.sqrt(2)))
-    return A * voigt / np.max(voigt)
+    return np.asarray(A * voigt / np.max(voigt))
 
 
 #
-def GLS(x, A, x0, F, m):
+def GLS(x: np.ndarray, A: float, x0: float, F: float, m: float) -> np.ndarray:
     """
     Gaussian-Lorentzian Sum (pseudo-Voigt) approximation.
 
@@ -293,13 +288,14 @@ def GLS(x, A, x0, F, m):
         Pseudo-Voigt profile (sum form)
     """
 
-    return A * (1 - m) * np.exp(-(((x - x0) / F) ** 2) * 4 * np.log(2)) + m / (
-        1 + 4 * ((x - x0) / F) ** 2
+    return np.asarray(
+        A * (1 - m) * np.exp(-(((x - x0) / F) ** 2) * 4 * np.log(2))
+        + m / (1 + 4 * ((x - x0) / F) ** 2)
     )
 
 
 #
-def GLP(x, A, x0, F, m):
+def GLP(x: np.ndarray, A: float, x0: float, F: float, m: float) -> np.ndarray:
     """
     Gaussian-Lorentzian Product (pseudo-Voigt) approximation.
 
@@ -326,7 +322,7 @@ def GLP(x, A, x0, F, m):
         Pseudo-Voigt profile (product form)
     """
 
-    return (
+    return np.asarray(
         A
         * np.exp(-(((x - x0) / F) ** 2) * 4 * np.log(2) * (1 - m))
         / (1 + 4 * m * ((x - x0) / F) ** 2)
@@ -334,7 +330,7 @@ def GLP(x, A, x0, F, m):
 
 
 #
-def DS(x, A, x0, F, alpha):
+def DS(x: np.ndarray, A: float, x0: float, F: float, alpha: float) -> np.ndarray:
     """
     Doniach-Sunjic lineshape for metallic systems.
 
@@ -366,93 +362,3 @@ def DS(x, A, x0, F, alpha):
         * np.cos(np.pi * alpha / 2 + (1 - alpha) * np.arctan((x - x0) / F))
         / (F**2 + (x - x0) ** 2) ** ((1 - alpha) / 2)
     )
-
-
-# Moeini, B, Linford, MR, Fairley, N, et al. [Doniach-Sunjic-Shirley (DSS)]
-# Definition of a new (DSS) peak shape for fitting asymmetric XPS signals
-# Surf Interface Anal. 2022; 54(1): 67-77. doi:10.1002/sia.7021
-
-# CasaXPS Manual: http://www.casaxps.com/help_manual/line_shapes.htm
-
-# #
-# def DSGLS(x, A, x0, F, alpha, m):
-#     """
-#     Doniach-Sunjic blended with Gaussian-Lorentzian Sum.
-
-#     Parameters
-#     ----------
-#     x : ndarray
-#         Energy axis
-#     A : float
-#         Amplitude scaling factor
-#     x0 : float
-#         Peak center position
-#     F : float
-#         Width parameter (shared by DS and GLS components)
-#     alpha : float
-#         Asymmetry parameter (from DS):
-#         - 0 < alpha < 0.5: Metallic asymmetry
-#         - alpha = 0: Reduces to pure GLS
-#     m : float
-#         Mixing parameter (from GLS):
-#         - Controls Gaussian/Lorentzian balance in symmetric part
-#         - 0 < m < 1 (typical: 0.3)
-
-#     Returns
-#     -------
-#     ndarray
-#         Hybrid DS-GLS lineshape
-#     """
-#
-#     return A* (m /(F**2 +(x-x0)**2 )**((1-alpha)/2) + \
-#            (1-m) *GLS(x, A=1, x0=x0, F=F, m=0.3))
-
-# #
-# def DSGLP(x, A, x0, F, alpha, m):
-#     """
-#     Doniach-Sunjic blended with Gaussian-Lorentzian Product.
-
-#     Parameters
-#     ----------
-#     x : ndarray
-#         Energy axis
-#     A : float
-#         Amplitude scaling factor
-#     x0 : float
-#         Peak center position
-#     F : float
-#         Width parameter (shared by DS and GLP components)
-#     alpha : float
-#         Asymmetry parameter (from DS):
-#         - 0 < alpha < 0.5: Metallic asymmetry
-#         - alpha = 0: Reduces to pure GLP
-#     m : float
-#         Mixing parameter:
-#         - Controls both DS blending and Gaussian/Lorentzian balance
-#         - Implementation details unclear (see Notes)
-
-#     Returns
-#     -------
-#     ndarray
-#         Hybrid DS-GLP lineshape
-#     """
-#
-#     return A* (m /(F**2 +(x-x0)**2 )**((1-alpha)/2) + \
-#            (1-m) *GLP(x, A=1, x0=x0, F=F, m=0.3))
-
-#
-# Area instead of Amplitude
-#
-
-#
-# def gauss_fun_int1(x, A, x0, SD):
-#     """
-#     Define Gaussian function as a probability density function
-#     This means the integral over from minus to plus infinity
-#     is 1 (if A=1). For every value in the 1D array x the function
-#     will return a function value, where A is the amplitude scaling
-#     factor, x0 is the x axis offset, SD is the standard deviation
-#     of the Gaussian distribution
-#     """
-#
-#     return A/SD/np.sqrt(2*np.pi)*np.exp(-1/2*((x-x0)/SD)**2)

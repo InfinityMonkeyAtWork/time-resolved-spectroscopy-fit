@@ -55,13 +55,10 @@ Key Features
 
 import copy
 import inspect
-import math
 import re
 import types
 from collections.abc import Callable
-
-# import concurrent.futures
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 import lmfit
 import numpy as np
@@ -123,7 +120,7 @@ class Model:
     par_names : list of str
         Names of all parameters in the model
     component_spectra : list of ndarray
-        Individual component spectra from last evaluation (when store1D=1)
+        Individual component spectra from last evaluation (when store_1d=1)
     value1D : ndarray or None
         1D spectrum (sum of all components) from last evaluation
     value2D : ndarray or None
@@ -212,6 +209,14 @@ class Model:
         self.time: np.ndarray | None = None  # necessarry or should just point to file?
         self.aux_axis: np.ndarray | None = None  # auxiliary physical axis (e.g. depth)
 
+    #
+    def __repr__(self) -> str:
+        n_comp = len(self.components)
+        n_par = len(self.par_names)
+        dim = self.dim or "?"
+        cls = type(self).__name__
+        return f"{cls}('{self.name}', {n_comp} comp, {n_par} pars, dim={dim})"
+
     @property
     def plot_config(self) -> PlotConfig:
         """
@@ -247,25 +252,25 @@ class Model:
 
         # minimum model description
         print("model name: " + self.name)
-        try:
+        if self.components:
             for comp in self.components:
                 comp.describe(detail=detail - 1)
-        except Exception:  # noqa: BLE001
+        else:
             print("no elements in this model")
         print("all lmfit.Parameters() [flattened and sorted alphabetically]:")
-        try:
+        if self.lmfit_pars:
             self.lmfit_pars.pretty_print()
-        except Exception:  # noqa: BLE001
+        else:
             print("lmfit.Parameters() object is empty")
         print()
         # plot initial guess of model
         if detail >= 1:
             if isinstance(self, Dynamics):
-                self.create_value1D(store1D=1)
+                self.create_value1D(store_1d=1)
                 self.plot_1D()
             else:  # energy-resolved model
                 if self.dim == 1:
-                    self.create_value1D(store1D=1)
+                    self.create_value1D(store_1d=1)
                     self.plot_1D()
                 elif self.dim == 2:
                     self.create_value2D()
@@ -718,7 +723,7 @@ class Model:
 
     #
     def create_value1D(
-        self, t_ind: int = 0, store1D: int = 0, return1D: int = 0, debug: bool = False
+        self, t_ind: int = 0, store_1d: int = 0, return_1d: int = 0, debug: bool = False
     ) -> np.ndarray | None:
         """
         Evaluate model to create 1D spectrum (energy or time).
@@ -733,10 +738,10 @@ class Model:
             Time index for evaluation. For energy-resolved models, this selects
             which time point to evaluate. For Dynamics models, affects which
             parameters have time-dependence applied.
-        store1D : int, default=0
+        store_1d : int, default=0
             If 1, store individual component spectra in self.component_spectra
             for later plotting or analysis.
-        return1D : int, default=0
+        return_1d : int, default=0
             If 1, return the computed spectrum. Otherwise return None and store
             in self.value1D only.
         debug : bool, default=False
@@ -745,7 +750,7 @@ class Model:
         Returns
         -------
         ndarray or None
-            If return1D=1, returns the 1D spectrum. Otherwise returns None.
+            If return_1d=1, returns the 1D spectrum. Otherwise returns None.
             Spectrum is always stored in self.value1D regardless of return setting.
 
         Notes
@@ -757,7 +762,7 @@ class Model:
         3. This allows backgrounds to access the sum of all peaks
 
         **Stored Components:**
-        When store1D=1, self.component_spectra contains individual contributions
+        When store_1d=1, self.component_spectra contains individual contributions
         in the ORIGINAL order (not reversed). This matches the order components
         were defined and makes plotting intuitive.
 
@@ -769,11 +774,11 @@ class Model:
         """
 
         # re-initialize list containing individual component spectra
-        if store1D == 1:
+        if store_1d == 1:
             self.component_spectra = []
         # initialize value1D by evaluating last component
         self.value1D = self.components[-1].value(t_ind)
-        if store1D == 1:
+        if store_1d == 1:
             self.component_spectra.append(self.value1D)
 
         # combine the components into a spectrum/ time dynamics curve
@@ -781,12 +786,12 @@ class Model:
             if debug:
                 print(N + 2)
                 print(self.components[-(N + 2)].fct_str)
-            if store1D == 1:
+            if store_1d == 1:
                 current_spec = copy.deepcopy(self.value1D)
             #
             self.value1D = Model.combine(self.value1D, self.components[-(N + 2)], t_ind)
             # check on last component value added to model
-            if store1D == 1:
+            if store_1d == 1:
                 self.component_spectra.append(self.value1D - current_spec)
             if debug:
                 uplt.plot_1D(
@@ -796,15 +801,15 @@ class Model:
                 )
 
         # flip component spectra list as components are combined LIFO in this function
-        if store1D == 1:
+        if store_1d == 1:
             self.component_spectra = self.component_spectra[::-1]
         #
-        if return1D == 1:
+        if return_1d == 1:
             return self.value1D
         return None
 
     #
-    def create_value2D(self, t_ind: list[int] = []) -> None:  # noqa: B006
+    def create_value2D(self, t_ind: list[int] | None = None) -> None:
         """
         Evaluate model to create 2D spectrum (time × energy).
 
@@ -814,9 +819,9 @@ class Model:
 
         Parameters
         ----------
-        t_ind : list, optional
+        t_ind : list of int or None, optional
             Time index range to process:
-            - [] (empty): Process entire time axis
+            - None (default): Process entire time axis
             - [start, stop]: Process self.time[start:stop] only
         debug : bool, default=False
             If True, print debug information during evaluation
@@ -844,28 +849,19 @@ class Model:
         if self.time is None or self.energy is None:
             raise ValueError("Model time and energy axes required for 2D evaluation")
 
-        if len(t_ind) == 0:  # process entire time axis
-            self.value2D = np.empty((len(self.time), len(self.energy)))
-            for ti, _t in enumerate(self.time):
-                val = self.create_value1D(t_ind=ti, return1D=1)
-                if val is None:
-                    raise RuntimeError("create_value1D returned None during 2D eval")
-                self.value2D[ti, :] = val
-        else:  # process selection according to t_ind
-            self.value2D = np.empty(
-                (len(self.time[t_ind[0] : t_ind[1]]), len(self.energy))
-            )
-            for ti, _t in enumerate(self.time[t_ind[0] : t_ind[1]]):
-                val = self.create_value1D(t_ind=ti, return1D=1)
-                if val is None:
-                    raise RuntimeError("create_value1D returned None during 2D eval")
-                self.value2D[ti, :] = val
+        time_slice = self.time if t_ind is None else self.time[t_ind[0] : t_ind[1]]
+        self.value2D = np.empty((len(time_slice), len(self.energy)))
+        for ti, _t in enumerate(time_slice):
+            val = self.create_value1D(t_ind=ti, return_1d=1)
+            if val is None:
+                raise RuntimeError("create_value1D returned None during 2D eval")
+            self.value2D[ti, :] = val
 
     #
     def plot_1D(
         self,
         t_ind: int = 0,
-        plot_ind: bool = False,
+        plot_sum: bool = True,
         x_lim: tuple[float, float] | None = None,
         y_lim: tuple[float, float] | None = None,
         save_img: int = 0,
@@ -883,10 +879,10 @@ class Model:
         t_ind : int, default=0
             Time index for energy-resolved models. Ignored for Dynamics models
             which show time evolution.
-        plot_ind : bool, default=False
+        plot_sum : bool, default=True
             Component display mode:
-            - False: Plot only sum of all components
-            - True: Plot each component separately
+            - True: Plot only sum of all components
+            - False: Plot each component separately
         x_lim : tuple of float, optional
             X-axis display range (min, max) in axis coordinates
         y_lim : tuple of float, optional
@@ -922,13 +918,13 @@ class Model:
             info = f"[{config.y_label}={round(self.time[t_ind], 3)} (index={t_ind})]"
 
         # Populate component_spectra argument of the model
-        self.create_value1D(t_ind, store1D=1)
-        if not plot_ind and self.value1D is None:
+        self.create_value1D(t_ind, store_1d=1)
+        if plot_sum and self.value1D is None:
             raise RuntimeError("Model evaluation did not produce value1D")
 
         # Plot
         plot_data = (
-            self.component_spectra if plot_ind else [cast("np.ndarray", self.value1D)]
+            [cast("np.ndarray", self.value1D)] if plot_sum else self.component_spectra
         )
         uplt.plot_1D(
             data=plot_data,
@@ -940,11 +936,11 @@ class Model:
             x_dir=x_dir,
             x_lim=x_lim,
             y_lim=y_lim,
-            legend=[c.name for c in self.components]
-            if plot_ind
-            else [
+            legend=[
                 "sum",
-            ],
+            ]
+            if plot_sum
+            else [c.name for c in self.components],
             save_img=save_img,
             save_path=save_path,
         )
@@ -1126,6 +1122,11 @@ class Component:
         self.aux_axis: np.ndarray | None = None
         # parent model reference
         self.parent_model: Model | None = None
+
+    #
+    def __repr__(self) -> str:
+        n = len(self.pars)
+        return f"Component('{self.comp_name}', type='{self.comp_type}', {n} pars)"
 
     # [automatic] create self.fct attribute that will update if either
     # self.package or self.fct_str changes [attribute is read only]
@@ -1432,9 +1433,9 @@ class Component:
             print(f"function will be {comp_type_str} [{subcycle_str}]\n")
 
             print("all lmfit.Parameters() [flattened and sorted alphabetically]:")
-            try:
+            if self.lmfit_pars:
                 self.lmfit_pars.pretty_print()
-            except Exception:  # noqa: BLE001
+            else:
                 print("lmfit.Parameters() object is empty")
             print()
 
@@ -1459,14 +1460,14 @@ class Component:
         """
 
         # get kernel parameters i.e. component parameters
-        parK = cast("list[Any]", ulmfit.par_extract(self.par_dict, return_type="list"))
+        par_k = cast("list[Any]", ulmfit.par_extract(self.par_dict, return_type="list"))
         if debug:
-            print(f"component/kernel parameters as list: {parK}")
+            print(f"component/kernel parameters as list: {par_k}")
         # define kernel time axis
         kernel_width = getattr(fcts_time, self.fct_str + "_kernel_width")()
         if debug:
             print(f"kernel width loaded from fcts_time: {kernel_width}")
-        t_range = parK[0] * kernel_width
+        t_range = par_k[0] * kernel_width
         if self.time is None or len(self.time) < 2:
             raise ValueError(f"time axis of component {self.fct_str} not defined")
         t_step = self.time[1] - self.time[0]
@@ -1634,7 +1635,7 @@ class Component:
     def plot(
         self,
         t_ind: int = 0,
-        plot_ind: bool = True,
+        plot_traces: bool = True,
         plot_every: int = 1,
         plot_max: int | None = None,
         **kwargs,
@@ -1649,13 +1650,13 @@ class Component:
         ----------
         t_ind : int, default=0
             Time index for evaluation
-        plot_ind : bool, default=True
+        plot_traces : bool, default=True
             For components with profile-varying parameter(s) (p_vary=True):
             - True: plot one trace per aux-axis point
             - False: plot single combined trace (average over aux-axis traces)
             For all other components, a single trace is plotted.
         plot_every : int, default=1
-            When plotting individual aux-axis traces (plot_ind=True), show
+            When plotting individual aux-axis traces (plot_traces=True), show
             every N-th curve (N=1 means show all curves).
         plot_max : int or None, default=None
             Optional hard cap on number of individual aux-axis curves to plot.
@@ -1696,7 +1697,7 @@ class Component:
         profile_dep = any(p.p_vary or p.expr_refs_profile_dep for p in self.pars)
         if self.package == fcts_energy and profile_dep:
             traces = self._value_profile_instances(t_ind=t_ind, **kwargs)
-            if plot_ind:
+            if plot_traces:
                 if x_axis is None:
                     raise ValueError(
                         f"Energy axis not defined for component '{self.comp_name}'"
@@ -1838,6 +1839,18 @@ class Par:
         self.parent_model: Model | None = None  # reference to parent model
 
     #
+    def __repr__(self) -> str:
+        flags = []
+        if self.t_vary:
+            flags.append("t_vary")
+        if self.p_vary:
+            flags.append("p_vary")
+        if self.expr_string:
+            flags.append(f"expr='{self.expr_string}'")
+        extra = f" [{', '.join(flags)}]" if flags else ""
+        return f"Par('{self.name}'{extra})"
+
+    #
     def describe(self, detail: int = 0) -> None:
         """
         Print parameter information.
@@ -1852,9 +1865,9 @@ class Par:
             f"par name: {self.name} [value: {self.value()}]"
             " and its lmfit_par attribute:"
         )
-        try:
+        if isinstance(self.lmfit_par, lmfit.Parameters):
             self.lmfit_par.pretty_print()
-        except Exception:  # noqa: BLE001
+        else:
             print("[this is not an lmfit.Parameter instance]")
             display(self.lmfit_par)
         #
@@ -2048,7 +2061,7 @@ class Par:
     #
     def _find_parameter_by_name(
         self, par_name: str, all_parameters: list["Par"]
-    ) -> Optional["Par"]:
+    ) -> "Par | None":
         """
         Find parameter by name in list.
 
@@ -2365,28 +2378,13 @@ class Dynamics(Model):
         else:
             # Compute repetition/normalization number
             norm = 10 ** (-time_unit) / self.frequency / self.subcycles
-            t_norm = []
-            N_sub = []
-            N_counter = []
+            t = np.asarray(self.time)
+            N_temp = np.floor(t / norm).astype(int)
+            mask = t >= 0  # Subcycles start at t=0
 
-            # Go through time axis and perform normalization
-            for t_i in self.time:
-                N_temp = math.floor(t_i / norm)
-                if t_i >= 0:  # Subcycles start at t=0
-                    # Which subcycle is active
-                    N_sub.append(math.floor(N_temp % self.subcycles) + 1)
-                    # Increments by 1 each subcycle
-                    N_counter.append(N_temp + 1)
-                    # Each subcycle starts with t=0
-                    t_norm.append(t_i - N_temp * norm)
-                else:  # Times t<0 are baseline/pre-trigger/ground state spectra
-                    N_sub.append(0)
-                    N_counter.append(0)
-                    t_norm.append(0)
-
-            self.time_norm = np.asarray(t_norm)
-            self.N_sub = np.asarray(N_sub)
-            self.N_counter = np.asarray(N_counter)
+            self.time_norm = np.where(mask, t - N_temp * norm, 0.0)
+            self.N_sub = np.where(mask, np.floor(N_temp % self.subcycles) + 1, 0.0)
+            self.N_counter = np.where(mask, N_temp + 1, 0.0)
 
         if debug:
             legends = ["normalized time", "subcycle counter", "cummulative counter"]

@@ -26,7 +26,6 @@ import time
 from collections.abc import Sequence
 from typing import Any, cast
 
-# import emcee
 import corner
 import lmfit
 import matplotlib.pyplot as plt
@@ -153,11 +152,11 @@ def residual_fun(
     # or if list of [value, vary(, min, max)] transition to val list
     par = ulmfit.par_extract(par, return_type="list")
 
-    # compute the fit curve [plot_ind has to be hardcoded as False/0 here]
+    # compute the fit curve [plot_sum has to be hardcoded as True/1 here]
     if unpack == 1:
-        fit = fit_fun(x, *par, 0, *args)
+        fit = fit_fun(x, *par, True, *args)
     elif unpack == 0:
-        fit = fit_fun(x, par, 0, *args)
+        fit = fit_fun(x, par, True, *args)
     else:
         raise ValueError("unpack must be 0 or 1")
     fit_arr = np.asarray(fit)
@@ -365,7 +364,7 @@ def fit_wrapper(
     fit_type: int,
     sigmas: list[float] | None = None,
     try_CI: int = 1,
-    MCsettings: ulmfit.MC | None = None,
+    mc_settings: ulmfit.MC | None = None,
     fit_alg_1: str = "Nelder",
     fit_alg_2: str = "leastsq",
     show_info: float = 0,
@@ -416,7 +415,7 @@ def fit_wrapper(
         - 0: Skip CI calculation
         - 1: Calculate CI if error bars available (result.errorbars=True)
 
-    MCsettings : ulmfit.MC, default=ulmfit.MC()
+    mc_settings : ulmfit.MC, default=ulmfit.MC()
         MCMC configuration object:
 
         - use_emcee: 0 (skip), 1 (always), 2 (if CI fails)
@@ -515,7 +514,7 @@ def fit_wrapper(
     ...     par=model.lmfit_pars,
     ...     fit_type=2,
     ...     try_CI=1,
-    ...     MCsettings=mc,
+    ...     mc_settings=mc,
     ...     show_info=1
     ... )
 
@@ -553,8 +552,8 @@ def fit_wrapper(
 
     if sigmas is None:
         sigmas = [1.0, 2.0, 3.0]
-    if MCsettings is None:
-        MCsettings = ulmfit.MC()
+    if mc_settings is None:
+        mc_settings = ulmfit.MC()
 
     # construct the lmfit parameters if necessary
     if isinstance(par, lmfit.parameter.Parameters):
@@ -636,14 +635,14 @@ def fit_wrapper(
             conf_CIs = pd.DataFrame()
             if show_info >= 1:
                 print("\nNo successful error bar determination via conf_interval")
-            if MCsettings.use_emcee == 2:
+            if mc_settings.use_emcee == 2:
                 # conf_interval didn't work -> use lmfit.emcee()
-                MCsettings.use_emcee = 1
+                mc_settings.use_emcee = 1
     elif try_CI == 0:
         conf_CIs = pd.DataFrame()
 
     # lmfit.emcee() [not a fit, it is a way to sample the parameter space!]
-    if MCsettings.use_emcee == 1:
+    if mc_settings.use_emcee == 1:
         t_emcee0 = time.time()
         par_fin_params = _result_params(par_fin)
         par_fin_params.add(
@@ -658,13 +657,13 @@ def fit_wrapper(
         # i.e. not close to the optimized parameter set, so burn=0 is ok here!
         emcee_fin = mini.emcee(
             params=par_fin_params,
-            steps=MCsettings.steps,
-            nwalkers=MCsettings.nwalkers,
-            burn=MCsettings.burn,
-            thin=MCsettings.thin,
-            ntemps=MCsettings.ntemps,
-            workers=MCsettings.workers,
-            is_weighted=MCsettings.is_weighted,
+            steps=mc_settings.steps,
+            nwalkers=mc_settings.nwalkers,
+            burn=mc_settings.burn,
+            thin=mc_settings.thin,
+            ntemps=mc_settings.ntemps,
+            workers=mc_settings.workers,
+            is_weighted=mc_settings.is_weighted,
             progress=True,
         )
         emcee_fin_params = _result_params(emcee_fin)
@@ -844,8 +843,8 @@ def results2df(
     x: ArrayLike | None = None,
     index: ArrayLike | None = None,
     config: PlotConfig | None = None,
-    first_N_spec_only: int = -1,
-    skip_first_N_spec: int = -1,
+    first_n_spec_only: int = -1,
+    skip_first_n_spec: int = -1,
     save_df: int = 0,
     save_path: PathLike = "",
 ) -> pd.DataFrame:
@@ -867,9 +866,9 @@ def results2df(
         Index values (e.g., slice numbers). If provided, included as column.
     config : PlotConfig, optional
         Plot configuration. If None, uses defaults.
-    first_N_spec_only : int, default=-1
+    first_n_spec_only : int, default=-1
         If != -1, include only first N results (for partial fitting).
-    skip_first_N_spec : int, default=-1
+    skip_first_n_spec : int, default=-1
         If != -1, skip first N results (for partial fitting).
     save_df : {-1, 0, 1}, default=0
         Save outputs:
@@ -903,11 +902,11 @@ def results2df(
 
     # select x (time) and index data if passed
     if x is not None:
-        x_save = results_select(data=x, skip=skip_first_N_spec, N=first_N_spec_only)
+        x_save = results_select(data=x, skip=skip_first_n_spec, N=first_n_spec_only)
         df.insert(0, config.y_label, x_save)  # and insert into dataframe
     if index is not None:
         ind_save = results_select(
-            data=index, skip=skip_first_N_spec, N=first_N_spec_only
+            data=index, skip=skip_first_n_spec, N=first_n_spec_only
         )
         df.insert(0, "index", ind_save)  # and insert into dataframe
 
@@ -1053,7 +1052,7 @@ def plt_fit_res_1D(
     par_init: Any,
     par_fin: Any,
     args: tuple[Any, ...] | None = None,
-    plot_ind: bool = True,
+    plot_sum: bool = False,
     show_init: bool = True,
     title: str = "",
     fit_lim: list[int] | None = None,
@@ -1090,11 +1089,11 @@ def plt_fit_res_1D(
     args : tuple, optional
         Additional arguments for fit function (model, dim, debug).
         If None, defaults to empty tuple.
-    plot_ind : bool, default=True
-        Plot individual components:
+    plot_sum : bool, default=False
+        Plot sum only:
 
-        - True: Show each component separately (colored + filled)
-        - False: Show only total fit (faster, cleaner for many components)
+        - False: Show each component separately (colored + filled)
+        - True: Show only total fit (faster, cleaner for many components)
 
     show_init : bool, default=True
         Show initial parameter guess:
@@ -1110,7 +1109,7 @@ def plt_fit_res_1D(
     config : PlotConfig, optional
         Plot configuration object. If None, uses defaults.
     legend : list of str, optional
-        Legend labels for components (used only if plot_ind=True).
+        Legend labels for components (used only if plot_sum=False).
         If None, auto-generates 'component 0', 'component 1', etc.
     **kwargs : dict
         Override config attributes for this plot:
@@ -1165,7 +1164,7 @@ def plt_fit_res_1D(
         par_ini = ulmfit.par_extract(par_init, return_type="list")
         plt.plot(
             x_arr,
-            fit_fun(x_arr, par_ini, 0, *args),
+            fit_fun(x_arr, par_ini, True, *args),
             color="#FFD700",
             linestyle=":",
             linewidth=2,
@@ -1179,8 +1178,8 @@ def plt_fit_res_1D(
         par_fin_vals = ulmfit.par_extract(par_fin, return_type="list")
 
         # Plot individual components if requested
-        if plot_ind:
-            peaks = fit_fun(x_arr, par_fin_vals, 1, *args)
+        if not plot_sum:
+            peaks = fit_fun(x_arr, par_fin_vals, False, *args)
             for p, peak in enumerate(peaks):
                 label = legend[p] if legend and p < len(legend) else f"component {p}"
                 color_idx = (p + 1) % len(colors)
@@ -1197,7 +1196,7 @@ def plt_fit_res_1D(
         # Plot final fit sum
         plt.plot(
             x_arr,
-            fit_fun(x_arr, par_fin_vals, 0, *args),
+            fit_fun(x_arr, par_fin_vals, True, *args),
             color="#000000",
             linestyle="-",
             linewidth=1,
@@ -1205,11 +1204,11 @@ def plt_fit_res_1D(
         )
 
         # Calculate residual
-        res = y_arr - fit_fun(x_arr, par_fin_vals, 0, *args)
+        res = y_arr - fit_fun(x_arr, par_fin_vals, True, *args)
     else:
         # Initial guess only
         par_ini = ulmfit.par_extract(par_init, return_type="list")
-        res = y_arr - fit_fun(x_arr, par_ini, 0, *args)
+        res = y_arr - fit_fun(x_arr, par_ini, True, *args)
 
     # Plot residual (scaled for visibility)
     plt.plot(
@@ -1227,16 +1226,9 @@ def plt_fit_res_1D(
     plt.title(title, loc="left", fontsize=10)
 
     # Apply axis limits, direction, and scale
-    if x_type == "log":
-        ax.set_xscale("log")
-    if x_lim is not None:
-        ax.set_xlim(x_lim[0], x_lim[1])
-    if x_dir == "rev":
-        plt.gca().invert_xaxis()
-    if y_type == "log":
-        ax.set_yscale("log")
-    if y_lim is not None:
-        ax.set_ylim(y_lim[0], y_lim[1])
+    uplt._apply_axis_settings(
+        ax, x_type, x_dir, y_type, y_dir=None, x_lim=x_lim, y_lim=y_lim
+    )
 
     # Draw zero line
     if x_lim is not None:
@@ -1260,22 +1252,8 @@ def plt_fit_res_1D(
     # Legend
     plt.legend(bbox_to_anchor=(1.35, 1))
 
-    # Save with predetermined filename
-    if abs(save_img) == 1:
-        plt.savefig(
-            save_path,
-            dpi=dpi_save,
-            bbox_inches="tight",
-            pad_inches=0.05,
-            facecolor="white",
-            edgecolor="auto",
-        )
-
-    # Display or close
-    if save_img >= 0:
-        plt.show()
-    else:
-        plt.close()
+    # Save/show/close
+    uplt._finalize_plot(save_img, save_path, dpi_save)
 
 
 #
@@ -1361,15 +1339,15 @@ def plt_fit_res_2D(
         res_cut = res
 
     res_sum = np.sum(np.abs(res_cut))
-    res_dim = np.shape(res_cut)
+    res_dim = res_cut.shape
 
     # Create default axes if not provided
     if x is None:
-        x_arr = np.arange(0, np.shape(data)[1], 1, dtype=float)
+        x_arr = np.arange(data.shape[1], dtype=float)
     else:
         x_arr = np.asarray(x, dtype=float)
     if y is None:
-        y_arr = np.arange(0, np.shape(data)[0], 1, dtype=float)
+        y_arr = np.arange(data.shape[0], dtype=float)
     else:
         y_arr = np.asarray(y, dtype=float)
 
@@ -1472,7 +1450,7 @@ def plt_fit_res_2D(
             x=float(x_arr[x_lim[0]]), ymin=0, ymax=1, color="#000000", linestyle=":"
         )
         axs["bottom"].axvline(
-            x=float(x_arr[np.shape(res)[1] - x_lim[1]]),
+            x=float(x_arr[res.shape[1] - x_lim[1]]),
             ymin=0,
             ymax=1,
             color="#000000",
@@ -1480,32 +1458,11 @@ def plt_fit_res_2D(
         )
 
     # Apply axis settings to all three plots
-    if x_type == "log":
-        axs["left"].set_xscale("log")
-        axs["right"].set_xscale("log")
-        axs["bottom"].set_xscale("log")
-    if x_dir == "rev":
-        axs["left"].invert_xaxis()
-        axs["right"].invert_xaxis()
-        axs["bottom"].invert_xaxis()
-    if y_type == "log":
-        axs["left"].set_yscale("log")
-        axs["right"].set_yscale("log")
-        axs["bottom"].set_yscale("log")
-    if y_dir == "rev":
-        axs["left"].invert_yaxis()
-        axs["right"].invert_yaxis()
-        axs["bottom"].invert_yaxis()
+    for a in axs.values():
+        uplt._apply_axis_settings(a, x_type, x_dir, y_type, y_dir)
 
-    # Save
-    if abs(save_img) == 1:
-        uplt.img_save(pathlib.Path(save_path) / "2D_data_fit_res.png")
-
-    # Show or close
-    if save_img >= 0:
-        plt.show()
-    else:
-        plt.close()
+    # Save/show/close
+    uplt._finalize_plot(save_img, pathlib.Path(save_path) / "2D_data_fit_res.png")
 
 
 #

@@ -42,13 +42,13 @@ class PlotConfig:
         Y-axis direction: 'def' (default) or 'rev' (reversed)
     y_type : str
         Y-axis scale: 'lin' (linear) or 'log' (logarithmic)
-    x_lim : Optional[Tuple[float, float]]
+    x_lim : tuple[float, float] | None
         X-axis limits (min, max)
-    y_lim : Optional[Tuple[float, float]]
+    y_lim : tuple[float, float] | None
         Y-axis limits (min, max)
     z_type : str
         Color scale type: 'lin' (linear) or 'log' (logarithmic)
-    z_lim : Optional[Tuple[float, float]]
+    z_lim : tuple[float, float] | None
         Color scale limits for 2D plots (min, max)
     dpi_plot : int
         DPI for displaying plots
@@ -56,27 +56,27 @@ class PlotConfig:
         DPI for saving plots
     z_colormap : str
         Colormap name for 2D plots
-    data_slice : Optional[List[List[int]]]
+    data_slice : list[list[int]] | None
         Data slicing indices for 2D plots: [[x_start, x_stop], [y_start, y_stop]]
-    colors : Optional[List[str]]
+    colors : list[str] | None
         List of colors for line plots
-    linestyles : Optional[List[str]]
+    linestyles : list[str] | None
         List of line styles
-    linewidths : Optional[List[float]]
+    linewidths : list[float] | None
         List of line widths
-    markers : Optional[List[str]]
+    markers : list[str] | None
         List of marker styles
-    markersizes : Optional[List[float]]
+    markersizes : list[float] | None
         List of marker sizes
-    legend : Optional[List[str]]
+    legend : list[str] | None
         List of legend labels
     waterfall : float
         Y-offset between plots for waterfall display
-    vlines : Optional[List[float]]
+    vlines : list[float] | None
         X-coordinates for vertical lines
-    hlines : Optional[List[float]]
+    hlines : list[float] | None
         Y-coordinates for horizontal lines
-    ticksize : Optional[float]
+    ticksize : float | None
         Font size for tick labels
 
     Examples

@@ -50,11 +50,12 @@ def _make_truth_file(project):
 def _make_fit_file(project, data, energy, time):
     """Create a fresh file loaded with simulated data, ready to fit."""
 
-    file = File(parent_project=project)
-    file.energy = energy.copy()
-    file.time = time.copy()
-    file.data = data
-    file.dim = 2
+    file = File(
+        parent_project=project,
+        data=data,
+        energy=energy.copy(),
+        time=time.copy(),
+    )
 
     file.load_model(
         model_yaml="test_models_energy.yaml",
@@ -67,11 +68,6 @@ def _make_fit_file(project, data, energy, time):
         par_name="GLP_01_A",
     )
 
-    file.set_fit_limits(
-        energy_limits=[energy[0], energy[-1]],
-        time_limits=[time[0], time[-1]],
-        show_plot=False,
-    )
     file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
     return file
 

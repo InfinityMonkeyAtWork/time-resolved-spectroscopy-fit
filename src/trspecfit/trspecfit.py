@@ -121,8 +121,8 @@ class Project:
         Results directory (path + '_fits' suffix)
     path_run : Path
         Directory for this specific run (path_results / name)
-    run : str
-        Current run name
+    name : str
+        Name for this analysis run
     files : list of File
         All File instances registered with this Project
     show_info : int
@@ -131,7 +131,7 @@ class Project:
         Module containing spectrum fitting functions (default: spectra)
     spec_fun_str : str
         Name of fitting function in spec_lib
-    skip_first_N_spec, first_N_spec_only : int
+    skip_first_n_spec, first_n_spec_only : int
         Slice selection for partial fitting (-1 = all slices)
 
     Notes
@@ -160,7 +160,7 @@ class Project:
     ) -> None:
         self.path = pathlib.Path(path) if path is not None else pathlib.Path("test")
         self.path_results = pathlib.Path(f"{path}_fits")
-        self.run = name
+        self.name = name
         self.path_run = self.path_results / name
 
         self._config_file: PathLike | None = None
@@ -201,8 +201,8 @@ class Project:
         # Advanced settings
         self.spec_lib = spectra
         self.spec_fun_str = "fit_model_mcp"
-        self.skip_first_N_spec = -1
-        self.first_N_spec_only = -1
+        self.skip_first_n_spec = -1
+        self.first_n_spec_only = -1
 
     @property
     def spec_fun(self) -> Callable:
@@ -211,6 +211,10 @@ class Project:
         """
 
         return cast("Callable", getattr(self.spec_lib, self.spec_fun_str))
+
+    #
+    def __repr__(self) -> str:
+        return f"Project(path='{self.path}', name='{self.name}')"
 
     #
     def describe(self, detail: int = 0) -> None:
@@ -229,7 +233,7 @@ class Project:
         print("Project")
         print(f"  path:         {self.path}")
         print(f"  results:      {self.path_results}")
-        print(f"  run:          {self.run}")
+        print(f"  name:         {self.name}")
         if self._config_file is not None:
             print(f"  config:       {self._config_file}")
         else:
@@ -439,18 +443,18 @@ class File:
         self.path_DA = self.p.path_run / path  # path to save fit results to
         self._plot_config: PlotConfig | None = None  # create plot config from project
         self.data = data  # (time-[optional] and) energy-dependent data to fit
-        self.dim = 0 if data is None else len(np.shape(data))  # 1/2 D for energy/+time
+        self.dim = 0 if data is None else data.ndim  # 1/2 D for energy/+time
         # take energy and time input or create a generic axis if None is passed
         if energy is not None or data is None:
             self.energy = energy
         elif self.dim == 1:
-            self.energy = np.arange(0, np.shape(data)[0])
+            self.energy = np.arange(0, data.shape[0])
         else:
-            self.energy = np.arange(0, np.shape(data)[1])
+            self.energy = np.arange(0, data.shape[1])
         if time is not None or self.dim <= 1 or data is None:
             self.time = time
         else:
-            self.time = np.arange(0, np.shape(data)[0])
+            self.time = np.arange(0, data.shape[0])
         self.aux_axis: np.ndarray | None = (
             aux_axis  # auxiliary physical axis (e.g. depth)
         )
@@ -474,6 +478,9 @@ class File:
         self.model_2D: mcp.Model | None = None
         # all Slice-by-Slice fit results (different from model_SbS.result)
         self.results_SbS: list = []
+        # default fit limits to entire dataset (energy is None only for bare File())
+        if self.energy is not None:
+            self.set_fit_limits(energy_limits=None, show_plot=False)
 
     @property
     def plot_config(self) -> PlotConfig:
@@ -495,6 +502,14 @@ class File:
         self._plot_config = config
 
     #
+    def __repr__(self) -> str:
+        shape = self.data.shape if self.data is not None else None
+        n_models = len(self.models)
+        return (
+            f"File(path='{self.path}', data={shape}, {n_models} models, dim={self.dim})"
+        )
+
+    #
     def describe(self) -> None:
         """
         Display information about this file's data.
@@ -509,10 +524,10 @@ class File:
             warnings.warn("No data loaded; nothing to describe.", stacklevel=2)
             return
         if self.energy is None:
-            self.energy = np.arange(np.shape(self.data)[-1])
+            self.energy = np.arange(self.data.shape[-1])
             warnings.warn("Energy axis missing; using index axis.", stacklevel=2)
         if self.dim == 2 and self.time is None:
-            self.time = np.arange(np.shape(self.data)[0])
+            self.time = np.arange(self.data.shape[0])
             warnings.warn("Time axis missing; using index axis.", stacklevel=2)
 
         config = self.plot_config
@@ -822,8 +837,8 @@ class File:
         mod.describe(detail=0)
 
         if detail == 1 and isinstance(mod, mcp.Dynamics):
-            mod.create_value1D(store1D=1)  # update individual component spectra
-            mod.plot_1D(plot_ind=True)  # plot guess only (individual components)
+            mod.create_value1D(store_1d=1)  # update individual component spectra
+            mod.plot_1D(plot_sum=False)  # plot guess only (individual components)
 
         if detail == 1 and mod.dim == 1:
             if self.energy is None or self.data_base is None:
@@ -833,7 +848,7 @@ class File:
                     stacklevel=2,
                 )
                 return
-            mod.create_value1D(store1D=1)  # update individual component spectra
+            mod.create_value1D(store_1d=1)  # update individual component spectra
             # plot initial guess (individual components), data, and residual
             title_mod = (
                 f"File: {self.path}, "
@@ -848,7 +863,7 @@ class File:
                 par_init=[],
                 par_fin=mod.lmfit_pars,
                 args=(mod, 1),
-                plot_ind=True,
+                plot_sum=False,
                 show_init=False,
                 title=title_mod,
                 fit_lim=self.e_lim,
@@ -1020,13 +1035,13 @@ class File:
             warnings.warn("No data loaded; cannot define baseline.", stacklevel=2)
             return
         if self.time is None:
-            self.time = np.arange(np.shape(self.data)[0])
+            self.time = np.arange(self.data.shape[0])
             warnings.warn(
                 "Time axis missing; using index axis for baseline definition.",
                 stacklevel=2,
             )
         if self.energy is None:
-            self.energy = np.arange(np.shape(self.data)[1])
+            self.energy = np.arange(self.data.shape[1])
             warnings.warn("Energy axis missing; using index axis.", stacklevel=2)
         if time_type not in ("abs", "ind"):
             warnings.warn(
@@ -1097,7 +1112,7 @@ class File:
             )
             return
         if self.energy is None and self.data is not None:
-            self.energy = np.arange(np.shape(self.data)[-1])
+            self.energy = np.arange(self.data.shape[-1])
             warnings.warn("Energy axis missing; using index axis.", stacklevel=2)
         if self.energy is None:
             warnings.warn(
@@ -1112,16 +1127,18 @@ class File:
 
         # convert energy and time limits to index values
         # use data ordering (not plot direction) to pass ascending input to searchsorted
-        n_e = np.shape(energy)[0]
+        n_e = len(energy)
         if energy[0] > energy[-1]:  # descending energy
-            E_ind_min = int(np.searchsorted(energy[::-1], np.min(energy_limits)))
-            E_ind_max = int(np.searchsorted(energy[::-1], np.max(energy_limits)))
-            self.e_lim = [n_e - E_ind_max, E_ind_min]  # skip high-E start, low-E end
+            e_ind_min = int(np.searchsorted(energy[::-1], np.min(energy_limits)))
+            e_ind_max = int(np.searchsorted(energy[::-1], np.max(energy_limits)))
+            self.e_lim = [n_e - e_ind_max, e_ind_min]  # skip high-E start, low-E end
         else:  # ascending energy
-            E_ind_min = int(np.searchsorted(energy, np.min(energy_limits)))
-            E_ind_max = int(np.searchsorted(energy, np.max(energy_limits)))
-            self.e_lim = [E_ind_min, n_e - E_ind_max]  # skip low-E start, high-E end
+            e_ind_min = int(np.searchsorted(energy, np.min(energy_limits)))
+            e_ind_max = int(np.searchsorted(energy, np.max(energy_limits)))
+            self.e_lim = [e_ind_min, n_e - e_ind_max]  # skip low-E start, high-E end
 
+        if time_limits is None and self.time is not None:
+            time_limits = [float(np.min(self.time)), float(np.max(self.time))]
         if time_limits is not None:
             if self.time is None:
                 if self.data is None or self.dim != 2:
@@ -1130,7 +1147,7 @@ class File:
                         stacklevel=2,
                     )
                     return
-                self.time = np.arange(np.shape(self.data)[0])
+                self.time = np.arange(self.data.shape[0])
                 warnings.warn(
                     "Time axis missing; using index axis for time limits.",
                     stacklevel=2,
@@ -1242,7 +1259,7 @@ class File:
         )
 
         # update individual component spectra
-        # self.model_base.create_value1D(store1D=1)
+        # self.model_base.create_value1D(store_1d=1)
 
         # display/plot and save baseline fit summary
         title_base = (
@@ -1258,7 +1275,7 @@ class File:
             par_init=initial_guess,
             par_fin=self.model_base.result[1],
             args=self.model_base.args,
-            plot_ind=True,
+            plot_sum=False,
             show_init=True,
             title=title_base,
             fit_lim=self.e_lim,
@@ -1366,7 +1383,7 @@ class File:
         for s_i, s in enumerate(self.data):
             if self.p.show_info < 3:
                 print(f"Analyzing slice number {s_i + 1}/{len(self.time)}", end="\r")
-            if s_i < self.p.skip_first_N_spec:
+            if s_i < self.p.skip_first_n_spec:
                 continue  # skip past baseline spectra for debugging
             if self.p.show_info >= 3:
                 print()
@@ -1376,13 +1393,13 @@ class File:
 
             # update the "x0" peak energy guess(es) using
             # "max(baseline) -(max current slice)" [ in eV]
-            deltaMAX = (
+            delta_max = (
                 self.energy[np.argmax(s)] - self.energy[np.argmax(self.data_base)]
             )
             if self.p.show_info >= 3:
-                print(f"deltaMAX (spectrum with respect to baseline: {deltaMAX}")
+                print(f"delta_max (spectrum with respect to baseline: {delta_max}")
             # update all guesses for parameters with names ending in "x0"
-            new_e_vals = list(e_pos_vals.add(deltaMAX))
+            new_e_vals = list(e_pos_vals.add(delta_max))
             self.model_SbS.update_value(
                 new_par_values=new_e_vals, par_select=e_pos_pars
             )
@@ -1429,7 +1446,7 @@ class File:
                 par_init=initial_guess,
                 par_fin=result_SbS[1],
                 args=self.model_SbS.args,
-                plot_ind=True,
+                plot_sum=False,
                 show_init=True,
                 fit_lim=self.e_lim,
                 config=self.plot_config,
@@ -1437,7 +1454,7 @@ class File:
                 save_path=path_slice.with_suffix(".png"),
             )
             #
-            if s_i == self.p.first_N_spec_only:
+            if s_i == self.p.first_n_spec_only:
                 break  # for debugging: only fit first N spectra
 
         if fit >= 1:
@@ -1482,8 +1499,8 @@ class File:
             x=self.time,
             index=np.arange(0, len(self.time)),
             config=self.plot_config,
-            skip_first_N_spec=self.p.skip_first_N_spec,
-            first_N_spec_only=self.p.first_N_spec_only,
+            skip_first_n_spec=self.p.skip_first_n_spec,
+            first_n_spec_only=self.p.first_n_spec_only,
             save_df=-1 if self.p.show_info == 0 else 1,
             save_path=save_path,
         )
@@ -1502,11 +1519,11 @@ class File:
         )
 
         if self.p.show_info >= 3:
-            print(f"size SbS 2D map: {np.shape(fit2D_SbS)}")
+            print(f"size SbS 2D map: {fit2D_SbS.shape}")
 
         # plot data, fit, and residual 2D maps
         # (works if full 2D map is fitted/ no slices skipped)
-        if self.p.first_N_spec_only == -1 and self.p.skip_first_N_spec == -1:
+        if self.p.first_n_spec_only == -1 and self.p.skip_first_n_spec == -1:
             fitlib.plt_fit_res_2D(
                 data=self.data,
                 fit=fit2D_SbS,

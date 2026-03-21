@@ -14,7 +14,7 @@ Key Concepts
 - fit_model_mcp: Default spectrum generator using mcp.Model system
 - Custom generators: Users can define alternative spectrum functions
   and specify them via Project.spec_fun_str
-  ["x, par, plot_ind, args" is the typical fit function structure]
+  ["x, par, plot_sum, args" is the typical fit function structure]
 
 Architecture
 ------------
@@ -37,7 +37,7 @@ from trspecfit.mcp import Model
 def fit_model_mcp(
     x: Sequence[float] | np.ndarray,
     par: Sequence[float] | np.ndarray,
-    plot_ind: bool,
+    plot_sum: bool,
     model: Model,
     dim: int,
     debug: bool,
@@ -59,11 +59,11 @@ def fit_model_mcp(
     par : list or array-like
         Parameter values in same order as model.par_names. These are the
         current values proposed by the optimizer during fitting.
-    plot_ind : bool
+    plot_sum : bool
         Component return mode:
 
-        - False: Return sum of all components (used during fitting)
-        - True: Return list of individual component spectra (for visualization)
+        - True: Return sum of all components (used during fitting)
+        - False: Return list of individual component spectra (for visualization)
 
     model : mcp.Model
         Model instance containing components and parameter structure.
@@ -82,29 +82,29 @@ def fit_model_mcp(
     -------
     ndarray or list of ndarray
         Generated spectrum or spectra:
-        - If dim=1 and plot_ind=False: 1D array (sum of components)
-        - If dim=1 and plot_ind=True: List of 1D arrays (individual components)
-        - If dim=2: 2D array (time × energy), regardless of plot_ind
+        - If dim=1 and plot_sum=True: 1D array (sum of components)
+        - If dim=1 and plot_sum=False: List of 1D arrays (individual components)
+        - If dim=2: 2D array (time x energy), regardless of plot_sum
 
     Examples
     --------
     >>> # During fitting (1D)
-    >>> spectrum = fit_model_mcp(energy, par_values, False, model, 1, False)
+    >>> spectrum = fit_model_mcp(energy, par_values, True, model, 1, False)
     >>> residual = data - spectrum
 
     >>> # For visualization (1D, individual components)
-    >>> components = fit_model_mcp(energy, par_values, True, model, 1, False)
+    >>> components = fit_model_mcp(energy, par_values, False, model, 1, False)
     >>> for i, comp in enumerate(components):
     ...     plt.plot(energy, comp, label=f'Component {i}')
 
     >>> # During fitting (2D)
-    >>> spectrum_2D = fit_model_mcp(energy, par_values, False, model, 2, False)
+    >>> spectrum_2D = fit_model_mcp(energy, par_values, True, model, 2, False)
     >>> residual_2D = data_2D - spectrum_2D
 
     Notes
     -----
     **Function Signature:**
-    The signature follows the standard form [x, par, plot_ind, args] required
+    The signature follows the standard form [x, par, plot_sum, args] required
     by fitlib.residual_fun. The 'args' tuple contains (model, dim, debug).
 
     **Parameter Update:**
@@ -112,7 +112,7 @@ def fit_model_mcp(
     The model retains these values after the function returns.
 
     **2D Behavior:**
-    For 2D models, plot_ind is ignored and the full 2D spectrum is always
+    For 2D models, plot_sum is ignored and the full 2D spectrum is always
     returned. Individual component plotting for 2D is typically done by
     examining time slices.
 
@@ -137,8 +137,8 @@ def fit_model_mcp(
 
     # Create energy- (and time-)resolved spectrum/data
     if dim == 1:  # 1D
-        if plot_ind:  # Return individual components
-            model.create_value1D(store1D=1)
+        if not plot_sum:  # Return individual components
+            model.create_value1D(store_1d=1)
             return model.component_spectra
         # Return sum of all components
         model.create_value1D()

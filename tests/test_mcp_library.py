@@ -108,7 +108,7 @@ class TestMCPModel:
         assert a_par.p_vary
         assert a_par.p_model is p_model
 
-        val = mod.create_value1D(return1D=1)
+        val = mod.create_value1D(return_1d=1)
         assert val is not None
         assert val.shape == mod.energy.shape
         assert np.isfinite(val).all()
@@ -428,40 +428,115 @@ class TestMCPIntegration:
 #
 #
 class TestMCPNormalization:
-    """Test MCP time normalization functionality"""
+    """Test MCP time normalization functionality."""
+
+    #
+    def _normalize(self, time, frequency, subcycles):
+        """Helper: run normalize_time and return the three arrays."""
+
+        t_mod = Dynamics("test")
+        t_mod.time = np.asarray(time)
+        t_mod.frequency = frequency
+        t_mod.subcycles = subcycles
+        t_mod.normalize_time()
+        return t_mod.time_norm, t_mod.N_sub, t_mod.N_counter
 
     #
     def test_time_normalization(self):
-        """Test time normalization for multi-cycle dynamics"""
-
-        # Create a dynamics model with frequency
+        """Test time normalization for multi-cycle dynamics."""
 
         t_mod = Dynamics("test_normalization")
         t_mod.time = np.linspace(0, 100, 1000)
         t_mod.subcycles = 3
 
-        # Test that we can set frequency
         t_mod.set_frequency(frequency=0.1)
-        # Test that normalization attributes are created
-        assert hasattr(t_mod, "time_norm")
-        assert hasattr(t_mod, "N_sub")
-        assert hasattr(t_mod, "N_counter")
+        assert t_mod.time_norm is not None
+        assert len(t_mod.time_norm) == len(t_mod.time)
 
-        # Test that normalized time is calculated
-        if hasattr(t_mod, "time_norm"):
-            assert t_mod.time_norm is not None
-            assert len(t_mod.time_norm) == len(t_mod.time)
+    #
+    def test_two_subcycles_values(self):
+        """Test exact values for 2-subcycle normalization (freq=10, subcycles=2)."""
+
+        time = np.array([0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3])
+        t_norm, n_sub, n_counter = self._normalize(time, frequency=10, subcycles=2)
+
+        # norm = 1/(10*2) = 0.05, so subcycle boundaries at 0, 0.05, 0.10, ...
+        assert len(t_norm) == len(time)
+        # time_norm resets at each subcycle boundary
+        assert np.allclose(t_norm, [0, 0, 0, 0.05, 0, 0, 0.05], atol=1e-12)
+        # N_sub cycles through 1 and 2
+        assert np.allclose(n_sub, [1, 2, 1, 1, 1, 2, 2])
+        # N_counter increments each subcycle
+        assert np.allclose(n_counter, [1, 2, 3, 3, 5, 6, 6])
+
+    #
+    def test_negative_times_are_zero(self):
+        """Negative times produce zero for all output arrays."""
+
+        time = np.array([-0.1, -0.05, -0.001, 0.0, 0.05])
+        t_norm, n_sub, n_counter = self._normalize(time, frequency=10, subcycles=2)
+
+        assert np.allclose(t_norm[:3], 0.0)
+        assert np.allclose(n_sub[:3], 0.0)
+        assert np.allclose(n_counter[:3], 0.0)
+        # t=0 is the first subcycle
+        assert n_sub[3] == 1.0
+        assert n_counter[3] == 1.0
+
+    #
+    def test_three_subcycles(self):
+        """N_sub cycles through 1, 2, 3 with three subcycles."""
+
+        # norm = 1/(30*3) ≈ 0.0111, so use clean multiples
+        freq, nsub = 30, 3
+        norm = 1.0 / freq / nsub
+        time = np.array([0, norm, 2 * norm, 3 * norm, 4 * norm, 5 * norm])
+        t_norm, n_sub, _ = self._normalize(time, frequency=freq, subcycles=nsub)
+
+        assert np.allclose(t_norm, 0.0, atol=1e-12)
+        assert np.allclose(n_sub, [1, 2, 3, 1, 2, 3])
+
+    #
+    def test_no_repetition(self):
+        """frequency=-1 passes time through unchanged."""
+
+        time = np.array([-1.0, 0.0, 1.0, 2.0])
+        t_norm, n_sub, n_counter = self._normalize(time, frequency=-1, subcycles=0)
+
+        assert np.allclose(t_norm, time)
+        assert np.allclose(n_sub, 0.0)
+        assert np.allclose(n_counter, 0.0)
+
+    #
+    def test_many_parameter_combinations(self):
+        """Sweep freq × subcycles and verify shapes and value ranges."""
+
+        for freq in [5, 50, 1000]:
+            for nsub in [2, 3, 5]:
+                time = np.linspace(-0.05, 0.5, 200)
+                t_norm, n_sub, n_counter = self._normalize(time, freq, nsub)
+
+                assert t_norm.shape == time.shape
+                # Negative-time entries are zero
+                neg_mask = time < 0
+                assert np.allclose(t_norm[neg_mask], 0.0)
+                assert np.allclose(n_sub[neg_mask], 0.0)
+                # Positive-time N_sub is in [1, nsub]
+                pos_mask = time >= 0
+                assert np.all(n_sub[pos_mask] >= 1)
+                assert np.all(n_sub[pos_mask] <= nsub)
+                # time_norm is non-negative
+                assert np.all(t_norm[pos_mask] >= -1e-15)
 
     #
     def test_subcycle_handling(self):
-        """Test subcycle handling in components"""
+        """Test subcycle handling in components."""
 
-        # Create a component with subcycle
         comp = Component("expFun", fcts_time, comp_subcycle=1)
         comp.subcycle = 1
 
         assert comp.subcycle == 1
-        assert comp.comp_type == "add"  # Default for non-background functions
+        assert comp.comp_type == "add"
 
 
 #
@@ -569,7 +644,7 @@ class TestMCPProfile:
         mod.add_profile(p_model)
 
         # Evaluate: should be finite and match energy shape
-        val = mod.create_value1D(return1D=1)
+        val = mod.create_value1D(return_1d=1)
         assert val is not None
         assert mod.energy is not None
         assert val.shape == mod.energy.shape
@@ -596,7 +671,7 @@ class TestMCPProfile:
             }
         )
         mod_flat.add_components([c1])
-        val_flat = mod_flat.create_value1D(return1D=1)
+        val_flat = mod_flat.create_value1D(return_1d=1)
 
         # Model with profile: base A=0, profile adds pExpDecay(depth, A=10, tau=2)
         mod_prof = Model("profiled")
@@ -609,7 +684,7 @@ class TestMCPProfile:
         mod_prof.add_components([c2])
         p_model = self._make_exp_profile("GLP_01_A", aux)
         mod_prof.add_profile(p_model)
-        val_prof = mod_prof.create_value1D(return1D=1)
+        val_prof = mod_prof.create_value1D(return_1d=1)
 
         assert val_flat is not None
         assert val_prof is not None
@@ -647,7 +722,7 @@ class TestMCPProfile:
         p_x0.add_components([c_x0])
         mod.add_profile(p_x0)
 
-        val = mod.create_value1D(return1D=1)
+        val = mod.create_value1D(return_1d=1)
         assert val is not None
         assert val.shape == mod.energy.shape
         assert np.isfinite(val).all()
@@ -756,7 +831,7 @@ class TestMCPProfile:
         mod.add_dynamics(t_mod)
 
         # Should evaluate at t_ind=5 without error
-        val = mod.create_value1D(t_ind=5, return1D=1)
+        val = mod.create_value1D(t_ind=5, return_1d=1)
         assert val is not None
         assert val.shape == energy.shape
         assert np.isfinite(val).all()
