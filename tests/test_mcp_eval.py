@@ -20,6 +20,7 @@ class TestEvaluation:
     #
     def _make_file_with_model(self, model_info):
         """Create project, file, and load model."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 201)
@@ -54,6 +55,7 @@ class TestEvaluation:
     #
     def _par(self, model, name: str):
         """Return parameter object by full name using the model API."""
+
         ci, pi = model.find_par_by_name(name)
         assert ci is not None and pi is not None, f"Parameter '{name}' not found"
         return model.components[ci].pars[pi]
@@ -61,6 +63,7 @@ class TestEvaluation:
     #
     def test_eval_energy_expression_value1d(self):
         """Dependent expression parameters should evaluate correctly in 1D."""
+
         file, model = self._make_file_with_model(["energy_expression"])
 
         value_1d = model.create_value1D(return1D=1)
@@ -81,6 +84,7 @@ class TestEvaluation:
     #
     def test_eval_time_dependent_expression_value2d(self):
         """Expressions depending on time-dependent parameters should evaluate in 2D."""
+
         file, model = self._make_file_with_model(["energy_expression"])
         file.add_time_dependence(
             model_yaml="test_models_time.yaml",
@@ -109,6 +113,7 @@ class TestEvaluation:
     #
     def test_eval_expression_fan_out(self):
         """Fan-out: GLP_02 and GLP_03 both reference GLP_01 directly."""
+
         file, model = self._make_file_with_model(["expression_fan_out"])
 
         # Evaluate 1D spectrum
@@ -133,6 +138,7 @@ class TestEvaluation:
     #
     def test_eval_expression_chain(self):
         """Chain: GLP_01 → GLP_02 → GLP_03 (each references the previous)."""
+
         file, model = self._make_file_with_model(["expression_chain"])
 
         # Evaluate 1D spectrum
@@ -163,6 +169,7 @@ class TestEvaluation:
     #
     def test_eval_multiple_time_dependent_pars(self):
         """Two pars on the same model with different dynamics models."""
+
         file, model = self._make_file_with_model(["simple_energy"])
 
         # Attach MonoExpPosIRF to GLP_01_A

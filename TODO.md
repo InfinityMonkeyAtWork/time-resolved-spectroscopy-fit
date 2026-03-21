@@ -2,8 +2,9 @@
 
 ## Test coverage: round-trip fits
 
+- [x] Basic 2D with dynamics — single GLP + expFun, clean and noisy recovery (2026-03-20)
 - [ ] Basic 1D energy fit — known peaks, add noise, fit, assert recovered params
-- [ ] 2D with dynamics — known decay, add noise, fit, assert
+- [ ] Multi-peak 2D — two or more peaks with independent dynamics
 - [ ] With profiles — depth-varying spectrum, add noise, fit, assert
 - [ ] Time-dependent profiles — spectral diffusion, add noise, fit, assert
 - [ ] REGRESSION: add test for each bug as discovered (ongoing)

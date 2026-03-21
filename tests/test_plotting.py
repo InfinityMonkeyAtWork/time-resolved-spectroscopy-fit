@@ -46,6 +46,7 @@ class TestPlotConfig:
     #
     def test_default_creation(self):
         """Test creating config with defaults"""
+
         config = PlotConfig()
         assert config.x_label == "x axis"
         assert config.dpi_plot == 100
@@ -54,6 +55,7 @@ class TestPlotConfig:
     #
     def test_custom_creation(self):
         """Test creating config with custom values"""
+
         config = PlotConfig(x_label="Custom X", dpi_plot=200, x_dir="rev")
         assert config.x_label == "Custom X"
         assert config.dpi_plot == 200
@@ -62,6 +64,7 @@ class TestPlotConfig:
     #
     def test_from_project(self):
         """Test creating config from Project"""
+
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Project(path=tmpdir, name="test")
             config = PlotConfig.from_project(project)
@@ -73,6 +76,7 @@ class TestPlotConfig:
     #
     def test_from_project_with_overrides(self):
         """Test creating config from Project with overrides"""
+
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Project(path=tmpdir, name="test")
             config = PlotConfig.from_project(
@@ -86,6 +90,7 @@ class TestPlotConfig:
     #
     def test_update(self):
         """Test updating config attributes"""
+
         config = PlotConfig()
         config.update(x_label="Updated", dpi_plot=175)
         assert config.x_label == "Updated"
@@ -94,6 +99,7 @@ class TestPlotConfig:
     #
     def test_update_invalid_attribute(self):
         """Test that updating invalid attribute raises error"""
+
         config = PlotConfig()
         with pytest.raises(AttributeError):
             config.update(invalid_attr="value")
@@ -101,6 +107,7 @@ class TestPlotConfig:
     #
     def test_copy(self):
         """Test copying config"""
+
         config = PlotConfig(x_label="Energy (eV)", y_label="Time (ps)")
         new_config = config.copy(x_label="Modified")
         assert new_config.x_label == "Modified"
@@ -116,6 +123,7 @@ class TestPlot1D:
     #
     def test_basic_plot(self):
         """Test basic 1D plot creation"""
+
         x = np.linspace(0, 10, 100)
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
@@ -126,6 +134,7 @@ class TestPlot1D:
     #
     def test_plot_with_custom_config(self):
         """Test 1D plot with custom config"""
+
         x = np.linspace(0, 10, 100)
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig(x_label="Energy (eV)", x_dir="rev", dpi_plot=150)
@@ -136,6 +145,7 @@ class TestPlot1D:
     #
     def test_plot_override_config(self):
         """Test overriding config parameters in plot call"""
+
         x = np.linspace(0, 10, 100)
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
@@ -153,6 +163,7 @@ class TestPlot1D:
     #
     def test_plot_no_x_axis(self):
         """Test plotting without explicit x-axis"""
+
         y_list = [np.sin(np.linspace(0, 10, 100)), np.cos(np.linspace(0, 10, 100))]
         config = PlotConfig()
 
@@ -162,6 +173,7 @@ class TestPlot1D:
     #
     def test_plot_single_trace(self):
         """Test plotting single trace"""
+
         x = np.linspace(0, 10, 100)
         y_list = [np.sin(x)]
         config = PlotConfig()
@@ -172,6 +184,7 @@ class TestPlot1D:
     #
     def test_plot_with_limits(self):
         """Test plot with axis limits"""
+
         x = np.linspace(0, 10, 100)
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
@@ -184,6 +197,7 @@ class TestPlot1D:
     #
     def test_plot_reversed_axis(self):
         """Test plot with reversed x-axis"""
+
         x = np.linspace(0, 10, 100)
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
@@ -194,6 +208,7 @@ class TestPlot1D:
     #
     def test_plot_log_scale(self):
         """Test plot with log scale"""
+
         x = np.linspace(0, 10, 100)
         # Use positive data for log scale
         y_list = [np.abs(np.sin(x)) + 0.1, np.abs(np.cos(x)) + 0.1]
@@ -205,6 +220,7 @@ class TestPlot1D:
     #
     def test_plot_with_vlines(self):
         """Test plot with vertical lines"""
+
         x = np.linspace(0, 10, 100)
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
@@ -215,6 +231,7 @@ class TestPlot1D:
     #
     def test_plot_waterfall(self):
         """Test waterfall plot"""
+
         x = np.linspace(0, 10, 100)
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
@@ -225,6 +242,7 @@ class TestPlot1D:
     #
     def test_plot_save(self):
         """Test saving plot"""
+
         x = np.linspace(0, 10, 100)
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
@@ -238,6 +256,7 @@ class TestPlot1D:
     #
     def test_plot_custom_styling(self):
         """Test plot with custom styling"""
+
         x = np.linspace(0, 10, 100)
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
@@ -263,6 +282,7 @@ class TestPlot2D:
     #
     def test_basic_plot(self):
         """Test basic 2D plot creation"""
+
         x = np.linspace(0, 10, 50)
         y = np.linspace(0, 5, 30)
         rng = np.random.default_rng()
@@ -275,6 +295,7 @@ class TestPlot2D:
     #
     def test_plot_with_custom_config(self):
         """Test 2D plot with custom config"""
+
         x = np.linspace(0, 10, 50)
         y = np.linspace(0, 5, 30)
         rng = np.random.default_rng()
@@ -287,6 +308,7 @@ class TestPlot2D:
     #
     def test_plot_override_config(self):
         """Test overriding config parameters"""
+
         x = np.linspace(0, 10, 50)
         y = np.linspace(0, 5, 30)
         rng = np.random.default_rng()
@@ -301,6 +323,7 @@ class TestPlot2D:
     #
     def test_plot_z_type_log(self):
         """Test 2D plot with logarithmic color scale"""
+
         x = np.linspace(0, 10, 50)
         y = np.linspace(0, 5, 30)
         data = np.abs(np.outer(y + 1, np.sin(x) + 2))
@@ -312,6 +335,7 @@ class TestPlot2D:
     #
     def test_plot_no_axes(self):
         """Test plotting without explicit axes"""
+
         data = np.random.default_rng().standard_normal((30, 50))
         config = PlotConfig()
 
@@ -321,6 +345,7 @@ class TestPlot2D:
     #
     def test_plot_with_limits(self):
         """Test plot with axis limits"""
+
         x = np.linspace(0, 10, 50)
         y = np.linspace(0, 5, 30)
         rng = np.random.default_rng()
@@ -333,6 +358,7 @@ class TestPlot2D:
     #
     def test_plot_with_z_limits(self):
         """Test plot with color scale limits"""
+
         x = np.linspace(0, 10, 50)
         y = np.linspace(0, 5, 30)
         rng = np.random.default_rng()
@@ -345,6 +371,7 @@ class TestPlot2D:
     #
     def test_plot_data_slice(self):
         """Test plotting with data slice"""
+
         x = np.linspace(0, 10, 50)
         y = np.linspace(0, 5, 30)
         rng = np.random.default_rng()
@@ -359,6 +386,7 @@ class TestPlot2D:
     #
     def test_plot_with_lines(self):
         """Test plot with vertical and horizontal lines"""
+
         x = np.linspace(0, 10, 50)
         y = np.linspace(0, 5, 30)
         rng = np.random.default_rng()
@@ -373,6 +401,7 @@ class TestPlot2D:
     #
     def test_plot_reversed_axes(self):
         """Test plot with reversed axes"""
+
         x = np.linspace(0, 10, 50)
         y = np.linspace(0, 5, 30)
         rng = np.random.default_rng()
@@ -385,6 +414,7 @@ class TestPlot2D:
     #
     def test_plot_colorbar_horizontal(self):
         """Test plot with horizontal colorbar"""
+
         x = np.linspace(0, 10, 50)
         y = np.linspace(0, 5, 30)
         rng = np.random.default_rng()
@@ -397,6 +427,7 @@ class TestPlot2D:
     #
     def test_plot_save(self):
         """Test saving 2D plot"""
+
         x = np.linspace(0, 10, 50)
         y = np.linspace(0, 5, 30)
         rng = np.random.default_rng()
@@ -420,6 +451,7 @@ class TestPlotConfigHierarchy:
     #
     def test_file_inherits_from_project(self):
         """Test that File inherits plot config from Project"""
+
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create project with custom settings
             project = Project(path=tmpdir, name="test")
@@ -442,6 +474,7 @@ class TestPlotConfigHierarchy:
     #
     def test_file_can_customize_config(self):
         """Test that File can customize its config persistently"""
+
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Project(path=tmpdir, name="test")
             x = np.linspace(0, 10, 50)
@@ -467,6 +500,7 @@ class TestEdgeCases:
     #
     def test_single_point(self):
         """Test plotting single data point"""
+
         config = PlotConfig()
         plot_1D([[1]], x=[0], config=config, save_img=-2)
         plt.close("all")
@@ -474,6 +508,7 @@ class TestEdgeCases:
     #
     def test_nan_in_data(self):
         """Test plotting with NaN values"""
+
         x = np.linspace(0, 10, 100)
         y = np.sin(x)
         y[10] = np.nan

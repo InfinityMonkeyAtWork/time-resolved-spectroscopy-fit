@@ -21,6 +21,7 @@ class TestParameterSweep:
     #
     def test_creation(self):
         """Test basic sweep creation"""
+
         sweep = ParameterSweep(strategy="auto", seed=42)
         assert sweep.strategy == "auto"
         assert sweep.seed == 42
@@ -29,12 +30,14 @@ class TestParameterSweep:
     #
     def test_invalid_strategy(self):
         """Test that invalid strategy raises error"""
+
         with pytest.raises(ValueError, match="strategy must be one of"):
             ParameterSweep(strategy="invalid")
 
     #
     def test_add_range(self):
         """Test adding discrete parameter range"""
+
         sweep = ParameterSweep()
         sweep.add_range("param_A", [1, 2, 3])
 
@@ -45,6 +48,7 @@ class TestParameterSweep:
     #
     def test_add_uniform(self):
         """Test adding uniform distribution parameter"""
+
         sweep = ParameterSweep()
         sweep.add_uniform("param_B", min_val=0, max_val=10, n_samples=5)
 
@@ -57,6 +61,7 @@ class TestParameterSweep:
     #
     def test_add_normal(self):
         """Test adding normal distribution parameter"""
+
         sweep = ParameterSweep()
         sweep.add_normal("param_C", mean=5, std=1, n_samples=10)
 
@@ -68,6 +73,7 @@ class TestParameterSweep:
     #
     def test_add_lognormal(self):
         """Test adding lognormal distribution parameter"""
+
         sweep = ParameterSweep()
         sweep.add_lognormal("param_D", mean=2, std=0.5, n_samples=10)
 
@@ -77,6 +83,7 @@ class TestParameterSweep:
     #
     def test_grid_strategy_detection(self):
         """Test auto strategy detects grid for all discrete parameters"""
+
         sweep = ParameterSweep(strategy="auto", seed=42)
         sweep.add_range("param_A", [1, 2, 3])
         sweep.add_range("param_B", [10, 20])
@@ -86,6 +93,7 @@ class TestParameterSweep:
     #
     def test_random_strategy_detection(self):
         """Test auto strategy detects random for mixed parameters"""
+
         sweep = ParameterSweep(strategy="auto", seed=42)
         sweep.add_range("param_A", [1, 2, 3])
         sweep.add_uniform("param_B", 0, 10, n_samples=5)
@@ -95,6 +103,7 @@ class TestParameterSweep:
     #
     def test_grid_generation_discrete_only(self):
         """Test grid generation with only discrete parameters"""
+
         sweep = ParameterSweep(strategy="grid", seed=42)
         sweep.add_range("param_A", [1, 2])
         sweep.add_range("param_B", [10, 20, 30])
@@ -108,6 +117,7 @@ class TestParameterSweep:
     #
     def test_grid_generation_with_continuous(self):
         """Test grid generation with continuous distributions"""
+
         sweep = ParameterSweep(strategy="grid", seed=42)
         sweep.add_range("param_A", [1, 2])
         sweep.add_uniform("param_B", 0, 10, n_samples=3)
@@ -124,6 +134,7 @@ class TestParameterSweep:
     #
     def test_random_generation(self):
         """Test random sampling generation"""
+
         sweep = ParameterSweep(strategy="random", seed=42)
         sweep.add_range("param_A", [1, 2, 3])
         sweep.add_uniform("param_B", 0, 10, n_samples=10)
@@ -139,6 +150,7 @@ class TestParameterSweep:
     #
     def test_reproducibility_with_seed(self):
         """Test that same seed produces same results"""
+
         sweep1 = ParameterSweep(strategy="random", seed=42)
         sweep1.add_uniform("param_A", 0, 10, n_samples=5)
 
@@ -153,6 +165,7 @@ class TestParameterSweep:
     #
     def test_different_seeds_produce_different_results(self):
         """Test that different seeds produce different results"""
+
         sweep1 = ParameterSweep(strategy="random", seed=42)
         sweep1.add_uniform("param_A", 0, 10, n_samples=5)
 
@@ -167,6 +180,7 @@ class TestParameterSweep:
     #
     def test_get_n_configs_grid(self):
         """Test config count calculation for grid strategy"""
+
         sweep = ParameterSweep(strategy="grid")
         sweep.add_range("param_A", [1, 2, 3])
         sweep.add_range("param_B", [10, 20])
@@ -176,6 +190,7 @@ class TestParameterSweep:
     #
     def test_get_n_configs_random(self):
         """Test config count calculation for random strategy"""
+
         sweep = ParameterSweep(strategy="random")
         sweep.add_uniform("param_A", 0, 10, n_samples=15)
         sweep.add_normal("param_B", 5, 1, n_samples=10)
@@ -185,6 +200,7 @@ class TestParameterSweep:
     #
     def test_iteration_multiple_times(self):
         """Test that sweep can be iterated multiple times"""
+
         sweep = ParameterSweep(strategy="random", seed=42)
         sweep.add_uniform("param_A", 0, 10, n_samples=5)
 
@@ -225,6 +241,7 @@ class TestSimulatorParameterSweep:
     #
     def test_simulate_parameter_sweep_basic(self):
         """Test basic parameter sweep simulation"""
+
         sweep = ParameterSweep(strategy="grid", seed=42)
         sweep.add_range("GLP_01_A", [15, 20])
         sweep.add_range("GLP_01_x0", [8, 10])
@@ -264,6 +281,7 @@ class TestSimulatorParameterSweep:
     #
     def test_sweep_dataset_smoke(self):
         """Smoke test end-to-end SweepDataset reading from generated HDF5."""
+
         sweep = ParameterSweep(strategy="grid", seed=42)
         sweep.add_range("GLP_01_A", [15, 20])
         sweep.add_range("GLP_01_x0", [8, 10])
@@ -316,6 +334,7 @@ class TestSimulatorParameterSweep:
     #
     def test_hdf5_structure(self):
         """Test detailed HDF5 file structure"""
+
         sweep = ParameterSweep(strategy="grid", seed=42)
         sweep.add_range("GLP_01_A", [15, 20])
 
@@ -374,6 +393,7 @@ class TestSimulatorParameterSweep:
     #
     def test_parameter_values_in_hdf5(self):
         """Test that swept parameter values are correctly stored"""
+
         sweep = ParameterSweep(strategy="grid", seed=42)
         test_values = [15, 20, 25]
         sweep.add_range("GLP_01_A", test_values)
@@ -409,6 +429,7 @@ class TestSimulatorParameterSweep:
     #
     def test_random_strategy_sweep(self):
         """Test parameter sweep with random strategy"""
+
         sweep = ParameterSweep(strategy="random", seed=42)
         sweep.add_uniform("GLP_01_A", 10, 25, n_samples=5)
 
@@ -444,6 +465,7 @@ class TestSimulatorParameterSweep:
     #
     def test_detector_settings_in_metadata(self):
         """Test that detector settings are stored in metadata"""
+
         sweep = ParameterSweep(strategy="grid", seed=42)
         sweep.add_range("GLP_01_A", [15, 20])
 

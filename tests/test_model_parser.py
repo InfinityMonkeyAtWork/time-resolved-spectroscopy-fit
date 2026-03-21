@@ -18,6 +18,7 @@ class TestEnergyParsing:
     #
     def _load_energy_model(self, model_info):
         """Create project, file, and load energy model."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         file.load_model(
@@ -134,6 +135,7 @@ class TestEnergyParsing:
     #
     def test_energy_expression_fwd_ref_model(self):
         """Test energy parameters with forward reference expressions"""
+
         model = self._load_energy_model(["energy_expression_forward_reference"])
         assert model.name == "energy_expression_forward_reference"
         assert model.dim == 1
@@ -182,6 +184,7 @@ class TestTimeParsing:
     #
     def _load_dynamics_model(self, model_info):
         """Create project, file, and load dynamics model."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         file.time = np.linspace(-10, 100, 111)  # needed for time-dependent models
@@ -364,6 +367,7 @@ class Test2DModelParsing:
     #
     def test_time_dependence_on_expression_parameter_raises(self):
         """Adding dynamics to expression-linked parameter should fail."""
+
         file = self._make_file_with_energy_model(model_energy=["energy_expression"])
 
         with pytest.raises(
@@ -378,6 +382,7 @@ class Test2DModelParsing:
     #
     def test_time_dependence_on_profiled_parameter_raises(self):
         """Adding dynamics directly to a profiled parameter should fail."""
+
         file = self._make_file_with_energy_model(
             model_energy=["single_glp"], aux_axis=np.linspace(0, 10, 21)
         )
@@ -407,6 +412,7 @@ class TestProfileParsing:
         aux_axis: np.ndarray | None = None,
     ) -> File:
         """Create a File with loaded energy model and optional aux axis."""
+
         project = Project(path="tests")
         file = File(parent_project=project, aux_axis=aux_axis)
         file.energy = np.linspace(80, 90, 201)
@@ -420,6 +426,7 @@ class TestProfileParsing:
     #
     def _load_profile_model(self, model_info, par_name):
         """Create project, file with energy model, and load profile."""
+
         file = self._make_file(
             model_energy=["simple_energy"],
             aux_axis=np.linspace(0, 10, 21),
@@ -436,6 +443,7 @@ class TestProfileParsing:
     #
     def test_pExpDecay_profile(self):
         """Test pExpDecay profile attached to GLP_01_A"""
+
         model, file = self._load_profile_model(["profile_pExpDecay"], "GLP_01_A")
 
         # target parameter should have p_vary set
@@ -461,6 +469,7 @@ class TestProfileParsing:
     #
     def test_pLinear_profile(self):
         """Test pLinear profile attached to GLP_01_x0"""
+
         model, file = self._load_profile_model(["profile_pLinear"], "GLP_01_x0")
 
         # target parameter should have p_vary set
@@ -486,6 +495,7 @@ class TestProfileParsing:
     #
     def test_profile_aux_axis_propagated(self):
         """Profile model should carry the aux_axis from File"""
+
         model, file = self._load_profile_model(["profile_pExpDecay"], "GLP_01_A")
 
         ci, pi = model.find_par_by_name("GLP_01_A")
@@ -500,6 +510,7 @@ class TestProfileParsing:
     #
     def test_profile_on_expression_parameter_raises(self):
         """Adding a profile to an expression-linked parameter should fail."""
+
         file = self._make_file(
             model_energy=["energy_expression"],
             aux_axis=np.linspace(0, 10, 21),
@@ -515,6 +526,7 @@ class TestProfileParsing:
     #
     def test_profile_on_time_dependent_parameter_raises(self):
         """Adding a profile to a time-dependent parameter should fail."""
+
         file = self._make_file(
             model_energy=["single_glp"],
             aux_axis=np.linspace(0, 10, 21),
@@ -542,6 +554,7 @@ class TestYAMLValidationErrors:
     #
     def test_wrong_parameter_order_accepted(self):
         """Parameters in non-standard order should still parse correctly."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         file.load_model(
@@ -557,6 +570,7 @@ class TestYAMLValidationErrors:
     #
     def test_wrong_parameter_name_raises(self):
         """Unknown parameter name (q instead of m for GLP) should fail validation."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         with pytest.raises(ModelValidationError, match="Invalid parameter"):
@@ -568,6 +582,7 @@ class TestYAMLValidationErrors:
     #
     def test_nonexistent_model_raises(self):
         """Loading a model name that doesn't exist in the YAML should fail."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         with pytest.raises(ValueError, match="not found in"):
@@ -579,6 +594,7 @@ class TestYAMLValidationErrors:
     #
     def test_model_info_not_list_raises(self):
         """Passing a string instead of a list for model_info should fail."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         with pytest.raises(TypeError, match="model_info must be a list"):

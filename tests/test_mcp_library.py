@@ -18,6 +18,7 @@ class TestMCPModel:
     #
     def test_model_creation(self):
         """Test basic model creation and initialization"""
+
         model = Model("test_model")
 
         assert model.name == "test_model"
@@ -30,6 +31,7 @@ class TestMCPModel:
     #
     def test_model_with_components(self):
         """Test model with spectral components (Au4f test from notebook)"""
+
         # Initialize 2D fit model
         mod2D = Model("Au4f_test")
         mod2D.energy = np.arange(75, 95, 0.1)[::-1]
@@ -78,6 +80,7 @@ class TestMCPModel:
     #
     def test_model_parameter_profile(self):
         """Profile model adds p_vary to par and produces averaged spectrum."""
+
         mod = Model("test_profile")
         mod.energy = np.linspace(80, 90, 100)
         mod.aux_axis = np.linspace(0, 5, 20)
@@ -120,6 +123,7 @@ class TestMCPComponent:
     #
     def test_component_creation(self):
         """Test basic component creation"""
+
         comp = Component("GLP")
 
         assert comp.fct_str == "GLP"
@@ -130,6 +134,7 @@ class TestMCPComponent:
     #
     def test_numbered_component(self):
         """Test numbered component creation"""
+
         comp = Component("GLP_01")
 
         assert comp.fct_str == "GLP"
@@ -139,6 +144,7 @@ class TestMCPComponent:
     #
     def test_component_parameter_management(self):
         """Test component parameter addition and management"""
+
         comp = Component("GLP")
         comp.add_pars(
             {
@@ -157,6 +163,7 @@ class TestMCPComponent:
     #
     def test_component_prefix_handling(self):
         """Test component prefix handling when component number changes"""
+
         comp = Component("GLP")
         comp.add_pars({"A": [20, True, 5, 25], "x0": [84.5, True, 82, 88]})
 
@@ -169,6 +176,7 @@ class TestMCPComponent:
     #
     def test_component_creation_with_energy_time(self):
         """Test component creation with energy and time axes"""
+
         comp = Component("GLP")
         comp.add_pars(
             {
@@ -201,6 +209,7 @@ class TestMCPParameter:
     #
     def test_parameter_creation(self):
         """Test basic parameter creation"""
+
         par = Par("test_param")
 
         assert par.name == "test_param"
@@ -211,6 +220,7 @@ class TestMCPParameter:
     #
     def test_parameter_with_info(self):
         """Test parameter creation with parameter info"""
+
         par = Par("test_param", [87.6, True, 84, 90])
 
         assert par.name == "test_param"
@@ -219,6 +229,7 @@ class TestMCPParameter:
     #
     def test_parameter_creation_with_expression(self):
         """Test parameter creation with expression"""
+
         par = Par("test_param", ["GLP_01_A * 0.75"])
 
         assert par.name == "test_param"
@@ -227,6 +238,7 @@ class TestMCPParameter:
     #
     def test_parameter_lmfit_creation(self):
         """Test parameter lmfit object creation"""
+
         par = Par("test_param", [87.6, True, 84, 90])
         par.create()
 
@@ -246,6 +258,7 @@ class TestMCPDynamics:
     #
     def test_dynamics_model_creation(self):
         """Test creation of time-dependence model"""
+
         # Initialize dynamics model
         t_mod = Model("GLP_01_x0")
         t_mod.time = np.linspace(-10, 100, 111)
@@ -288,6 +301,7 @@ class TestMCPDynamics:
     #
     def test_dynamics_parameter_handling(self):
         """Test parameter handling in dynamics models"""
+
         # Create a simple dynamics model
         t_mod = Model("test_dynamics")
         t_mod.time = np.linspace(0, 10, 100)
@@ -319,6 +333,7 @@ class TestMCPIntegration:
     #
     def test_2d_model_with_dynamics(self):
         """Test 2D model with time-dependent parameters"""
+
         # Create 2D model
         mod2D = Model("Au4f_2D")
         mod2D.energy = np.linspace(80, 90, 100)
@@ -373,6 +388,7 @@ class TestMCPIntegration:
     #
     def test_parameter_value_updates(self):
         """Test parameter value updates during fitting"""
+
         # Create a simple model
         model = Model("test_updates")
         model.energy = np.linspace(80, 90, 100)
@@ -417,6 +433,7 @@ class TestMCPNormalization:
     #
     def test_time_normalization(self):
         """Test time normalization for multi-cycle dynamics"""
+
         # Create a dynamics model with frequency
 
         t_mod = Dynamics("test_normalization")
@@ -438,6 +455,7 @@ class TestMCPNormalization:
     #
     def test_subcycle_handling(self):
         """Test subcycle handling in components"""
+
         # Create a component with subcycle
         comp = Component("expFun", fcts_time, comp_subcycle=1)
         comp.subcycle = 1
@@ -454,6 +472,7 @@ class TestMCPProfile:
     #
     def _make_model_with_peak(self, aux_axis=None):
         """Helper: energy model with one GLP_01 component."""
+
         mod = Model("test")
         mod.energy = np.linspace(80, 90, 100)
         mod.aux_axis = aux_axis if aux_axis is not None else np.linspace(0, 5, 20)
@@ -473,6 +492,7 @@ class TestMCPProfile:
     #
     def _make_exp_profile(self, name, aux_axis):
         """Helper: Profile model with a single pExpDecay component."""
+
         p_model = Profile(name)
         p_model.aux_axis = aux_axis
         c_prof = Component("pExpDecay_01", fcts_profile)
@@ -483,6 +503,7 @@ class TestMCPProfile:
     #
     def test_profile_class_creation(self):
         """Profile should inherit from Model and carry parent_model."""
+
         p = Profile("test_profile")
         assert p.name == "test_profile"
         assert p.parent_model is None
@@ -491,6 +512,7 @@ class TestMCPProfile:
     #
     def test_add_profile_sets_p_vary(self):
         """add_profile() should set p_vary=True on the target parameter."""
+
         mod = self._make_model_with_peak()
         p_model = self._make_exp_profile("GLP_01_A", mod.aux_axis)
 
@@ -503,6 +525,7 @@ class TestMCPProfile:
     #
     def test_add_profile_propagates_aux_axis(self):
         """add_profile() propagates aux_axis to Profile and its components."""
+
         mod = self._make_model_with_peak()
         p_model = self._make_exp_profile("GLP_01_A", mod.aux_axis)
         mod.add_profile(p_model)
@@ -518,6 +541,7 @@ class TestMCPProfile:
     #
     def test_add_profile_sets_parent_model(self):
         """add_profile() should set parent_model on the Profile."""
+
         mod = self._make_model_with_peak()
         p_model = self._make_exp_profile("GLP_01_A", mod.aux_axis)
         mod.add_profile(p_model)
@@ -526,6 +550,7 @@ class TestMCPProfile:
     #
     def test_profile_value1D_initialized(self):
         """Profile.value1D should be set after add_profile."""
+
         mod = self._make_model_with_peak()
         p_model = self._make_exp_profile("GLP_01_A", mod.aux_axis)
         mod.add_profile(p_model)
@@ -537,6 +562,7 @@ class TestMCPProfile:
     #
     def test_component_value_averaging(self):
         """Component with p_vary should return uniform average over aux_axis."""
+
         aux = np.linspace(0, 5, 20)
         mod = self._make_model_with_peak(aux_axis=aux)
         p_model = self._make_exp_profile("GLP_01_A", aux)
@@ -553,6 +579,7 @@ class TestMCPProfile:
     #
     def test_profile_differs_from_no_profile(self):
         """Profile averaging should differ from the base parameter alone."""
+
         aux = np.linspace(0, 5, 20)
         energy = np.linspace(80, 90, 100)
 
@@ -592,6 +619,7 @@ class TestMCPProfile:
     #
     def test_multiple_p_vary_pars_same_component(self):
         """Two p_vary parameters on one component share the same aux_axis loop."""
+
         aux = np.linspace(0, 5, 15)
         mod = Model("multi_profile")
         mod.energy = np.linspace(80, 90, 100)
@@ -627,6 +655,7 @@ class TestMCPProfile:
     #
     def test_add_profile_raises_without_aux_axis(self):
         """add_profile() should raise ValueError if aux_axis is not set."""
+
         mod = Model("no_aux")
         mod.energy = np.linspace(80, 90, 100)
         # No aux_axis set
@@ -649,6 +678,7 @@ class TestMCPProfile:
     #
     def test_add_profile_raises_for_expression_par(self):
         """add_profile() should raise ValueError for expression parameters."""
+
         mod = Model("expr_model")
         mod.energy = np.linspace(80, 90, 100)
         mod.aux_axis = np.linspace(0, 5, 20)
@@ -675,6 +705,7 @@ class TestMCPProfile:
     #
     def test_file_aux_axis_propagation(self):
         """File.aux_axis should propagate to loaded Model via load_model()."""
+
         from trspecfit import File, Project
 
         project = Project(path="tests")

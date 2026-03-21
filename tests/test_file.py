@@ -18,6 +18,7 @@ class TestModelManagement:
     #
     def _make_file_with_axes(self):
         """Create project and file with axes and dummy data."""
+
         project = Project(path="tests")
         aux_axis = np.array([0.0, 1.0, 2.0, 3.0])
         file = File(parent_project=project, aux_axis=aux_axis)
@@ -33,6 +34,7 @@ class TestModelManagement:
     #
     def test_load_model_sets_active(self):
         """load_model should set model_active and populate models list."""
+
         file = self._make_file_with_axes()
         file.load_model(
             model_yaml="test_models_energy.yaml",
@@ -47,6 +49,7 @@ class TestModelManagement:
     #
     def test_load_multiple_models(self):
         """Loading a second model should add to list and update active."""
+
         file = self._make_file_with_axes()
         file.load_model(
             model_yaml="test_models_energy.yaml",
@@ -65,6 +68,7 @@ class TestModelManagement:
     #
     def test_load_model_returns_none_for_energy(self):
         """load_model with model_type='energy' should return None."""
+
         file = self._make_file_with_axes()
         result = file.load_model(
             model_yaml="test_models_energy.yaml",
@@ -76,6 +80,7 @@ class TestModelManagement:
     #
     def test_load_model_returns_model_for_dynamics(self):
         """load_model with model_type='dynamics' should return a Dynamics object."""
+
         file = self._make_file_with_axes()
         result = file.load_model(
             model_yaml="test_models_time.yaml",
@@ -92,6 +97,7 @@ class TestModelManagement:
     #
     def test_load_model_returns_model_for_profile(self):
         """load_model with model_type='profile' should return a Profile object."""
+
         file = self._make_file_with_axes()
         result = file.load_model(
             model_yaml="test_models_profile.yaml",
@@ -107,6 +113,7 @@ class TestModelManagement:
     #
     def test_load_model_rejects_non_list(self):
         """load_model should raise TypeError if model_info is not a list."""
+
         file = self._make_file_with_axes()
         with pytest.raises(TypeError, match="model_info must be a list"):
             file.load_model(
@@ -118,6 +125,7 @@ class TestModelManagement:
     #
     def test_load_model_rejects_multiple_energy_names(self):
         """load_model should raise ValueError for energy model with >1 name."""
+
         file = self._make_file_with_axes()
         with pytest.raises(ValueError, match="single model"):
             file.load_model(
@@ -129,6 +137,7 @@ class TestModelManagement:
     #
     def test_load_model_rejects_duplicate_name(self):
         """load_model should raise ValueError when trying to load a model again."""
+
         file = self._make_file_with_axes()
         file.load_model(
             model_yaml="test_models_energy.yaml",
@@ -145,6 +154,7 @@ class TestModelManagement:
     #
     def test_load_model_rejects_nonexistent_submodel(self):
         """load_model should raise ValueError when model name not in YAML."""
+
         file = self._make_file_with_axes()
         with pytest.raises(ValueError, match="not found"):
             file.load_model(
@@ -156,6 +166,7 @@ class TestModelManagement:
     #
     def test_load_model_rejects_invalid_model_type(self):
         """load_model should raise ValueError for unrecognized model_type."""
+
         file = self._make_file_with_axes()
         with pytest.raises(ValueError, match="not recognized"):
             file.load_model(
@@ -168,6 +179,7 @@ class TestModelManagement:
     #
     def test_load_model_propagates_axes(self):
         """Loaded model should inherit energy, time, and aux_axis from file."""
+
         file = self._make_file_with_axes()
         file.load_model(
             model_yaml="test_models_energy.yaml",
@@ -183,6 +195,7 @@ class TestModelManagement:
     #
     def test_select_model_by_name(self):
         """select_model with a string should return the matching model."""
+
         file = self._make_file_with_axes()
         file.load_model(
             model_yaml="test_models_energy.yaml",
@@ -201,6 +214,7 @@ class TestModelManagement:
     #
     def test_select_model_by_index(self):
         """select_model with an int should return the model at that index."""
+
         file = self._make_file_with_axes()
         file.load_model(
             model_yaml="test_models_energy.yaml",
@@ -222,6 +236,7 @@ class TestModelManagement:
     #
     def test_select_model_not_found(self):
         """select_model should return None for nonexistent name / out-of-range index."""
+
         file = self._make_file_with_axes()
         file.load_model(
             model_yaml="test_models_energy.yaml",
@@ -234,6 +249,7 @@ class TestModelManagement:
     #
     def test_select_model_returns_index(self):
         """select_model with return_type='index' should return the list index."""
+
         file = self._make_file_with_axes()
         file.load_model(
             model_yaml="test_models_energy.yaml",
@@ -251,6 +267,7 @@ class TestModelManagement:
     #
     def test_select_model_by_list(self):
         """select_model with a list should compose a name and find the model."""
+
         file = self._make_file_with_axes()
         file.load_model(
             model_yaml="test_models_energy.yaml",
@@ -264,6 +281,7 @@ class TestModelManagement:
     #
     def test_delete_model_by_name(self):
         """delete_model with a name should remove that model."""
+
         file = self._make_file_with_axes()
         file.load_model(
             model_yaml="test_models_energy.yaml",
@@ -282,6 +300,7 @@ class TestModelManagement:
     #
     def test_delete_model_by_index(self):
         """delete_model with an index should remove the model at that position."""
+
         file = self._make_file_with_axes()
         file.load_model(
             model_yaml="test_models_energy.yaml",
@@ -300,6 +319,7 @@ class TestModelManagement:
     #
     def test_delete_active_model(self):
         """delete_model with None should remove the currently active model."""
+
         file = self._make_file_with_axes()
         file.load_model(
             model_yaml="test_models_energy.yaml",
@@ -319,6 +339,7 @@ class TestModelManagement:
     #
     def test_delete_model_no_active_warns(self):
         """delete_model(None) with no active model should warn."""
+
         file = self._make_file_with_axes()
         file.model_active = None
         with pytest.warns(UserWarning, match="No active model"):
@@ -327,6 +348,7 @@ class TestModelManagement:
     #
     def test_delete_model_nonexistent(self):
         """delete_model with bad name or out-of-range index should not crash."""
+
         file = self._make_file_with_axes()
         file.load_model(
             model_yaml="test_models_energy.yaml",
@@ -341,6 +363,7 @@ class TestModelManagement:
     #
     def test_reset_models(self):
         """reset_models should clear all models."""
+
         file = self._make_file_with_axes()
         file.load_model(
             model_yaml="test_models_energy.yaml",
@@ -359,6 +382,7 @@ class TestModelManagement:
     #
     def test_reset_models_on_empty(self):
         """reset_models on a file with no models should not crash."""
+
         file = self._make_file_with_axes()
         assert len(file.models) == 0
         file.reset_models()
@@ -373,6 +397,7 @@ class TestFitLimitsAndBaseline:
     #
     def _make_file_with_data(self):
         """Create file with axes and 2D data."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 201)
@@ -386,6 +411,7 @@ class TestFitLimitsAndBaseline:
     #
     def test_set_fit_limits_energy_only(self):
         """set_fit_limits should set e_lim and e_lim_abs."""
+
         file = self._make_file_with_data()
         file.set_fit_limits([82, 88], show_plot=False)
         assert file.e_lim_abs == [82, 88]
@@ -400,6 +426,7 @@ class TestFitLimitsAndBaseline:
     #
     def test_set_fit_limits_energy_and_time(self):
         """set_fit_limits with time_limits should set both e_lim and t_lim."""
+
         file = self._make_file_with_data()
         file.set_fit_limits([82, 88], time_limits=[0, 50], show_plot=False)
         assert file.e_lim_abs == [82, 88]
@@ -413,6 +440,7 @@ class TestFitLimitsAndBaseline:
     #
     def test_set_fit_limits_none_uses_full_range(self):
         """set_fit_limits with None energy_limits should use full energy range."""
+
         file = self._make_file_with_data()
         file.set_fit_limits(None, show_plot=False)
         assert file.e_lim_abs is not None
@@ -422,6 +450,7 @@ class TestFitLimitsAndBaseline:
     #
     def test_set_fit_limits_descending_energy(self):
         """set_fit_limits should handle descending energy axes correctly."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         file.energy = np.linspace(90, 80, 201)  # descending
@@ -443,6 +472,7 @@ class TestFitLimitsAndBaseline:
     #
     def test_set_fit_limits_time_without_time_axis_warns(self):
         """set_fit_limits with time_limits but no time axis (1D) should warn."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 201)
@@ -453,6 +483,7 @@ class TestFitLimitsAndBaseline:
     #
     def test_set_fit_limits_no_data_warns(self):
         """set_fit_limits without data or energy should warn."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         with pytest.warns(UserWarning, match="cannot set fit limits"):
@@ -461,6 +492,7 @@ class TestFitLimitsAndBaseline:
     #
     def test_define_baseline_abs(self):
         """define_baseline should average data in the given time window."""
+
         file = self._make_file_with_data()
         # Baseline from t=-10 to t=0 (absolute)
         file.define_baseline(-10, 0, time_type="abs", show_plot=False)
@@ -478,6 +510,7 @@ class TestFitLimitsAndBaseline:
     #
     def test_define_baseline_ind(self):
         """define_baseline with time_type='ind' should use indices directly."""
+
         file = self._make_file_with_data()
         file.define_baseline(0, 5, time_type="ind", show_plot=False)
         assert file.data_base is not None
@@ -488,6 +521,7 @@ class TestFitLimitsAndBaseline:
     #
     def test_define_baseline_stores_time_info(self):
         """define_baseline should store base_t_ind and base_t_abs."""
+
         file = self._make_file_with_data()
         file.define_baseline(-5, 5, time_type="abs", show_plot=False)
         assert file.base_t_ind is not None
@@ -498,6 +532,7 @@ class TestFitLimitsAndBaseline:
     #
     def test_define_baseline_1d_warns(self):
         """define_baseline on 1D data should warn."""
+
         file = self._make_file_with_data()
         file.dim = 1
         with pytest.warns(UserWarning, match="Cannot define baseline for 1D"):
@@ -506,6 +541,7 @@ class TestFitLimitsAndBaseline:
     #
     def test_define_baseline_no_data_warns(self):
         """define_baseline without data should warn."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         file.dim = 2
@@ -515,6 +551,7 @@ class TestFitLimitsAndBaseline:
     #
     def test_define_baseline_invalid_time_type_warns(self):
         """define_baseline with invalid time_type should warn."""
+
         file = self._make_file_with_data()
         with pytest.warns(UserWarning, match="Unknown time_type"):
             file.define_baseline(-10, 0, time_type="bogus", show_plot=False)
