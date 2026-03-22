@@ -29,7 +29,6 @@ def par_create(
     par_info: list[Any],
     prefix: str = "",
     suffix: str = "",
-    debug: bool = False,
 ) -> lmfit.Parameter:
     """
     Create lmfit.Parameter object with optional name modifiers.
@@ -51,8 +50,6 @@ def par_create(
         String to prepend to parameter name
     suffix : str, default=''
         String to append to parameter name
-    debug : bool, default=False
-        If True, print parameter name and info during creation
 
     Returns
     -------
@@ -62,9 +59,6 @@ def par_create(
 
     # Assemble parameter name
     par_str = prefix + par_name + suffix
-    if debug:
-        print(par_str)
-        print(par_info)
 
     # Create lmfit.Parameter object
     lmf_par = lmfit.Parameter(par_str)
@@ -77,8 +71,6 @@ def par_create(
         lmf_par.set(par_info[0], par_info[1], -np.inf, np.inf)
     # Expression parameter: [expr_string]
     elif len(par_info) == 1:
-        if debug:
-            print("expr=" + par_info[0])
         try:
             lmf_par.set(expr=par_info[0])
         except Exception as e:  # noqa: BLE001

@@ -7,6 +7,9 @@
 - Ruff is the formatter/linter. Line length 88.
 - Numpy: prefer `np.where` over `np.concatenate` for piecewise functions;
   use `x.shape` not `np.shape(x)`.
+- Function calls: use keyword arguments for all parameters except the
+  primary data object, e.g. `func(data, value=10)` not `func(data, 10)`.
+  Applies to all types (`bool`, `int`, `float`, `str`).
 
 # Testing
 
@@ -16,7 +19,7 @@
   `make_aux_axis`) and class-level private builders/loaders (`_make_file_...`, `_load_..._model`,
   `_make_2d_model`, etc.). Name helpers by intent, not lifecycle.
 - Test YAML files live in `tests/` (e.g. `test_models_energy.yaml`).
-- Always pass `show_plot=False` and `debug=False` in test calls.
+- Always pass `show_plot=False` in test calls.
 - Run tests: `pytest -q`
 
 # Documentation

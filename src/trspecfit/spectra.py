@@ -28,7 +28,6 @@ The fitting workflow is:
 from collections.abc import Sequence
 
 import numpy as np
-from IPython.display import display
 
 from trspecfit.mcp import Model
 
@@ -40,7 +39,6 @@ def fit_model_mcp(
     plot_sum: bool,
     model: Model,
     dim: int,
-    debug: bool,
 ) -> np.ndarray | list[np.ndarray]:
     """
     Generate spectrum from mcp.Model for fitting or visualization.
@@ -74,10 +72,6 @@ def fit_model_mcp(
         - 1: Generate 1D spectrum (energy-resolved or time-resolved)
         - 2: Generate 2D spectrum (time- and energy-resolved)
 
-    debug : bool
-        If True, print parameter values and detailed model info to console.
-        Useful for debugging optimization issues.
-
     Returns
     -------
     ndarray or list of ndarray
@@ -89,23 +83,23 @@ def fit_model_mcp(
     Examples
     --------
     >>> # During fitting (1D)
-    >>> spectrum = fit_model_mcp(energy, par_values, True, model, 1, False)
+    >>> spectrum = fit_model_mcp(energy, par_values, True, model, 1)
     >>> residual = data - spectrum
 
     >>> # For visualization (1D, individual components)
-    >>> components = fit_model_mcp(energy, par_values, False, model, 1, False)
+    >>> components = fit_model_mcp(energy, par_values, False, model, 1)
     >>> for i, comp in enumerate(components):
     ...     plt.plot(energy, comp, label=f'Component {i}')
 
     >>> # During fitting (2D)
-    >>> spectrum_2D = fit_model_mcp(energy, par_values, True, model, 2, False)
+    >>> spectrum_2D = fit_model_mcp(energy, par_values, True, model, 2)
     >>> residual_2D = data_2D - spectrum_2D
 
     Notes
     -----
     **Function Signature:**
     The signature follows the standard form [x, par, plot_sum, args] required
-    by fitlib.residual_fun. The 'args' tuple contains (model, dim, debug).
+    by fitlib.residual_fun. The 'args' tuple contains (model, dim).
 
     **Parameter Update:**
     This function updates model.lmfit_pars in-place via model.update_value().
@@ -130,10 +124,6 @@ def fit_model_mcp(
     else:
         par_values = list(par)
     model.update_value(new_par_values=par_values)  # Update lmfit parameters
-
-    if debug:
-        display(model.lmfit_pars)
-        model.print_all_pars(detail=1)
 
     # Create energy- (and time-)resolved spectrum/data
     if dim == 1:  # 1D

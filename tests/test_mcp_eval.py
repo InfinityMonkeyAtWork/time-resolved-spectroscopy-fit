@@ -28,7 +28,6 @@ class TestEvaluation:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=model_info,
-            debug=False,
         )
         model = file.model_active
         assert model is not None, "Model loading failed in setup"
@@ -46,7 +45,6 @@ class TestEvaluation:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=model_info,
-            debug=False,
         )
         model = file.model_active
         assert model is not None, "Model loading failed in setup"

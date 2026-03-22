@@ -128,7 +128,7 @@ class Model:
     const : tuple or None
         Constants for residual function (x, data, package, function_str, ...)
     args : tuple or None
-        Arguments for fit function (model, dim, debug)
+        Arguments for fit function (model, dim)
     result : list
         Fit results from fit_wrapper [par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs]
     parent_file : File or None
@@ -277,9 +277,7 @@ class Model:
                     self.plot_2D()
 
     #
-    def add_components(
-        self, comps_list: list["Component"], debug: bool = False
-    ) -> None:
+    def add_components(self, comps_list: list["Component"]) -> None:
         """
         Add components to model and initialize their parameters.
 
@@ -292,8 +290,6 @@ class Model:
         comps_list : list of Component
             Components to add to this model. Components should already have
             their parameter dictionaries populated via Component.add_pars().
-        debug : bool, default=False
-            If True, print detailed parameter information during creation
 
         Notes
         -----
@@ -349,12 +345,10 @@ class Model:
             if comp.comp_type == "conv":
                 comp.time = Component.create_t_kernel(comp)
             # populate pars attribute in the component
-            comp.create_pars(prefix=prefix, debug=debug)
+            comp.create_pars(prefix=prefix)
 
         # update model lmfit_par_list (+par_names) and components
-        self.update(debug=debug)
-        if debug:
-            self.lmfit_pars.pretty_print()
+        self.update()
 
     #
     def find_par_by_name(self, par_name: str) -> tuple[int | None, int | None]:
@@ -399,7 +393,7 @@ class Model:
                 p.describe(detail)
 
     #
-    def update(self, debug: bool = False) -> None:
+    def update(self) -> None:
         """
         Update model from bottom up: parameters → components → model.
 
@@ -407,11 +401,6 @@ class Model:
         flattened lmfit parameter structures. Call this after modifying
         parameter structure.
         (automatically called after add_components, add_profile, add_dynamics)
-
-        Parameters
-        ----------
-        debug : bool, default=False
-            If True, print parameter list after update
         """
 
         # re-initialize
@@ -427,8 +416,6 @@ class Model:
 
         # create lmfit.Parameters object from the lmfit_par_list
         self.lmfit_pars.add_many(*self.lmfit_par_list)
-        if debug:
-            self.lmfit_pars.pretty_print()
 
         # update list of all parameter names
         self.par_names = [par.name for par in self.lmfit_par_list]
@@ -477,9 +464,7 @@ class Model:
                     p_count += 1
 
     #
-    def add_dynamics(
-        self, dynamics_model: "Dynamics", frequency: float = -1, debug: bool = False
-    ) -> None:
+    def add_dynamics(self, dynamics_model: "Dynamics", frequency: float = -1) -> None:
         """
         Add temporal dynamics model to a parameter.
 
@@ -496,8 +481,6 @@ class Model:
             Repetition frequency for cyclic dynamics (Hz):
             - -1: Single cycle over entire time axis
             - >0: Dynamics repeat at this frequency
-        debug : bool, default=False
-            If True, print parameter structure after adding dynamics
         """
 
         # set the model instance calling this method as parent model for Dynamics
@@ -527,13 +510,13 @@ class Model:
         # add Dynamics model and update corresponding parameter
         target_par.update(dynamics_model)
         # update model lmfit_par_list, par_names and components
-        self.update(debug=debug)
+        self.update()
 
         # Re-analyze all expressions since time-dependence status may have changed
         self._analyze_expression_dependencies()
 
     #
-    def add_profile(self, profile_model: "Profile", debug: bool = False) -> None:
+    def add_profile(self, profile_model: "Profile") -> None:
         """
         Add a profile variation to a parameter over the auxiliary axis.
 
@@ -550,8 +533,6 @@ class Model:
         profile_model : Profile
             Profile instance describing the parameter variation over aux_axis.
             Its name must match a parameter in this model.
-        debug : bool, default=False
-            If True, print parameter structure after adding profile.
 
         Raises
         ------
@@ -602,7 +583,7 @@ class Model:
         target_par.lmfit_par_list.extend(profile_model.lmfit_par_list)
 
         # update model lmfit_par_list, par_names and components
-        self.update(debug=debug)
+        self.update()
 
         # Re-analyze all expressions since profile status may have changed
         self._analyze_expression_dependencies()
@@ -723,7 +704,7 @@ class Model:
 
     #
     def create_value1D(
-        self, t_ind: int = 0, store_1d: int = 0, return_1d: int = 0, debug: bool = False
+        self, t_ind: int = 0, store_1d: int = 0, return_1d: int = 0
     ) -> np.ndarray | None:
         """
         Evaluate model to create 1D spectrum (energy or time).
@@ -744,8 +725,6 @@ class Model:
         return_1d : int, default=0
             If 1, return the computed spectrum. Otherwise return None and store
             in self.value1D only.
-        debug : bool, default=False
-            If True, print component numbers and plot each component as it's added
 
         Returns
         -------
@@ -783,9 +762,6 @@ class Model:
 
         # combine the components into a spectrum/ time dynamics curve
         for N in range(len(self.components) - 1):
-            if debug:
-                print(N + 2)
-                print(self.components[-(N + 2)].fct_str)
             if store_1d == 1:
                 current_spec = copy.deepcopy(self.value1D)
             #
@@ -793,12 +769,6 @@ class Model:
             # check on last component value added to model
             if store_1d == 1:
                 self.component_spectra.append(self.value1D - current_spec)
-            if debug:
-                uplt.plot_1D(
-                    [
-                        self.component_spectra[-1],
-                    ]
-                )
 
         # flip component spectra list as components are combined LIFO in this function
         if store_1d == 1:
@@ -823,8 +793,6 @@ class Model:
             Time index range to process:
             - None (default): Process entire time axis
             - [start, stop]: Process self.time[start:stop] only
-        debug : bool, default=False
-            If True, print debug information during evaluation
 
         Notes
         -----
@@ -1306,7 +1274,7 @@ class Component:
         self.par_dict = par_info_dict
 
     #
-    def create_pars(self, prefix: str = "", debug: bool = False) -> None:
+    def create_pars(self, prefix: str = "") -> None:
         """
         Create Par objects from parameter dictionary.
 
@@ -1318,8 +1286,6 @@ class Component:
         ----------
         prefix : str, default=''
             Prefix to prepend to parameter names (e.g., for Dynamics models)
-        debug : bool, default=False
-            If True, print parameter details during creation
 
         Notes
         -----
@@ -1349,15 +1315,11 @@ class Component:
                 # auto-prefix time function parameter references
                 if isinstance(self.parent_model, Dynamics) and prefix:
                     expr = self._add_prefix_to_expression(expr, prefix)
-                    if debug:
-                        print(f"Expression transform: '{p_info[0]}' -> '{expr}'")
                 expr_params.append((temp, expr))
                 # Temporarily set a dummy value (needed for lmfit creation)
                 temp.create(expr_skip=True)
             else:
                 temp.create()
-            if debug:
-                temp.describe()
             lst.append(temp)
         self.pars = lst
 
@@ -1440,18 +1402,13 @@ class Component:
             print()
 
     #
-    def create_t_kernel(self, debug: bool = False) -> np.ndarray:
+    def create_t_kernel(self) -> np.ndarray:
         """
         Create time axis for convolution kernel.
 
         Convolution kernels need a time axis that extends beyond the data
         time axis to properly handle edge effects. This method creates an
         appropriately sized kernel axis based on the kernel width.
-
-        Parameters
-        ----------
-        debug : bool, default=False
-            If True, print kernel axis details
 
         Returns
         -------
@@ -1461,18 +1418,12 @@ class Component:
 
         # get kernel parameters i.e. component parameters
         par_k = cast("list[Any]", ulmfit.par_extract(self.par_dict, return_type="list"))
-        if debug:
-            print(f"component/kernel parameters as list: {par_k}")
         # define kernel time axis
         kernel_width = getattr(fcts_time, self.fct_str + "_kernel_width")()
-        if debug:
-            print(f"kernel width loaded from fcts_time: {kernel_width}")
         t_range = par_k[0] * kernel_width
         if self.time is None or len(self.time) < 2:
             raise ValueError(f"time axis of component {self.fct_str} not defined")
         t_step = self.time[1] - self.time[0]
-        if debug:
-            print(f"delta time (from self.time): {t_step}")
         return np.arange(-t_range, t_range + t_step, t_step)
 
     #
@@ -1894,7 +1845,6 @@ class Par:
         prefix: str = "",
         suffix: str = "",
         expr_skip: bool = False,
-        debug: bool = False,
     ) -> None:
         """
         Create lmfit parameter from info specification.
@@ -1912,8 +1862,6 @@ class Par:
         expr_skip : bool, default=False
             If True and info is expression, create with dummy value first
             (expression set later in two-pass creation)
-        debug : bool, default=False
-            If True, print creation details
 
         Notes
         -----
@@ -1926,10 +1874,10 @@ class Par:
         if expr_skip and len(self.info) == 1 and isinstance(self.info[0], str):
             # if skipping expression, use a dummy value for now
             lmfit_par = ulmfit.par_create(
-                self.name, [1, True, -np.inf, np.inf], prefix, suffix, debug
+                self.name, [1, True, -np.inf, np.inf], prefix, suffix
             )
         else:
-            lmfit_par = ulmfit.par_create(self.name, self.info, prefix, suffix, debug)
+            lmfit_par = ulmfit.par_create(self.name, self.info, prefix, suffix)
         # add to lmfit_par attribute
         self.lmfit_par.add_many(lmfit_par)
         # and list of individual lmfit paramters
@@ -2292,7 +2240,7 @@ class Dynamics(Model):
             # parameter level uses index to refer to par.t_model=Dynamics
 
     #
-    def normalize_time(self, time_unit: int = 0, debug: bool = False) -> None:
+    def normalize_time(self, time_unit: int = 0, *, show_plot: bool = False) -> None:
         """
         Normalize time axis for multi-cycle dynamics with subcycles.
 
@@ -2304,7 +2252,7 @@ class Dynamics(Model):
         ----------
         time_unit : int, default=0
             Power of 10 for time units (currently unused)
-        debug : bool, default=False
+        show_plot : bool, default=False
             If True, plot normalized time arrays
 
         Examples
@@ -2386,7 +2334,7 @@ class Dynamics(Model):
             self.N_sub = np.where(mask, np.floor(N_temp % self.subcycles) + 1, 0.0)
             self.N_counter = np.where(mask, N_temp + 1, 0.0)
 
-        if debug:
+        if show_plot:
             legends = ["normalized time", "subcycle counter", "cummulative counter"]
             uplt.plot_1D(
                 data=[self.time_norm, self.N_sub, self.N_counter],

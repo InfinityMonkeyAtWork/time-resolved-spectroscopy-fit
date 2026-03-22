@@ -84,7 +84,6 @@ from trspecfit.utils import plot as uplt
 PathLike = str | pathlib.Path
 ModelRef = str | int | list[str]
 
-# what does show_info mean? convert to binary debug by True if show_info >=3 else False
 
 # multi-subcycle models allow for convolution only in the "0th subcycle"
 # i.e. first model_info element which affects all times t.
@@ -126,7 +125,7 @@ class Project:
     files : list of File
         All File instances registered with this Project
     show_info : int
-        Verbosity level (0=silent, 1=basic, 2=detailed, 3=debug)
+        Verbosity level (0=silent, 1=basic, 2=detailed, 3=verbose)
     spec_lib : module
         Module containing spectrum fitting functions (default: spectra)
     spec_fun_str : str
@@ -651,7 +650,6 @@ class File:
         model_yaml: PathLike,
         model_info: list[str],
         par_name: str = "",
-        debug: bool = False,
         model_type: Literal["energy", "dynamics", "profile"] = "energy",
     ) -> mcp.Model | None:
         """
@@ -680,8 +678,6 @@ class File:
             indicates an energy-dependent model. For ``"dynamics"`` and ``"profile"``
             model types, must match the name of the energy model parameter that the
             loaded model will be attached to.
-        debug : bool, default=False
-            If True, print detailed parameter information during loading
         model_type : {'energy', 'dynamics', 'profile'}, default='energy'
             Type of model to load:
 
@@ -731,7 +727,6 @@ class File:
             model_yaml_path=model_yaml_path,
             model_info=model_info,
             is_dynamics=model_type == "dynamics",
-            debug=debug,
         )
 
         # Initialize model
@@ -799,6 +794,9 @@ class File:
 
         # Add all components (and their parameters) to model
         loaded_model.add_components(all_comps)
+
+        if self.p.show_info >= 2:
+            loaded_model.lmfit_pars.pretty_print()
 
         # Add model to file
         if model_type == "energy":
@@ -1243,8 +1241,8 @@ class File:
             [],
         )
         # args [for fit function called in residual function]
-        # model, dimension (dim =1 for baseline and SbS, =2 for 2D (global) fit), debug
-        self.model_base.args = (self.model_base, 1, False)
+        # model, dimension (dim =1 for baseline and SbS, =2 for 2D (global) fit)
+        self.model_base.args = (self.model_base, 1)
         # fit (optionally) with confidence intervals
         self.model_base.result = fitlib.fit_wrapper(
             const=self.model_base.const,
@@ -1418,8 +1416,8 @@ class File:
                 self.e_lim,
                 [],
             )
-            # args (lmfit2D.Model, dim, debug) [for fit fnctn called in residual fnctn]
-            self.model_SbS.args = (self.model_SbS, 1, False)
+            # args [for fit function called in residual function]
+            self.model_SbS.args = (self.model_SbS, 1)
 
             # fit with confidence intervals
             result_SbS = fitlib.fit_wrapper(
@@ -1574,7 +1572,6 @@ class File:
             model_yaml,
             model_info,
             par_name,
-            debug=not self.p.show_info < 2,
             model_type="dynamics",
         )  # load
         if t_mod is None:
@@ -1660,7 +1657,6 @@ class File:
             model_yaml,
             model_info,
             par_name,
-            debug=not self.p.show_info < 2,
             model_type="profile",
         )
         if p_mod is None:
@@ -1755,7 +1751,7 @@ class File:
             self.t_lim,
         )
         # args [for fit function called in residual function]
-        self.model_2D.args = (self.model_2D, 2, False)  # model, dimension, debug
+        self.model_2D.args = (self.model_2D, 2)  # model, dimension
 
         # fit (with confidence intervals)
         self.model_2D.result = fitlib.fit_wrapper(

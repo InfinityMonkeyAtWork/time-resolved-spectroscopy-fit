@@ -58,7 +58,8 @@ def load_plot_grid(
     paths: Sequence[PathLike],
     columns: int = 3,
     fig_width: float = 16,
-    debug: bool = False,
+    *,
+    show_info: bool = False,
 ) -> None:
     """
     Load and display multiple images in a grid layout.
@@ -74,12 +75,12 @@ def load_plot_grid(
         Number of columns in grid
     fig_width : float, default=16
         Total figure width in inches
-    debug : bool, default=False
-        Print layout info if debug is True
+    show_info : bool, default=False
+        Print layout info.
     """
 
     images = [plt.imread(path) for path in paths]
-    plot_grid(images, columns, fig_width, debug)
+    plot_grid(images, columns, fig_width, show_info=show_info)
 
 
 #
@@ -87,7 +88,8 @@ def plot_grid(
     images: Sequence[NDArray[np.generic]],
     columns: int = 3,
     fig_width: float = 16,
-    debug: bool = False,
+    *,
+    show_info: bool = False,
 ) -> None:
     """
     Display multiple images in a grid layout.
@@ -103,8 +105,8 @@ def plot_grid(
         Number of columns in grid
     fig_width : float, default=16
         Total figure width in inches
-    debug : bool, default=0
-        If True, print layout calculations (rows, aspect ratio, height)
+    show_info : bool, default=False
+        If True, print layout calculations (rows, aspect ratio, height).
 
     Notes
     -----
@@ -120,7 +122,7 @@ def plot_grid(
     ratio = img_shape[1] / img_shape[0]  # width/height
     fig_height = fig_width * rows / (ratio * columns)
 
-    if debug >= 1:
+    if show_info:
         print(f"rows {rows}")
         print(f"image shape {img_shape}")
         print(f"aspect ratio {ratio}")

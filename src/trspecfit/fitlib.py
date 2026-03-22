@@ -207,7 +207,7 @@ def residual_fun(
 
 #
 def time_display(
-    t_start: float, print_str: str = "", return_delta_seconds: bool = False
+    t_start: float, print_str: str = "", *, return_delta_seconds: bool = False
 ) -> float | None:
     """
     Display elapsed time in human-readable format.
@@ -391,7 +391,7 @@ def fit_wrapper(
         (x, data, package, function_str, unpack, e_lim, t_lim)
     args : tuple
         Arguments for fit function (passed to residual_fun):
-        Typically (model, dim, debug) for MCP models
+        Typically (model, dim) for MCP models
     par_names : list of str
         Parameter names in order (for display and export)
     par : lmfit.Parameters or list
@@ -961,7 +961,7 @@ def results2fit2D(
         (x, data, package, function_str, unpack, e_lim, t_lim)
         Used to evaluate fit function at each time point.
     args : tuple
-        Arguments for fit function (model, dim, debug).
+        Arguments for fit function (model, dim).
         Passed to residual_fun for spectrum generation.
     num_fmt : str, default='%.6e'
         Number format for saving (scientific notation with 6 decimals)
@@ -1052,6 +1052,7 @@ def plt_fit_res_1D(
     par_init: Any,
     par_fin: Any,
     args: tuple[Any, ...] | None = None,
+    *,
     plot_sum: bool = False,
     show_init: bool = True,
     title: str = "",
@@ -1087,7 +1088,7 @@ def plt_fit_res_1D(
         - list: Empty list shows initial guess only (no final fit)
 
     args : tuple, optional
-        Additional arguments for fit function (model, dim, debug).
+        Additional arguments for fit function (model, dim).
         If None, defaults to empty tuple.
     plot_sum : bool, default=False
         Plot sum only:

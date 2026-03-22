@@ -39,7 +39,6 @@ class TestModelManagement:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
-            debug=False,
         )
         assert file.model_active is not None
         assert file.model_active.name == "simple_energy"
@@ -54,12 +53,10 @@ class TestModelManagement:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
-            debug=False,
         )
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["single_glp"],
-            debug=False,
         )
         assert len(file.models) == 2
         assert file.model_active is not None
@@ -73,7 +70,6 @@ class TestModelManagement:
         result = file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
-            debug=False,
         )
         assert result is None
 
@@ -87,7 +83,6 @@ class TestModelManagement:
             model_info=["MonoExpPos"],
             par_name="GLP_01_A",
             model_type="dynamics",
-            debug=False,
         )
         assert result is not None
         assert result.name == "GLP_01_A"
@@ -104,7 +99,6 @@ class TestModelManagement:
             model_info=["profile_pLinear"],
             par_name="GLP_01_A",
             model_type="profile",
-            debug=False,
         )
         assert result is not None
         assert result.name == "GLP_01_A"
@@ -119,7 +113,6 @@ class TestModelManagement:
             file.load_model(
                 model_yaml="test_models_energy.yaml",
                 model_info="simple_energy",  # type: ignore[arg-type]
-                debug=False,
             )
 
     #
@@ -131,7 +124,6 @@ class TestModelManagement:
             file.load_model(
                 model_yaml="test_models_energy.yaml",
                 model_info=["simple_energy", "single_glp"],
-                debug=False,
             )
 
     #
@@ -142,13 +134,11 @@ class TestModelManagement:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
-            debug=False,
         )
         with pytest.raises(ValueError, match="already exists"):
             file.load_model(
                 model_yaml="test_models_energy.yaml",
                 model_info=["simple_energy"],
-                debug=False,
             )
 
     #
@@ -160,7 +150,6 @@ class TestModelManagement:
             file.load_model(
                 model_yaml="test_models_energy.yaml",
                 model_info=["this_model_does_not_exist"],
-                debug=False,
             )
 
     #
@@ -173,7 +162,6 @@ class TestModelManagement:
                 model_yaml="test_models_energy.yaml",
                 model_info=["simple_energy"],
                 model_type="bogus",  # type: ignore[arg-type]
-                debug=False,
             )
 
     #
@@ -184,7 +172,6 @@ class TestModelManagement:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
-            debug=False,
         )
         model = file.model_active
         assert model is not None
@@ -200,12 +187,10 @@ class TestModelManagement:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
-            debug=False,
         )
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["single_glp"],
-            debug=False,
         )
         model = file.select_model("simple_energy")
         assert model is not None
@@ -219,12 +204,10 @@ class TestModelManagement:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
-            debug=False,
         )
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["single_glp"],
-            debug=False,
         )
         model = file.select_model(0)
         assert model is not None
@@ -241,7 +224,6 @@ class TestModelManagement:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
-            debug=False,
         )
         assert file.select_model("nonexistent") is None
         assert file.select_model(99) is None
@@ -254,12 +236,10 @@ class TestModelManagement:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
-            debug=False,
         )
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["single_glp"],
-            debug=False,
         )
         idx = file.select_model("single_glp", return_type="index")
         assert idx == 1
@@ -272,7 +252,6 @@ class TestModelManagement:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
-            debug=False,
         )
         model = file.select_model(["simple_energy"])
         assert model is not None
@@ -286,12 +265,10 @@ class TestModelManagement:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
-            debug=False,
         )
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["single_glp"],
-            debug=False,
         )
         file.delete_model("simple_energy")
         assert len(file.models) == 1
@@ -305,12 +282,10 @@ class TestModelManagement:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
-            debug=False,
         )
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["single_glp"],
-            debug=False,
         )
         file.delete_model(0)
         assert len(file.models) == 1
@@ -324,12 +299,10 @@ class TestModelManagement:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
-            debug=False,
         )
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["single_glp"],
-            debug=False,
         )
         # active is single_glp (last loaded)
         file.delete_model()
@@ -353,7 +326,6 @@ class TestModelManagement:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
-            debug=False,
         )
         file.delete_model("nonexistent")
         assert len(file.models) == 1
@@ -368,12 +340,10 @@ class TestModelManagement:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
-            debug=False,
         )
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=["single_glp"],
-            debug=False,
         )
         assert len(file.models) == 2
         file.reset_models()

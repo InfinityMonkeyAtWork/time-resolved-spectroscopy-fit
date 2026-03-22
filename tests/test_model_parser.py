@@ -24,7 +24,6 @@ class TestEnergyParsing:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=model_info,
-            debug=False,
         )
         model = file.model_active
         assert model is not None, "Model loading failed in setup"
@@ -192,7 +191,6 @@ class TestTimeParsing:
             model_yaml="test_models_time.yaml",
             model_info=model_info,
             par_name="parTEST",  # this is the name of the time-dependent parameter
-            debug=True,
             model_type="dynamics",
         )
         assert model is not None, "Model loading failed in setup"
@@ -308,7 +306,6 @@ class Test2DModelParsing:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=model_energy,
-            debug=False,
         )
         file.time = np.linspace(-10, 100, 111)  # needed for time-dependent models
         return file
@@ -419,7 +416,6 @@ class TestProfileParsing:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=model_energy,
-            debug=False,
         )
         return file
 
