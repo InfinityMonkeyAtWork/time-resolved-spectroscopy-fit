@@ -1330,7 +1330,9 @@ class Component:
             try:
                 temp.lmfit_par[par_name].set(expr=expr)
             except Exception as e:  # noqa: BLE001
-                print(f"Failed to set expr '{expr}' for parameter '{par_name}': {e}")
+                raise ValueError(
+                    f"Failed to set expression '{expr}' for parameter '{par_name}': {e}"
+                ) from e
 
     #
     def update_lmfit_par_list(self) -> None:
@@ -2229,6 +2231,12 @@ class Dynamics(Model):
             - -1: No repetition (single cycle)
             - >0: Repeat at this frequency
 
+        Raises
+        ------
+        ValueError
+            If frequency > 0 and subcycles == 0 (single dynamics model).
+            Multi-cycle requires at least 2 entries in model_info.
+
         Notes
         -----
         After setting frequency:
@@ -2236,21 +2244,44 @@ class Dynamics(Model):
         - Each component receives time_N_sub mask (1=active, 0=inactive)
         - Components with subcycle>0 use time_norm instead of time
 
+        **model_info length and subcycle assignment:**
+
+        The number of entries in model_info determines the subcycle structure.
+        The first entry is always the global component (subcycle=0), which
+        evaluates on the raw time axis regardless of frequency. The remaining
+        entries are repeating subcycles.
+
+        - 1 entry: single dynamics, no frequency support (subcycles=0)
+        - 2 entries: e.g. ``["none", "MonoExp"]`` or ``["IRF", "MonoExp"]``.
+          The first model applies globally (IRF convolution or no-op
+          placeholder), the second repeats at the set frequency as a single
+          full-period cycle (subcycles=1).
+        - 3+ entries: e.g. ``["IRF", "ModelA", "ModelB"]``. First model is
+          global, the rest are subcycles that alternate within each period
+          (subcycles=len-1).
+
         **Component Updates:**
         For each component:
         - time_N_sub mask applied (zeros where subcycle doesn't match)
         - Normalized time axis inherited (if subcycle != 0)
         """
 
-        self.frequency = frequency  # set the frequency attribute itslef
+        if frequency > 0 and self.subcycles == 0:
+            raise ValueError(
+                "Cannot set frequency on a single dynamics model (subcycles=0). "
+                "Multi-cycle requires at least 2 entries in model_info: the "
+                "first is the global component (e.g. IRF or 'none'), the rest "
+                "are repeating subcycles."
+            )
+        self.frequency = frequency
         self.normalize_time()  # update the normalization of the time axis
         if self.N_sub is None:
             raise RuntimeError("N_sub not initialized; call normalize_time() first")
         # update components accordingly
         for comp in self.components:
             # <time_N_sub> is 0/1 where subcomponent is in-/active
-            if comp.time_N_sub is None:
-                comp.time_N_sub = np.ones(len(self.N_sub))
+            # reset to all-active before applying mask (idempotent on re-call)
+            comp.time_N_sub = np.ones(len(self.N_sub))
             comp.time_N_sub[self.N_sub != comp.subcycle] = 0
             # inherit normalized time from Dynamics model
             if comp.subcycle != 0:
@@ -2310,20 +2341,17 @@ class Dynamics(Model):
 
         **Validation:**
         Raises ValueError for:
-        - subcycles = 1 (use subcycles=0 for no subdivision)
         - frequency < 0 and != -1
+
+        Note: subcycles=0 with frequency > 0 is rejected upstream in
+        set_frequency().
         - subcycles > 1 with frequency = -1 (inconsistent)
+
+        Note: subcycles=1 is rejected at model load time (File.load_model).
         """
 
         if self.time is None:
             raise ValueError("Dynamics.time axis must be defined")
-        # Sanity checks
-        if self.subcycles == 1 or not isinstance(self.subcycles, int):
-            raise ValueError(
-                "Subcycle (N) must either be zero or a >= 2 integer. "
-                f"Got: {self.subcycles} (type: {type(self.subcycles).__name__})"
-            )
-
         if self.frequency < 0 and self.frequency != -1:
             raise ValueError(
                 f'Frequency (f) must be >0 (or "-1" for no repetition). '
