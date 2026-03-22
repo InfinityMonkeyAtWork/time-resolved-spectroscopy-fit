@@ -1224,7 +1224,7 @@ class Component:
 
         # Pattern to match parameter references: function_name_NN_param_name
         # Captures: (function_name)(_NN_param_name)
-        pattern = r"\b([A-Za-z_][A-Za-z0-9_]*?)(_\d{2}_[A-Za-z_][A-Za-z0-9_]*)\b"
+        pattern = r"\b([A-Za-z_][A-Za-z0-9_]*?)(_\d{2,}_[A-Za-z_][A-Za-z0-9_]*)\b"
 
         def replace_with_prefix(match: re.Match[str]) -> str:
             func_name = match.group(1)  # e.g., "expFun" or "GLP"
@@ -1972,6 +1972,9 @@ class Par:
                 )
             # Profile-varying parameter with aux_ind
             if self.p_vary and aux_ind is not None and self.p_model is not None:
+                # Ensure profile is fresh for this t_ind (no-op if already
+                # evaluated via the owning component, cheap cache check).
+                self.p_model.create_value1D(t_ind=t_ind)
                 base = cast("list[float]", ulmfit.par_extract(self.lmfit_par))
                 if self.p_model.value1D is None:
                     raise RuntimeError(

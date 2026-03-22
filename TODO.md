@@ -27,13 +27,15 @@
 - [ ] **API ergonomics audit**: rationalize `show_info` fractional verbosity levels, replace 0/1 flags with enums or bools, fix boolean-trap positional args (FBT001/FBT002). One pass to make the API more self-documenting.
 - [ ] **AI-assisted YAML model creation**: use AI to help users build and validate YAML model files — smart autocorrect, suggesting parameter names, and potentially inspecting the data to propose initial guesses or flag mismatches.
 
-## Performance
+## Performance & architecture
 
 Don't touch until feature set is stable.
 
+- [ ] **Dependency-aware evaluation order**: component evaluation order is currently reverse list position (last→first, so backgrounds see peak sums). Profile refresh happens inside each component's `_value_profile_instances`, and cross-component expression references read cached profile state via `Par.value()`. This means correctness depends on evaluation order coincidentally matching data flow. When an expression-only component evaluates before the component that owns the referenced profile, `Par.value()` must eagerly refresh the profile (current bandaid — causes double profile evaluation per `t_ind`). **Proper fix**: build a DAG at model construction time (nodes = components + profile models, edges = expression refs + profile ownership + background deps). Topological sort determines eval order. Profile models get a dedicated pre-pass keyed to `t_ind`, then components read from already-fresh profiles. Benefits: correctness by construction, no stale reads, transitive chain detection for free (cycle detection), clearer path to component-level caching.
 - [ ] **Freeze non-varying pars**: pars without time-dependence (or profile dependence) are re-evaluated at every aux-axis point; could evaluate once and reuse.
 - [ ] **Parallelization / vectorization**: explore numba, GPU acceleration, or parallel evaluation across aux-axis points.
 
 ## Build & release
 
 - [ ] **Automate tagging and pushing**: automate `git tag v1.2.3` + `git push v1.2.3` as part of the release workflow.
+- [ ] **Remove legacy/backwards-compat code**: before v1.0.0 release, audit codebase for legacy fallbacks and backwards compatibility shims and consider removing.

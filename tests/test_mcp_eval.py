@@ -355,6 +355,183 @@ class TestEvaluation:
         np.testing.assert_allclose(value_1d, expected, rtol=1e-10)
 
     #
+    def test_eval_dynamics_expression_tracks_across_time(self):
+        """Expression referencing a t_vary par must track its value over time.
+
+        energy_expression: GLP_02_A = "3/4*GLP_01_A"
+        Add MonoExpPos dynamics to GLP_01_A.
+
+        At t_ind=0 (t=-10, before t0): dynamics=0, A1=20, A2=15
+        At t_ind=15 (t=5, after t0): dynamics nonzero, A1 changes,
+        A2 must still equal 3/4 * A1.
+        """
+
+        file, model = self._make_file_with_model(["energy_expression"])
+        file.add_time_dependence(
+            model_yaml="test_models_time.yaml",
+            model_info=["MonoExpPos"],
+            par_name="GLP_01_A",
+        )
+
+        p_A1 = self._par(model, "GLP_01_A")
+        p_A2 = self._par(model, "GLP_02_A")
+
+        # Before t0: dynamics = 0, base values
+        A1_early = p_A1.value(t_ind=0)
+        A2_early = p_A2.value(t_ind=0)
+        assert np.isclose(A1_early, 20.0)
+        assert np.isclose(A2_early, 3 / 4 * A1_early)
+
+        # After t0: dynamics nonzero, expression must track
+        A1_late = p_A1.value(t_ind=15)
+        A2_late = p_A2.value(t_ind=15)
+        assert not np.isclose(A1_early, A1_late)
+        assert np.isclose(A2_late, 3 / 4 * A1_late)
+
+        # 2D evaluation should be finite
+        model.create_value2D()
+        assert model.value2D is not None
+        assert model.value2D.shape == (len(file.time), len(file.energy))
+        assert np.isfinite(model.value2D).all()
+
+    #
+    def test_eval_mixed_dynamics_and_profile(self):
+        """One par with dynamics, different par with profile on same model.
+
+        single_glp: GLP(A=20, x0=85, F=1, m=0.3)
+        Profile pLinear(m=-0.5, b=0) on GLP_01_A.
+        Dynamics MonoExpNeg on GLP_01_x0.
+
+        At t_ind=0 (t=-10, before t0): dynamics=0, x0=85
+          Profile averages A → mean_A = 19
+          Expected: GLP(energy, 19, 85, 1, 0.3)
+
+        At t_ind=15 (t=5, after t0): x0 shifted by dynamics
+          Profile still averages A → mean_A = 19
+          Expected: GLP(energy, 19, x0_late, 1, 0.3)
+        """
+
+        file, model = self._make_file_with_profile_model(["single_glp"])
+
+        file.add_par_profile(
+            model_yaml="test_models_profile.yaml",
+            model_info=["profile_pLinear"],
+            par_name="GLP_01_A",
+        )
+        file.add_time_dependence(
+            model_yaml="test_models_time.yaml",
+            model_info=["MonoExpNeg"],
+            par_name="GLP_01_x0",
+        )
+
+        assert model.dim == 2
+
+        p_A = self._par(model, "GLP_01_A")
+        p_x0 = self._par(model, "GLP_01_x0")
+        assert p_A.p_vary is True
+        assert p_x0.t_vary is True
+
+        # Before t0: x0 at base, profile applied to A
+        offsets = pLinear(model.aux_axis, -0.5, 0.0)
+        mean_A = 20.0 + np.mean(offsets)  # 19.0
+        spec_early = model.create_value1D(t_ind=0, return_1d=1)
+        x0_early = p_x0.value(t_ind=0)
+        expected_early = GLP(file.energy, mean_A, x0_early, 1.0, 0.3)
+        np.testing.assert_allclose(spec_early, expected_early, rtol=1e-10)
+
+        # After t0: x0 shifted, profile unchanged
+        spec_late = model.create_value1D(t_ind=15, return_1d=1)
+        x0_late = p_x0.value(t_ind=15)
+        assert not np.isclose(x0_early, x0_late)
+        expected_late = GLP(file.energy, mean_A, x0_late, 1.0, 0.3)
+        np.testing.assert_allclose(spec_late, expected_late, rtol=1e-10)
+
+        # 2D evaluation
+        model.create_value2D()
+        assert model.value2D is not None
+        assert model.value2D.shape == (len(file.time), len(file.energy))
+        assert np.isfinite(model.value2D).all()
+
+    #
+    def test_eval_expression_refs_profiled_par_per_aux(self):
+        """Expression referencing a profiled par with time-dependent profile.
+
+        two_glp_expr_amplitude: GLP_02_A = "GLP_01_A * 0.5"
+        Profile pLinear(m=-0.5, b=0) on GLP_01_A.
+        Dynamics MonoExpPos on profile slope (GLP_01_A_pLinear_01_m).
+
+        GLP_02 is the last component (evaluates first in reverse order).
+        Its expression must see fresh profile values for the current t_ind
+        even though GLP_01 (which owns the profile) has not evaluated yet.
+
+        At each time step the averaged spectrum must equal:
+          GLP(energy, mean(A1_eff), 85, 1, 0.3)
+          + GLP(energy, mean(A1_eff * 0.5), 87, 1, 0.3)
+        where A1_eff[i] = 20 + profile.value1D[i] depends on the current
+        profile slope (which changes with time via MonoExpPos dynamics).
+        """
+
+        file, model = self._make_file_with_profile_model(
+            ["two_glp_expr_amplitude"],
+        )
+
+        file.add_par_profile(
+            model_yaml="test_models_profile.yaml",
+            model_info=["profile_pLinear"],
+            par_name="GLP_01_A",
+        )
+        file.add_time_dependence(
+            model_yaml="test_models_time.yaml",
+            model_info=["MonoExpPos"],
+            par_name="GLP_01_A_pLinear_01_m",
+        )
+
+        assert model.dim == 2
+        p_A1 = self._par(model, "GLP_01_A")
+        profile = p_A1.p_model
+        assert profile is not None
+
+        # t_ind=0 (before t0): dynamics=0, slope = base (-0.5)
+        spec_early = model.create_value1D(t_ind=0, return_1d=1)
+        assert spec_early is not None
+        A1_eff_early = 20.0 + profile.value1D
+        expected_early = GLP(file.energy, np.mean(A1_eff_early), 85.0, 1.0, 0.3) + GLP(
+            file.energy, np.mean(A1_eff_early * 0.5), 87.0, 1.0, 0.3
+        )
+        np.testing.assert_allclose(spec_early, expected_early, rtol=1e-10)
+
+        # t_ind=15 (after t0): slope changed by dynamics
+        spec_late = model.create_value1D(t_ind=15, return_1d=1)
+        assert spec_late is not None
+        A1_eff_late = 20.0 + profile.value1D
+        expected_late = GLP(file.energy, np.mean(A1_eff_late), 85.0, 1.0, 0.3) + GLP(
+            file.energy, np.mean(A1_eff_late * 0.5), 87.0, 1.0, 0.3
+        )
+        np.testing.assert_allclose(spec_late, expected_late, rtol=1e-10)
+
+        # The two spectra must differ (profile slope changed)
+        assert not np.allclose(spec_early, spec_late)
+
+    #
+    def test_eval_expression_chain_dynamics_raises(self):
+        """Transitive chain A3->A2->A1 with dynamics on A1 must raise.
+
+        expression_chain: GLP_02_A=GLP_01_A*0.5, GLP_03_A=GLP_02_A*0.5
+        Adding dynamics to GLP_01_A creates a transitive chain through
+        GLP_02_A that is not supported — users should reference the base
+        t_vary parameter directly.
+        """
+
+        file, model = self._make_file_with_model(["expression_chain"])
+
+        with pytest.raises(ValueError, match="indirectly references"):
+            file.add_time_dependence(
+                model_yaml="test_models_time.yaml",
+                model_info=["MonoExpPosIRF"],
+                par_name="GLP_01_A",
+            )
+
+    #
     def test_eval_expression_chain_profile_raises(self):
         """Transitive chain A3->A2->A1 with profile on A1 must raise.
 
