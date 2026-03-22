@@ -51,7 +51,6 @@ Examples
 See examples/ directory for complete workflows.
 """
 
-import copy
 import pathlib
 import time
 import warnings
@@ -923,7 +922,7 @@ class File:
                 return
 
         elif isinstance(model_to_delete, int):
-            mod_index_del = copy.deepcopy(model_to_delete)
+            mod_index_del = model_to_delete
             if mod_index_del not in range(len(self.models)):
                 print("delete_model: Model index out of range")
                 return

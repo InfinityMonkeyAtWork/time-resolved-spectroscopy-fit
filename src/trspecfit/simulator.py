@@ -54,7 +54,6 @@ Examples
 See examples/simulator/ directory for complete workflows.
 """
 
-import copy
 import json
 from pathlib import Path
 from typing import cast
@@ -371,10 +370,12 @@ class Simulator:
 
         if dim == 1:
             self.model.create_value1D(t_ind=t_ind, return_1d=False)
-            self.data_clean = copy.deepcopy(self.model.value1D)
+            assert self.model.value1D is not None
+            self.data_clean = self.model.value1D.copy()
         elif dim == 2:
             self.model.create_value2D()
-            self.data_clean = copy.deepcopy(self.model.value2D)
+            assert self.model.value2D is not None
+            self.data_clean = self.model.value2D.copy()
         else:
             raise ValueError(f"dim must be 1 or 2, got {dim}")
 

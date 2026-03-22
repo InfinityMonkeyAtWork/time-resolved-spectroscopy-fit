@@ -53,7 +53,6 @@ Key Features
 - Automatic component combination (addition, convolution, backgrounds)
 """
 
-import copy
 import inspect
 import re
 import types
@@ -763,7 +762,7 @@ class Model:
         # combine the components into a spectrum/ time dynamics curve
         for N in range(len(self.components) - 1):
             if store_1d == 1:
-                current_spec = copy.deepcopy(self.value1D)
+                current_spec = self.value1D.copy()
             #
             self.value1D = Model.combine(self.value1D, self.components[-(N + 2)], t_ind)
             # check on last component value added to model
