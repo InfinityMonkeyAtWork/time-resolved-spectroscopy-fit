@@ -46,6 +46,7 @@ dev = [
   "pre-commit",
   "deptry",
   "mypy",
+  "nbstripout",
   "pytest",
   "pyright",
   "ruff",

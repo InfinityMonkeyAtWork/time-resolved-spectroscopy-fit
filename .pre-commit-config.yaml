@@ -29,6 +29,13 @@ repos:
     pass_filenames: false
     stages: [pre-commit]
 
+  - id: nbstripout
+    name: nbstripout
+    entry: .venv/bin/nbstripout
+    language: system
+    types: [jupyter]
+    stages: [pre-commit]
+
   - id: deptry
     name: deptry
     entry: .venv/bin/deptry .
