@@ -108,11 +108,11 @@ def residual_fun(
         - 1: Unpack parameters: ``fit_fun(x, *par, ...)``
 
     e_lim : list of int, default=[]
-        Energy axis limits [left, right] for residual calculation.
-        Uses slice notation: data[e_lim[0]:-e_lim[1]]
+        Energy axis limits [start, stop) for residual calculation.
+        Uses slice notation: data[e_lim[0]:e_lim[1]]
         Empty list uses full energy range.
     t_lim : list of int, default=[]
-        Time axis limits [start, stop] for residual calculation.
+        Time axis limits [start, stop) for residual calculation.
         Uses slice notation: data[t_lim[0]:t_lim[1]]
         Empty list uses full time range.
     res_type : {'lmfit', 'RSS', 'abs', 'res', 'fit'}, default='lmfit'
@@ -165,13 +165,13 @@ def residual_fun(
     # select user-defined region to consider for residual computation
     if len(data_arr.shape) == 1:  # 1D data
         if len(e_lim) != 0:
-            residual = data_arr[e_lim[0] : -e_lim[1]] - fit_arr[e_lim[0] : -e_lim[1]]
+            residual = data_arr[e_lim[0] : e_lim[1]] - fit_arr[e_lim[0] : e_lim[1]]
         else:  # use entire data and fit array to compute RSS
             residual = data_arr - fit_arr
     elif len(data_arr.shape) == 2:  # 2D data
         if (len(e_lim) != 0) and (len(t_lim) == 0):
             residual = (
-                data_arr[:, e_lim[0] : -e_lim[1]] - fit_arr[:, e_lim[0] : -e_lim[1]]
+                data_arr[:, e_lim[0] : e_lim[1]] - fit_arr[:, e_lim[0] : e_lim[1]]
             )
         elif (len(e_lim) == 0) and (len(t_lim) != 0):
             residual = (
@@ -179,8 +179,8 @@ def residual_fun(
             )
         elif (len(e_lim) != 0) and (len(t_lim) != 0):
             residual = (
-                data_arr[t_lim[0] : t_lim[1], e_lim[0] : -e_lim[1]]
-                - fit_arr[t_lim[0] : t_lim[1], e_lim[0] : -e_lim[1]]
+                data_arr[t_lim[0] : t_lim[1], e_lim[0] : e_lim[1]]
+                - fit_arr[t_lim[0] : t_lim[1], e_lim[0] : e_lim[1]]
             )
         # or use entire data and fit array to compute RSS
         else:
@@ -1108,7 +1108,7 @@ def plt_fit_res_1D(
     title : str, default=''
         Plot title. Use for file/model identification.
     fit_lim : list of int, optional
-        Fit limit indices [left, right] to show as vertical dashed lines.
+        Fit limit indices [start, stop) to show as vertical dashed lines.
         Visualizes which data region was used for optimization.
     config : PlotConfig, optional
         Plot configuration object. If None, uses defaults.
@@ -1244,9 +1244,10 @@ def plt_fit_res_1D(
 
     # Draw vertical lines showing fit limits
     if fit_lim is not None and len(fit_lim) == 2:
-        x_end = x_arr[-fit_lim[1]] if fit_lim[1] > 0 else x_arr[-1]
+        x_start = x_arr[fit_lim[0]]
+        x_end = x_arr[fit_lim[1] - 1] if fit_lim[1] > 0 else x_arr[-1]
         ax.vlines(
-            x=[x_arr[fit_lim[0]], x_end],
+            x=[x_start, x_end],
             ymin=np.min(res),
             ymax=np.max(y_arr),
             colors="#A9A9A9",
@@ -1334,9 +1335,9 @@ def plt_fit_res_2D(
 
     # Cut residual according to x_lim and y_lim for statistics
     if x_lim is not None and y_lim is not None:
-        res_cut = res[y_lim[0] : y_lim[1], x_lim[0] : -x_lim[1]]
+        res_cut = res[y_lim[0] : y_lim[1], x_lim[0] : x_lim[1]]
     elif x_lim is not None:
-        res_cut = res[:, x_lim[0] : -x_lim[1]]
+        res_cut = res[:, x_lim[0] : x_lim[1]]
     elif y_lim is not None:
         res_cut = res[y_lim[0] : y_lim[1], :]
     else:
@@ -1447,14 +1448,18 @@ def plt_fit_res_2D(
             y=float(y_arr[y_lim[0]]), xmin=0, xmax=1, color="#000000", linestyle=":"
         )
         axs["bottom"].axhline(
-            y=float(y_arr[y_lim[1]]), xmin=0, xmax=1, color="#000000", linestyle=":"
+            y=float(y_arr[y_lim[1] - 1]),
+            xmin=0,
+            xmax=1,
+            color="#000000",
+            linestyle=":",
         )
     if x_lim is not None:
         axs["bottom"].axvline(
             x=float(x_arr[x_lim[0]]), ymin=0, ymax=1, color="#000000", linestyle=":"
         )
         axs["bottom"].axvline(
-            x=float(x_arr[res.shape[1] - x_lim[1]]),
+            x=float(x_arr[x_lim[1] - 1]),
             ymin=0,
             ymax=1,
             color="#000000",

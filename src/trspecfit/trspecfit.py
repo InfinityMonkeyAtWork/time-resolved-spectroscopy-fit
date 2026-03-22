@@ -462,9 +462,9 @@ class File:
         self.model_active: mcp.Model | None = None  # default model to work with
         # Energy and time limits for fitting methods
         self.e_lim_abs: list[float] = []  # energy limits (low, high) user-defined
-        self.e_lim: list[int] = []  # index (from left, from right: energy[left:-right])
+        self.e_lim: list[int] = []  # index [start, stop) for energy[start:stop]
         self.t_lim_abs: list[float] = []  # time limits (low, high) user-defined
-        self.t_lim: list[int] = []  # index (left to right: time[left:right])
+        self.t_lim: list[int] = []  # index [start, stop) for time[start:stop]
         #
         self.base_t_abs: list[
             float
@@ -1125,17 +1125,21 @@ class File:
             energy_limits = [float(np.min(energy)), float(np.max(energy))]
         self.e_lim_abs = [np.min(energy_limits), np.max(energy_limits)]
 
-        # convert energy and time limits to index values
-        # use data ordering (not plot direction) to pass ascending input to searchsorted
-        n_e = len(energy)
+        # convert energy limits to [start, stop) slice indices
+        # searchsorted with side='left' for lower bound, side='right' for upper bound
         if energy[0] > energy[-1]:  # descending energy
-            e_ind_min = int(np.searchsorted(energy[::-1], np.min(energy_limits)))
-            e_ind_max = int(np.searchsorted(energy[::-1], np.max(energy_limits)))
-            self.e_lim = [n_e - e_ind_max, e_ind_min]  # skip high-E start, low-E end
+            rev = energy[::-1]
+            start = len(energy) - int(
+                np.searchsorted(rev, np.max(energy_limits), side="right")
+            )
+            stop = len(energy) - int(
+                np.searchsorted(rev, np.min(energy_limits), side="left")
+            )
+            self.e_lim = [start, stop]
         else:  # ascending energy
-            e_ind_min = int(np.searchsorted(energy, np.min(energy_limits)))
-            e_ind_max = int(np.searchsorted(energy, np.max(energy_limits)))
-            self.e_lim = [e_ind_min, n_e - e_ind_max]  # skip low-E start, high-E end
+            start = int(np.searchsorted(energy, np.min(energy_limits), side="left"))
+            stop = int(np.searchsorted(energy, np.max(energy_limits), side="right"))
+            self.e_lim = [start, stop]
 
         if time_limits is None and self.time is not None:
             time_limits = [float(np.min(self.time)), float(np.max(self.time))]
@@ -1153,17 +1157,17 @@ class File:
                     stacklevel=2,
                 )
             self.t_lim_abs = list(time_limits)
-            t_ind_min = int(np.searchsorted(self.time, np.min(time_limits)))
-            t_ind_max = int(np.searchsorted(self.time, np.max(time_limits)))
-            self.t_lim = [t_ind_min, t_ind_max]  # "min:max"
+            t_start = int(np.searchsorted(self.time, np.min(time_limits), side="left"))
+            t_stop = int(np.searchsorted(self.time, np.max(time_limits), side="right"))
+            self.t_lim = [t_start, t_stop]
 
         if show_plot:  # show data with limits
             if self.dim == 1:
                 if self.data is None:
                     warnings.warn("Data missing; cannot plot fit limits.", stacklevel=2)
                     return
-                x_cut = energy[self.e_lim[0] : -self.e_lim[1]]
-                y_cut = self.data[self.e_lim[0] : -self.e_lim[1]]
+                x_cut = energy[self.e_lim[0] : self.e_lim[1]]
+                y_cut = self.data[self.e_lim[0] : self.e_lim[1]]
                 uplt.plot_1D(
                     data=[self.data, y_cut],
                     x=[energy, x_cut],
