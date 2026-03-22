@@ -1631,13 +1631,17 @@ class Component:
                 "component.plot(..., spectrum=<peak_sum_array>)."
             )
 
-        # get x axis and its label
+        # get x axis, label, and plot config
+        config = None
+        if self.parent_model is not None:
+            config = self.parent_model.plot_config
+
         if self.package == fcts_energy:
             x_axis = self.energy
-            x_name = "Energy"
+            x_name = config.x_label if config else "Energy"
         elif self.package == fcts_time:
             x_axis = self.time
-            x_name = "Time"
+            x_name = config.y_label if config else "Time"
         elif self.package == fcts_profile:
             x_axis = self.aux_axis
             x_name = "Auxiliary axis"
@@ -1680,12 +1684,20 @@ class Component:
             plot_data = [self.value(t_ind, **kwargs)]
             legend = [self.comp_name]
 
+        # Energy components inherit x_dir from config (e.g. reversed eV axis);
+        # time and profile components always use default (forward) direction.
+        x_dir = "def"
+        if self.package == fcts_energy and config is not None:
+            x_dir = config.x_dir
+
         #
         uplt.plot_1D(
             data=plot_data,
+            config=config,
             title=f"function: {self.fct_str} from {self.package_name}",
             x=x_axis,
             x_label=x_name,
+            x_dir=x_dir,
             y_label="Amplitude",
             legend=legend,
         )

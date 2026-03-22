@@ -1276,56 +1276,41 @@ class Simulator:
             # Create 3-panel plot
             _fig, axes = plt.subplots(1, 3, figsize=(15, 4))
 
-            # Determine axis direction
-            x_dir_reversed = config.x_dir == "rev"
-
-            # Clean data
-            im1 = axes[0].pcolormesh(
-                self.model.energy,
-                self.model.time,
-                self.data_clean,
-                shading="nearest",
-                cmap=config.z_colormap,
-            )
-            axes[0].set_title("Clean Model Data")
-            axes[0].set_xlabel(config.x_label)
-            axes[0].set_ylabel(config.y_label)
-            if x_dir_reversed:
-                axes[0].invert_xaxis()
-            plt.colorbar(im1, ax=axes[0])
-
-            # Noisy data
-            im2 = axes[1].pcolormesh(
-                self.model.energy,
-                self.model.time,
-                self.data_noisy,
-                shading="nearest",
-                cmap=config.z_colormap,
-            )
-            axes[1].set_title(plt_title)
-            axes[1].set_xlabel(config.x_label)
-            axes[1].set_ylabel(config.y_label)
-            if x_dir_reversed:
-                axes[1].invert_xaxis()
-            plt.colorbar(im2, ax=axes[1])
-
-            # Noise
-            im3 = axes[2].pcolormesh(
-                self.model.energy,
-                self.model.time,
-                self.noise,
-                shading="nearest",
-                cmap=config.z_colormap,
-            )
-            axes[2].set_title("Noise (Simulated - Clean)")
-            axes[2].set_xlabel(config.x_label)
-            axes[2].set_ylabel(config.y_label)
-            if x_dir_reversed:
-                axes[2].invert_xaxis()
-            plt.colorbar(im3, ax=axes[2])
+            panels = [
+                (self.data_clean, "Clean Model Data"),
+                (self.data_noisy, plt_title),
+                (self.noise, "Noise (Simulated - Clean)"),
+            ]
+            for ax, (data, title) in zip(axes, panels, strict=True):
+                im = ax.pcolormesh(
+                    self.model.energy,
+                    self.model.time,
+                    data,
+                    shading="nearest",
+                    cmap=config.z_colormap,
+                )
+                ax.set_title(title)
+                ax.set_xlabel(config.x_label)
+                ax.set_ylabel(config.y_label)
+                if config.ticksize is not None:
+                    ax.tick_params(labelsize=config.ticksize)
+                uplt._apply_axis_settings(
+                    ax,
+                    x_type=config.x_type,
+                    x_dir=config.x_dir,
+                    y_type=config.y_type,
+                    y_dir=config.y_dir,
+                    x_lim=config.x_lim,
+                    y_lim=config.y_lim,
+                )
+                plt.colorbar(im, ax=ax)
 
             plt.tight_layout()
-            plt.show()
+            uplt._finalize_plot(
+                save_img=0,
+                save_path="",
+                dpi_save=config.dpi_save,
+            )
 
     #
     def save_data(

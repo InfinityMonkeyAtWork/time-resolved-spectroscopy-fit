@@ -494,6 +494,112 @@ class TestPlotConfigHierarchy:
 
 #
 #
+class TestPlotConfigPropagation:
+    """Test that PlotConfig propagates to mcp.py and simulator."""
+
+    #
+    def _make_file_with_model(self, *, x_dir="rev"):
+        """Create a project/file/model with a reversed energy axis."""
+
+        project = Project(path="tests")
+        project.x_dir = x_dir
+        project.e_label = "Binding Energy (eV)"
+
+        file = File(parent_project=project)
+        file.energy = np.linspace(80, 90, 201)
+        file.time = np.linspace(-10, 100, 111)
+        file.data = np.random.default_rng(42).normal(
+            size=(len(file.time), len(file.energy))
+        )
+        file.dim = 2
+
+        file.load_model(
+            model_yaml="test_models_energy.yaml",
+            model_info=["single_glp"],
+        )
+        return file
+
+    #
+    def test_component_plot_respects_x_dir(self):
+        """Component.plot() should reverse x-axis when config.x_dir='rev'."""
+
+        file = self._make_file_with_model(x_dir="rev")
+        assert file.model_active is not None
+        component = file.model_active.components[0]
+
+        component.plot()
+        ax = plt.gca()
+        assert ax.xaxis_inverted(), "x-axis should be inverted for x_dir='rev'"
+        plt.close("all")
+
+    #
+    def test_component_plot_uses_project_label(self):
+        """Component.plot() should use x_label from PlotConfig."""
+
+        file = self._make_file_with_model()
+        assert file.model_active is not None
+        component = file.model_active.components[0]
+
+        component.plot()
+        ax = plt.gca()
+        assert ax.get_xlabel() == "Binding Energy (eV)"
+        plt.close("all")
+
+    #
+    def test_component_plot_default_dir(self):
+        """Component.plot() should not invert x-axis when config.x_dir='def'."""
+
+        file = self._make_file_with_model(x_dir="def")
+        assert file.model_active is not None
+        component = file.model_active.components[0]
+
+        component.plot()
+        ax = plt.gca()
+        assert not ax.xaxis_inverted(), "x-axis should not be inverted for x_dir='def'"
+        plt.close("all")
+
+    #
+    def test_simulator_2d_respects_x_dir(self):
+        """Simulator.plot_comparison(dim=2) should reverse x-axis when x_dir='rev'."""
+
+        from trspecfit import Simulator
+
+        file = self._make_file_with_model(x_dir="rev")
+        model = file.model_active
+        assert model is not None
+        sim = Simulator(model, noise_level=0.05)
+        sim.simulate_2D()
+
+        sim.plot_comparison(dim=2)
+        fig = plt.gcf()
+        for ax in fig.axes:
+            # Skip colorbar axes (they don't have energy on x-axis)
+            if ax.get_xlabel() == "Binding Energy (eV)":
+                assert ax.xaxis_inverted(), "x-axis should be inverted in 2D sim plot"
+        plt.close("all")
+
+    #
+    def test_simulator_2d_respects_axis_labels(self):
+        """Simulator.plot_comparison(dim=2) should use labels from PlotConfig."""
+
+        from trspecfit import Simulator
+
+        file = self._make_file_with_model()
+        model = file.model_active
+        assert model is not None
+        sim = Simulator(model, noise_level=0.05)
+        sim.simulate_2D()
+
+        sim.plot_comparison(dim=2)
+        fig = plt.gcf()
+        # Find a main panel axis (not colorbar)
+        main_axes = [ax for ax in fig.axes if ax.get_xlabel() != ""]
+        assert any(ax.get_xlabel() == "Binding Energy (eV)" for ax in main_axes)
+        plt.close("all")
+
+
+#
+#
 class TestEdgeCases:
     """Test edge cases and potential regressions"""
 

@@ -766,6 +766,7 @@ class File:
         loaded_model.dim = 1  # start with 1, +1 when adding dynamics
         if isinstance(loaded_model, mcp.Dynamics):
             loaded_model.subcycles = len(model_info) - 1
+        loaded_model.parent_file = self
         loaded_model.energy = self.energy
         loaded_model.time = self.time
         loaded_model.aux_axis = self.aux_axis
