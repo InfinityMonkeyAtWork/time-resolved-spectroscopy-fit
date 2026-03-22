@@ -1592,6 +1592,7 @@ class Component:
         plot_traces: bool = True,
         plot_every: int = 1,
         plot_max: int | None = None,
+        save_img: int = 0,
         **kwargs,
     ) -> None:
         """
@@ -1615,6 +1616,8 @@ class Component:
         plot_max : int or None, default=None
             Optional hard cap on number of individual aux-axis curves to plot.
             First plot_max traces are shown (spaced according to plot_every).
+        save_img : int, default=0
+            0: display, 1: save+display, -1: save only, -2: close (no display/save)
         **kwargs : dict
             Additional arguments passed to component function.
             Background components require ``spectrum`` to be provided.
@@ -1701,6 +1704,7 @@ class Component:
             x_dir=x_dir,
             y_label="Amplitude",
             legend=legend,
+            save_img=save_img,
         )
 
 

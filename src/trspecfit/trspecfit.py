@@ -324,8 +324,9 @@ class Project:
             if self.show_info >= 1:
                 print(f"Config file {config_path} not found, using defaults")
         except Exception as e:  # noqa: BLE001
-            print(f"Error loading config: {e}")
-            print("Using default settings")
+            if self.show_info >= 1:
+                print(f"Error loading config: {e}")
+                print("Using default settings")
 
 
 #
@@ -918,17 +919,26 @@ class File:
         elif isinstance(model_to_delete, str):
             mod_index_del = self.select_model(model_to_delete, return_type="index")
             if mod_index_del is None:
-                print(f"delete_model: Model with name {model_to_delete} not found")
+                warnings.warn(
+                    f"delete_model: Model with name {model_to_delete} not found",
+                    stacklevel=2,
+                )
                 return
 
         elif isinstance(model_to_delete, int):
             mod_index_del = model_to_delete
             if mod_index_del not in range(len(self.models)):
-                print("delete_model: Model index out of range")
+                warnings.warn(
+                    "delete_model: Model index out of range",
+                    stacklevel=2,
+                )
                 return
 
         else:
-            print(f"delete_model: input type {type(model_to_delete)} not supported")
+            warnings.warn(
+                f"delete_model: input type {type(model_to_delete)} not supported",
+                stacklevel=2,
+            )
             return
 
         # delete model from list using index: File.models[index]

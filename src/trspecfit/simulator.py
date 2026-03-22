@@ -55,6 +55,7 @@ See examples/simulator/ directory for complete workflows.
 """
 
 import json
+import warnings
 from pathlib import Path
 from typing import cast
 
@@ -300,9 +301,10 @@ class Simulator:
         if self.counts_per_delay is not None:
             # Direct specification takes precedence
             if self.count_rate is not None or self.integration_time is not None:
-                print(
-                    "Warning: counts_per_delay specified directly."
-                    " Ignoring count_rate and integration_time."
+                warnings.warn(
+                    "counts_per_delay specified directly."
+                    " Ignoring count_rate and integration_time.",
+                    stacklevel=2,
                 )
         elif self.count_rate is not None and self.integration_time is not None:
             # Calculate from rate and time
@@ -333,13 +335,14 @@ class Simulator:
             else:
                 self.counts_per_delay = int(np.sum(signal_positive))
 
-            print(
-                f"WARNING: No photon count specified for photon_counting detection.\n"
-                f"Estimating from model: {self.counts_per_delay:.2e} counts/delay\n"
+            warnings.warn(
+                f"No photon count specified for photon_counting detection. "
+                f"Estimating from model: {self.counts_per_delay:.2e} counts/delay. "
                 f"For accurate simulation, specify counts_per_delay"
-                f" or (count_rate, integration_time).\n"
+                f" or (count_rate, integration_time). "
                 f"This estimate assumes your model amplitudes"
-                f" represent realistic count rates."
+                f" represent realistic count rates.",
+                stacklevel=2,
             )
 
         # Ensure counts_per_delay is positive
@@ -951,7 +954,10 @@ class Simulator:
         """Update noise level (analog detectors only)"""
 
         if self.detection != "analog":
-            print("Warning: noise_level only applies to analog detection")
+            warnings.warn(
+                "noise_level only applies to analog detection",
+                stacklevel=2,
+            )
         self.noise_level = noise_level
 
     #
@@ -959,7 +965,10 @@ class Simulator:
         """Update noise type (analog detectors only)"""
 
         if self.detection != "analog":
-            print("Warning: noise_type only applies to analog detection")
+            warnings.warn(
+                "noise_type only applies to analog detection",
+                stacklevel=2,
+            )
         self.noise_type = noise_type.lower()
 
     #
@@ -967,7 +976,10 @@ class Simulator:
         """Update counts per delay (photon counting only)"""
 
         if self.detection != "photon_counting":
-            print("Warning: counts_per_delay only applies to photon_counting detection")
+            warnings.warn(
+                "counts_per_delay only applies to photon_counting detection",
+                stacklevel=2,
+            )
         self.counts_per_delay = counts_per_delay
 
     #
@@ -987,7 +999,10 @@ class Simulator:
         """
 
         if self.detection != "photon_counting":
-            print("Warning: count_rate only applies to photon_counting detection")
+            warnings.warn(
+                "count_rate only applies to photon_counting detection",
+                stacklevel=2,
+            )
             return
 
         self.count_rate = count_rate
@@ -1141,7 +1156,12 @@ class Simulator:
 
     #
     def plot_comparison(
-        self, t_ind: int = 0, dim: int = 1, SNR_scale: str = "linear"
+        self,
+        t_ind: int = 0,
+        dim: int = 1,
+        SNR_scale: str = "linear",
+        *,
+        save_img: int = 0,
     ) -> None:
         """
         Plot comparison of clean vs noisy data.
@@ -1162,6 +1182,8 @@ class Simulator:
             Scale for SNR display in title:
             - 'linear': Show as ratio (e.g., "SNR: 25.0 linear")
             - 'dB': Show in decibels (e.g., "SNR: 14.0 dB")
+        save_img : int, default=0
+            0: display, 1: save+display, -1: save only, -2: close (no display/save)
 
         Examples
         --------
@@ -1263,6 +1285,7 @@ class Simulator:
                 linestyles=["-", "", "-"],  # Empty string = no line for noisy data
                 markers=[None, "o", None],  # Scatter points for noisy data
                 markersizes=[6, 3, 6],  # Smaller markers for noisy data
+                save_img=save_img,
             )
 
         elif dim == 2:
@@ -1308,7 +1331,7 @@ class Simulator:
 
             plt.tight_layout()
             uplt._finalize_plot(
-                save_img=0,
+                save_img=save_img,
                 save_path="",
                 dpi_save=config.dpi_save,
             )
@@ -1321,6 +1344,7 @@ class Simulator:
         save_format: str = "hdf5",
         N_data: list[np.ndarray] | None = None,
         overwrite: bool = True,
+        show_info: int = 1,
     ) -> None:
         """
         Save simulated data to file with metadata.
@@ -1345,6 +1369,8 @@ class Simulator:
         overwrite : bool, default=True
             If True, overwrite existing files.
             If False, raise FileExistsError if file exists.
+        show_info : int, default=1
+            Verbosity level. Set to 0 to suppress output.
 
         Raises
         ------
@@ -1523,7 +1549,8 @@ class Simulator:
         else:
             raise ValueError(f"Unknown save format: {save_format}. Use 'hdf5'.")
 
-        print(f"Data saved to: {filepath}")
+        if show_info >= 1:
+            print(f"Data saved to: {filepath}")
 
     #
     def _save_hdf5(self, filepath: str, N_data: list[np.ndarray] | None = None) -> None:

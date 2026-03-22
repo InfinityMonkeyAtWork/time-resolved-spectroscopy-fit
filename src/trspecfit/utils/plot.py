@@ -30,7 +30,7 @@ type PathLike = str | pathlib.Path
 
 
 #
-def load_plot(path: PathLike, dpi_fig: int = 75) -> None:
+def load_plot(path: PathLike, dpi_fig: int = 75, *, save_img: int = 0) -> None:
     """
     Load and display a saved figure as an image.
 
@@ -43,6 +43,8 @@ def load_plot(path: PathLike, dpi_fig: int = 75) -> None:
         Path to the image file to load
     dpi_fig : int, default=75
         Display DPI (actual DPI multiplied by 1.25)
+    save_img : {-1, 0, 1}, default=0
+        -1 save only, 0 display only, 1 save and display.
     """
 
     # 1.25x factor accounts for typical whitespace/margins in saved figures
@@ -50,7 +52,7 @@ def load_plot(path: PathLike, dpi_fig: int = 75) -> None:
     img = mpimg.imread(path)
     plt.imshow(img)
     plt.axis("off")
-    plt.show()
+    _finalize_plot(save_img)
 
 
 #
@@ -60,6 +62,9 @@ def load_plot_grid(
     fig_width: float = 16,
     *,
     show_info: bool = False,
+    save_img: int = 0,
+    save_path: PathLike = "",
+    dpi_save: int = 300,
 ) -> None:
     """
     Load and display multiple images in a grid layout.
@@ -77,10 +82,24 @@ def load_plot_grid(
         Total figure width in inches
     show_info : bool, default=False
         Print layout info.
+    save_img : {-1, 0, 1}, default=0
+        -1 save only, 0 display only, 1 save and display.
+    save_path : str or Path, default=""
+        File path for saving.
+    dpi_save : int, default=300
+        DPI for saved image.
     """
 
     images = [plt.imread(path) for path in paths]
-    plot_grid(images, columns, fig_width, show_info=show_info)
+    plot_grid(
+        images,
+        columns,
+        fig_width,
+        show_info=show_info,
+        save_img=save_img,
+        save_path=save_path,
+        dpi_save=dpi_save,
+    )
 
 
 #
@@ -90,6 +109,9 @@ def plot_grid(
     fig_width: float = 16,
     *,
     show_info: bool = False,
+    save_img: int = 0,
+    save_path: PathLike = "",
+    dpi_save: int = 300,
 ) -> None:
     """
     Display multiple images in a grid layout.
@@ -107,6 +129,12 @@ def plot_grid(
         Total figure width in inches
     show_info : bool, default=False
         If True, print layout calculations (rows, aspect ratio, height).
+    save_img : {-1, 0, 1}, default=0
+        -1 save only, 0 display only, 1 save and display.
+    save_path : str or Path, default=""
+        File path for saving.
+    dpi_save : int, default=300
+        DPI for saved image.
 
     Notes
     -----
@@ -142,7 +170,7 @@ def plot_grid(
         ax.set_axis_off()
 
     plt.subplots_adjust(hspace=0, wspace=0.05)
-    plt.show()
+    _finalize_plot(save_img, save_path, dpi_save)
 
 
 #

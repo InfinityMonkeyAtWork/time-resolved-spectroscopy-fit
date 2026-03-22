@@ -11,6 +11,7 @@ This module provides utilities for:
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Literal, overload
 
 import lmfit
@@ -74,9 +75,10 @@ def par_create(
         try:
             lmf_par.set(expr=par_info[0])
         except Exception as e:  # noqa: BLE001
-            print(
+            warnings.warn(
                 f"Exception while adding expression {par_info[0]} "
-                f"to parameter {par_str}: {e}"
+                f"to parameter {par_str}: {e}",
+                stacklevel=2,
             )
 
     return lmf_par
