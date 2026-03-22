@@ -204,7 +204,7 @@ def get_item(
 
 
 #
-def sign_change(array: ArrayLike, ignore_zeros: bool = True) -> NDArray[np.int_]:
+def sign_change(array: ArrayLike, *, ignore_zeros: bool = True) -> NDArray[np.int_]:
     """
     Detect sign changes in an array with proper zero handling.
 

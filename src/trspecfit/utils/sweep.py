@@ -555,7 +555,7 @@ class SweepDataset:
 
     #
     def load_config(
-        self, config_idx: int, load_clean: bool = True, load_noisy: bool = True
+        self, config_idx: int, *, load_clean: bool = True, load_noisy: bool = True
     ) -> dict[str, Any]:
         """
         Load a single parameter configuration and its data.

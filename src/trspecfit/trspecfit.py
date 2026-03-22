@@ -1001,6 +1001,7 @@ class File:
         self,
         time_start: float,
         time_stop: float,
+        *,
         time_type: str = "abs",
         show_plot: bool = True,
     ) -> None:
@@ -1083,6 +1084,7 @@ class File:
     def set_fit_limits(
         self,
         energy_limits: Sequence[float] | None,
+        *,
         time_limits: Sequence[float] | None = None,
         show_plot: bool = True,
     ) -> None:

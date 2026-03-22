@@ -704,7 +704,7 @@ class Model:
 
     #
     def create_value1D(
-        self, t_ind: int = 0, store_1d: int = 0, return_1d: int = 0
+        self, t_ind: int = 0, *, store_1d: int = 0, return_1d: int = 0
     ) -> np.ndarray | None:
         """
         Evaluate model to create 1D spectrum (energy or time).
@@ -829,6 +829,7 @@ class Model:
     def plot_1D(
         self,
         t_ind: int = 0,
+        *,
         plot_sum: bool = True,
         x_lim: tuple[float, float] | None = None,
         y_lim: tuple[float, float] | None = None,
@@ -1586,6 +1587,7 @@ class Component:
     def plot(
         self,
         t_ind: int = 0,
+        *,
         plot_traces: bool = True,
         plot_every: int = 1,
         plot_max: int | None = None,
@@ -1842,6 +1844,7 @@ class Par:
     #
     def create(
         self,
+        *,
         prefix: str = "",
         suffix: str = "",
         expr_skip: bool = False,
@@ -1910,6 +1913,7 @@ class Par:
     def value(
         self,
         t_ind: int = 0,
+        *,
         update_t_model: bool = True,
         aux_ind: int | None = None,
     ) -> float:
@@ -1944,7 +1948,10 @@ class Par:
             ):
                 all_parameters = self.get_all_parameters()
                 return self._evaluate_dynamic_expression(
-                    t_ind, all_parameters, update_t_model, aux_ind
+                    t_ind,
+                    all_parameters,
+                    update_t_model=update_t_model,
+                    aux_ind=aux_ind,
                 )
             # Profile-varying parameter with aux_ind
             if self.p_vary and aux_ind is not None and self.p_model is not None:
@@ -2037,6 +2044,7 @@ class Par:
         self,
         t_ind: int,
         all_parameters: list["Par"],
+        *,
         update_t_model: bool = True,
         aux_ind: int | None = None,
     ) -> float:

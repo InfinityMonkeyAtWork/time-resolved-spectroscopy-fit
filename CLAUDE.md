@@ -10,6 +10,9 @@
 - Function calls: use keyword arguments for all parameters except the
   primary data object, e.g. `func(data, value=10)` not `func(data, 10)`.
   Applies to all types (`bool`, `int`, `float`, `str`).
+- Function signatures: use `*` to enforce keyword-only arguments for any
+  parameter that isn't the primary data object (the "subject").
+  E.g. `def func(data, *, threshold=0.5, normalize=True)`.
 
 # Testing
 

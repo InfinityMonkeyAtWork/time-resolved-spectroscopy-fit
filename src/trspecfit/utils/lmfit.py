@@ -504,6 +504,7 @@ class MC:
     #
     def __init__(
         self,
+        *,
         use_mc: int = 0,
         steps: int = 5000,
         nwalkers: int = 1,

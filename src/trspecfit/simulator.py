@@ -601,7 +601,7 @@ class Simulator:
 
     #
     def simulate_N(
-        self, N: int, dim: int = 2, t_ind: int = 0, show_progress: bool = True
+        self, N: int, *, dim: int = 2, t_ind: int = 0, show_progress: bool = True
     ) -> tuple[np.ndarray, list[np.ndarray], list[np.ndarray]]:
         """
         Generate N simulated datasets with independent noise realizations.
@@ -1330,6 +1330,7 @@ class Simulator:
     #
     def save_data(
         self,
+        *,
         filepath: str | None = None,
         save_format: str = "hdf5",
         N_data: list[np.ndarray] | None = None,
@@ -1633,6 +1634,7 @@ class Simulator:
         self,
         parameter_sweep: ParameterSweep,
         N_realizations: int,
+        *,
         filepath: str = "ml_training_data.h5",
         show_progress: bool = True,
     ) -> None:
