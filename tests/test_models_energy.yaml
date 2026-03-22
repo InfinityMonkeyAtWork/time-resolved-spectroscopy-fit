@@ -149,3 +149,13 @@ wrong_parameter_name:
       x0: [84.5, True, 82, 88]
       q: [0.3, True, 0, 1]
       F: [1.0, True, 0.75, 2.5]
+
+# background as last component (should fail ordering validation)
+background_last:
+    GLP:
+      A: [20, True, 5, 25]
+      x0: [84.5, True, 82, 88]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+    Offset:
+      y0: [2, True, 0, 5]

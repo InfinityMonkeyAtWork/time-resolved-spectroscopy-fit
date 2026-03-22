@@ -56,3 +56,13 @@ MonoExpPosExpr:
         tau: ["expFun_01_tau"]
         t0: [0, False, 0, 1]
         y0: [0, False, 0, 1]
+
+# convolution as last component (should fail ordering validation)
+conv_last:
+    expFun:
+        A: [1, True, 0, 5]
+        tau: [2.5, True, 1, 10]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]
+    gaussCONV:
+        SD: [5.0E-2, True, 0, 1]

@@ -599,6 +599,33 @@ class TestYAMLValidationErrors:
                 model_info="simple_energy",  # type: ignore[arg-type]
             )
 
+    #
+    def test_background_last_raises(self):
+        """Background as last component should fail ordering validation."""
+
+        project = Project(path="tests")
+        file = File(parent_project=project)
+        with pytest.raises(ModelValidationError, match="background function"):
+            file.load_model(
+                model_yaml="test_models_energy.yaml",
+                model_info=["background_last"],
+            )
+
+    #
+    def test_conv_last_raises(self):
+        """Convolution as last component should fail ordering validation."""
+
+        project = Project(path="tests")
+        file = File(parent_project=project)
+        file.time = np.linspace(-10, 100, 111)
+        with pytest.raises(ModelValidationError, match="convolution function"):
+            file.load_model(
+                model_yaml="test_models_time.yaml",
+                model_info=["conv_last"],
+                par_name="parTEST",
+                model_type="dynamics",
+            )
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

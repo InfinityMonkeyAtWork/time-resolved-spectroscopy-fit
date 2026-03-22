@@ -15,6 +15,7 @@ from ruamel.yaml.error import YAMLError
 
 from trspecfit.config.functions import (
     all_functions,
+    background_functions,
     energy_functions,
     get_function_parameters,
     numbering_exceptions,
@@ -293,6 +294,31 @@ def validate_model_components(
                         f"Got: {param_value}\n"
                         f"See 'models_energy.yaml' in example directory: {example_dir}"
                     )
+
+        # Check component ordering: last component must not be background or
+        # convolution, because these require a pre-existing spectrum to
+        # operate on and the last component is evaluated first (standalone).
+        comp_names = list(components.keys())
+        if comp_names:
+            last_base, _ = parse_component_name(comp_names[-1])
+            if last_base in background_functions():
+                raise ModelValidationError(
+                    f"Last component '{comp_names[-1]}' in model "
+                    f"'{model_name}' is a background function.\n"
+                    f"Background components (Offset, Shirley, LinBack) need a "
+                    f"spectrum to operate on, so they cannot be the last "
+                    f"component.\nMove a peak component after the background "
+                    f"in {model_yaml_path}"
+                )
+            if "CONV" in last_base or last_base.endswith("CONV"):
+                raise ModelValidationError(
+                    f"Last component '{comp_names[-1]}' in model "
+                    f"'{model_name}' is a convolution function.\n"
+                    f"Convolution components need a spectrum to convolve with, "
+                    f"so they cannot be the last component.\n"
+                    f"Move a peak component after the convolution "
+                    f"in {model_yaml_path}"
+                )
 
 
 #
