@@ -1197,10 +1197,9 @@ class File:
         ----------
         model_name : str
             Name of a previously loaded model (use File.load_model first)
-        fit : {0, 1, 2}
+        fit : {1, 2}
             Fitting mode:
 
-            - 0: Show initial guess only (no fit)
             - 1: Perform fit with single method
             - 2: Two-stage fit (global then local optimization)
 
@@ -1310,10 +1309,9 @@ class File:
         ----------
         model_name : str
             Name of a previously loaded model (use File.load_model first)
-        fit : {0, 1, 2}
+        fit : {1, 2}
             Fitting mode:
 
-            - 0: Show initial guess only (no fit)
             - 1: Perform fit with single method
             - 2: Two-stage fit (global then local optimization)
 
@@ -1701,10 +1699,9 @@ class File:
         ----------
         model_name : str
             Name of the model to fit (loaded via File.load_model)
-        fit : {0, 1, 2}
+        fit : {1, 2}
             Fitting mode:
 
-            - 0: Show initial guess only (no fit)
             - 1: Perform fit with single method
             - 2: Two-stage fit - global minimum search (fit_alg_1)
               followed by local optimization (fit_alg_2)

@@ -555,6 +555,9 @@ def fit_wrapper(
     if mc_settings is None:
         mc_settings = ulmfit.MC()
 
+    if fit_type not in (1, 2):
+        raise ValueError(f"fit_type must be 1 or 2, got {fit_type}")
+
     # construct the lmfit parameters if necessary
     if isinstance(par, lmfit.parameter.Parameters):
         par_ini = copy.deepcopy(par)
