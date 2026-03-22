@@ -543,7 +543,7 @@ class SweepDataset:
                 parameters = {
                     key: value
                     for key, value in config_group.attrs.items()
-                    if key != "all_parameters"
+                    if key not in ("all_parameters", "all_parameter_values")
                 }
                 param_data.append(parameters)
 
@@ -577,7 +577,7 @@ class SweepDataset:
         dict
             Dictionary with keys:
             - parameters: Dict of swept parameter values
-            - all_parameters: Dict of all model parameters (if available)
+            - all_parameter_values: Dict of all model parameter values (if available)
             - clean: Clean data (if load_clean=True)
             - noisy: List of noisy realizations (if load_noisy=True)
 
@@ -603,13 +603,18 @@ class SweepDataset:
             parameters = {
                 key: value
                 for key, value in config_group.attrs.items()
-                if key != "all_parameters"
+                if key not in ("all_parameters", "all_parameter_values")
             }
             result["parameters"] = parameters
 
-            # Get all parameters (JSON)
-            if "all_parameters" in config_group.attrs:
-                result["all_parameters"] = json_loads_attr(
+            # Get all parameter values (JSON)
+            if "all_parameter_values" in config_group.attrs:
+                result["all_parameter_values"] = json_loads_attr(
+                    config_group.attrs["all_parameter_values"]
+                )
+            elif "all_parameters" in config_group.attrs:
+                # Legacy format (pre-rename)
+                result["all_parameter_values"] = json_loads_attr(
                     config_group.attrs["all_parameters"]
                 )
 

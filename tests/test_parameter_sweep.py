@@ -218,6 +218,22 @@ class TestSimulatorParameterSweep:
     """Test Simulator.simulate_parameter_sweep() integration"""
 
     #
+    def _make_1d_model(self):
+        """Create a simple 1D model for sweep testing."""
+
+        project = Project(path="tests", name="test")
+        file = File(
+            parent_project=project,
+            energy=np.arange(0, 20, 0.5),  # Coarse for speed
+            time=np.arange(-10, 100, 5),  # Coarse for speed
+        )
+        file.load_model(
+            model_yaml="test_models_energy.yaml", model_info=["simple_energy"]
+        )
+        assert file.model_active is not None
+        return file.model_active
+
+    #
     def _make_2d_model(self):
         """Create a simple 2D model for sweep testing."""
 
@@ -321,11 +337,11 @@ class TestSimulatorParameterSweep:
             assert "GLP_01_A" in summary.columns
             assert "GLP_01_x0" in summary.columns
 
-            # Per-config access and JSON parsing for all_parameters
+            # Per-config access and JSON parsing for all_parameter_values
             config = dataset.load_config(0)
             assert "parameters" in config
-            assert "all_parameters" in config
-            assert isinstance(config["all_parameters"], dict)
+            assert "all_parameter_values" in config
+            assert isinstance(config["all_parameter_values"], dict)
             assert "clean" in config
             assert config["clean"].shape == (time.size, energy.size)
             assert "noisy" in config
@@ -372,7 +388,7 @@ class TestSimulatorParameterSweep:
                 config = configs["config_000000"]
                 assert isinstance(config, h5py.Group)
                 assert "GLP_01_A" in config.attrs
-                assert "all_parameters" in config.attrs
+                assert "all_parameter_values" in config.attrs
 
                 # Check clean data exists
                 assert "clean" in config
@@ -518,6 +534,100 @@ class TestSimulatorParameterSweep:
                 assert isinstance(metadata, h5py.Group)
                 assert metadata.attrs["detection"] == "photon_counting"
                 assert metadata.attrs["counts_per_delay"] == 5000
+
+    #
+    def test_sweep_1d_model(self):
+        """Test parameter sweep with a 1D model (dim=1)."""
+
+        sweep = ParameterSweep(strategy="grid", seed=42)
+        sweep.add_range("GLP_01_A", [15, 20])
+
+        sim = Simulator(
+            model=self._make_1d_model(),
+            detection="analog",
+            noise_level=0.05,
+            seed=42,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = Path(tmpdir) / "test_sweep_1d.h5"
+
+            sim.simulate_parameter_sweep(
+                parameter_sweep=sweep,
+                N_realizations=2,
+                dim=1,
+                filepath=str(filepath),
+                show_progress=False,
+            )
+
+            assert filepath.exists()
+
+            with h5py.File(filepath, "r") as f:
+                assert "energy" in f
+                assert "metadata" in f
+
+                metadata = f["metadata"]
+                assert isinstance(metadata, h5py.Group)
+                assert metadata.attrs["n_configs"] == 2
+                assert metadata.attrs["n_realizations_per_config"] == 2
+
+                # Metadata must reflect actual dimension, not model capability
+                assert metadata.attrs["dimension"] == 1
+
+                # Check data is 1D (energy axis only)
+                configs = f["parameter_configs"]
+                assert isinstance(configs, h5py.Group)
+                config = configs["config_000000"]
+                assert isinstance(config, h5py.Group)
+                clean = config["clean"]
+                assert isinstance(clean, h5py.Dataset)
+                assert clean.ndim == 1
+
+    #
+    def test_simulate_N_rejects_zero(self):
+        """Test that simulate_N raises ValueError for N < 1."""
+
+        sim = Simulator(
+            model=self._make_2d_model(),
+            detection="analog",
+            noise_level=0.05,
+            seed=42,
+        )
+
+        with pytest.raises(ValueError, match="N must be >= 1"):
+            sim.simulate_N(N=0, dim=2, show_progress=False)
+
+        with pytest.raises(ValueError, match="N must be >= 1"):
+            sim.simulate_N(N=-1, dim=2, show_progress=False)
+
+    #
+    def test_sweep_seed_zero_metadata(self):
+        """Test that seed=0 is stored correctly, not as 'None'."""
+
+        sweep = ParameterSweep(strategy="grid", seed=0)
+        sweep.add_range("GLP_01_A", [15])
+
+        sim = Simulator(
+            model=self._make_2d_model(),
+            detection="analog",
+            noise_level=0.05,
+            seed=42,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = Path(tmpdir) / "test_seed_zero.h5"
+
+            sim.simulate_parameter_sweep(
+                parameter_sweep=sweep,
+                N_realizations=1,
+                filepath=str(filepath),
+                show_progress=False,
+            )
+
+            with h5py.File(filepath, "r") as f:
+                metadata = f["metadata"]
+                assert isinstance(metadata, h5py.Group)
+                assert metadata.attrs["sweep_seed"] == 0
 
 
 if __name__ == "__main__":

@@ -617,7 +617,7 @@ class Simulator:
         Parameters
         ----------
         N : int
-            Number of datasets to generate (number of noise realizations)
+            Number of datasets to generate (must be >= 1)
         dim : {1, 2}, default=2
             Dimensionality:
             - 1: Generate 1D spectra
@@ -729,6 +729,9 @@ class Simulator:
         simulate_2D : Single 2D simulation
         save_data : Save multiple datasets to HDF5
         """
+
+        if N < 1:
+            raise ValueError(f"N must be >= 1, got {N}")
 
         # Generate clean data ONCE
         if show_progress:
@@ -1648,6 +1651,7 @@ class Simulator:
         parameter_sweep: ParameterSweep,
         N_realizations: int,
         *,
+        dim: int = 2,
         filepath: str = "ml_training_data.h5",
         show_progress: bool = True,
     ) -> None:
@@ -1663,6 +1667,10 @@ class Simulator:
             Generator yielding parameter configurations
         N_realizations : int
             Number of noisy realizations per parameter configuration
+        dim : {1, 2}, default=2
+            Dimensionality of simulated data:
+            - 1: Generate 1D spectra
+            - 2: Generate 2D spectra
         filepath : str, default='ml_training_data.h5'
             HDF5 file path for output
         show_progress : bool, default=True
@@ -1739,7 +1747,7 @@ class Simulator:
 
         # Initialize HDF5 file with structure
         self._initialize_sweep_hdf5(
-            filepath, parameter_sweep, N_realizations, n_configs
+            filepath, parameter_sweep, N_realizations, n_configs, dim
         )
 
         # Process each configuration
@@ -1759,7 +1767,7 @@ class Simulator:
             # Generate noisy realizations for this config
             clean, noisy_list, _noise_list = self.simulate_N(
                 N=N_realizations,
-                dim=2,
+                dim=dim,
                 show_progress=False,  # Don't clutter output
             )
 
@@ -1791,6 +1799,7 @@ class Simulator:
         parameter_sweep: ParameterSweep,
         N_realizations: int,
         n_configs: int,
+        dim: int,
     ) -> None:
         """
         Create HDF5 file structure for parameter sweep data.
@@ -1799,14 +1808,14 @@ class Simulator:
         --------------
         /
         ├── energy (dataset)              # Energy axis
-        ├── time (dataset)                # Time axis
+        ├── time (dataset)                # Time axis (empty for 1D)
         ├── metadata/ (group)             # Sweep metadata
         │   ├── attrs: n_configs, n_realizations_per_config, ...
         │   └── attrs: parameter_space (JSON)
         ├── parameter_configs/ (group)    # Parameter configurations
         │   ├── config_000000/ (group)
         │   │   ├── attrs: GLP_01_A, GLP_01_x0, ...
-        │   │   ├── attrs: all_parameters (JSON)
+        │   │   ├── attrs: all_parameter_values (JSON)
         │   │   └── clean (dataset)       # Clean data for this config
         │   ├── config_000001/ (group)
         │   └── ...
@@ -1828,6 +1837,8 @@ class Simulator:
             Number of noisy realizations per config
         n_configs : int
             Total number of parameter configurations
+        dim : {1, 2}
+            Dimensionality of simulated data
         """
 
         with h5py.File(filepath, "w") as f:
@@ -1865,7 +1876,9 @@ class Simulator:
 
             # Parameter sweep settings
             meta.attrs["sweep_strategy"] = parameter_sweep.strategy
-            meta.attrs["sweep_seed"] = parameter_sweep.seed or "None"
+            meta.attrs["sweep_seed"] = (
+                "None" if parameter_sweep.seed is None else parameter_sweep.seed
+            )
 
             # Save parameter space definition as JSON
             param_space = {}
@@ -1878,11 +1891,22 @@ class Simulator:
 
             meta.attrs["parameter_space"] = json.dumps(param_space, indent=2)
 
-            # Dimension info
-            if self.model.time is not None and len(self.model.time) > 0:
-                meta.attrs["dimension"] = 2
-            else:
-                meta.attrs["dimension"] = 1
+            # Save full model definition once (static across all configs)
+            model_params = {}
+            for par_name in self.model.lmfit_pars:
+                par = self.model.lmfit_pars[par_name]
+                model_params[par_name] = {
+                    "value": float(par.value),
+                    "vary": bool(par.vary),
+                    "min": float(par.min) if par.min is not None else None,
+                    "max": float(par.max) if par.max is not None else None,
+                    "expr": par.expr or None,
+                }
+            meta.attrs["model_parameters"] = json.dumps(model_params, indent=2)
+            meta.attrs["model_name"] = self.model.name
+
+            # Dimension matches the actual data written, not model capability
+            meta.attrs["dimension"] = dim
 
     #
     def _append_config_to_hdf5(
@@ -1920,15 +1944,12 @@ class Simulator:
             for par_name, value in param_config.items():
                 config_group.attrs[par_name] = float(value)
 
-            # Save ALL model parameters as JSON (complete state)
-            params_dict = {}
-            for par_name in self.model.lmfit_pars:
-                par = self.model.lmfit_pars[par_name]
-                params_dict[par_name] = {
-                    "value": float(par.value),
-                    "vary": bool(par.vary),
-                }
-            config_group.attrs["all_parameters"] = json.dumps(params_dict)
+            # Save all parameter values for this config (full model state)
+            param_values = {
+                par_name: float(self.model.lmfit_pars[par_name].value)
+                for par_name in self.model.lmfit_pars
+            }
+            config_group.attrs["all_parameter_values"] = json.dumps(param_values)
 
             # Save clean data for this configuration
             config_group.create_dataset("clean", data=clean)
