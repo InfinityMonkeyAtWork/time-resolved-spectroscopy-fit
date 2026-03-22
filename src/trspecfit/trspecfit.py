@@ -1014,9 +1014,9 @@ class File:
         Parameters
         ----------
         time_start : float or int
-            Start point in time (absolute value or index depending on time_type)
+            Start point in time, inclusive (absolute value or index, see time_type)
         time_stop : float or int
-            Stop point in time (absolute value or index depending on time_type)
+            Stop point in time, inclusive (absolute value or index, see time_type)
         time_type : {'abs', 'ind'}, default='abs'
             Type of time specification:
 
@@ -1050,13 +1050,13 @@ class File:
             return
 
         if time_type == "abs":
-            t_ind_start = int(np.searchsorted(self.time, time_start))
-            t_ind_stop = int(np.searchsorted(self.time, time_stop))
+            t_ind_start = int(np.searchsorted(self.time, time_start, side="left"))
+            t_ind_stop = int(np.searchsorted(self.time, time_stop, side="right"))
         elif time_type == "ind":
             t_ind_start = int(time_start)
-            t_ind_stop = int(time_stop)
+            t_ind_stop = int(time_stop + 1)
         self.base_t_ind = [t_ind_start, t_ind_stop]
-        self.base_t_abs = [self.time[t_ind_start], self.time[t_ind_stop]]
+        self.base_t_abs = [self.time[t_ind_start], self.time[t_ind_stop - 1]]
 
         # cut and average
         self.data_base = np.mean(

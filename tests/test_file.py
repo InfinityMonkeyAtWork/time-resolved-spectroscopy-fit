@@ -461,31 +461,31 @@ class TestFitLimitsAndBaseline:
 
     #
     def test_define_baseline_abs(self):
-        """define_baseline should average data in the given time window."""
+        """define_baseline should average data in the given time window (inclusive)."""
 
         file = self._make_file_with_data()
-        # Baseline from t=-10 to t=0 (absolute)
+        # Baseline from t=-10 to t=0 (absolute, both inclusive)
         file.define_baseline(-10, 0, time_type="abs", show_plot=False)
         assert file.data_base is not None
         assert file.energy is not None
         assert file.time is not None
         assert file.data is not None
         assert file.data_base.shape == file.energy.shape
-        # Manually compute expected baseline
-        t_start = int(np.searchsorted(file.time, -10))
-        t_stop = int(np.searchsorted(file.time, 0))
+        # Manually compute expected baseline (side='right' includes stop value)
+        t_start = int(np.searchsorted(file.time, -10, side="left"))
+        t_stop = int(np.searchsorted(file.time, 0, side="right"))
         expected = np.mean(file.data[t_start:t_stop, :], axis=0)
         np.testing.assert_allclose(file.data_base, expected)
 
     #
     def test_define_baseline_ind(self):
-        """define_baseline with time_type='ind' should use indices directly."""
+        """define_baseline with time_type='ind' should use indices directly (incl.)."""
 
         file = self._make_file_with_data()
         file.define_baseline(0, 5, time_type="ind", show_plot=False)
         assert file.data_base is not None
         assert file.data is not None
-        expected = np.mean(file.data[0:5, :], axis=0)
+        expected = np.mean(file.data[0:6, :], axis=0)  # stop index 5 is inclusive
         np.testing.assert_allclose(file.data_base, expected)
 
     #
@@ -645,6 +645,7 @@ class TestFitLimitsSlicing:
         file = self._make_file(energy=energy, time=time)
         file.set_fit_limits(energy_limits=None, show_plot=False)
 
+        assert file.data is not None
         data_cut = file.data[:, file.e_lim[0] : file.e_lim[1]]
         assert data_cut.shape == file.data.shape
 
