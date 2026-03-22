@@ -25,6 +25,13 @@
 - Always pass `show_plot=False` in test calls.
 - Run tests: `pytest -q`
 
+# Renaming / API changes
+
+- When renaming a public parameter, function, or class, grep the **entire repo**
+  — not just `src/`. Example notebooks (`examples/**/*.ipynb`, `examples/**/*.py`),
+  YAML configs, tests, and docs all reference the public API.
+  Use `grep -r` or the Grep tool without a path filter to catch everything.
+
 # Documentation
 
 - Keep `README.md` minimal — overview and quick-start only.

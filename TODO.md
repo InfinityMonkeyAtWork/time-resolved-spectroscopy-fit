@@ -11,7 +11,7 @@
 
 - [ ] **ML-based peak finder**: replace or augment current peak finder with ML approach for better initial guesses.
 - [ ] **Project-level fits**: allow parameters to vary at Project, File, or Static scope (multi-file fitting).
-- [ ] **Configurable `__lnsigma` for emcee**: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling. Allow users to pass these via `MCsettings`.
+- [ ] **Configurable `__lnsigma` for emcee**: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling. Allow users to pass these via `mc_settings`.
 - [ ] **pShirley `1e-6` scaling factor**: hardcoded scale factor in `energy.py` silently affects fit results. Needed to prevent numerical instability, but should be derived from data or made an explicit parameter.
 
 ## Fit results: save & load (for model comparison)
@@ -23,7 +23,7 @@
 ## UX improvements
 
 - [ ] **ROI input for SNR**: `Simulator.snr()` uses full data array for signal power. Allow user to specify a region of interest for the calculation.
-- [ ] **Consistent PlotConfig usage**: audit all plot functions across the codebase to ensure they respect `PlotConfig` settings (e.g. `Simulator.plot_comparison()` ignores `x_type`/`y_type`).
+- [x] **Consistent PlotConfig usage**: audit all plot functions across the codebase to ensure they respect `PlotConfig` settings (e.g. `Simulator.plot_comparison()` ignores `x_type`/`y_type`).
 - [ ] **API ergonomics audit**: rationalize `show_info` fractional verbosity levels, replace 0/1 flags with enums or bools, fix boolean-trap positional args (FBT001/FBT002). One pass to make the API more self-documenting.
 - [ ] **AI-assisted YAML model creation**: use AI to help users build and validate YAML model files — smart autocorrect, suggesting parameter names, and potentially inspecting the data to propose initial guesses or flag mismatches.
 
