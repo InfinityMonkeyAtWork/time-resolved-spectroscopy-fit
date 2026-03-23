@@ -27,7 +27,7 @@ Common parameter names:
 - m: Slope
 - b: Intercept
 - x0: Center position
-- w: Width (standard deviation)
+- SD: Standard deviation (width)
 
 Use descriptive names without underscores.
 
@@ -89,7 +89,7 @@ def pLinear(x: np.ndarray, m: float, b: float) -> np.ndarray:
 
 
 #
-def pGauss(x: np.ndarray, A: float, x0: float, w: float) -> np.ndarray:
+def pGauss(x: np.ndarray, A: float, x0: float, SD: float) -> np.ndarray:
     """
     Gaussian profile.
 
@@ -101,7 +101,7 @@ def pGauss(x: np.ndarray, A: float, x0: float, w: float) -> np.ndarray:
         Peak amplitude.
     x0 : float
         Center position.
-    w : float
+    SD : float
         Standard deviation (width).
 
     Notes
@@ -109,4 +109,4 @@ def pGauss(x: np.ndarray, A: float, x0: float, w: float) -> np.ndarray:
     Primary use cases: fluence averaging, inhomogeneous broadening.
     """
 
-    return A * np.exp(-0.5 * ((x - x0) / w) ** 2)
+    return A * np.exp(-0.5 * ((x - x0) / SD) ** 2)

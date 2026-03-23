@@ -73,6 +73,23 @@ class TestLinFun:
         idx = np.argmin(np.abs(t - 10.0))
         assert result[idx] == pytest.approx(7.0, abs=0.1)
 
+    #
+    def test_zero_slope(self):
+        """m=0 with y0=0 gives all zeros."""
+
+        t = make_time_axis()
+        result = linFun(t, m=0.0, t0=0.0, y0=0.0)
+        np.testing.assert_allclose(result, 0.0, atol=1e-15)
+
+    #
+    def test_monotonic_positive_slope(self):
+        """Positive m: monotonically increasing after t0."""
+
+        t = make_time_axis()
+        result = linFun(t, m=2.0, t0=0.0, y0=0.0)
+        active = result[t >= 0]
+        assert np.all(np.diff(active) >= -1e-12)
+
 
 #
 #
@@ -118,6 +135,23 @@ class TestExpFun:
         assert result[idx_t0] == pytest.approx(-2.0, abs=0.01)
         assert result[-1] == pytest.approx(0.0, abs=1e-3)
 
+    #
+    def test_zero_amplitude(self):
+        """A=0 with y0=0 gives all zeros."""
+
+        t = make_time_axis()
+        result = expFun(t, A=0.0, tau=5.0, t0=0.0, y0=0.0)
+        np.testing.assert_allclose(result, 0.0, atol=1e-15)
+
+    #
+    def test_monotonic_decay(self):
+        """Positive A: monotonically decreasing after t0."""
+
+        t = make_time_axis()
+        result = expFun(t, A=3.0, tau=5.0, t0=0.0, y0=0.0)
+        active = result[t >= 0]
+        assert np.all(np.diff(active) <= 1e-12)
+
 
 #
 #
@@ -147,6 +181,15 @@ class TestSinFun:
         result = sinFun(t, A=1.0, f=0.5, phi=np.pi / 2, t0=0.0, y0=0.0)
         idx_t0 = np.argmin(np.abs(t - 0.0))
         assert result[idx_t0] == pytest.approx(1.0, abs=0.02)
+
+    #
+    def test_zero_amplitude(self):
+        """A=0 should return y0 for t>=t0, 0 for t<t0."""
+
+        t = make_time_axis()
+        result = sinFun(t, A=0.0, f=0.5, phi=0.0, t0=0.0, y0=2.0)
+        np.testing.assert_allclose(result[t < 0], 0.0)
+        np.testing.assert_allclose(result[t >= 0], 2.0)
 
     #
     def test_offset(self):
@@ -206,6 +249,22 @@ class TestSinDivX:
         idx_zero = np.argmin(np.abs(t - t_zero))
         assert result[idx_zero] == pytest.approx(y0, abs=0.01)
 
+    #
+    def test_zero_amplitude(self):
+        """A=0 with y0=0 gives all zeros."""
+
+        t = make_time_axis()
+        result = sinDivX(t, A=0.0, f=0.5, t0=0.0, y0=0.0)
+        np.testing.assert_allclose(result, 0.0, atol=1e-15)
+
+    #
+    def test_asymptotic_value(self):
+        """For t >> t0, sinc → 0 so value → y0."""
+
+        t = np.linspace(-10, 1000, 10000)
+        result = sinDivX(t, A=2.0, f=0.5, t0=0.0, y0=3.0)
+        assert result[-1] == pytest.approx(3.0, abs=0.01)
+
 
 #
 #
@@ -242,6 +301,14 @@ class TestErfFun:
         t = make_time_axis()
         result = erfFun(t, A=2.0, SD=1.0, t0=10.0, y0=0.0)
         assert np.all(np.diff(result) >= -1e-12)
+
+    #
+    def test_zero_amplitude(self):
+        """A=0 with y0=0 gives all zeros."""
+
+        t = make_time_axis()
+        result = erfFun(t, A=0.0, SD=1.0, t0=10.0, y0=0.0)
+        np.testing.assert_allclose(result, 0.0, atol=1e-15)
 
     #
     def test_note_no_hard_t0_cutoff(self):
@@ -292,6 +359,14 @@ class TestSqrtFun:
         result = sqrtFun(t, A=1.0, t0=0.0, y0=0.0)
         active = result[t >= 0]
         assert np.all(np.diff(active) >= -1e-12)
+
+    #
+    def test_zero_amplitude(self):
+        """A=0 with y0=0 gives all zeros."""
+
+        t = make_time_axis()
+        result = sqrtFun(t, A=0.0, t0=0.0, y0=0.0)
+        np.testing.assert_allclose(result, 0.0, atol=1e-15)
 
     #
     def test_offset_y0(self):

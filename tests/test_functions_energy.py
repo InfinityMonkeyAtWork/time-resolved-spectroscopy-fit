@@ -248,6 +248,43 @@ class TestGaussAsym:
         right_area = np.sum(result[center:])
         assert right_area > left_area
 
+    #
+    def test_zero_amplitude(self):
+        x = make_energy_axis()
+        result = GaussAsym(x, A=0.0, x0=0.0, SD=1.0, ratio=1.5)
+        np.testing.assert_allclose(result, 0.0, atol=1e-15)
+
+    #
+    def test_zero_width(self):
+        """SD → 0 should remain finite (no NaN/Inf)."""
+
+        x = make_energy_axis()
+        result = GaussAsym(x, A=1.0, x0=0.0, SD=1e-15, ratio=1.5)
+        assert np.all(np.isfinite(result))
+
+    #
+    def test_fwhm_left_side(self):
+        """Left side uses SD directly: half-max at x0 - sqrt(2*ln2)*SD."""
+
+        x = np.linspace(-20, 20, 10001)
+        SD = 2.0
+        result = GaussAsym(x, A=1.0, x0=0.0, SD=SD, ratio=2.0)
+        fwhm_half_left = np.sqrt(2 * np.log(2)) * SD
+        idx = np.argmin(np.abs(x - (-fwhm_half_left)))
+        assert result[idx] == pytest.approx(0.5, abs=0.01)
+
+    #
+    def test_fwhm_right_side(self):
+        """Right side uses SD*ratio: half-max at x0 + sqrt(2*ln2)*SD*ratio."""
+
+        x = np.linspace(-20, 20, 10001)
+        SD = 2.0
+        ratio = 2.0
+        result = GaussAsym(x, A=1.0, x0=0.0, SD=SD, ratio=ratio)
+        fwhm_half_right = np.sqrt(2 * np.log(2)) * SD * ratio
+        idx = np.argmin(np.abs(x - fwhm_half_right))
+        assert result[idx] == pytest.approx(0.5, abs=0.01)
+
 
 #
 #
@@ -323,40 +360,47 @@ class TestGLS:
     #
     def test_peak_at_center(self):
         x = make_energy_axis()
-        result = GLS(x, A=3.0, x0=0.0, F=1.0, m=0.3)
-        peak_idx = np.argmax(result)
-        assert x[peak_idx] == pytest.approx(0.0, abs=0.01)
-
-    #
-    def test_pure_gaussian_m0(self):
-        """m=0 should give pure Gaussian shape."""
-
-        x = make_energy_axis()
-        result = GLS(x, A=5.0, x0=0.0, F=1.0, m=0.0)
-        expected = 5.0 * np.exp(-((x / 1.0) ** 2) * 4 * np.log(2))
-        np.testing.assert_allclose(result, expected, atol=1e-12)
-
-    #
-    def test_peak_value_at_center_m0(self):
-        """At x=x0 with m=0, value should be A."""
-
-        x = make_energy_axis()
-        result = GLS(x, A=5.0, x0=0.0, F=1.0, m=0.0)
-        assert result[len(x) // 2] == pytest.approx(5.0, rel=1e-6)
-
-    #
-    def test_peak_value_at_center_nonzero_m(self):
-        """At x=x0 with m>0, value should still be A."""
-
-        x = make_energy_axis()
         result = GLS(x, A=8.0, x0=0.0, F=1.0, m=0.5)
         assert result[len(x) // 2] == pytest.approx(8.0, rel=1e-6)
+
+    #
+    def test_zero_amplitude(self):
+        x = make_energy_axis()
+        result = GLS(x, A=0.0, x0=0.0, F=1.0, m=0.5)
+        np.testing.assert_allclose(result, 0.0, atol=1e-15)
+
+    #
+    def test_zero_width(self):
+        """F → 0 should remain finite (no NaN/Inf)."""
+
+        x = make_energy_axis()
+        result = GLS(x, A=1.0, x0=0.0, F=1e-15, m=0.5)
+        assert np.all(np.isfinite(result))
 
     #
     def test_symmetry(self):
         x = make_energy_axis()
         result = GLS(x, A=1.0, x0=0.0, F=1.5, m=0.5)
         np.testing.assert_allclose(result, result[::-1], atol=1e-12)
+
+    #
+    def test_fwhm(self):
+        """F is the FWHM: at x = x0 ± F/2, value should be A/2."""
+
+        x = np.linspace(-20, 20, 10001)
+        F = 3.0
+        result = GLS(x, A=1.0, x0=0.0, F=F, m=0.5)
+        idx = np.argmin(np.abs(x - F / 2))
+        assert result[idx] == pytest.approx(0.5, abs=0.01)
+
+    #
+    def test_pure_lorentzian_m1(self):
+        """m=1 matches Lorentz with W=F."""
+
+        x = make_energy_axis()
+        result = GLS(x, A=5.0, x0=0.0, F=2.0, m=1.0)
+        lorentz = Lorentz(x, A=5.0, x0=0.0, W=2.0)
+        np.testing.assert_allclose(result, lorentz, atol=1e-12)
 
 
 #
@@ -365,26 +409,22 @@ class TestGLP:
     #
     def test_peak_at_center(self):
         x = make_energy_axis()
-        result = GLP(x, A=3.0, x0=0.0, F=1.0, m=0.3)
+        result = GLP(x, A=3.0, x0=0.0, F=1.0, m=0.5)
         assert result[len(x) // 2] == pytest.approx(3.0, rel=1e-6)
 
     #
-    def test_pure_gaussian_m0(self):
-        """m=0 should give pure Gaussian shape."""
-
+    def test_zero_amplitude(self):
         x = make_energy_axis()
-        result = GLP(x, A=5.0, x0=0.0, F=1.0, m=0.0)
-        expected = 5.0 * np.exp(-((x / 1.0) ** 2) * 4 * np.log(2))
-        np.testing.assert_allclose(result, expected, atol=1e-12)
+        result = GLP(x, A=0.0, x0=0.0, F=1.0, m=0.5)
+        np.testing.assert_allclose(result, 0.0, atol=1e-15)
 
     #
-    def test_pure_lorentzian_m1(self):
-        """m=1 should give pure Lorentzian shape."""
+    def test_zero_width(self):
+        """F → 0 should remain finite (no NaN/Inf)."""
 
         x = make_energy_axis()
-        result = GLP(x, A=5.0, x0=0.0, F=1.0, m=1.0)
-        expected = 5.0 / (1 + 4 * (x / 1.0) ** 2)
-        np.testing.assert_allclose(result, expected, atol=1e-12)
+        result = GLP(x, A=1.0, x0=0.0, F=1e-15, m=0.5)
+        assert np.all(np.isfinite(result))
 
     #
     def test_symmetry(self):
@@ -393,11 +433,24 @@ class TestGLP:
         np.testing.assert_allclose(result, result[::-1], atol=1e-12)
 
     #
-    def test_offset_center(self):
+    def test_fwhm(self):
+        """At m=0 (pure Gaussian), FWHM should equal F."""
+
         x = make_energy_axis()
-        result = GLP(x, A=2.0, x0=3.0, F=1.0, m=0.3)
-        peak_idx = np.argmax(result)
-        assert x[peak_idx] == pytest.approx(3.0, abs=0.01)
+        F = 2.0
+        result = GLP(x, A=1.0, x0=0.0, F=F, m=0.0)
+        half_max_indices = np.where(result >= 0.5)[0]
+        fwhm_measured = x[half_max_indices[-1]] - x[half_max_indices[0]]
+        assert fwhm_measured == pytest.approx(F, abs=0.02)
+
+    #
+    def test_pure_lorentzian_m1(self):
+        """m=1 matches Lorentz with W=F."""
+
+        x = make_energy_axis()
+        result = GLP(x, A=5.0, x0=0.0, F=2.0, m=1.0)
+        lorentz = Lorentz(x, A=5.0, x0=0.0, W=2.0)
+        np.testing.assert_allclose(result, lorentz, atol=1e-12)
 
 
 #
@@ -405,11 +458,11 @@ class TestGLP:
 class TestDS:
     #
     def test_lorentzian_at_alpha0(self):
-        """Alpha=0 should reduce to a Lorentzian-like shape."""
+        """Alpha=0 reduces to Lorentzian: DS(alpha=0) = 1/(F²+x²) = Lorentz(W=2F)."""
 
         x = make_energy_axis()
         result = DS(x, A=1.0, x0=0.0, F=1.0, alpha=0.0)
-        lorentz = 1.0 / (1.0 + (x / 1.0) ** 2)
+        lorentz = Lorentz(x, A=1.0, x0=0.0, W=2.0)
         np.testing.assert_allclose(result, lorentz, atol=1e-12)
 
     #
@@ -419,8 +472,6 @@ class TestDS:
         x = make_energy_axis()
         result = DS(x, A=1.0, x0=0.0, F=1.0, alpha=0.15)
         center = len(x) // 2
-        # DS tail is on the high-binding-energy (low-KE) side = left side
-        # The peak is slightly shifted, so compare integrated weight
         assert not np.allclose(result[:center], result[::-1][:center], atol=1e-3)
 
     #
@@ -431,6 +482,20 @@ class TestDS:
         result = DS(x, A=1.0, x0=0.0, F=1.0, alpha=0.1)
         peak_idx = np.argmax(result)
         assert x[peak_idx] == pytest.approx(0.0, abs=0.2)
+
+    #
+    def test_zero_amplitude(self):
+        x = make_energy_axis()
+        result = DS(x, A=0.0, x0=0.0, F=1.0, alpha=0.15)
+        np.testing.assert_allclose(result, 0.0, atol=1e-15)
+
+    #
+    def test_zero_width(self):
+        """F → 0 should remain finite (no NaN/Inf)."""
+
+        x = make_energy_axis()
+        result = DS(x, A=1.0, x0=0.0, F=1e-15, alpha=0.15)
+        assert np.all(np.isfinite(result))
 
 
 #

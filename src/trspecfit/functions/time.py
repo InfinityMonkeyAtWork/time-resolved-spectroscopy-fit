@@ -59,7 +59,6 @@ To add a new dynamics or convolution function:
 """
 
 import numpy as np
-from scipy.signal import square
 from scipy.special import erf, wofz
 
 
@@ -296,6 +295,7 @@ def gaussCONV(x: np.ndarray, SD: float) -> np.ndarray:
     return np.exp(-1 / 2 * (x / SD) ** 2)
 
 
+#
 def gaussCONV_kernel_width() -> int:
     """
     Kernel width multiplier for Gaussian convolution.
@@ -327,6 +327,7 @@ def lorentzCONV(x: np.ndarray, W: float) -> np.ndarray:
     return 1 / (1 + (2 * x / W) ** 2)
 
 
+#
 def lorentzCONV_kernel_width() -> int:
     """Kernel width multiplier for Lorentzian (10×W)."""
 
@@ -357,6 +358,7 @@ def voigtCONV(x: np.ndarray, SD: float, W: float) -> np.ndarray:
     return np.asarray(voigt / np.max(voigt))
 
 
+#
 def voigtCONV_kernel_width() -> int:
     """Kernel width multiplier for Voigt (12)."""
 
@@ -386,6 +388,7 @@ def expSymCONV(x: np.ndarray, tau: float) -> np.ndarray:
     return np.asarray(np.exp(-1 / tau * np.abs(x)))
 
 
+#
 def expSymCONV_kernel_width() -> int:
     """Kernel width multiplier for symmetric exponential (6×tau)."""
 
@@ -413,6 +416,7 @@ def expDecayCONV(x: np.ndarray, tau: float) -> np.ndarray:
     return np.where(x < 0, 0.0, expSymCONV(x, tau))
 
 
+#
 def expDecayCONV_kernel_width() -> int:
     """Kernel width multiplier for decay exponential (6×tau)."""
 
@@ -440,6 +444,7 @@ def expRiseCONV(x: np.ndarray, tau: float) -> np.ndarray:
     return np.where(x > 0, 0.0, expSymCONV(x, tau))
 
 
+#
 def expRiseCONV_kernel_width() -> int:
     """Kernel width multiplier for rise exponential (6×tau)."""
 
@@ -464,9 +469,10 @@ def boxCONV(x: np.ndarray, width: float) -> np.ndarray:
         Rectangular function: 1 inside width, 0 outside (with smooth edges)
     """
 
-    return np.asarray((square(x - np.min(x) / 2, duty=width / (2 * np.pi)) + 1) / 2)
+    return np.where(np.abs(x) <= width / 2, 1.0, 0.0)
 
 
+#
 def boxCONV_kernel_width() -> int:
     """Kernel width multiplier for box (1×width)."""
 
