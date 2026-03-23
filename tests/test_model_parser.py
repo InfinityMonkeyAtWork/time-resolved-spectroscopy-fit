@@ -341,7 +341,7 @@ class Test2DModelParsing:
         assert model.components[2].par_dict["x0"] == [84.5, True, 82, 88]
         # x0 is the time-dependent parameter
         td_par_model = model.components[2].pars[1].t_model
-        assert td_par_model is not None
+        assert td_par_model is not None  # type guard
         assert td_par_model.components[0].comp_name == "gaussCONV"
         assert td_par_model.components[0].par_dict["SD"] == [5.0e-2, True, 0, 1]
         assert td_par_model.components[1].fct_str == "expFun"
@@ -444,11 +444,11 @@ class TestProfileParsing:
 
         # target parameter should have p_vary set
         ci, pi = model.find_par_by_name("GLP_01_A")
-        assert ci is not None
-        assert pi is not None
+        assert ci is not None  # type guard
+        assert pi is not None  # type guard
         par = model.components[ci].pars[pi]
         assert par.p_vary is True
-        assert par.p_model is not None
+        assert par.p_model is not None  # type guard
 
         # profile model should be a Profile with correct components
         p_mod = par.p_model
@@ -470,14 +470,14 @@ class TestProfileParsing:
 
         # target parameter should have p_vary set
         ci, pi = model.find_par_by_name("GLP_01_x0")
-        assert ci is not None
-        assert pi is not None
+        assert ci is not None  # type guard
+        assert pi is not None  # type guard
         par = model.components[ci].pars[pi]
         assert par.p_vary is True
 
         # profile model components
         p_mod = par.p_model
-        assert p_mod is not None
+        assert p_mod is not None  # type guard
         assert len(p_mod.components) == 1
         assert p_mod.components[0].fct_str == "pLinear"
         assert p_mod.components[0].comp_name == "pLinear_01"
@@ -495,12 +495,12 @@ class TestProfileParsing:
         model, file = self._load_profile_model(["profile_pExpDecay"], "GLP_01_A")
 
         ci, pi = model.find_par_by_name("GLP_01_A")
-        assert ci is not None
-        assert pi is not None
+        assert ci is not None  # type guard
+        assert pi is not None  # type guard
         par = model.components[ci].pars[pi]
         p_mod = par.p_model
-        assert p_mod is not None
-        assert p_mod.aux_axis is not None
+        assert p_mod is not None  # type guard
+        assert p_mod.aux_axis is not None  # type guard
         np.testing.assert_array_equal(p_mod.aux_axis, file.aux_axis)
 
     #
@@ -558,7 +558,7 @@ class TestYAMLValidationErrors:
             model_info=["wrong_order"],
         )
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
         # Values should be correctly assigned despite m/F swap in YAML
         assert model.components[1].par_dict["m"] == [0.3, True, 0, 1]
         assert model.components[1].par_dict["F"] == [1.0, True, 0.75, 2.5]

@@ -324,13 +324,13 @@ def lorentzCONV(x: np.ndarray, W: float) -> np.ndarray:
         Lorentzian kernel (unnormalized)
     """
 
-    return 1 / (1 + (x / W / 2) ** 2)
+    return 1 / (1 + (2 * x / W) ** 2)
 
 
 def lorentzCONV_kernel_width() -> int:
-    """Kernel width multiplier for Lorentzian (12×W)."""
+    """Kernel width multiplier for Lorentzian (10×W)."""
 
-    return 12
+    return 10
 
 
 #

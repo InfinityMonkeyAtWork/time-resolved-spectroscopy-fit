@@ -289,8 +289,11 @@ def GLS(x: np.ndarray, A: float, x0: float, F: float, m: float) -> np.ndarray:
     """
 
     return np.asarray(
-        A * (1 - m) * np.exp(-(((x - x0) / F) ** 2) * 4 * np.log(2))
-        + m / (1 + 4 * ((x - x0) / F) ** 2)
+        A
+        * (
+            (1 - m) * np.exp(-(((x - x0) / F) ** 2) * 4 * np.log(2))
+            + m / (1 + 4 * ((x - x0) / F) ** 2)
+        )
     )
 
 

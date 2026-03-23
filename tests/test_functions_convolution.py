@@ -94,14 +94,13 @@ class TestLorentzCONV:
 
     #
     def test_half_max_at_half_width(self):
-        """At x = ±W/2, value should be 0.5 (by FWHM definition)."""
+        """At x = ±W/2, value should be 0.5 (FWHM definition)."""
 
         x_sym = make_kernel_axis()
         W = 2.0
         result = lorentzCONV(x_sym, W=W)
-        idx = np.argmin(np.abs(x_sym - W))
-        expected = 1 / (1 + (W / W / 2) ** 2)
-        assert result[idx] == pytest.approx(expected, abs=1e-3)
+        idx = np.argmin(np.abs(x_sym - W / 2))
+        assert result[idx] == pytest.approx(0.5, abs=1e-3)
 
     #
     def test_kernel_width_positive(self):

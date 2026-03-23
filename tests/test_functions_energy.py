@@ -345,6 +345,14 @@ class TestGLS:
         assert result[len(x) // 2] == pytest.approx(5.0, rel=1e-6)
 
     #
+    def test_peak_value_at_center_nonzero_m(self):
+        """At x=x0 with m>0, value should still be A."""
+
+        x = make_energy_axis()
+        result = GLS(x, A=8.0, x0=0.0, F=1.0, m=0.5)
+        assert result[len(x) // 2] == pytest.approx(8.0, rel=1e-6)
+
+    #
     def test_symmetry(self):
         x = make_energy_axis()
         result = GLS(x, A=1.0, x0=0.0, F=1.5, m=0.5)
@@ -423,6 +431,105 @@ class TestDS:
         result = DS(x, A=1.0, x0=0.0, F=1.0, alpha=0.1)
         peak_idx = np.argmax(result)
         assert x[peak_idx] == pytest.approx(0.0, abs=0.2)
+
+
+#
+#
+class TestZeroAmplitude:
+    """Peak functions with A=0 should produce all zeros."""
+
+    #
+    def test_glp_zero_amplitude(self):
+        """GLP(A=0) should return all zeros."""
+
+        x = make_energy_axis()
+        result = GLP(x, A=0.0, x0=0.0, F=1.0, m=0.3)
+        np.testing.assert_array_equal(result, 0.0)
+
+    #
+    def test_gauss_zero_amplitude(self):
+        """Gauss(A=0) should return all zeros."""
+
+        x = make_energy_axis()
+        result = Gauss(x, A=0.0, x0=0.0, SD=1.0)
+        np.testing.assert_array_equal(result, 0.0)
+
+    #
+    def test_lorentz_zero_amplitude(self):
+        """Lorentz(A=0) should return all zeros."""
+
+        x = make_energy_axis()
+        result = Lorentz(x, A=0.0, x0=0.0, W=1.0)
+        np.testing.assert_array_equal(result, 0.0)
+
+    #
+    def test_gls_zero_amplitude(self):
+        """GLS(A=0) should return all zeros."""
+
+        x = make_energy_axis()
+        result = GLS(x, A=0.0, x0=0.0, F=1.0, m=0.3)
+        np.testing.assert_array_equal(result, 0.0)
+
+    #
+    def test_ds_zero_amplitude(self):
+        """DS(A=0) should return all zeros."""
+
+        x = make_energy_axis()
+        result = DS(x, A=0.0, x0=0.0, F=1.0, alpha=0.1)
+        np.testing.assert_array_equal(result, 0.0)
+
+
+#
+#
+class TestZeroWidth:
+    """Peak functions with F=0 produce NaN at center due to 0/0.
+
+    These tests document the current behavior. If a guard is added
+    later (e.g. returning a delta-like spike or raising), update these.
+    """
+
+    #
+    def test_glp_zero_width_nan_at_center(self):
+        """GLP(F=0) produces NaN at x=x0."""
+
+        x = make_energy_axis()
+        with np.errstate(divide="ignore", invalid="ignore"):
+            result = GLP(x, A=10.0, x0=0.0, F=0.0, m=0.3)
+        center = len(x) // 2
+        assert np.isnan(result[center])
+        # All other points should be zero (peak collapses)
+        off_center = np.delete(result, center)
+        assert np.all(off_center == 0.0)
+
+    #
+    def test_gauss_zero_width_nan_at_center(self):
+        """Gauss(SD=0) produces NaN at x=x0."""
+
+        x = make_energy_axis()
+        with np.errstate(divide="ignore", invalid="ignore"):
+            result = Gauss(x, A=10.0, x0=0.0, SD=0.0)
+        center = len(x) // 2
+        assert np.isnan(result[center])
+
+    #
+    def test_lorentz_zero_width_nan_at_center(self):
+        """Lorentz(W=0) produces NaN at x=x0."""
+
+        x = make_energy_axis()
+        with np.errstate(divide="ignore", invalid="ignore"):
+            result = Lorentz(x, A=10.0, x0=0.0, W=0.0)
+        center = len(x) // 2
+        assert np.isnan(result[center])
+
+    #
+    def test_gls_zero_width_nan_at_center(self):
+        """GLS(F=0) produces NaN at x=x0."""
+
+        x = make_energy_axis()
+        with np.errstate(divide="ignore", invalid="ignore"):
+            result = GLS(x, A=10.0, x0=0.0, F=0.0, m=0.3)
+        center = len(x) // 2
+        assert np.isnan(result[center])
 
 
 if __name__ == "__main__":

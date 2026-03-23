@@ -23,6 +23,15 @@
   `_make_2d_model`, etc.). Name helpers by intent, not lifecycle.
 - Test YAML files live in `tests/` (e.g. `test_models_energy.yaml`).
 - Always pass `show_plot=False` in test calls.
+- **Use the public API** (`Project`, `File.load_model`, `File.add_time_dependence`,
+  `File.add_par_profile`, `File.set_fit_limits`, etc.) in tests — not internal
+  constructors or private methods. Tests that bypass the public API can mask real
+  bugs by skipping validation, axis propagation, or setup steps that users hit.
+  Exception: pure-math unit tests (e.g. testing a numerical function directly) and
+  tests that intentionally verify internal invariants.
+- When `assert x is not None` narrows an `X | None` type so subsequent code
+  can access attributes, add a `# type guard` comment. Leave it unlabeled
+  when the assertion is the actual test (e.g. verifying a method populates a field).
 - Run tests: `pytest -q`
 
 # Renaming / API changes

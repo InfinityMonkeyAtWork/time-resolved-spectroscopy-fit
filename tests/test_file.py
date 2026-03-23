@@ -40,7 +40,7 @@ class TestModelManagement:
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
         )
-        assert file.model_active is not None
+        assert file.model_active is not None  # type guard
         assert file.model_active.name == "simple_energy"
         assert len(file.models) == 1
         assert file.models[0] is file.model_active
@@ -59,7 +59,7 @@ class TestModelManagement:
             model_info=["single_glp"],
         )
         assert len(file.models) == 2
-        assert file.model_active is not None
+        assert file.model_active is not None  # type guard
         assert file.model_active.name == "single_glp"
 
     #
@@ -84,7 +84,7 @@ class TestModelManagement:
             par_name="GLP_01_A",
             model_type="dynamics",
         )
-        assert result is not None
+        assert result is not None  # type guard
         assert result.name == "GLP_01_A"
         # dynamics should not be added to file.models
         assert len(file.models) == 0
@@ -100,7 +100,7 @@ class TestModelManagement:
             par_name="GLP_01_A",
             model_type="profile",
         )
-        assert result is not None
+        assert result is not None  # type guard
         assert result.name == "GLP_01_A"
         assert len(file.models) == 0
 
@@ -174,7 +174,7 @@ class TestModelManagement:
             model_info=["simple_energy"],
         )
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
         np.testing.assert_array_equal(model.energy, file.energy)
         np.testing.assert_array_equal(model.time, file.time)
         np.testing.assert_array_equal(model.aux_axis, file.aux_axis)
@@ -193,7 +193,7 @@ class TestModelManagement:
             model_info=["single_glp"],
         )
         model = file.select_model("simple_energy")
-        assert model is not None
+        assert model is not None  # type guard
         assert model.name == "simple_energy"
 
     #
@@ -210,10 +210,10 @@ class TestModelManagement:
             model_info=["single_glp"],
         )
         model = file.select_model(0)
-        assert model is not None
+        assert model is not None  # type guard
         assert model.name == "simple_energy"
         model = file.select_model(1)
-        assert model is not None
+        assert model is not None  # type guard
         assert model.name == "single_glp"
 
     #
@@ -254,7 +254,7 @@ class TestModelManagement:
             model_info=["simple_energy"],
         )
         model = file.select_model(["simple_energy"])
-        assert model is not None
+        assert model is not None  # type guard
         assert model.name == "simple_energy"
 
     #
@@ -327,9 +327,11 @@ class TestModelManagement:
             model_yaml="test_models_energy.yaml",
             model_info=["simple_energy"],
         )
-        file.delete_model("nonexistent")
+        with pytest.warns(UserWarning, match="not found"):
+            file.delete_model("nonexistent")
         assert len(file.models) == 1
-        file.delete_model(99)
+        with pytest.warns(UserWarning, match="out of range"):
+            file.delete_model(99)
         assert len(file.models) == 1
 
     #
@@ -385,8 +387,8 @@ class TestFitLimitsAndBaseline:
         file = self._make_file_with_data()
         file.set_fit_limits([82, 88], show_plot=False)
         assert file.e_lim_abs == [82, 88]
-        assert file.e_lim is not None
-        assert file.energy is not None
+        assert file.e_lim is not None  # type guard
+        assert file.energy is not None  # type guard
         # Slicing with e_lim should give a smaller array
         e_cut = file.energy[file.e_lim[0] : file.e_lim[1]]
         assert len(e_cut) < len(file.energy)
@@ -401,8 +403,8 @@ class TestFitLimitsAndBaseline:
         file.set_fit_limits([82, 88], time_limits=[0, 50], show_plot=False)
         assert file.e_lim_abs == [82, 88]
         assert file.t_lim_abs == [0, 50]
-        assert file.t_lim is not None
-        assert file.time is not None
+        assert file.t_lim is not None  # type guard
+        assert file.time is not None  # type guard
         t_cut = file.time[file.t_lim[0] : file.t_lim[1]]
         assert np.min(t_cut) >= 0
         assert np.max(t_cut) <= 50
@@ -431,8 +433,8 @@ class TestFitLimitsAndBaseline:
         file.dim = 2
         file.set_fit_limits([82, 88], show_plot=False)
         assert file.e_lim_abs == [82, 88]
-        assert file.e_lim is not None
-        assert file.energy is not None
+        assert file.e_lim is not None  # type guard
+        assert file.energy is not None  # type guard
         # Slicing with e_lim should give a smaller array within bounds
         e_cut = file.energy[file.e_lim[0] : file.e_lim[1]]
         assert len(e_cut) < len(file.energy)
@@ -466,10 +468,10 @@ class TestFitLimitsAndBaseline:
         file = self._make_file_with_data()
         # Baseline from t=-10 to t=0 (absolute, both inclusive)
         file.define_baseline(-10, 0, time_type="abs", show_plot=False)
-        assert file.data_base is not None
-        assert file.energy is not None
-        assert file.time is not None
-        assert file.data is not None
+        assert file.data_base is not None  # type guard
+        assert file.energy is not None  # type guard
+        assert file.time is not None  # type guard
+        assert file.data is not None  # type guard
         assert file.data_base.shape == file.energy.shape
         # Manually compute expected baseline (side='right' includes stop value)
         t_start = int(np.searchsorted(file.time, -10, side="left"))
@@ -483,8 +485,8 @@ class TestFitLimitsAndBaseline:
 
         file = self._make_file_with_data()
         file.define_baseline(0, 5, time_type="ind", show_plot=False)
-        assert file.data_base is not None
-        assert file.data is not None
+        assert file.data_base is not None  # type guard
+        assert file.data is not None  # type guard
         expected = np.mean(file.data[0:6, :], axis=0)  # stop index 5 is inclusive
         np.testing.assert_allclose(file.data_base, expected)
 
@@ -494,8 +496,8 @@ class TestFitLimitsAndBaseline:
 
         file = self._make_file_with_data()
         file.define_baseline(-5, 5, time_type="abs", show_plot=False)
-        assert file.base_t_ind is not None
-        assert file.base_t_abs is not None
+        assert file.base_t_ind is not None  # type guard
+        assert file.base_t_abs is not None  # type guard
         assert len(file.base_t_ind) == 2
         assert len(file.base_t_abs) == 2
 
@@ -645,86 +647,256 @@ class TestFitLimitsSlicing:
         file = self._make_file(energy=energy, time=time)
         file.set_fit_limits(energy_limits=None, show_plot=False)
 
-        assert file.data is not None
+        assert file.data is not None  # type guard
         data_cut = file.data[:, file.e_lim[0] : file.e_lim[1]]
         assert data_cut.shape == file.data.shape
 
-    # -- residual function slicing (fitlib) --
+    # -- residual function slicing (fitlib.residual_fun) --
 
     #
-    def test_residual_no_limits_full_shape(self):
-        """Residual with no limits should return array matching data shape."""
+    def _make_file_with_model(
+        self, *, energy, time=None, energy_limits=None, time_limits=None
+    ):
+        """Helper: File with data, loaded model, and fit limits set."""
 
-        data_1d = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        fit_1d = np.array([1.1, 2.1, 3.1, 4.1, 5.1])
-        # Directly test the slicing logic: with empty e_lim, full array used
-        residual = data_1d - fit_1d
-        assert residual.shape == data_1d.shape
+        project = Project(path="tests")
+        file = File(parent_project=project)
+        file.energy = energy
+        if time is not None:
+            file.time = time
+            file.data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
+        else:
+            file.data = np.random.default_rng(42).normal(size=len(energy))
+        file.load_model(
+            model_yaml="test_models_energy.yaml",
+            model_info=["single_glp"],
+        )
+        if time is not None:
+            file.add_time_dependence(
+                model_yaml="test_models_time.yaml",
+                model_info=["MonoExpPos"],
+                par_name="GLP_01_A",
+            )
+        file.set_fit_limits(
+            energy_limits=energy_limits,
+            time_limits=time_limits,
+            show_plot=False,
+        )
+        return file
 
-        data_2d = np.ones((10, 20))
-        fit_2d = np.ones((10, 20)) * 1.1
-        residual_2d = data_2d - fit_2d
-        assert residual_2d.shape == data_2d.shape
+    #
+    def _call_residual(self, file, *, res_type="res"):
+        """Call fitlib.residual_fun using the same const/args as the fit pipeline."""
+
+        from trspecfit import fitlib
+
+        model = file.model_active
+        dim = 1 if file.time is None else (model.dim if model.dim else 1)
+        const = (
+            file.energy,
+            file.data,
+            file.p.spec_lib,
+            file.p.spec_fun_str,
+            0,
+            file.e_lim,
+            file.t_lim if file.time is not None else [],
+        )
+        args = (model, dim)
+        return fitlib.residual_fun(
+            model.lmfit_pars,
+            *const,
+            res_type=res_type,
+            args=args,
+        )
+
+    #
+    def test_residual_no_limits_full_shape_1d(self):
+        """residual_fun with no limits should return array matching 1D data."""
+
+        energy = np.linspace(80, 90, 201)
+        file = self._make_file_with_model(energy=energy)
+
+        residual = self._call_residual(file)
+        assert residual.shape == file.data.shape
+
+    #
+    def test_residual_no_limits_full_shape_2d(self):
+        """residual_fun with no limits should return array matching 2D data."""
+
+        energy = np.linspace(80, 90, 201)
+        time = np.linspace(-10, 100, 111)
+        file = self._make_file_with_model(energy=energy, time=time)
+
+        residual = self._call_residual(file)
+        assert residual.shape == file.data.shape
 
     #
     def test_residual_e_lim_slicing_1d(self):
         """e_lim slicing in 1D residual should select correct subarray."""
 
-        data = np.arange(10, dtype=float)
-        fit = np.zeros(10)
-        e_lim = [2, 7]  # [start, stop) → indices 2,3,4,5,6
+        energy = np.linspace(80, 90, 201)
+        file = self._make_file_with_model(energy=energy, energy_limits=[82, 88])
 
-        residual = data[e_lim[0] : e_lim[1]] - fit[e_lim[0] : e_lim[1]]
-        assert len(residual) == 5
-        np.testing.assert_array_equal(residual, [2.0, 3.0, 4.0, 5.0, 6.0])
+        n_e_limited = file.e_lim[1] - file.e_lim[0]
+        assert n_e_limited < len(energy)
+
+        residual = self._call_residual(file)
+        assert residual.shape == (n_e_limited,)
 
     #
     def test_residual_e_lim_slicing_2d(self):
         """e_lim slicing in 2D residual should select correct energy columns."""
 
-        data = np.ones((5, 10))
-        fit = np.zeros((5, 10))
-        e_lim = [2, 7]  # [start, stop) → 5 columns
+        energy = np.linspace(80, 90, 201)
+        time = np.linspace(-10, 100, 111)
+        file = self._make_file_with_model(
+            energy=energy,
+            time=time,
+            energy_limits=[82, 88],
+        )
 
-        residual = data[:, e_lim[0] : e_lim[1]] - fit[:, e_lim[0] : e_lim[1]]
-        assert residual.shape == (5, 5)
+        n_e = file.e_lim[1] - file.e_lim[0]
+        n_t = len(time)
+        residual = self._call_residual(file)
+        assert residual.shape == (n_t, n_e)
 
     #
     def test_residual_t_lim_slicing_2d(self):
         """t_lim slicing in 2D residual should select correct time rows."""
 
-        data = np.ones((10, 20))
-        fit = np.zeros((10, 20))
-        t_lim = [2, 8]
+        energy = np.linspace(80, 90, 201)
+        time = np.linspace(-10, 100, 111)
+        file = self._make_file_with_model(
+            energy=energy,
+            time=time,
+            time_limits=[0, 50],
+        )
 
-        residual = data[t_lim[0] : t_lim[1], :] - fit[t_lim[0] : t_lim[1], :]
-        assert residual.shape == (6, 20)
+        n_e = len(energy)
+        n_t = file.t_lim[1] - file.t_lim[0]
+        residual = self._call_residual(file)
+        assert residual.shape == (n_t, n_e)
 
     #
     def test_residual_both_limits_2d(self):
         """Combined e_lim and t_lim should select correct sub-region."""
 
-        data = np.ones((10, 20))
-        fit = np.zeros((10, 20))
-        e_lim = [2, 17]  # [start, stop) → 15 columns
-        t_lim = [1, 7]  # [start, stop) → 6 rows
-
-        residual = (
-            data[t_lim[0] : t_lim[1], e_lim[0] : e_lim[1]]
-            - fit[t_lim[0] : t_lim[1], e_lim[0] : e_lim[1]]
+        energy = np.linspace(80, 90, 201)
+        time = np.linspace(-10, 100, 111)
+        file = self._make_file_with_model(
+            energy=energy,
+            time=time,
+            energy_limits=[82, 88],
+            time_limits=[0, 50],
         )
-        assert residual.shape == (6, 15)
+
+        n_e = file.e_lim[1] - file.e_lim[0]
+        n_t = file.t_lim[1] - file.t_lim[0]
+        residual = self._call_residual(file)
+        assert residual.shape == (n_t, n_e)
 
     #
     def test_residual_e_lim_full_range(self):
-        """e_lim spanning full array must not produce empty array."""
+        """e_lim spanning full energy must produce full-length residual."""
 
-        data = np.arange(10, dtype=float)
-        fit = np.zeros(10)
-        e_lim = [0, 10]  # [start, stop) — full array
+        energy = np.linspace(80, 90, 201)
+        file = self._make_file_with_model(energy=energy)
 
-        residual = data[e_lim[0] : e_lim[1]] - fit[e_lim[0] : e_lim[1]]
-        assert len(residual) == 10
+        residual = self._call_residual(file)
+        assert len(residual) == len(energy)
+
+
+#
+#
+class TestFitLimitsOutOfRange:
+    """Test set_fit_limits when limits fall partially or entirely outside data range."""
+
+    #
+    def _make_file(self, *, energy, time=None):
+        """Create a File with data on the given axes."""
+
+        project = Project(path="tests")
+        file = File(parent_project=project)
+        file.energy = energy
+        if time is not None:
+            file.time = time
+            file.data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
+        else:
+            file.data = np.random.default_rng(42).normal(size=len(energy))
+        return file
+
+    #
+    def test_energy_limits_entirely_below_range(self):
+        """Limits entirely below energy axis produce zero-length e_lim."""
+
+        energy = np.linspace(80, 90, 201)
+        file = self._make_file(energy=energy)
+        file.set_fit_limits([70, 75], show_plot=False)
+
+        n_selected = file.e_lim[1] - file.e_lim[0]
+        assert n_selected == 0
+
+    #
+    def test_energy_limits_entirely_above_range(self):
+        """Limits entirely above energy axis produce zero-length e_lim."""
+
+        energy = np.linspace(80, 90, 201)
+        file = self._make_file(energy=energy)
+        file.set_fit_limits([95, 100], show_plot=False)
+
+        n_selected = file.e_lim[1] - file.e_lim[0]
+        assert n_selected == 0
+
+    #
+    def test_energy_limits_partially_below(self):
+        """Limits extending below axis should clip to available data."""
+
+        energy = np.linspace(80, 90, 201)
+        file = self._make_file(energy=energy)
+        file.set_fit_limits([75, 85], show_plot=False)
+
+        e_cut = energy[file.e_lim[0] : file.e_lim[1]]
+        assert len(e_cut) > 0
+        assert np.min(e_cut) >= 80.0
+        assert np.max(e_cut) <= 85.0
+
+    #
+    def test_energy_limits_partially_above(self):
+        """Limits extending above axis should clip to available data."""
+
+        energy = np.linspace(80, 90, 201)
+        file = self._make_file(energy=energy)
+        file.set_fit_limits([85, 95], show_plot=False)
+
+        e_cut = energy[file.e_lim[0] : file.e_lim[1]]
+        assert len(e_cut) > 0
+        assert np.min(e_cut) >= 85.0
+        assert np.max(e_cut) <= 90.0
+
+    #
+    def test_time_limits_entirely_outside(self):
+        """Time limits entirely outside time axis produce zero-length t_lim."""
+
+        energy = np.linspace(80, 90, 201)
+        time = np.linspace(-10, 100, 111)
+        file = self._make_file(energy=energy, time=time)
+        file.set_fit_limits([80, 90], time_limits=[200, 300], show_plot=False)
+
+        n_selected = file.t_lim[1] - file.t_lim[0]
+        assert n_selected == 0
+
+    #
+    def test_descending_energy_limits_outside(self):
+        """Out-of-range limits on descending energy should also clip correctly."""
+
+        energy = np.linspace(90, 80, 201)
+        file = self._make_file(energy=energy)
+        file.set_fit_limits([75, 85], show_plot=False)
+
+        e_cut = energy[file.e_lim[0] : file.e_lim[1]]
+        assert len(e_cut) > 0
+        assert np.min(e_cut) >= 80.0
+        assert np.max(e_cut) <= 85.0
 
 
 if __name__ == "__main__":

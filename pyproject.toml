@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trspecfit"
-version = "0.5.8"
+version = "0.5.9"
 authors = [
     {name = "Johannes Mahl", email = "johannes.a.mahl@gmail.com"},
 ]
@@ -84,6 +84,7 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 filterwarnings = [
     "ignore:FigureCanvasAgg is non-interactive:UserWarning",
+    "ignore:invalid value encountered in scalar divide:RuntimeWarning:lmfit",
 ]
 
 [tool.ruff]

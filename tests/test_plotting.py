@@ -128,7 +128,10 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
 
-        plot_1D(y_list, x=x, config=config, save_img=-2)
+        plot_1D(y_list, x=x, config=config, save_img=0)
+        ax = plt.gca()
+        assert len(ax.get_lines()) >= 2
+        assert ax.get_xlabel() == "x axis"  # default label
         plt.close("all")
 
     #
@@ -139,7 +142,10 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig(x_label="Energy (eV)", x_dir="rev", dpi_plot=150)
 
-        plot_1D(y_list, x=x, config=config, save_img=-2)
+        plot_1D(y_list, x=x, config=config, save_img=0)
+        ax = plt.gca()
+        assert ax.get_xlabel() == "Energy (eV)"
+        assert ax.xaxis_inverted()
         plt.close("all")
 
     #
@@ -156,8 +162,11 @@ class TestPlot1D:
             config=config,
             x_label="Override Label",
             x_dir="rev",
-            save_img=-2,
+            save_img=0,
         )
+        ax = plt.gca()
+        assert ax.get_xlabel() == "Override Label"
+        assert ax.xaxis_inverted()
         plt.close("all")
 
     #
@@ -178,7 +187,9 @@ class TestPlot1D:
         y_list = [np.sin(x)]
         config = PlotConfig()
 
-        plot_1D(y_list, x=x, config=config, save_img=-2)
+        plot_1D(y_list, x=x, config=config, save_img=0)
+        ax = plt.gca()
+        assert len(ax.get_lines()) >= 1
         plt.close("all")
 
     #
@@ -202,7 +213,9 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
 
-        plot_1D(y_list, x=x, config=config, x_dir="rev", save_img=-2)
+        plot_1D(y_list, x=x, config=config, x_dir="rev", save_img=0)
+        ax = plt.gca()
+        assert ax.xaxis_inverted()
         plt.close("all")
 
     #
@@ -214,7 +227,9 @@ class TestPlot1D:
         y_list = [np.abs(np.sin(x)) + 0.1, np.abs(np.cos(x)) + 0.1]
         config = PlotConfig()
 
-        plot_1D(y_list, x=x, config=config, y_type="log", save_img=-2)
+        plot_1D(y_list, x=x, config=config, y_type="log", save_img=0)
+        ax = plt.gca()
+        assert ax.get_yscale() == "log"
         plt.close("all")
 
     #
@@ -225,7 +240,16 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
 
-        plot_1D(y_list, x=x, config=config, vlines=[3, 7], save_img=-2)
+        plot_1D(y_list, x=x, config=config, vlines=[3, 7], save_img=0)
+        ax = plt.gca()
+        assert len(ax.get_lines()) >= 2  # data lines
+        # vlines rendered as LineCollection
+        from matplotlib.collections import LineCollection
+
+        vline_collections = [
+            c for c in ax.get_children() if isinstance(c, LineCollection)
+        ]
+        assert len(vline_collections) >= 1
         plt.close("all")
 
     #
@@ -289,7 +313,11 @@ class TestPlot2D:
         data = rng.standard_normal((30, 50)) + np.outer(y, np.sin(x))
         config = PlotConfig()
 
-        plot_2D(data, x=x, y=y, config=config, save_img=-2)
+        plot_2D(data, x=x, y=y, config=config, save_img=0)
+        fig = plt.gcf()
+        assert len(fig.axes) >= 1  # at least one axes (data panel)
+        ax = fig.axes[0]
+        assert ax.get_xlabel() == "x axis"  # default label
         plt.close("all")
 
     #
@@ -302,7 +330,9 @@ class TestPlot2D:
         data = rng.standard_normal((30, 50)) + np.outer(y, np.sin(x))
         config = PlotConfig(z_colormap="plasma", x_dir="rev")
 
-        plot_2D(data, x=x, y=y, config=config, save_img=-2)
+        plot_2D(data, x=x, y=y, config=config, save_img=0)
+        ax = plt.gcf().axes[0]
+        assert ax.xaxis_inverted()
         plt.close("all")
 
     #
@@ -316,8 +346,10 @@ class TestPlot2D:
         config = PlotConfig()
 
         plot_2D(
-            data, x=x, y=y, config=config, z_colormap="plasma", x_dir="rev", save_img=-2
+            data, x=x, y=y, config=config, z_colormap="plasma", x_dir="rev", save_img=0
         )
+        ax = plt.gcf().axes[0]
+        assert ax.xaxis_inverted()
         plt.close("all")
 
     #
@@ -408,7 +440,10 @@ class TestPlot2D:
         data = rng.standard_normal((30, 50)) + np.outer(y, np.sin(x))
         config = PlotConfig()
 
-        plot_2D(data, x=x, y=y, config=config, x_dir="rev", y_dir="rev", save_img=-2)
+        plot_2D(data, x=x, y=y, config=config, x_dir="rev", y_dir="rev", save_img=0)
+        ax = plt.gcf().axes[0]
+        assert ax.xaxis_inverted()
+        assert ax.yaxis_inverted()
         plt.close("all")
 
     #
@@ -524,7 +559,7 @@ class TestPlotConfigPropagation:
         """Component.plot() should reverse x-axis when config.x_dir='rev'."""
 
         file = self._make_file_with_model(x_dir="rev")
-        assert file.model_active is not None
+        assert file.model_active is not None  # type guard
         component = file.model_active.components[0]
 
         component.plot()
@@ -537,7 +572,7 @@ class TestPlotConfigPropagation:
         """Component.plot() should use x_label from PlotConfig."""
 
         file = self._make_file_with_model()
-        assert file.model_active is not None
+        assert file.model_active is not None  # type guard
         component = file.model_active.components[0]
 
         component.plot()
@@ -550,7 +585,7 @@ class TestPlotConfigPropagation:
         """Component.plot() should not invert x-axis when config.x_dir='def'."""
 
         file = self._make_file_with_model(x_dir="def")
-        assert file.model_active is not None
+        assert file.model_active is not None  # type guard
         component = file.model_active.components[0]
 
         component.plot()
@@ -566,7 +601,7 @@ class TestPlotConfigPropagation:
 
         file = self._make_file_with_model(x_dir="rev")
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
         sim = Simulator(model, noise_level=0.05)
         sim.simulate_2D()
 
@@ -586,7 +621,7 @@ class TestPlotConfigPropagation:
 
         file = self._make_file_with_model()
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
         sim = Simulator(model, noise_level=0.05)
         sim.simulate_2D()
 

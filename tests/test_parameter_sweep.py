@@ -81,24 +81,33 @@ class TestParameterSweep:
         assert sweep.parameter_specs["param_D"]["type"] == "lognormal"
 
     #
-    def test_grid_strategy_detection(self):
-        """Test auto strategy detects grid for all discrete parameters"""
+    def test_auto_strategy_all_discrete_produces_grid(self):
+        """Auto strategy with all discrete params should produce cartesian product."""
 
         sweep = ParameterSweep(strategy="auto", seed=42)
         sweep.add_range("param_A", [1, 2, 3])
         sweep.add_range("param_B", [10, 20])
 
-        assert sweep._determine_strategy() == "grid"
+        configs = list(sweep)
+        # Grid: 3 × 2 = 6 combinations
+        assert len(configs) == 6
+        assert configs[0] == {"param_A": 1, "param_B": 10}
 
     #
-    def test_random_strategy_detection(self):
-        """Test auto strategy detects random for mixed parameters"""
+    def test_auto_strategy_mixed_produces_random(self):
+        """Auto strategy with continuous params should produce n_samples configs."""
 
         sweep = ParameterSweep(strategy="auto", seed=42)
         sweep.add_range("param_A", [1, 2, 3])
         sweep.add_uniform("param_B", 0, 10, n_samples=5)
 
-        assert sweep._determine_strategy() == "random"
+        configs = list(sweep)
+        # Random mode: max(n_samples) = 5, not grid's 3 × 5 = 15
+        assert len(configs) == 5
+        # Continuous draws should spread across [0, 10]
+        param_B_values = [c["param_B"] for c in configs]
+        assert len(set(param_B_values)) >= 3
+        assert all(0 <= v <= 10 for v in param_B_values)
 
     #
     def test_grid_generation_discrete_only(self):
@@ -230,7 +239,7 @@ class TestSimulatorParameterSweep:
         file.load_model(
             model_yaml="test_models_energy.yaml", model_info=["simple_energy"]
         )
-        assert file.model_active is not None
+        assert file.model_active is not None  # type guard
         return file.model_active
 
     #
@@ -251,7 +260,7 @@ class TestSimulatorParameterSweep:
             model_info=["MonoExpPosIRF"],
             par_name="GLP_01_x0",
         )
-        assert file.model_active is not None
+        assert file.model_active is not None  # type guard
         return file.model_active
 
     #
