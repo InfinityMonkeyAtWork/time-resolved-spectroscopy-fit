@@ -193,7 +193,6 @@ class TestTimeParsing:
             par_name="parTEST",  # this is the name of the time-dependent parameter
             model_type="dynamics",
         )
-        assert model is not None, "Model loading failed in setup"
         return model
 
     #
@@ -585,18 +584,6 @@ class TestYAMLValidationErrors:
             file.load_model(
                 model_yaml="test_models_energy.yaml",
                 model_info=["this_model_does_not_exist"],
-            )
-
-    #
-    def test_model_info_not_list_raises(self):
-        """Passing a string instead of a list for model_info should fail."""
-
-        project = Project(path="tests")
-        file = File(parent_project=project)
-        with pytest.raises(TypeError, match="model_info must be a list"):
-            file.load_model(
-                model_yaml="test_models_energy.yaml",
-                model_info="simple_energy",  # type: ignore[arg-type]
             )
 
     #

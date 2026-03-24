@@ -651,10 +651,10 @@ class File:
     def load_model(
         self,
         model_yaml: PathLike,
-        model_info: list[str],
+        model_info: str | list[str],
         par_name: str = "",
         model_type: Literal["energy", "dynamics", "profile"] = "energy",
-    ) -> mcp.Model | None:
+    ) -> mcp.Model:
         """
         Load a model from YAML file.
 
@@ -664,17 +664,20 @@ class File:
         ----------
         model_yaml : str or Path
             YAML file name (located in project path) defining the model
-        model_info : list of str
-            Model name(s) to load:
+        model_info : str or list of str
+            Model name(s) to load. A bare string is treated as a single-element
+            list.
 
-            - For energy-dependent models (1D or 2D): ``['model_name']``
-              (single element). Model will be set as active model.
-            - For standard time-dependent models: ``['model_name']``.
-              Single element applies to entire time axis.
+            - For energy-dependent models (1D or 2D): ``'model_name'`` or
+              ``['model_name']`` (single element). Model will be set as active
+              model.
+            - For standard time-dependent models: ``'model_name'`` or
+              ``['model_name']``. Single element applies to entire time axis.
             - For multi-cycle time-dependent models: ``['model1', 'model2', ...]``.
               Element 0 applies to entire time axis, elements 1+ apply to
               respective subcycles only.
-            - For profile models: ``['model_name']`` (single element).
+            - For profile models: ``'model_name'`` or ``['model_name']``
+              (single element).
 
         par_name : str, default=''
             Parameter name for dynamics and profile models. Empty string (default)
@@ -690,21 +693,14 @@ class File:
 
         Returns
         -------
-        Model or None
-            Returns the loaded model for ``'dynamics'`` and ``'profile'`` types.
-            Returns ``None`` for ``'energy'`` models (which are set as active model).
+        Model
+            The loaded model. For ``'energy'`` models the model is also
+            registered in ``self.models`` and set as the active model.
         """
 
-        # sanity checks
-        if not isinstance(model_info, list):
-            raise TypeError(
-                "model_info must be a list.\n"
-                "Usage:\n"
-                "  [name_model1,] for energy-dependent models\n"
-                "  [name_model1, name_model2 (optional), ...]"
-                " for time-dependent models\n"
-                "  [name_model1,] for profile models"
-            )
+        # normalize bare string to single-element list
+        if isinstance(model_info, str):
+            model_info = [model_info]
         if model_type == "energy" and len(model_info) != 1:
             raise ValueError(
                 'Energy-resolved data (model_type="energy") require a single model'
@@ -803,7 +799,6 @@ class File:
         if model_type == "energy":
             self.models.append(loaded_model)
             self.set_active_model(model_info)  # set as current active model
-            return None
         return loaded_model
 
     #
@@ -1198,7 +1193,9 @@ class File:
                 )
 
     #
-    def fit_baseline(self, model_name: str, fit: int, **lmfit_wrapper_kwargs) -> None:
+    def fit_baseline(
+        self, model_name: str, stages: int = 1, **lmfit_wrapper_kwargs
+    ) -> None:
         """
         Fit the baseline/ground state/pre-trigger reference spectrum.
 
@@ -1206,11 +1203,11 @@ class File:
         ----------
         model_name : str
             Name of a previously loaded model (use File.load_model first)
-        fit : {1, 2}
-            Fitting mode:
+        stages : {1, 2}, default=1
+            Number of optimization stages:
 
-            - 1: Perform fit with single method
-            - 2: Two-stage fit (global then local optimization)
+            - 1: Single optimization with ``fit_alg_1``
+            - 2: Two-stage fit (``fit_alg_1`` then ``fit_alg_2``)
 
         **lmfit_wrapper_kwargs
             Additional keyword arguments passed to fitlib.fit_wrapper
@@ -1259,7 +1256,7 @@ class File:
             args=self.model_base.args,
             par_names=self.model_base.par_names,
             par=self.model_base.lmfit_pars,
-            fit_type=fit,
+            stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
             save_output=1,
             save_path=path_base_results / model_name,
@@ -1293,7 +1290,7 @@ class File:
             save_path=path_base_results / "base_fit.png",
         )
 
-        if fit >= 1:
+        if stages >= 1:
             fitlib.time_display(
                 t_start=t_base, print_str="Time elapsed for baseline fit: "
             )
@@ -1307,7 +1304,9 @@ class File:
         """
 
     #
-    def fit_SliceBySlice(self, model_name: str, fit: int, **fit_wrapper_kwargs) -> None:
+    def fit_SliceBySlice(
+        self, model_name: str, stages: int = 1, **fit_wrapper_kwargs
+    ) -> None:
         """
         Fit time- and energy-resolved spectrum Slice-by-Slice (SbS).
 
@@ -1318,11 +1317,11 @@ class File:
         ----------
         model_name : str
             Name of a previously loaded model (use File.load_model first)
-        fit : {1, 2}
-            Fitting mode:
+        stages : {1, 2}, default=1
+            Number of optimization stages:
 
-            - 1: Perform fit with single method
-            - 2: Two-stage fit (global then local optimization)
+            - 1: Single optimization with ``fit_alg_1``
+            - 2: Two-stage fit (``fit_alg_1`` then ``fit_alg_2``)
 
         **fit_wrapper_kwargs
             Additional keyword arguments passed to fitlib.fit_wrapper
@@ -1428,7 +1427,7 @@ class File:
                 args=self.model_SbS.args,
                 par_names=self.model_SbS.par_names,
                 par=self.model_SbS.lmfit_pars,
-                fit_type=fit,
+                stages=stages,
                 show_output=0,
                 save_output=1,
                 save_path=path_slice,
@@ -1458,7 +1457,7 @@ class File:
             if s_i == self.p.first_n_spec_only:
                 break  # for debugging: only fit first N spectra
 
-        if fit >= 1:
+        if stages >= 1:
             self.save_SliceBySlice_fit(save_path=path_SbS_results)
             fitlib.time_display(
                 t_start=t_SbS, print_str="Time elapsed for Slice-by-Slice fit: "
@@ -1535,7 +1534,7 @@ class File:
     def add_time_dependence(
         self,
         model_yaml: PathLike,
-        model_info: list[str],
+        model_info: str | list[str],
         par_name: str,
         frequency: float = -1,
     ) -> None:
@@ -1555,7 +1554,7 @@ class File:
         ----------
         model_yaml : str or Path
             YAML file name defining the Dynamics model
-        model_info : list of str
+        model_info : str or list of str
             Model name(s) for time-dependent behavior
         par_name : str
             Name of parameter to make time-dependent. Can be an energy model
@@ -1571,12 +1570,6 @@ class File:
             par_name,
             model_type="dynamics",
         )  # load
-        if t_mod is None:
-            warnings.warn(
-                "Dynamics model could not be loaded; time dependence not added.",
-                stacklevel=2,
-            )
-            return
         if self.model_active is None:
             warnings.warn(
                 "No active model available; time dependence not added.",
@@ -1623,7 +1616,7 @@ class File:
     def add_par_profile(
         self,
         model_yaml: PathLike,
-        model_info: list[str],
+        model_info: str | list[str],
         par_name: str,
     ) -> None:
         """
@@ -1644,7 +1637,7 @@ class File:
         ----------
         model_yaml : str or Path
             YAML file name defining the Profile model
-        model_info : list of str
+        model_info : str or list of str
             Model name(s) for the profile (single element)
         par_name : str
             Name of the parameter in the active model to attach the profile to
@@ -1656,12 +1649,6 @@ class File:
             par_name,
             model_type="profile",
         )
-        if p_mod is None:
-            warnings.warn(
-                "Profile model could not be loaded; profile not added.",
-                stacklevel=2,
-            )
-            return
         if self.model_active is None:
             warnings.warn(
                 "No active model available; profile not added.",
@@ -1688,7 +1675,9 @@ class File:
             self.model_active.dim = 2
 
     #
-    def fit_2Dmodel(self, model_name: str, fit: int, **fit_wrapper_kwargs) -> None:
+    def fit_2Dmodel(
+        self, model_name: str, stages: int = 1, **fit_wrapper_kwargs
+    ) -> None:
         """
         Perform energy- and time-dependent 2D model fit.
 
@@ -1696,12 +1685,11 @@ class File:
         ----------
         model_name : str
             Name of the model to fit (loaded via File.load_model)
-        fit : {1, 2}
-            Fitting mode:
+        stages : {1, 2}, default=1
+            Number of optimization stages:
 
-            - 1: Perform fit with single method
-            - 2: Two-stage fit - global minimum search (fit_alg_1)
-              followed by local optimization (fit_alg_2)
+            - 1: Single optimization with ``fit_alg_1``
+            - 2: Two-stage fit (``fit_alg_1`` then ``fit_alg_2``)
 
         **fit_wrapper_kwargs
             Additional keyword arguments passed to fitlib.fit_wrapper
@@ -1755,13 +1743,13 @@ class File:
             args=self.model_2D.args,
             par_names=self.model_2D.par_names,
             par=self.model_2D.lmfit_pars,
-            fit_type=fit,
+            stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
             save_output=1,
             save_path=path_2D_results / model_name,
             **fit_wrapper_kwargs,
         )
-        if fit >= 1:
+        if stages >= 1:
             self.save_2Dmodel_fit(save_path=path_2D_results)
             fitlib.time_display(
                 t_start=t_2D, print_str="Time elapsed for 2D model fit: "

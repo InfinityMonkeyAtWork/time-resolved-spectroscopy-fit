@@ -361,7 +361,7 @@ def fit_wrapper(
     args: tuple[Any, ...],
     par_names: list[str],
     par: Any,
-    fit_type: int,
+    stages: int,
     sigmas: list[float] | None = None,
     try_CI: int = 1,
     mc_settings: ulmfit.MC | None = None,
@@ -380,7 +380,7 @@ def fit_wrapper(
     - MCMC sampling via lmfit.emcee
     - Result visualization and export
 
-    Two-stage fitting (fit_type=2) is recommended for robust optimization:
+    Two-stage fitting (stages=2) is recommended for robust optimization:
     first finds global minimum with Nelder-Mead, then refines locally with
     leastsq for accurate error bars.
 
@@ -401,11 +401,11 @@ def fit_wrapper(
         - list: Convert to lmfit.Parameters using par_names.
           Each element: ``[value, vary, min, max]`` or ``['expression']``
 
-    fit_type : {1, 2}
-        Fitting strategy:
+    stages : {1, 2}
+        Number of optimization stages:
 
-        - 1: Single fit with fit_alg_1
-        - 2: Two-stage fit (global with fit_alg_1, local with fit_alg_2)
+        - 1: Single optimization with ``fit_alg_1``
+        - 2: Two-stage fit (``fit_alg_1`` then ``fit_alg_2``)
 
     sigmas : list of int or float, default=[1,2,3]
         Confidence levels for CI and MCMC (e.g., [1,2,3] for 1σ, 2σ, 3σ)
@@ -433,7 +433,7 @@ def fit_wrapper(
 
         See lmfit documentation for full list
     fit_alg_2 : str, default='leastsq'
-        Second optimization method (fit_type=2 only).
+        Second optimization method (stages=2 only).
         Typically 'leastsq' for accurate local optimization and error bars.
     show_output : {0, 1}, default=0
         Output mode:
@@ -485,7 +485,7 @@ def fit_wrapper(
     ...     args=args,
     ...     par_names=model.par_names,
     ...     par=model.lmfit_pars,
-    ...     fit_type=1,
+    ...     stages=1,
     ...     show_output=1
     ... )
     >>> par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs = results
@@ -496,7 +496,7 @@ def fit_wrapper(
     ...     args=args,
     ...     par_names=model.par_names,
     ...     par=model.lmfit_pars,
-    ...     fit_type=2,
+    ...     stages=2,
     ...     try_CI=1,
     ...     sigmas=[1, 2, 3],
     ...     show_output=1,
@@ -511,7 +511,7 @@ def fit_wrapper(
     ...     args=args,
     ...     par_names=model.par_names,
     ...     par=model.lmfit_pars,
-    ...     fit_type=2,
+    ...     stages=2,
     ...     try_CI=1,
     ...     mc_settings=mc,
     ...     show_output=1
@@ -538,8 +538,8 @@ def fit_wrapper(
     - Chain length: Increase steps if distributions look noisy
 
     **Performance Tips:**
-    - Use fit_type=1 for quick fits during model development
-    - Use fit_type=2 for final/publication fits
+    - Use stages=1 for quick fits during model development
+    - Use stages=2 for final/publication fits
     - MCMC is slow (minutes for complex models) but provides best uncertainties
 
     **File Outputs:**
@@ -554,8 +554,8 @@ def fit_wrapper(
     if mc_settings is None:
         mc_settings = ulmfit.MC()
 
-    if fit_type not in (1, 2):
-        raise ValueError(f"fit_type must be 1 or 2, got {fit_type}")
+    if stages not in (1, 2):
+        raise ValueError(f"stages must be 1 or 2, got {stages}")
 
     # construct the lmfit parameters if necessary
     if isinstance(par, lmfit.parameter.Parameters):
@@ -575,7 +575,7 @@ def fit_wrapper(
         t_ini = time.time()
         print(f"\nTime initialize: {t_ini - t_0} s")
     #
-    if fit_type == 1:  # one fit only
+    if stages == 1:  # one fit only
         par_fin = mini.minimize(method=fit_alg_1)
         par_fin_params = _result_params(par_fin)
         if show_output >= 1:
@@ -584,7 +584,7 @@ def fit_wrapper(
             t_fit = time.time()
             print(f"Time fit: {t_fit - t_ini} s")
     #
-    if fit_type == 2:  # find global minimum + local optimization
+    if stages == 2:  # find global minimum + local optimization
         par_fin_GM = mini.minimize(method=fit_alg_1)
         par_fin_GM_params = _result_params(par_fin_GM)
         if show_output >= 1:

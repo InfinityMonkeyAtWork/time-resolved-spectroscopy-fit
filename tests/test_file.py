@@ -63,17 +63,6 @@ class TestModelManagement:
         assert file.model_active.name == "single_glp"
 
     #
-    def test_load_model_returns_none_for_energy(self):
-        """load_model with model_type='energy' should return None."""
-
-        file = self._make_file_with_axes()
-        result = file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
-        )
-        assert result is None
-
-    #
     def test_load_model_returns_model_for_dynamics(self):
         """load_model with model_type='dynamics' should return a Dynamics object."""
 
@@ -84,7 +73,6 @@ class TestModelManagement:
             par_name="GLP_01_A",
             model_type="dynamics",
         )
-        assert result is not None  # type guard
         assert result.name == "GLP_01_A"
         # dynamics should not be added to file.models
         assert len(file.models) == 0
@@ -100,20 +88,20 @@ class TestModelManagement:
             par_name="GLP_01_A",
             model_type="profile",
         )
-        assert result is not None  # type guard
         assert result.name == "GLP_01_A"
         assert len(file.models) == 0
 
     #
-    def test_load_model_rejects_non_list(self):
-        """load_model should raise TypeError if model_info is not a list."""
+    def test_load_model_accepts_bare_string(self):
+        """load_model should accept a bare string as model_info."""
 
         file = self._make_file_with_axes()
-        with pytest.raises(TypeError, match="model_info must be a list"):
-            file.load_model(
-                model_yaml="test_models_energy.yaml",
-                model_info="simple_energy",  # type: ignore[arg-type]
-            )
+        file.load_model(
+            model_yaml="test_models_energy.yaml",
+            model_info="simple_energy",
+        )
+        assert file.model_active is not None  # type guard
+        assert file.model_active.name == "simple_energy"
 
     #
     def test_load_model_rejects_multiple_energy_names(self):

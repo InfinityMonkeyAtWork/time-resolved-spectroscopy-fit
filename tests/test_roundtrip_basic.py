@@ -107,12 +107,12 @@ class TestRoundTripClean:
 
         fit_file.fit_baseline(
             model_name="single_glp",
-            fit=2,
+            stages=2,
             try_CI=0,
         )
         fit_file.fit_2Dmodel(
             model_name="single_glp",
-            fit=2,
+            stages=2,
             try_CI=0,
         )
 
@@ -150,12 +150,12 @@ class TestRoundTripNoisy:
 
         fit_file.fit_baseline(
             model_name="single_glp",
-            fit=2,
+            stages=2,
             try_CI=0,
         )
         fit_file.fit_2Dmodel(
             model_name="single_glp",
-            fit=1,
+            stages=1,
             try_CI=0,
         )
 
