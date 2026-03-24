@@ -76,7 +76,7 @@ def _extract_par_dict(model):
 
     return {
         name: model.lmfit_pars[name].value
-        for name in model.par_names
+        for name in model.parameter_names
         if model.lmfit_pars[name].expr is None
     }
 
@@ -110,13 +110,13 @@ class TestRoundTripClean:
             stages=2,
             try_CI=0,
         )
-        fit_file.fit_2Dmodel(
+        fit_file.fit_2d(
             model_name="single_glp",
             stages=2,
             try_CI=0,
         )
 
-        fitted_pars = fit_file.model_2D.result[1].params
+        fitted_pars = fit_file.model_2d.result[1].params
         for name, true_val in truth_pars.items():
             fit_val = fitted_pars[name].value
             assert np.isclose(true_val, fit_val, rtol=1e-2, atol=1e-6), (
@@ -153,13 +153,13 @@ class TestRoundTripNoisy:
             stages=2,
             try_CI=0,
         )
-        fit_file.fit_2Dmodel(
+        fit_file.fit_2d(
             model_name="single_glp",
             stages=1,
             try_CI=0,
         )
 
-        fitted_pars = fit_file.model_2D.result[1].params
+        fitted_pars = fit_file.model_2d.result[1].params
         for name, true_val in truth_pars.items():
             if abs(true_val) < 1e-6:
                 continue  # skip fixed-at-zero params (t0, y0)

@@ -545,7 +545,7 @@ class Simulator:
         >>> clean, noisy, noise = sim.simulate_2D()
         >>> # ... set up fitting ...
         >>> file.data = noisy  # Use noisy data for fit
-        >>> file.fit_2Dmodel(model_name='test', stages=2)
+        >>> file.fit_2d(model_name='test', stages=2)
         >>> # Compare fitted vs. true parameters
 
         >>> # Vary noise level to study impact
@@ -649,7 +649,7 @@ class Simulator:
         >>> fitted_params = []
         >>> for noisy_data in noisy_list:
         ...     file.data = noisy_data
-        ...     file.fit_2Dmodel('test', stages=2)
+        ...     file.fit_2d('test', stages=2)
         ...     fitted_params.append(model.lmfit_pars['amplitude'].value)
         >>>
         >>> # Check parameter recovery

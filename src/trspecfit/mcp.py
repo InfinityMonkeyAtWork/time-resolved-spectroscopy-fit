@@ -116,7 +116,7 @@ class Model:
         Flattened list of all individual parameters (spectral + temporal + profile)
     lmfit_pars : lmfit.Parameters
         Complete parameter object for fitting (from lmfit_par_list)
-    par_names : list of str
+    parameter_names : list of str
         Names of all parameters in the model
     component_spectra : list of ndarray
         Individual component spectra from last evaluation (when store_1d=1)
@@ -186,7 +186,7 @@ class Model:
         # lmfit.Parameters object corresponding to lmfit_par_list attribute
         self.lmfit_pars: lmfit.Parameters = lmfit.Parameters()
         # list of all parameter names
-        self.par_names: list[str] = []
+        self.parameter_names: list[str] = []
         # list of component spectra (from last evaluation/ current parameters)
         self.component_spectra: list[np.ndarray] = []
         # 1D spectrum (i.e. sum/ combination of all components)
@@ -211,7 +211,7 @@ class Model:
     #
     def __repr__(self) -> str:
         n_comp = len(self.components)
-        n_par = len(self.par_names)
+        n_par = len(self.parameter_names)
         dim = self.dim or "?"
         cls = type(self).__name__
         return f"{cls}('{self.name}', {n_comp} comp, {n_par} pars, dim={dim})"
@@ -312,7 +312,7 @@ class Model:
         - kernel time axis (for convolution components)
 
         **Model Updates:**
-        After adding components, the model's lmfit_pars and par_names
+        After adding components, the model's lmfit_pars and parameter_names
         are automatically updated via self.update().
         """
 
@@ -346,7 +346,7 @@ class Model:
             # populate pars attribute in the component
             comp.create_pars(prefix=prefix)
 
-        # update model lmfit_par_list (+par_names) and components
+        # update model lmfit_par_list (+parameter_names) and components
         self.update()
 
     #
@@ -405,7 +405,7 @@ class Model:
         # re-initialize
         self.lmfit_par_list = []
         self.lmfit_pars = lmfit.Parameters()
-        self.par_names = []
+        self.parameter_names = []
 
         for comp in self.components:
             # create a flattened lmfit.Parameter list for the component
@@ -417,7 +417,7 @@ class Model:
         self.lmfit_pars.add_many(*self.lmfit_par_list)
 
         # update list of all parameter names
-        self.par_names = [par.name for par in self.lmfit_par_list]
+        self.parameter_names = [par.name for par in self.lmfit_par_list]
 
     #
     def update_value(
@@ -508,7 +508,7 @@ class Model:
 
         # add Dynamics model and update corresponding parameter
         target_par.update(dynamics_model)
-        # update model lmfit_par_list, par_names and components
+        # update model lmfit_par_list, parameter_names and components
         self.update()
 
         # Re-analyze all expressions since time-dependence status may have changed
@@ -581,7 +581,7 @@ class Model:
         # include profile parameters in this model's lmfit parameter list
         target_par.lmfit_par_list.extend(profile_model.lmfit_par_list)
 
-        # update model lmfit_par_list, par_names and components
+        # update model lmfit_par_list, parameter_names and components
         self.update()
 
         # Re-analyze all expressions since profile status may have changed

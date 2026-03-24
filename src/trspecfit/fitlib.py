@@ -483,7 +483,7 @@ def fit_wrapper(
     >>> results = fit_wrapper(
     ...     const=const,
     ...     args=args,
-    ...     par_names=model.par_names,
+    ...     par_names=model.parameter_names,
     ...     par=model.lmfit_pars,
     ...     stages=1,
     ...     show_output=1
@@ -494,7 +494,7 @@ def fit_wrapper(
     >>> results = fit_wrapper(
     ...     const=const,
     ...     args=args,
-    ...     par_names=model.par_names,
+    ...     par_names=model.parameter_names,
     ...     par=model.lmfit_pars,
     ...     stages=2,
     ...     try_CI=1,
@@ -509,7 +509,7 @@ def fit_wrapper(
     >>> results = fit_wrapper(
     ...     const=const,
     ...     args=args,
-    ...     par_names=model.par_names,
+    ...     par_names=model.parameter_names,
     ...     par=model.lmfit_pars,
     ...     stages=2,
     ...     try_CI=1,

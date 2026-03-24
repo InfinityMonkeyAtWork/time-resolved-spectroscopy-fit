@@ -55,7 +55,7 @@ def fit_model_mcp(
         compatibility.
 
     par : list or array-like
-        Parameter values in same order as model.par_names. These are the
+        Parameter values in same order as model.parameter_names. These are the
         current values proposed by the optimizer during fitting.
     plot_sum : bool
         Component return mode:
@@ -114,7 +114,7 @@ def fit_model_mcp(
     2D spectrum generation can be slow for large grids or complex models
     with many time-dependent parameters. Consider:
     - Reducing time/energy grid density during initial fits
-    - Using fit_SliceBySlice for quasi-independent time points
+    - Using fit_slice_by_slice for quasi-independent time points
     - Implementing parallel evaluation (model.create_value2D_parallel)
     """
 

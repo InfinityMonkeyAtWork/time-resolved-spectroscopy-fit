@@ -217,8 +217,8 @@ class TestModelManagement:
         assert file.select_model(99) is None
 
     #
-    def test_select_model_returns_index(self):
-        """select_model with return_type='index' should return the list index."""
+    def test_select_model_second_by_name(self):
+        """select_model should find the second loaded model by name."""
 
         file = self._make_file_with_axes()
         file.load_model(
@@ -229,8 +229,9 @@ class TestModelManagement:
             model_yaml="test_models_energy.yaml",
             model_info=["single_glp"],
         )
-        idx = file.select_model("single_glp", return_type="index")
-        assert idx == 1
+        mod = file.select_model("single_glp")
+        assert mod is not None
+        assert mod.name == "single_glp"
 
     #
     def test_select_model_by_list(self):
@@ -318,7 +319,7 @@ class TestModelManagement:
         with pytest.warns(UserWarning, match="not found"):
             file.delete_model("nonexistent")
         assert len(file.models) == 1
-        with pytest.warns(UserWarning, match="out of range"):
+        with pytest.warns(UserWarning, match="not found"):
             file.delete_model(99)
         assert len(file.models) == 1
 

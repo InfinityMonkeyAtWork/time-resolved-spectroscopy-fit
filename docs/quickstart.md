@@ -40,7 +40,7 @@ file.add_time_dependence(
 file.describe_model()
 
 # Global 2D fit
-file.fit_2Dmodel()
+file.fit_2d()
 ```
 
 ## Profile

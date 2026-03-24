@@ -29,8 +29,8 @@ Workflow
 6. **Set Limits**: Define fitting regions with File.set_fit_limits()
 7. **Fit**: Execute appropriate fitting method:
    - File.fit_baseline() for ground state spectrum
-   - File.fit_SliceBySlice() for time-independent analysis
-   - File.fit_2Dmodel() for global time- and energy-resolved fitting
+   - File.fit_slice_by_slice() for time-independent analysis
+   - File.fit_2d() for global time- and energy-resolved fitting
 8. **Export**: Results automatically saved to project directory structure
 
 Features
@@ -55,7 +55,7 @@ import pathlib
 import time
 import warnings
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Literal, cast, overload
+from typing import TYPE_CHECKING, Literal, cast
 
 # TYPE_CHECKING is False at runtime so this import is skipped during execution.
 # Exists only for type checkers (mypy/pyright) to resolve types.ModuleType annotations.
@@ -63,6 +63,7 @@ if TYPE_CHECKING:
     import types
 
 import numpy as np
+import pandas as pd
 from IPython.display import display
 from ruamel.yaml import YAML
 
@@ -397,9 +398,9 @@ class File:
         Time range for baseline extraction (absolute and indices)
     model_base : Model or None
         Model used for baseline fitting
-    model_SbS : Model or None
+    model_sbs : Model or None
         Model used for Slice-by-Slice fitting
-    results_SbS : list
+    results_sbs : list
         Slice-by-Slice fit results for all time slices
     plot_config : PlotConfig
         Plot configuration (created from parent Project on first access)
@@ -415,7 +416,7 @@ class File:
     6. Define baseline with define_baseline() (for 2D data)
     7. Set fit limits with set_fit_limits()
     8. Fit baseline with fit_baseline()
-    9. Perform Slice-by-Slice or 2D fit with fit_SliceBySlice() or fit_2Dmodel()
+    9. Perform Slice-by-Slice or 2D fit with fit_slice_by_slice() or fit_2d()
 
     **Model Management:**
     File can manage multiple models simultaneously for comparison. Use
@@ -476,10 +477,10 @@ class File:
         self.data_base = None  # average spectrum between above indices
         self.model_base: mcp.Model | None = None
         #
-        self.model_SbS: mcp.Model | None = None
-        self.model_2D: mcp.Model | None = None
-        # all Slice-by-Slice fit results (different from model_SbS.result)
-        self.results_SbS: list = []
+        self.model_sbs: mcp.Model | None = None
+        self.model_2d: mcp.Model | None = None
+        # all Slice-by-Slice fit results (different from model_sbs.result)
+        self.results_sbs: list = []
         # default fit limits to entire dataset (energy is None only for bare File())
         if self.energy is not None:
             self.set_fit_limits(energy_limits=None, show_plot=False)
@@ -577,56 +578,38 @@ class File:
         return "_".join(model_list)  # see str.join()
 
     #
-    @overload
-    def select_model(
-        self, model_info: ModelRef, return_type: Literal["model"] = "model"
-    ) -> mcp.Model | None: ...
-
-    @overload
-    def select_model(
-        self, model_info: ModelRef, return_type: Literal["index"] = "index"
-    ) -> int | None: ...
-
-    def select_model(
-        self, model_info: ModelRef, return_type: Literal["model", "index"] = "model"
-    ) -> mcp.Model | int | None:
+    def select_model(self, model_info: ModelRef) -> mcp.Model | None:
         """
-        Select model by name [type(model_info)=str] or position [type(model_info)=int].
+        Select model by name, index, or multi-cycle name list.
 
-        Returns model (``return_type='model'``, default) or
-        index of model in File.models (``return_type='index'``).
-        Returns None if model name not found or index out of range.
+        Parameters
+        ----------
+        model_info : str, int, or list of str
+            Model identifier: name, position in ``self.models``, or list of
+            submodel names (joined with ``_`` to match composite name).
 
-        For time-dependence/ dynamics models with more than one model i.e. submodels:
-        pass the list containing all model names (same input as in "load_model")
+        Returns
+        -------
+        Model or None
+            The matched model, or None if not found.
         """
 
         if isinstance(model_info, str):
-            for m_i, m in enumerate(self.models):
+            for m in self.models:
                 if m.name == model_info:
-                    if return_type == "model":
-                        return self.models[m_i]
-                    if return_type == "index":
-                        return m_i
-            return None  # no match found
+                    return m
+            return None
 
         if isinstance(model_info, int):
-            if model_info not in range(len(self.models)):
-                return None  # no match found
-            if return_type == "model":
+            if 0 <= model_info < len(self.models):
                 return self.models[model_info]
-            if return_type == "index":
-                return model_info
+            return None
 
-        elif isinstance(model_info, list):
+        if isinstance(model_info, list):
             m_name = self.model_list_to_name(model_info)
-            for m_i, m in enumerate(self.models):
+            for m in self.models:
                 if m.name == m_name:
-                    if return_type == "model":
-                        return self.models[m_i]
-                    if return_type == "index":
-                        return m_i
-            return None  # no match found
+                    return m
 
         return None
 
@@ -885,18 +868,15 @@ class File:
             )
 
     #
-    def delete_model(self, model_to_delete: str | int | None = None) -> None:
+    def delete_model(self, model_to_delete: ModelRef | None = None) -> None:
         """
         Remove a model from this file's model list.
 
         Parameters
         ----------
-        model_to_delete : str or int, optional
-            Model to delete:
-
-            - str: Model name
-            - int: Model index in self.models
-            - None: Delete currently active model
+        model_to_delete : str, int, list of str, or None, optional
+            Model to delete (name, index, multi-cycle name list, or None
+            for the currently active model).
 
         Notes
         -----
@@ -904,42 +884,21 @@ class File:
         if needed using set_active_model().
         """
 
-        mod_index_del: int | None = None
         if model_to_delete is None:
             if self.model_active is None:
                 warnings.warn("No active model to delete.", stacklevel=2)
                 return
-            mod_index_del = self.models.index(self.model_active)  # list.index(value)
+            self.models.remove(self.model_active)
+            return
 
-        elif isinstance(model_to_delete, str):
-            mod_index_del = self.select_model(model_to_delete, return_type="index")
-            if mod_index_del is None:
-                warnings.warn(
-                    f"delete_model: Model with name {model_to_delete} not found",
-                    stacklevel=2,
-                )
-                return
-
-        elif isinstance(model_to_delete, int):
-            mod_index_del = model_to_delete
-            if mod_index_del not in range(len(self.models)):
-                warnings.warn(
-                    "delete_model: Model index out of range",
-                    stacklevel=2,
-                )
-                return
-
-        else:
+        mod = self.select_model(model_to_delete)
+        if mod is None:
             warnings.warn(
-                f"delete_model: input type {type(model_to_delete)} not supported",
+                f"delete_model: Model {model_to_delete!r} not found.",
                 stacklevel=2,
             )
             return
-
-        # delete model from list using index: File.models[index]
-        if mod_index_del is None:
-            return
-        self.models.pop(mod_index_del)
+        self.models.remove(mod)
 
     #
     def reset_models(self) -> None:
@@ -1254,7 +1213,7 @@ class File:
         self.model_base.result = fitlib.fit_wrapper(
             const=self.model_base.const,
             args=self.model_base.args,
-            par_names=self.model_base.par_names,
+            par_names=self.model_base.parameter_names,
             par=self.model_base.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
@@ -1304,7 +1263,7 @@ class File:
         """
 
     #
-    def fit_SliceBySlice(
+    def fit_slice_by_slice(
         self, model_name: str, stages: int = 1, **fit_wrapper_kwargs
     ) -> None:
         """
@@ -1337,8 +1296,8 @@ class File:
         t_SbS = time.time()  # start timing for SbS fit
 
         # find model with matching name from list
-        self.model_SbS = self.select_model(model_info=model_name)
-        if self.model_SbS is None:
+        self.model_sbs = self.select_model(model_info=model_name)
+        if self.model_sbs is None:
             warnings.warn(
                 f"Model '{model_name}' not found; Slice-by-Slice fit skipped.",
                 stacklevel=2,
@@ -1372,20 +1331,22 @@ class File:
 
         # set all fixed SbS fit parameters equal to baseline model results
         base_df = ulmfit.par2df(self.model_base.lmfit_pars, col_type="min")
-        self.model_SbS.update_value(
+        self.model_sbs.update_value(
             new_par_values=list(base_df["value"]), par_select="all"
         )
 
         # find all parameters with names ending in "x0"
         # so they can be updated for every slice
-        e_pos_pars = [name for name in self.model_SbS.par_names if name.endswith("_x0")]
+        e_pos_pars = [
+            name for name in self.model_sbs.parameter_names if name.endswith("_x0")
+        ]
         # find their corresponding values
         e_pos_vals = uarr.get_item(
             base_df, row=["name", e_pos_pars], col="value", astype="series"
         )
 
         # cycle through all spectra and fit them
-        self.results_SbS = []  # (re-)initialize placeholder for results
+        self.results_sbs = []  # (re-)initialize placeholder for results
         for s_i, s in enumerate(self.data):
             print(f"Analyzing slice number {s_i + 1}/{len(self.time)}", end="\r")
             if s_i < self.p.skip_first_n_spec:
@@ -1400,16 +1361,16 @@ class File:
             )
             # update all guesses for parameters with names ending in "x0"
             new_e_vals = list(e_pos_vals.add(delta_max))
-            self.model_SbS.update_value(
+            self.model_sbs.update_value(
                 new_par_values=new_e_vals, par_select=e_pos_pars
             )
             # get initial guess
             initial_guess = ulmfit.par_extract(
-                self.model_SbS.lmfit_pars, return_type="list"
+                self.model_sbs.lmfit_pars, return_type="list"
             )
 
             # const = (x, data, package, fnctn str, unpack, energy limits, time limits)
-            self.model_SbS.const = (
+            self.model_sbs.const = (
                 self.energy,
                 s,
                 self.p.spec_lib,
@@ -1419,14 +1380,14 @@ class File:
                 [],
             )
             # args [for fit function called in residual function]
-            self.model_SbS.args = (self.model_SbS, 1)
+            self.model_sbs.args = (self.model_sbs, 1)
 
             # fit with confidence intervals
             result_SbS = fitlib.fit_wrapper(
-                const=self.model_SbS.const,
-                args=self.model_SbS.args,
-                par_names=self.model_SbS.par_names,
-                par=self.model_SbS.lmfit_pars,
+                const=self.model_sbs.const,
+                args=self.model_sbs.args,
+                par_names=self.model_sbs.parameter_names,
+                par=self.model_sbs.lmfit_pars,
                 stages=stages,
                 show_output=0,
                 save_output=1,
@@ -1435,17 +1396,17 @@ class File:
             )
 
             # add final fit parameters to list of fit parameters of all spectra
-            self.results_SbS.append(result_SbS)
+            self.results_sbs.append(result_SbS)
 
             # (optionally) plot and (always) save fit summary for this slice
             fitlib.plt_fit_res_1D(
-                x=self.model_SbS.const[0],
-                y=self.model_SbS.const[1],
+                x=self.model_sbs.const[0],
+                y=self.model_sbs.const[1],
                 fit_fun_str=self.p.spec_fun_str,
                 package=self.p.spec_lib,
                 par_init=initial_guess,
                 par_fin=result_SbS[1],
-                args=self.model_SbS.args,
+                args=self.model_sbs.args,
                 plot_sum=False,
                 show_init=True,
                 fit_lim=self.e_lim,
@@ -1458,13 +1419,13 @@ class File:
                 break  # for debugging: only fit first N spectra
 
         if stages >= 1:
-            self.save_SliceBySlice_fit(save_path=path_SbS_results)
+            self.save_sbs_fit(save_path=path_SbS_results)
             fitlib.time_display(
                 t_start=t_SbS, print_str="Time elapsed for Slice-by-Slice fit: "
             )
 
     #
-    def save_SliceBySlice_fit(self, save_path: PathLike) -> None:
+    def save_sbs_fit(self, save_path: PathLike) -> None:
         """
         Export Slice-by-Slice fit results.
 
@@ -1477,7 +1438,7 @@ class File:
             Base directory for saving results
         """
 
-        if self.model_SbS is None or self.time is None:
+        if self.model_sbs is None or self.time is None:
             warnings.warn(
                 "Slice-by-Slice model/results are incomplete; nothing to save.",
                 stacklevel=2,
@@ -1486,7 +1447,7 @@ class File:
         if self.data is None:
             warnings.warn("Data missing; cannot save Slice-by-Slice fit.", stacklevel=2)
             return
-        if self.model_SbS.const is None or self.model_SbS.args is None:
+        if self.model_sbs.const is None or self.model_sbs.args is None:
             warnings.warn(
                 "Slice-by-Slice model const/args missing; cannot reconstruct 2D fit.",
                 stacklevel=2,
@@ -1495,7 +1456,7 @@ class File:
         # convert results, specifically par_fin to dataframe and save
         # this also plots all parameters as a function of time
         df_SbS = fitlib.results2df(
-            results=self.results_SbS,
+            results=self.results_sbs,
             x=self.time,
             index=np.arange(0, len(self.time)),
             config=self.plot_config,
@@ -1506,11 +1467,11 @@ class File:
         )
 
         # get slice-by-slice fit spectra as a 2D map
-        df_SbS_pars = df_SbS.loc[:, self.model_SbS.par_names]
+        df_SbS_pars = df_SbS.loc[:, self.model_sbs.parameter_names]
         fit2D_SbS = fitlib.results2fit2D(
             results=df_SbS_pars,
-            const=self.model_SbS.const,
-            args=self.model_SbS.args,
+            const=self.model_sbs.const,
+            args=self.model_sbs.args,
             save_2D=-1 if self.p.show_output == 0 else 1,
             save_path=save_path,
         )
@@ -1675,9 +1636,7 @@ class File:
             self.model_active.dim = 2
 
     #
-    def fit_2Dmodel(
-        self, model_name: str, stages: int = 1, **fit_wrapper_kwargs
-    ) -> None:
+    def fit_2d(self, model_name: str, stages: int = 1, **fit_wrapper_kwargs) -> None:
         """
         Perform energy- and time-dependent 2D model fit.
 
@@ -1699,8 +1658,8 @@ class File:
         t_2D = time.time()  # start timing for 2D fit
 
         # find model with matching name from list
-        self.model_2D = self.select_model(model_info=model_name)
-        if self.model_2D is None:
+        self.model_2d = self.select_model(model_info=model_name)
+        if self.model_2d is None:
             warnings.warn(
                 f"Model '{model_name}' not found; 2D fit skipped.",
                 stacklevel=2,
@@ -1721,11 +1680,11 @@ class File:
 
         # set all fixed 2D fit parameters equal to baseline model results
         base_df = ulmfit.par2df(self.model_base.lmfit_pars, col_type="min")
-        self.model_2D.update_value(
+        self.model_2d.update_value(
             new_par_values=list(base_df["value"]), par_select=list(base_df["name"])
         )
         # const [x, data, package, function string, unpack, energy limits, time limits]
-        self.model_2D.const = (
+        self.model_2d.const = (
             self.energy,
             self.data,
             self.p.spec_lib,
@@ -1735,14 +1694,14 @@ class File:
             self.t_lim,
         )
         # args [for fit function called in residual function]
-        self.model_2D.args = (self.model_2D, 2)  # model, dimension
+        self.model_2d.args = (self.model_2d, 2)  # model, dimension
 
         # fit (with confidence intervals)
-        self.model_2D.result = fitlib.fit_wrapper(
-            const=self.model_2D.const,
-            args=self.model_2D.args,
-            par_names=self.model_2D.par_names,
-            par=self.model_2D.lmfit_pars,
+        self.model_2d.result = fitlib.fit_wrapper(
+            const=self.model_2d.const,
+            args=self.model_2d.args,
+            par_names=self.model_2d.parameter_names,
+            par=self.model_2d.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
             save_output=1,
@@ -1750,14 +1709,14 @@ class File:
             **fit_wrapper_kwargs,
         )
         if stages >= 1:
-            self.save_2Dmodel_fit(save_path=path_2D_results)
+            self.save_2d_fit(save_path=path_2D_results)
             fitlib.time_display(
                 t_start=t_2D, print_str="Time elapsed for 2D model fit: "
             )
-            display(self.model_2D.result[1].params)  # display final pars below figure
+            display(self.model_2d.result[1].params)  # display final pars below figure
 
     #
-    def save_2Dmodel_fit(self, save_path: PathLike) -> None:
+    def save_2d_fit(self, save_path: PathLike) -> None:
         """
         Export 2D model fit results.
 
@@ -1771,7 +1730,7 @@ class File:
         """
 
         if (
-            self.model_2D is None
+            self.model_2d is None
             or self.energy is None
             or self.time is None
             or self.data is None
@@ -1781,8 +1740,8 @@ class File:
                 stacklevel=2,
             )
             return
-        self.model_2D.create_value2D()  # update 2D spectrum to final fit result
-        if self.model_2D.value2D is None:
+        self.model_2d.create_value2D()  # update 2D spectrum to final fit result
+        if self.model_2d.value2D is None:
             warnings.warn(
                 "2D model evaluation did not produce value2D; nothing to save.",
                 stacklevel=2,
@@ -1791,7 +1750,7 @@ class File:
         # plot data, fit, and residual 2D maps
         fitlib.plt_fit_res_2D(
             data=self.data,
-            fit=self.model_2D.value2D,
+            fit=self.model_2d.value2D,
             x=self.energy,
             y=self.time,
             config=self.plot_config,
@@ -1801,6 +1760,64 @@ class File:
             save_path=save_path,
         )
         # dpi_plot = round(1.5 *self.p.dpi_plt), NOT AVAILABLE YET (fig_size)
+
+    #
+    def get_fit_results(
+        self,
+        *,
+        fit_type: Literal["baseline", "sbs", "2d"] = "baseline",
+    ) -> pd.DataFrame:
+        """
+        Return fit results as a DataFrame for programmatic access.
+
+        Parameters
+        ----------
+        fit_type : {'baseline', 'sbs', '2d'}, default='baseline'
+            Which fit results to return:
+
+            - 'baseline': Baseline/ground-state fit (from ``fit_baseline``)
+            - 'sbs': Slice-by-Slice fit (from ``fit_slice_by_slice``)
+            - '2d': 2D global fit (from ``fit_2d``)
+
+        Returns
+        -------
+        pd.DataFrame
+            For 'baseline' and '2d': one row per parameter with columns
+            ``['name', 'value', 'stderr', 'init_value', 'min', 'max',
+            'vary', 'expr']``.
+            For 'sbs': one row per time slice with columns = parameter names.
+
+        Raises
+        ------
+        ValueError
+            If the requested fit has not been performed yet.
+        """
+
+        if fit_type == "baseline":
+            if self.model_base is None or not self.model_base.result:
+                raise ValueError("No baseline fit results. Run fit_baseline() first.")
+            return ulmfit.par2df(
+                self.model_base.result[1].params,
+                col_type="min",
+                par_names=self.model_base.parameter_names,
+            )
+        if fit_type == "sbs":
+            if not self.results_sbs:
+                raise ValueError(
+                    "No Slice-by-Slice fit results. Run fit_slice_by_slice() first."
+                )
+            return ulmfit.list_of_par2df(self.results_sbs)
+        if fit_type == "2d":
+            if self.model_2d is None or not self.model_2d.result:
+                raise ValueError("No 2D fit results. Run fit_2d() first.")
+            return ulmfit.par2df(
+                self.model_2d.result[1].params,
+                col_type="min",
+                par_names=self.model_2d.parameter_names,
+            )
+        raise ValueError(
+            f"Unknown fit_type={fit_type!r}; use 'baseline', 'sbs', or '2d'."
+        )
 
     #
     def compare_models(self) -> None:

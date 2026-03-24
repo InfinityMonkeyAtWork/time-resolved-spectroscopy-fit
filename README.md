@@ -55,14 +55,20 @@ pip install git+https://github.com/InfinityMonkeyAtWork/time-resolved-spectrosco
 from trspecfit import Project, File
 
 project = Project(path='my_project', name='my_experiment')
-file = File(parent_project=project, path='my_dataset')
+file = File(parent_project=project, path='my_dataset',
+            data=..., energy=..., time=...)
 
-# Load an energy model defined in a YAML file
-file.load_model('models_energy.yaml', ['some_energy_model'])
-file.describe_model()
+# Load model from YAML, set limits, fit
+file.load_model('models_energy.yaml', 'my_base_model')
+file.set_fit_limits(energy_limits=[...], time_limits=[...])
+file.fit_baseline('my_base_model')
 
-# Fit each time slice individually
-file.fit_SliceBySlice()
+file.load_model('models_energy.yaml', 'my_2d_model')
+file.add_time_dependence('models_time.yaml', 'my_dynamics', 'my_par')
+file.fit_2d('my_2d_model')
+
+# Inspect results
+df = file.get_fit_results(fit_type='2d')
 ```
 
 For global fits, dynamics, profiles, and advanced workflows see the
