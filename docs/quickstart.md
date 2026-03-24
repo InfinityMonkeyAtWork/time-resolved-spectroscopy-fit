@@ -29,11 +29,12 @@ file.define_baseline(t_ind=0)
 file.fit_baseline()
 
 # Add time dependence to one parameter in the active energy model
-# par_name must match a loaded parameter name exactly
+# target_parameter must match a loaded parameter name exactly
 file.add_time_dependence(
-    model_yaml='models_time.yaml',
-    model_info=['some_dynamics_model'],
-    par_name='some_base_parameter',
+    target_model='some_energy_model',
+    target_parameter='some_base_parameter',
+    dynamics_yaml='models_time.yaml',
+    dynamics_model=['some_dynamics_model'],
 )
 
 # Inspect updated parameters
@@ -59,23 +60,26 @@ file.load_model('models_energy.yaml', ['some_energy_model'])
 
 # Attach profile to a base parameter
 file.add_par_profile(
-    model_yaml='models_profile.yaml',
-    model_info=['some_profile_model'],   # profile model name
-    par_name='some_base_parameter',      # base parameter name
+    target_model='some_energy_model',
+    target_parameter='some_base_parameter',
+    profile_yaml='models_profile.yaml',
+    profile_model=['some_profile_model'],
 )
 
 # Add dynamics to a base parameter (most common use case)
 file.add_time_dependence(
-    model_yaml='models_time.yaml',
-    model_info=['some_dynamics_model'],
-    par_name='some_base_parameter',
+    target_model='some_energy_model',
+    target_parameter='some_base_parameter',
+    dynamics_yaml='models_time.yaml',
+    dynamics_model=['some_dynamics_model'],
 )
 
 # Optionally: attach dynamics to a profile parameter (series composition)
 file.add_time_dependence(
-    model_yaml='models_time.yaml',
-    model_info=['another_dynamics_model'],
-    par_name='some_profile_parameter',
+    target_model='some_energy_model',
+    target_parameter='some_profile_parameter',
+    dynamics_yaml='models_time.yaml',
+    dynamics_model=['another_dynamics_model'],
 )
 ```
 
@@ -85,7 +89,7 @@ file.add_time_dependence(
 
 ## Notes
 - `add_time_dependence(...)` must be called before `create_value2D()` if you want dynamics in one or more parameters.
-- `model_info` in `add_time_dependence(...)` can contain multiple names for multi-cycle dynamics.
+- `dynamics_model` in `add_time_dependence(...)` can contain multiple names for multi-cycle dynamics.
 - For repeating dynamics, pass `frequency=<Hz>` to `add_time_dependence(...)`.
 
 ## Next Steps

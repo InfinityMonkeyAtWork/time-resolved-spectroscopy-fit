@@ -64,7 +64,7 @@ file.set_fit_limits(energy_limits=[...], time_limits=[...])
 file.fit_baseline('my_base_model')
 
 file.load_model('models_energy.yaml', 'my_2d_model')
-file.add_time_dependence('models_time.yaml', 'my_dynamics', 'my_par')
+file.add_time_dependence('my_2d_model', 'my_par', 'models_time.yaml', 'my_dynamics')
 file.fit_2d('my_2d_model')
 
 # Inspect results

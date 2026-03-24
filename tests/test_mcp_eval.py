@@ -83,9 +83,10 @@ class TestEvaluation:
 
         file, model = self._make_file_with_model(["energy_expression"])
         file.add_time_dependence(
-            model_yaml="test_models_time.yaml",
-            model_info=["MonoExpPosIRF"],
-            par_name="GLP_01_x0",
+            target_model="energy_expression",
+            target_parameter="GLP_01_x0",
+            dynamics_yaml="test_models_time.yaml",
+            dynamics_model=["MonoExpPosIRF"],
         )
 
         assert model.dim == 2
@@ -170,15 +171,17 @@ class TestEvaluation:
 
         # Attach MonoExpPosIRF to GLP_01_A
         file.add_time_dependence(
-            model_yaml="test_models_time.yaml",
-            model_info=["MonoExpPosIRF"],
-            par_name="GLP_01_A",
+            target_model="simple_energy",
+            target_parameter="GLP_01_A",
+            dynamics_yaml="test_models_time.yaml",
+            dynamics_model=["MonoExpPosIRF"],
         )
         # Attach MonoExpNeg to GLP_01_x0
         file.add_time_dependence(
-            model_yaml="test_models_time.yaml",
-            model_info=["MonoExpNeg"],
-            par_name="GLP_01_x0",
+            target_model="simple_energy",
+            target_parameter="GLP_01_x0",
+            dynamics_yaml="test_models_time.yaml",
+            dynamics_model=["MonoExpNeg"],
         )
 
         assert model.dim == 2
@@ -220,9 +223,10 @@ class TestEvaluation:
 
         # Attach pLinear profile (m=-0.5, b=0) to GLP_01_A
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pLinear"],
-            par_name="GLP_01_A",
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pLinear"],
         )
 
         # Evaluate via the model
@@ -253,15 +257,17 @@ class TestEvaluation:
 
         # Attach pLinear profile (m=-0.5, b=0) to GLP_01_A
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pLinear"],
-            par_name="GLP_01_A",
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pLinear"],
         )
         # Make the profile slope time-dependent
         file.add_time_dependence(
-            model_yaml="test_models_time.yaml",
-            model_info=["MonoExpPos"],
-            par_name="GLP_01_A_pLinear_01_m",
+            target_model="single_glp",
+            target_parameter="GLP_01_A_pLinear_01_m",
+            dynamics_yaml="test_models_time.yaml",
+            dynamics_model=["MonoExpPos"],
         )
 
         assert model.dim == 2
@@ -318,9 +324,10 @@ class TestEvaluation:
 
         # Attach pLinear profile (m=-0.5, b=0) to GLP_01_A
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pLinear"],
-            par_name="GLP_01_A",
+            target_model="two_glp_expr_amplitude",
+            target_parameter="GLP_01_A",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pLinear"],
         )
 
         # Evaluate
@@ -350,9 +357,10 @@ class TestEvaluation:
 
         file, model = self._make_file_with_model(["energy_expression"])
         file.add_time_dependence(
-            model_yaml="test_models_time.yaml",
-            model_info=["MonoExpPos"],
-            par_name="GLP_01_A",
+            target_model="energy_expression",
+            target_parameter="GLP_01_A",
+            dynamics_yaml="test_models_time.yaml",
+            dynamics_model=["MonoExpPos"],
         )
 
         p_A1 = self._par(model, "GLP_01_A")
@@ -396,14 +404,16 @@ class TestEvaluation:
         file, model = self._make_file_with_profile_model(["single_glp"])
 
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pLinear"],
-            par_name="GLP_01_A",
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pLinear"],
         )
         file.add_time_dependence(
-            model_yaml="test_models_time.yaml",
-            model_info=["MonoExpNeg"],
-            par_name="GLP_01_x0",
+            target_model="single_glp",
+            target_parameter="GLP_01_x0",
+            dynamics_yaml="test_models_time.yaml",
+            dynamics_model=["MonoExpNeg"],
         )
 
         assert model.dim == 2
@@ -458,14 +468,16 @@ class TestEvaluation:
         )
 
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pLinear"],
-            par_name="GLP_01_A",
+            target_model="two_glp_expr_amplitude",
+            target_parameter="GLP_01_A",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pLinear"],
         )
         file.add_time_dependence(
-            model_yaml="test_models_time.yaml",
-            model_info=["MonoExpPos"],
-            par_name="GLP_01_A_pLinear_01_m",
+            target_model="two_glp_expr_amplitude",
+            target_parameter="GLP_01_A_pLinear_01_m",
+            dynamics_yaml="test_models_time.yaml",
+            dynamics_model=["MonoExpPos"],
         )
 
         assert model.dim == 2
@@ -508,9 +520,10 @@ class TestEvaluation:
 
         with pytest.raises(ValueError, match="indirectly references"):
             file.add_time_dependence(
-                model_yaml="test_models_time.yaml",
-                model_info=["MonoExpPosIRF"],
-                par_name="GLP_01_A",
+                target_model="expression_chain",
+                target_parameter="GLP_01_A",
+                dynamics_yaml="test_models_time.yaml",
+                dynamics_model=["MonoExpPosIRF"],
             )
 
     #
@@ -527,7 +540,8 @@ class TestEvaluation:
 
         with pytest.raises(ValueError, match="indirectly references"):
             file.add_par_profile(
-                model_yaml="test_models_profile.yaml",
-                model_info=["profile_pLinear"],
-                par_name="GLP_01_A",
+                target_model="expression_chain",
+                target_parameter="GLP_01_A",
+                profile_yaml="test_models_profile.yaml",
+                profile_model=["profile_pLinear"],
             )

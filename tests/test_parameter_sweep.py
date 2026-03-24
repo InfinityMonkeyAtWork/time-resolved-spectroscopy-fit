@@ -256,9 +256,10 @@ class TestSimulatorParameterSweep:
             model_yaml="test_models_energy.yaml", model_info=["simple_energy"]
         )
         file.add_time_dependence(
-            model_yaml="test_models_time.yaml",
-            model_info=["MonoExpPosIRF"],
-            par_name="GLP_01_x0",
+            target_model="simple_energy",
+            target_parameter="GLP_01_x0",
+            dynamics_yaml="test_models_time.yaml",
+            dynamics_model=["MonoExpPosIRF"],
         )
         assert file.model_active is not None  # type guard
         return file.model_active

@@ -38,9 +38,10 @@ def _make_truth_file(project):
         model_info=["single_glp"],
     )
     file.add_time_dependence(
-        model_yaml="test_models_time.yaml",
-        model_info=["MonoExpPos"],
-        par_name="GLP_01_A",
+        target_model="single_glp",
+        target_parameter="GLP_01_A",
+        dynamics_yaml="test_models_time.yaml",
+        dynamics_model=["MonoExpPos"],
     )
     return file
 
@@ -61,9 +62,10 @@ def _make_fit_file(project, data, energy, time):
         model_info=["single_glp"],
     )
     file.add_time_dependence(
-        model_yaml="test_models_time.yaml",
-        model_info=["MonoExpPos"],
-        par_name="GLP_01_A",
+        target_model="single_glp",
+        target_parameter="GLP_01_A",
+        dynamics_yaml="test_models_time.yaml",
+        dynamics_model=["MonoExpPos"],
     )
 
     file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)

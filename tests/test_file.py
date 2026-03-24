@@ -662,9 +662,10 @@ class TestFitLimitsSlicing:
         )
         if time is not None:
             file.add_time_dependence(
-                model_yaml="test_models_time.yaml",
-                model_info=["MonoExpPos"],
-                par_name="GLP_01_A",
+                target_model="single_glp",
+                target_parameter="GLP_01_A",
+                dynamics_yaml="test_models_time.yaml",
+                dynamics_model=["MonoExpPos"],
             )
         file.set_fit_limits(
             energy_limits=energy_limits,

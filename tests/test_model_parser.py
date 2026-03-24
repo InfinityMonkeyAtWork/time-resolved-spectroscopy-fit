@@ -315,9 +315,10 @@ class Test2DModelParsing:
 
         file = self._make_file_with_energy_model(model_energy=["simple_energy"])
         file.add_time_dependence(
-            model_yaml="test_models_time.yaml",
-            model_info=["MonoExpPosIRF"],
-            par_name="GLP_01_x0",
+            target_model="simple_energy",
+            target_parameter="GLP_01_x0",
+            dynamics_yaml="test_models_time.yaml",
+            dynamics_model=["MonoExpPosIRF"],
         )
         model = file.model_active
         assert model is not None, "Model loading failed in setup"
@@ -370,9 +371,10 @@ class Test2DModelParsing:
             ValueError, match="Cannot add time dependence to expression parameter"
         ):
             file.add_time_dependence(
-                model_yaml="test_models_time.yaml",
-                model_info=["MonoExpPosIRF"],
-                par_name="GLP_02_x0",
+                target_model="energy_expression",
+                target_parameter="GLP_02_x0",
+                dynamics_yaml="test_models_time.yaml",
+                dynamics_model=["MonoExpPosIRF"],
             )
 
     #
@@ -383,16 +385,18 @@ class Test2DModelParsing:
             model_energy=["single_glp"], aux_axis=np.linspace(0, 10, 21)
         )
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pLinear"],
-            par_name="GLP_01_A",
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pLinear"],
         )
 
         with pytest.raises(ValueError, match="already has a profile"):
             file.add_time_dependence(
-                model_yaml="test_models_time.yaml",
-                model_info=["MonoExpPos"],
-                par_name="GLP_01_A",
+                target_model="single_glp",
+                target_parameter="GLP_01_A",
+                dynamics_yaml="test_models_time.yaml",
+                dynamics_model=["MonoExpPos"],
             )
 
 
@@ -427,9 +431,10 @@ class TestProfileParsing:
             aux_axis=np.linspace(0, 10, 21),
         )
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=model_info,
-            par_name=par_name,
+            target_model="simple_energy",
+            target_parameter=par_name,
+            profile_yaml="test_models_profile.yaml",
+            profile_model=model_info,
         )
         model = file.model_active
         assert model is not None, "Model loading failed in setup"
@@ -513,9 +518,10 @@ class TestProfileParsing:
 
         with pytest.raises(ValueError):
             file.add_par_profile(
-                model_yaml="test_models_profile.yaml",
-                model_info=["profile_pExpDecay"],
-                par_name="GLP_02_A",
+                target_model="energy_expression",
+                target_parameter="GLP_02_A",
+                profile_yaml="test_models_profile.yaml",
+                profile_model=["profile_pExpDecay"],
             )
 
     #
@@ -528,16 +534,18 @@ class TestProfileParsing:
         )
         file.time = np.linspace(-10, 100, 111)
         file.add_time_dependence(
-            model_yaml="test_models_time.yaml",
-            model_info=["MonoExpPos"],
-            par_name="GLP_01_A",
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml="test_models_time.yaml",
+            dynamics_model=["MonoExpPos"],
         )
 
         with pytest.raises(ValueError, match="already has time dependence"):
             file.add_par_profile(
-                model_yaml="test_models_profile.yaml",
-                model_info=["profile_pExpDecay"],
-                par_name="GLP_01_A",
+                target_model="single_glp",
+                target_parameter="GLP_01_A",
+                profile_yaml="test_models_profile.yaml",
+                profile_model=["profile_pExpDecay"],
             )
 
 

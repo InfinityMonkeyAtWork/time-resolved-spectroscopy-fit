@@ -358,9 +358,10 @@ class TestMCPIntegration:
         model = file.model_active
 
         file.add_time_dependence(
-            model_yaml="test_models_time.yaml",
-            model_info=["MonoExpPosIRF"],
-            par_name="GLP_01_x0",
+            target_model="simple_energy",
+            target_parameter="GLP_01_x0",
+            dynamics_yaml="test_models_time.yaml",
+            dynamics_model=["MonoExpPosIRF"],
         )
 
         assert model.dim == 2
@@ -565,9 +566,10 @@ class TestMCPProfile:
         # Spectrum with profile on A
         file = self._make_file(aux_axis=np.linspace(0, 5, 20))
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pExpDecay"],
-            par_name="GLP_01_A",
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pExpDecay"],
         )
 
         val_prof = file.model_active.create_value1D(return_1d=1)
@@ -584,9 +586,10 @@ class TestMCPProfile:
         file = self._make_file(aux_axis=aux)
 
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pExpDecay"],
-            par_name="GLP_01_A",
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pExpDecay"],
         )
 
         ci, pi = file.model_active.find_par_by_name("GLP_01_A")
@@ -604,9 +607,10 @@ class TestMCPProfile:
         model = file.model_active
 
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pExpDecay"],
-            par_name="GLP_01_A",
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pExpDecay"],
         )
 
         # Full model evaluation should produce spectrum over parent's energy axis
@@ -623,9 +627,10 @@ class TestMCPProfile:
         file = self._make_file(aux_axis=aux)
 
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pExpDecay"],
-            par_name="GLP_01_A",
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pExpDecay"],
         )
 
         ci, pi = file.model_active.find_par_by_name("GLP_01_A")
@@ -645,9 +650,10 @@ class TestMCPProfile:
         model = file.model_active
 
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pExpDecay"],
-            par_name="GLP_01_A",
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pExpDecay"],
         )
 
         val = model.create_value1D(return_1d=1)
@@ -670,9 +676,10 @@ class TestMCPProfile:
         # Model with profile
         file_prof = self._make_file(aux_axis=np.linspace(0, 5, 20))
         file_prof.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pExpDecay"],
-            par_name="GLP_01_A",
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pExpDecay"],
         )
         model_prof = file_prof.model_active
         val_prof = model_prof.create_value1D(return_1d=1)
@@ -690,16 +697,18 @@ class TestMCPProfile:
 
         # Profile on A: pExpDecay
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pExpDecay"],
-            par_name="GLP_01_A",
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pExpDecay"],
         )
 
         # Profile on x0: pLinear
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pLinear"],
-            par_name="GLP_01_x0",
+            target_model="single_glp",
+            target_parameter="GLP_01_x0",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pLinear"],
         )
 
         val = model.create_value1D(return_1d=1)
@@ -708,9 +717,10 @@ class TestMCPProfile:
         # Both profiles active: should differ from single-profile result
         file_single = self._make_file(aux_axis=aux)
         file_single.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pExpDecay"],
-            par_name="GLP_01_A",
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pExpDecay"],
         )
         val_single = file_single.model_active.create_value1D(return_1d=1)
         assert not np.allclose(val, val_single)
@@ -724,9 +734,10 @@ class TestMCPProfile:
 
         with pytest.raises((ValueError, AttributeError)):
             file.add_par_profile(
-                model_yaml="test_models_profile.yaml",
-                model_info=["profile_pExpDecay"],
-                par_name="GLP_01_A",
+                target_model="single_glp",
+                target_parameter="GLP_01_A",
+                profile_yaml="test_models_profile.yaml",
+                profile_model=["profile_pExpDecay"],
             )
 
     #
@@ -750,9 +761,10 @@ class TestMCPProfile:
         # GLP_02_A is an expression ("GLP_01_A * 0.5") — profile should be rejected
         with pytest.raises(ValueError, match="expression"):
             file.add_par_profile(
-                model_yaml="test_models_profile.yaml",
-                model_info=["profile_pExpDecay"],
-                par_name="GLP_02_A",
+                target_model="two_glp_expr_amplitude",
+                target_parameter="GLP_02_A",
+                profile_yaml="test_models_profile.yaml",
+                profile_model=["profile_pExpDecay"],
             )
 
     #
@@ -785,16 +797,18 @@ class TestMCPProfile:
 
         # Add profile to A via public API
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pExpDecay"],
-            par_name="GLP_01_A",
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pExpDecay"],
         )
 
         # Add dynamics to x0 via public API
         file.add_time_dependence(
-            model_yaml="test_models_time.yaml",
-            model_info=["MonoExpPos"],
-            par_name="GLP_01_x0",
+            target_model="single_glp",
+            target_parameter="GLP_01_x0",
+            dynamics_yaml="test_models_time.yaml",
+            dynamics_model=["MonoExpPos"],
         )
 
         assert model.dim == 2

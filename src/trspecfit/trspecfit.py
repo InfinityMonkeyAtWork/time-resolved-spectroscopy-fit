@@ -1174,14 +1174,7 @@ class File:
 
         t_base = time.time()  # start timing for baseline fit
 
-        # find model with matching name from list
-        self.model_base = self.select_model(model_info=model_name)
-        if self.model_base is None:
-            warnings.warn(
-                f"Model '{model_name}' not found; baseline fit skipped.",
-                stacklevel=2,
-            )
-            return
+        self.model_base = self._resolve_model(model_name)
         if self.energy is None or self.data_base is None:
             warnings.warn(
                 "Baseline data/energy axis missing; baseline fit skipped.",
@@ -1295,14 +1288,7 @@ class File:
 
         t_SbS = time.time()  # start timing for SbS fit
 
-        # find model with matching name from list
-        self.model_sbs = self.select_model(model_info=model_name)
-        if self.model_sbs is None:
-            warnings.warn(
-                f"Model '{model_name}' not found; Slice-by-Slice fit skipped.",
-                stacklevel=2,
-            )
-            return
+        self.model_sbs = self._resolve_model(model_name)
         if self.model_base is None:
             warnings.warn(
                 "Baseline model is not fitted yet; run fit_baseline() first.",
@@ -1492,15 +1478,34 @@ class File:
             )
 
     #
+    def _resolve_model(self, model_name: str | None) -> mcp.Model:
+        """
+        Resolve a model by name, falling back to model_active.
+
+        Raises ValueError if the model cannot be found.
+        """
+
+        if model_name is None:
+            if self.model_active is None:
+                raise ValueError("No active model set. Pass target_model explicitly.")
+            return self.model_active
+        mod = self.select_model(model_name)
+        if mod is None:
+            raise ValueError(f"Model '{model_name}' not found.")
+        return mod
+
+    #
     def add_time_dependence(
         self,
-        model_yaml: PathLike,
-        model_info: str | list[str],
-        par_name: str,
+        target_model: str,
+        target_parameter: str,
+        dynamics_yaml: PathLike,
+        dynamics_model: str | list[str],
+        *,
         frequency: float = -1,
     ) -> None:
         """
-        Add time dependence for one parameter of currently active model.
+        Add time dependence for one parameter of a model.
 
         Loads a "Dynamics"-type model to describe time-dependent behavior.
         The parameter can live either directly in the energy model or inside
@@ -1513,82 +1518,81 @@ class File:
 
         Parameters
         ----------
-        model_yaml : str or Path
-            YAML file name defining the Dynamics model
-        model_info : str or list of str
-            Model name(s) for time-dependent behavior
-        par_name : str
+        target_model : str
+            Name of the energy model to add dynamics to.
+        target_parameter : str
             Name of parameter to make time-dependent. Can be an energy model
             parameter or a profile model parameter.
+        dynamics_yaml : str or Path
+            YAML file name defining the Dynamics model.
+        dynamics_model : str or list of str
+            Model name(s) for time-dependent behavior.
         frequency : float, default=-1
             Repetition frequency for time-dependent behavior.
             -1 (default) means no repetition (single cycle).
         """
 
+        model = self._resolve_model(target_model)
         t_mod = self.load_model(
-            model_yaml,
-            model_info,
-            par_name,
+            dynamics_yaml,
+            dynamics_model,
+            target_parameter,
             model_type="dynamics",
-        )  # load
-        if self.model_active is None:
-            warnings.warn(
-                "No active model available; time dependence not added.",
-                stacklevel=2,
-            )
-            return
+        )
 
         # Try energy model first
-        ci, pi = self.model_active.find_par_by_name(par_name)
+        ci, pi = model.find_par_by_name(target_parameter)
         if ci is not None and pi is not None:
-            target_par = self.model_active.components[ci].pars[pi]
+            target_par = model.components[ci].pars[pi]
             if target_par.p_vary:
                 raise ValueError(
-                    f"Cannot add time dependence to parameter '{par_name}' because "
-                    "it already has a profile (p_vary=True). This is currently "
-                    "disabled to avoid strongly correlated fits. Add dynamics to a "
-                    "profile parameter instead, or remove/fix the profile first."
+                    f"Cannot add time dependence to parameter "
+                    f"'{target_parameter}' because it already has a profile "
+                    "(p_vary=True). This is currently disabled to avoid strongly "
+                    "correlated fits. Add dynamics to a profile parameter "
+                    "instead, or remove/fix the profile first."
                 )
-            self.model_active.add_dynamics(cast("mcp.Dynamics", t_mod), frequency)
-            self.model_active.dim = 2
+            model.add_dynamics(cast("mcp.Dynamics", t_mod), frequency)
+            model.dim = 2
             return
 
         # Search profile models attached to energy model parameters
-        for comp in self.model_active.components:
+        for comp in model.components:
             for par in comp.pars:
                 if par.p_vary and par.p_model is not None:
-                    pci, _ppi = par.p_model.find_par_by_name(par_name)
+                    pci, _ppi = par.p_model.find_par_by_name(target_parameter)
                     if pci is not None:
                         # Add dynamics to the profile model
                         par.p_model.add_dynamics(cast("mcp.Dynamics", t_mod), frequency)
                         # Sync dynamics params into the energy model's parameter list
                         par.lmfit_par_list.extend(t_mod.lmfit_par_list)
-                        self.model_active.update()
-                        self.model_active.dim = 2
+                        model.update()
+                        model.dim = 2
                         return
 
         # Not found in energy model or any attached profile
         raise ValueError(
-            f"Parameter '{par_name}' not found in model "
-            f"'{self.model_active.name}' or any attached profile models."
+            f"Parameter '{target_parameter}' not found in model "
+            f"'{model.name}' or any attached profile models."
         )
 
     #
     def add_par_profile(
         self,
-        model_yaml: PathLike,
-        model_info: str | list[str],
-        par_name: str,
+        target_model: str,
+        target_parameter: str,
+        profile_yaml: PathLike,
+        profile_model: str | list[str],
     ) -> None:
         """
-        Add a parameter profile over the auxiliary axis to the currently active model.
+        Add a parameter profile over the auxiliary axis to a model.
 
         Loads a ``"profile"``-type model from a YAML file and attaches it to the
-        named parameter of the currently active model, so that the parameter varies
-        over ``aux_axis`` (uniform averaging over the auxiliary dimension).
+        named parameter, so that the parameter varies over ``aux_axis``
+        (uniform averaging over the auxiliary dimension).
 
         If any parameters inside the profile model are time-dependent
-        (``t_vary=True``), ``model_active.dim`` is automatically set to 2.
+        (``t_vary=True``), the model's dim is automatically set to 2.
 
         To avoid strongly correlated fits, adding a profile to an
         energy-model parameter that already has time dependence
@@ -1596,44 +1600,42 @@ class File:
 
         Parameters
         ----------
-        model_yaml : str or Path
-            YAML file name defining the Profile model
-        model_info : str or list of str
-            Model name(s) for the profile (single element)
-        par_name : str
-            Name of the parameter in the active model to attach the profile to
-            (e.g. ``'GLP_01_A'``)
+        target_model : str
+            Name of the energy model to add the profile to.
+        target_parameter : str
+            Name of the parameter to attach the profile to
+            (e.g. ``'GLP_01_A'``).
+        profile_yaml : str or Path
+            YAML file name defining the Profile model.
+        profile_model : str or list of str
+            Model name(s) for the profile (single element).
         """
+
+        model = self._resolve_model(target_model)
         p_mod = self.load_model(
-            model_yaml,
-            model_info,
-            par_name,
+            profile_yaml,
+            profile_model,
+            target_parameter,
             model_type="profile",
         )
-        if self.model_active is None:
-            warnings.warn(
-                "No active model available; profile not added.",
-                stacklevel=2,
-            )
-            return
-        ci, pi = self.model_active.find_par_by_name(par_name)
+        ci, pi = model.find_par_by_name(target_parameter)
         if ci is None or pi is None:
             raise ValueError(
-                f"Parameter '{par_name}' not found in active model "
-                f"'{self.model_active.name}'."
+                f"Parameter '{target_parameter}' not found in model '{model.name}'."
             )
-        target_par = self.model_active.components[ci].pars[pi]
+        target_par = model.components[ci].pars[pi]
         if target_par.t_vary:
             raise ValueError(
-                f"Cannot add profile to parameter '{par_name}' because it already "
-                "has time dependence (t_vary=True). This is currently disabled to "
-                "avoid strongly correlated fits. Add profile first and dynamics to "
-                "a profile parameter instead, or remove/fix time dependence first."
+                f"Cannot add profile to parameter '{target_parameter}' because "
+                "it already has time dependence (t_vary=True). This is currently "
+                "disabled to avoid strongly correlated fits. Add profile first "
+                "and dynamics to a profile parameter instead, or remove/fix "
+                "time dependence first."
             )
-        self.model_active.add_profile(cast("mcp.Profile", p_mod))
+        model.add_profile(cast("mcp.Profile", p_mod))
         # auto-promote to 2D if any parameter inside the profile is time-dependent
         if any(p.t_vary for comp in p_mod.components for p in comp.pars):
-            self.model_active.dim = 2
+            model.dim = 2
 
     #
     def fit_2d(self, model_name: str, stages: int = 1, **fit_wrapper_kwargs) -> None:
@@ -1657,14 +1659,7 @@ class File:
 
         t_2D = time.time()  # start timing for 2D fit
 
-        # find model with matching name from list
-        self.model_2d = self.select_model(model_info=model_name)
-        if self.model_2d is None:
-            warnings.warn(
-                f"Model '{model_name}' not found; 2D fit skipped.",
-                stacklevel=2,
-            )
-            return
+        self.model_2d = self._resolve_model(model_name)
         if self.model_base is None:
             warnings.warn(
                 "Baseline model is not fitted yet; run fit_baseline() first.",

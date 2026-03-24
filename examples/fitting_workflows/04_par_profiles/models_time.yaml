@@ -1,16 +1,13 @@
 # Time-dynamics models for the par_profiles example
 # Applied to profile model parameters — not directly to energy model parameters.
 #
-# Usage: load with par_name matching the lmfit name of the profile parameter
-# to be made time-dependent, then add to the profile model (not the energy model):
+# Usage (high-level API): attach the profile first, then add dynamics to the
+# profile parameter. target_parameter must match the lmfit name of the profile
+# parameter to be made time-dependent:
 #
-#   p_bb = file.load_model("models_profile.yaml", ["GLP_01_x0"],
-#                          par_name="GLP_01_x0", model_type="profile")
-#   t_bb = file.load_model("models_time.yaml", ["BandBendingRecovery"],
-#                          par_name="GLP_01_x0_pLinear_01_m", model_type="dynamics")
-#   p_bb.add_dynamics(t_bb)           # add to the PROFILE model
-#   file.model_active.add_profile(p_bb)
-#   file.model_active.dim = 2
+#   file.add_par_profile("2D", "GLP_01_x0", "models_profile.yaml", ["GLP_01_x0"])
+#   file.add_time_dependence("2D", "GLP_01_x0_pLinear_01_m",
+#                            "models_time.yaml", ["BandBendingRecovery"])
 #
 # This is the key difference from standard time dynamics: the Dynamics model is
 # attached to a parameter of the Profile model, not a parameter of the energy model.
