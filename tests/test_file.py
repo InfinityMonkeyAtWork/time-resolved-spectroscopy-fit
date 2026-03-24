@@ -431,23 +431,23 @@ class TestFitLimitsAndBaseline:
         assert np.max(e_cut) <= 88
 
     #
-    def test_set_fit_limits_time_without_time_axis_warns(self):
-        """set_fit_limits with time_limits but no time axis (1D) should warn."""
+    def test_set_fit_limits_time_without_time_axis_raises(self):
+        """set_fit_limits with time_limits but no time axis (1D) should raise."""
 
         project = Project(path="tests")
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 201)
         file.dim = 1
-        with pytest.warns(UserWarning, match="[Tt]ime"):
+        with pytest.raises(ValueError, match="[Tt]ime.*missing"):
             file.set_fit_limits([82, 88], time_limits=[0, 50], show_plot=False)
 
     #
-    def test_set_fit_limits_no_data_warns(self):
-        """set_fit_limits without data or energy should warn."""
+    def test_set_fit_limits_no_data_raises(self):
+        """set_fit_limits without data or energy should raise."""
 
         project = Project(path="tests")
         file = File(parent_project=project)
-        with pytest.warns(UserWarning, match="cannot set fit limits"):
+        with pytest.raises(ValueError, match="cannot set fit limits"):
             file.set_fit_limits([82, 88], show_plot=False)
 
     #
@@ -491,30 +491,30 @@ class TestFitLimitsAndBaseline:
         assert len(file.base_t_abs) == 2
 
     #
-    def test_define_baseline_1d_warns(self):
-        """define_baseline on 1D data should warn."""
+    def test_define_baseline_1d_raises(self):
+        """define_baseline on 1D data should raise."""
 
         file = self._make_file_with_data()
         file.dim = 1
-        with pytest.warns(UserWarning, match="Cannot define baseline for 1D"):
+        with pytest.raises(ValueError, match="Cannot define baseline for 1D"):
             file.define_baseline(-10, 0, show_plot=False)
 
     #
-    def test_define_baseline_no_data_warns(self):
-        """define_baseline without data should warn."""
+    def test_define_baseline_no_data_raises(self):
+        """define_baseline without data should raise."""
 
         project = Project(path="tests")
         file = File(parent_project=project)
         file.dim = 2
-        with pytest.warns(UserWarning, match="No data loaded"):
+        with pytest.raises(ValueError, match="No data loaded"):
             file.define_baseline(-10, 0, show_plot=False)
 
     #
-    def test_define_baseline_invalid_time_type_warns(self):
-        """define_baseline with invalid time_type should warn."""
+    def test_define_baseline_invalid_time_type_raises(self):
+        """define_baseline with invalid time_type should raise."""
 
         file = self._make_file_with_data()
-        with pytest.warns(UserWarning, match="Unknown time_type"):
+        with pytest.raises(ValueError, match="Unknown time_type"):
             file.define_baseline(-10, 0, time_type="bogus", show_plot=False)
 
 
@@ -887,6 +887,154 @@ class TestFitLimitsOutOfRange:
         assert len(e_cut) > 0
         assert np.min(e_cut) >= 80.0
         assert np.max(e_cut) <= 85.0
+
+
+#
+#
+class TestFitPreconditions:
+    """Fit methods raise ValueError on missing preconditions."""
+
+    #
+    def _make_file_with_model(self):
+        """Create file with axes, 2D data, and a loaded energy model."""
+
+        project = Project(path="tests")
+        file = File(parent_project=project)
+        file.energy = np.linspace(80, 90, 201)
+        file.time = np.linspace(-10, 100, 111)
+        file.data = np.random.default_rng(42).normal(
+            size=(len(file.time), len(file.energy))
+        )
+        file.dim = 2
+        file.load_model(
+            model_yaml="test_models_energy.yaml",
+            model_info=["simple_energy"],
+        )
+        return file
+
+    # -- fit_baseline --
+
+    #
+    def test_fit_baseline_no_energy_raises(self):
+        """fit_baseline raises ValueError when energy axis is missing."""
+
+        file = self._make_file_with_model()
+        file.energy = None
+        with pytest.raises(ValueError, match="energy axis missing"):
+            file.fit_baseline("simple_energy")
+
+    #
+    def test_fit_baseline_no_data_base_raises(self):
+        """fit_baseline raises ValueError when baseline data is missing."""
+
+        file = self._make_file_with_model()
+        file.data_base = None
+        with pytest.raises(ValueError, match="data.*missing"):
+            file.fit_baseline("simple_energy")
+
+    # -- fit_slice_by_slice --
+
+    #
+    def test_fit_sbs_no_baseline_model_raises(self):
+        """fit_slice_by_slice raises ValueError when baseline not fitted."""
+
+        file = self._make_file_with_model()
+        file.model_base = None
+        with pytest.raises(ValueError, match="fit_baseline"):
+            file.fit_slice_by_slice("simple_energy")
+
+    #
+    def test_fit_sbs_no_data_raises(self):
+        """fit_slice_by_slice raises ValueError when data is missing."""
+
+        file = self._make_file_with_model()
+        file.model_base = file.model_active  # satisfy baseline check
+        file.data = None
+        with pytest.raises(ValueError, match="missing"):
+            file.fit_slice_by_slice("simple_energy")
+
+    #
+    def test_fit_sbs_no_time_raises(self):
+        """fit_slice_by_slice raises ValueError when time axis is missing."""
+
+        file = self._make_file_with_model()
+        file.model_base = file.model_active
+        file.time = None
+        with pytest.raises(ValueError, match="missing"):
+            file.fit_slice_by_slice("simple_energy")
+
+    # -- fit_2d --
+
+    #
+    def test_fit_2d_no_baseline_model_raises(self):
+        """fit_2d raises ValueError when baseline not fitted."""
+
+        file = self._make_file_with_model()
+        file.model_base = None
+        with pytest.raises(ValueError, match="fit_baseline"):
+            file.fit_2d("simple_energy")
+
+    #
+    def test_fit_2d_no_data_raises(self):
+        """fit_2d raises ValueError when data is missing."""
+
+        file = self._make_file_with_model()
+        file.model_base = file.model_active
+        file.data = None
+        with pytest.raises(ValueError, match="missing"):
+            file.fit_2d("simple_energy")
+
+    #
+    def test_fit_2d_no_time_raises(self):
+        """fit_2d raises ValueError when time axis is missing."""
+
+        file = self._make_file_with_model()
+        file.model_base = file.model_active
+        file.time = None
+        with pytest.raises(ValueError, match="missing"):
+            file.fit_2d("simple_energy")
+
+    # -- save_sbs_fit --
+
+    #
+    def test_save_sbs_fit_no_model_raises(self):
+        """save_sbs_fit raises ValueError when SbS model is missing."""
+
+        file = self._make_file_with_model()
+        file.model_sbs = None
+        with pytest.raises(ValueError, match="incomplete"):
+            file.save_sbs_fit("/tmp/dummy")
+
+    #
+    def test_save_sbs_fit_no_data_raises(self):
+        """save_sbs_fit raises ValueError when data is missing."""
+
+        file = self._make_file_with_model()
+        file.model_sbs = file.model_active
+        file.data = None
+        with pytest.raises(ValueError, match="Data missing"):
+            file.save_sbs_fit("/tmp/dummy")
+
+    # -- save_2d_fit --
+
+    #
+    def test_save_2d_fit_no_model_raises(self):
+        """save_2d_fit raises ValueError when 2D model is missing."""
+
+        file = self._make_file_with_model()
+        file.model_2d = None
+        with pytest.raises(ValueError, match="missing"):
+            file.save_2d_fit("/tmp/dummy")
+
+    #
+    def test_save_2d_fit_no_data_raises(self):
+        """save_2d_fit raises ValueError when data is missing."""
+
+        file = self._make_file_with_model()
+        file.model_2d = file.model_active
+        file.data = None
+        with pytest.raises(ValueError, match="missing"):
+            file.save_2d_fit("/tmp/dummy")
 
 
 if __name__ == "__main__":

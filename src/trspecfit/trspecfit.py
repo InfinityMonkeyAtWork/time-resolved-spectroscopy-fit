@@ -987,11 +987,9 @@ class File:
         """
 
         if self.dim == 1:
-            warnings.warn("Cannot define baseline for 1D data.", stacklevel=2)
-            return
+            raise ValueError("Cannot define baseline for 1D data.")
         if self.data is None:
-            warnings.warn("No data loaded; cannot define baseline.", stacklevel=2)
-            return
+            raise ValueError("No data loaded; cannot define baseline.")
         if self.time is None:
             self.time = np.arange(self.data.shape[0])
             warnings.warn(
@@ -1002,11 +1000,9 @@ class File:
             self.energy = np.arange(self.data.shape[1])
             warnings.warn("Energy axis missing; using index axis.", stacklevel=2)
         if time_type not in ("abs", "ind"):
-            warnings.warn(
-                f"Unknown time_type '{time_type}'. Expected 'abs' or 'ind'.",
-                stacklevel=2,
+            raise ValueError(
+                f"Unknown time_type '{time_type}'. Expected 'abs' or 'ind'."
             )
-            return
 
         if time_type == "abs":
             t_ind_start = int(np.searchsorted(self.time, time_start, side="left"))
@@ -1065,20 +1061,12 @@ class File:
         """
 
         if self.data is None and self.energy is None:
-            warnings.warn(
-                "No data/energy axis loaded; cannot set fit limits.",
-                stacklevel=2,
-            )
-            return
+            raise ValueError("No data/energy axis loaded; cannot set fit limits.")
         if self.energy is None and self.data is not None:
             self.energy = np.arange(self.data.shape[-1])
             warnings.warn("Energy axis missing; using index axis.", stacklevel=2)
         if self.energy is None:
-            warnings.warn(
-                "Energy axis unavailable; cannot set fit limits.",
-                stacklevel=2,
-            )
-            return
+            raise ValueError("Energy axis unavailable; cannot set fit limits.")
         energy = self.energy
         if energy_limits is None:
             energy_limits = [float(np.min(energy)), float(np.max(energy))]
@@ -1105,11 +1093,7 @@ class File:
         if time_limits is not None:
             if self.time is None:
                 if self.data is None or self.dim != 2:
-                    warnings.warn(
-                        "Time axis missing; cannot apply time limits.",
-                        stacklevel=2,
-                    )
-                    return
+                    raise ValueError("Time axis missing; cannot apply time limits.")
                 self.time = np.arange(self.data.shape[0])
                 warnings.warn(
                     "Time axis missing; using index axis for time limits.",
@@ -1176,11 +1160,7 @@ class File:
 
         self.model_base = self._resolve_model(model_name)
         if self.energy is None or self.data_base is None:
-            warnings.warn(
-                "Baseline data/energy axis missing; baseline fit skipped.",
-                stacklevel=2,
-            )
-            return
+            raise ValueError("Baseline data/energy axis missing; cannot fit baseline.")
 
         # get initial guess
         initial_guess = ulmfit.par_extract(
@@ -1290,22 +1270,18 @@ class File:
 
         self.model_sbs = self._resolve_model(model_name)
         if self.model_base is None:
-            warnings.warn(
-                "Baseline model is not fitted yet; run fit_baseline() first.",
-                stacklevel=2,
+            raise ValueError(
+                "Baseline model is not fitted yet; run fit_baseline() first."
             )
-            return
         if (
             self.data is None
             or self.time is None
             or self.energy is None
             or self.data_base is None
         ):
-            warnings.warn(
-                "Data/axes/baseline missing; Slice-by-Slice fit skipped.",
-                stacklevel=2,
+            raise ValueError(
+                "Data/axes/baseline missing; cannot run Slice-by-Slice fit."
             )
-            return
 
         # define (and create) path where SbS fit results will be saved to
         path_SbS_results = self.create_model_path(
@@ -1425,20 +1401,15 @@ class File:
         """
 
         if self.model_sbs is None or self.time is None:
-            warnings.warn(
-                "Slice-by-Slice model/results are incomplete; nothing to save.",
-                stacklevel=2,
+            raise ValueError(
+                "Slice-by-Slice model/results are incomplete; nothing to save."
             )
-            return
         if self.data is None:
-            warnings.warn("Data missing; cannot save Slice-by-Slice fit.", stacklevel=2)
-            return
+            raise ValueError("Data missing; cannot save Slice-by-Slice fit.")
         if self.model_sbs.const is None or self.model_sbs.args is None:
-            warnings.warn(
-                "Slice-by-Slice model const/args missing; cannot reconstruct 2D fit.",
-                stacklevel=2,
+            raise ValueError(
+                "Slice-by-Slice model const/args missing; cannot reconstruct 2D fit."
             )
-            return
         # convert results, specifically par_fin to dataframe and save
         # this also plots all parameters as a function of time
         df_SbS = fitlib.results2df(
@@ -1661,14 +1632,11 @@ class File:
 
         self.model_2d = self._resolve_model(model_name)
         if self.model_base is None:
-            warnings.warn(
-                "Baseline model is not fitted yet; run fit_baseline() first.",
-                stacklevel=2,
+            raise ValueError(
+                "Baseline model is not fitted yet; run fit_baseline() first."
             )
-            return
         if self.energy is None or self.time is None or self.data is None:
-            warnings.warn("Data/axes missing; 2D fit skipped.", stacklevel=2)
-            return
+            raise ValueError("Data/axes missing; cannot run 2D fit.")
 
         # define (and create) path where 2D fit results will be saved to
         path_2D_results = self.create_model_path(model_name)
@@ -1730,18 +1698,12 @@ class File:
             or self.time is None
             or self.data is None
         ):
-            warnings.warn(
-                "2D model/data/axes missing; nothing to save.",
-                stacklevel=2,
-            )
-            return
+            raise ValueError("2D model/data/axes missing; nothing to save.")
         self.model_2d.create_value2D()  # update 2D spectrum to final fit result
         if self.model_2d.value2D is None:
-            warnings.warn(
-                "2D model evaluation did not produce value2D; nothing to save.",
-                stacklevel=2,
+            raise ValueError(
+                "2D model evaluation did not produce value2D; nothing to save."
             )
-            return
         # plot data, fit, and residual 2D maps
         fitlib.plt_fit_res_2D(
             data=self.data,
