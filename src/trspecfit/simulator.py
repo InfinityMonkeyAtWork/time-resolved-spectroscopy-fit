@@ -1347,7 +1347,7 @@ class Simulator:
         save_format: str = "hdf5",
         N_data: list[np.ndarray] | None = None,
         overwrite: bool = True,
-        show_info: int = 1,
+        show_output: int = 1,
     ) -> None:
         """
         Save simulated data to file with metadata.
@@ -1372,8 +1372,12 @@ class Simulator:
         overwrite : bool, default=True
             If True, overwrite existing files.
             If False, raise FileExistsError if file exists.
-        show_info : int, default=1
-            Verbosity level. Set to 0 to suppress output.
+        show_output : int, default=1
+            Output mode:
+
+            - 0: Silent / programmatic / API mode -- no prints
+            - 1: Interactive / notebook / UI mode -- show timing and
+              save confirmation
 
         Raises
         ------
@@ -1552,7 +1556,7 @@ class Simulator:
         else:
             raise ValueError(f"Unknown save format: {save_format}. Use 'hdf5'.")
 
-        if show_info >= 1:
+        if show_output >= 1:
             print(f"Data saved to: {filepath}")
 
     #

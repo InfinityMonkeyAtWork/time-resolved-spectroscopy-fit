@@ -123,8 +123,13 @@ class Project:
         Name for this analysis run
     files : list of File
         All File instances registered with this Project
-    show_info : int
-        Verbosity level (0=silent, 1=basic, 2=detailed, 3=verbose)
+    show_output : int
+        Verbosity level:
+
+        - 0: Silent / programmatic / API mode -- no prints, no plots
+          displayed or saved
+        - 1: Interactive / notebook / UI mode -- show timing, fit results,
+          save plots and data
     spec_lib : module
         Module containing spectrum fitting functions (default: spectra)
     spec_fun_str : str
@@ -175,7 +180,7 @@ class Project:
     def _set_defaults(self) -> None:
         """Set default project configuration."""
 
-        self.show_info = 1
+        self.show_output = 1
         # Plot settings
         self.e_label = "Energy"
         self.t_label = "Time"
@@ -304,7 +309,7 @@ class Project:
                 config = yaml.load(f)
 
             if config is None:
-                if self.show_info >= 1:
+                if self.show_output >= 1:
                     print(f"Warning: {config_file} is empty, using defaults")
                 return
 
@@ -312,19 +317,17 @@ class Project:
             for key, value in config.items():
                 if hasattr(self, key):
                     setattr(self, key, value)
-                    if self.show_info >= 2:
-                        print(f"Set {key} = {value}")
                 else:
-                    if self.show_info >= 1:
+                    if self.show_output >= 1:
                         print(f"Warning: Unknown config key '{key}' ignored")
 
             self._config_file = config_path
 
         except FileNotFoundError:
-            if self.show_info >= 1:
+            if self.show_output >= 1:
                 print(f"Config file {config_path} not found, using defaults")
         except Exception as e:  # noqa: BLE001
-            if self.show_info >= 1:
+            if self.show_output >= 1:
                 print(f"Error loading config: {e}")
                 print("Using default settings")
 
@@ -732,7 +735,7 @@ class File:
         # Initialize model
         fcts_package: types.ModuleType
         if model_type == "energy":
-            if self.p.show_info >= 1:
+            if self.p.show_output >= 1:
                 print(
                     f"Loading model to describe energy- (and time-)dependent data: "
                     f"{self.model_list_to_name(model_info)}"
@@ -740,7 +743,7 @@ class File:
             fcts_package = fcts_energy
             loaded_model = mcp.Model(self.model_list_to_name(model_info))
         elif model_type == "dynamics":
-            if self.p.show_info >= 1:
+            if self.p.show_output >= 1:
                 print(
                     f"Loading model to describe time-dependence of a model parameter: "
                     f"{par_name} of {self.model_list_to_name(model_info)} model"
@@ -748,7 +751,7 @@ class File:
             fcts_package = fcts_time
             loaded_model = mcp.Dynamics(par_name)
         elif model_type == "profile":
-            if self.p.show_info >= 1:
+            if self.p.show_output >= 1:
                 print(
                     f"Loading profile model for parameter: "
                     f"{par_name} of {self.model_list_to_name(model_info)} model"
@@ -795,9 +798,6 @@ class File:
 
         # Add all components (and their parameters) to model
         loaded_model.add_components(all_comps)
-
-        if self.p.show_info >= 2:
-            loaded_model.lmfit_pars.pretty_print()
 
         # Add model to file
         if model_type == "energy":
@@ -993,16 +993,11 @@ class File:
             )
             path_model = self.path_DA / yaml_name / model_name
         # path_model = self.path_DA / self.model_base.yaml_f_name / model_name
-        if self.p.show_info >= 3:
-            print(path_model)
         path_model.mkdir(parents=True, exist_ok=True)
         if subfolders is None:
             subfolders = []
-        if len(subfolders) != 0:
-            for subfolder in subfolders:
-                (path_model / subfolder).mkdir(parents=True, exist_ok=True)
-                if self.p.show_info >= 3:
-                    print(path_model / subfolder)
+        for subfolder in subfolders:
+            (path_model / subfolder).mkdir(parents=True, exist_ok=True)
 
         return path_model
 
@@ -1265,7 +1260,7 @@ class File:
             par_names=self.model_base.par_names,
             par=self.model_base.lmfit_pars,
             fit_type=fit,
-            show_info=1 if self.p.show_info >= 2 else 0,
+            show_output=1 if self.p.show_output >= 1 else 0,
             save_output=1,
             save_path=path_base_results / model_name,
             **lmfit_wrapper_kwargs,
@@ -1294,7 +1289,7 @@ class File:
             fit_lim=self.e_lim,
             config=self.plot_config,
             legend=[comp.name for comp in self.model_base.components],
-            save_img=-1 if self.p.show_info < 1 else 1,
+            save_img=-1 if self.p.show_output < 1 else 1,
             save_path=path_base_results / "base_fit.png",
         )
 
@@ -1393,13 +1388,9 @@ class File:
         # cycle through all spectra and fit them
         self.results_SbS = []  # (re-)initialize placeholder for results
         for s_i, s in enumerate(self.data):
-            if self.p.show_info < 3:
-                print(f"Analyzing slice number {s_i + 1}/{len(self.time)}", end="\r")
+            print(f"Analyzing slice number {s_i + 1}/{len(self.time)}", end="\r")
             if s_i < self.p.skip_first_n_spec:
                 continue  # skip past baseline spectra for debugging
-            if self.p.show_info >= 3:
-                print()
-                print("Spectrum #" + str(s_i))  # print iteration info
             # define path for files saved for this slice
             path_slice = path_SbS_results / "slices" / str(self.p.DA_slices_fmt % s_i)
 
@@ -1408,8 +1399,6 @@ class File:
             delta_max = (
                 self.energy[np.argmax(s)] - self.energy[np.argmax(self.data_base)]
             )
-            if self.p.show_info >= 3:
-                print(f"delta_max (spectrum with respect to baseline: {delta_max}")
             # update all guesses for parameters with names ending in "x0"
             new_e_vals = list(e_pos_vals.add(delta_max))
             self.model_SbS.update_value(
@@ -1440,7 +1429,7 @@ class File:
                 par_names=self.model_SbS.par_names,
                 par=self.model_SbS.lmfit_pars,
                 fit_type=fit,
-                show_info=1 if self.p.show_info >= 3 else 0,
+                show_output=0,
                 save_output=1,
                 save_path=path_slice,
                 **fit_wrapper_kwargs,
@@ -1462,7 +1451,7 @@ class File:
                 show_init=True,
                 fit_lim=self.e_lim,
                 config=self.plot_config,
-                save_img=-1 if self.p.show_info < 3 else 1,
+                save_img=-1,
                 save_path=path_slice.with_suffix(".png"),
             )
             #
@@ -1513,12 +1502,9 @@ class File:
             config=self.plot_config,
             skip_first_n_spec=self.p.skip_first_n_spec,
             first_n_spec_only=self.p.first_n_spec_only,
-            save_df=-1 if self.p.show_info == 0 else 1,
+            save_df=-1 if self.p.show_output == 0 else 1,
             save_path=save_path,
         )
-
-        if self.p.show_info >= 3:
-            display(df_SbS)
 
         # get slice-by-slice fit spectra as a 2D map
         df_SbS_pars = df_SbS.loc[:, self.model_SbS.par_names]
@@ -1526,12 +1512,9 @@ class File:
             results=df_SbS_pars,
             const=self.model_SbS.const,
             args=self.model_SbS.args,
-            save_2D=-1 if self.p.show_info == 0 else 1,
+            save_2D=-1 if self.p.show_output == 0 else 1,
             save_path=save_path,
         )
-
-        if self.p.show_info >= 3:
-            print(f"size SbS 2D map: {fit2D_SbS.shape}")
 
         # plot data, fit, and residual 2D maps
         # (works if full 2D map is fitted/ no slices skipped)
@@ -1544,7 +1527,7 @@ class File:
                 config=self.plot_config,
                 x_lim=self.e_lim,
                 y_lim=self.t_lim,
-                save_img=-1 if self.p.show_info == 0 else 1,
+                save_img=-1 if self.p.show_output == 0 else 1,
                 save_path=save_path,
             )
 
@@ -1773,7 +1756,7 @@ class File:
             par_names=self.model_2D.par_names,
             par=self.model_2D.lmfit_pars,
             fit_type=fit,
-            show_info=1 if self.p.show_info >= 2 else 0,
+            show_output=1 if self.p.show_output >= 1 else 0,
             save_output=1,
             save_path=path_2D_results / model_name,
             **fit_wrapper_kwargs,
@@ -1826,7 +1809,7 @@ class File:
             config=self.plot_config,
             x_lim=self.e_lim,
             y_lim=self.t_lim,
-            save_img=-1 if self.p.show_info == 0 else 1,
+            save_img=-1 if self.p.show_output == 0 else 1,
             save_path=save_path,
         )
         # dpi_plot = round(1.5 *self.p.dpi_plt), NOT AVAILABLE YET (fig_size)

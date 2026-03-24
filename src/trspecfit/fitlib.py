@@ -31,7 +31,7 @@ import lmfit
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from IPython.display import display, display_pretty
+from IPython.display import display
 from lmfit.minimizer import MinimizerResult
 from numpy.typing import ArrayLike
 
@@ -367,7 +367,7 @@ def fit_wrapper(
     mc_settings: ulmfit.MC | None = None,
     fit_alg_1: str = "Nelder",
     fit_alg_2: str = "leastsq",
-    show_info: float = 0,
+    show_output: int = 0,
     save_output: int = 0,
     save_path: PathLike = "",
 ) -> list[Any]:
@@ -435,13 +435,12 @@ def fit_wrapper(
     fit_alg_2 : str, default='leastsq'
         Second optimization method (fit_type=2 only).
         Typically 'leastsq' for accurate local optimization and error bars.
-    show_info : {0, 1, 2, 3}, default=0
-        Verbosity level:
+    show_output : {0, 1}, default=0
+        Output mode:
 
-        - 0: Silent
-        - 1: Basic timing and final results
-        - 1.5: Also show initial parameters
-        - 2: Also show constants and arguments
+        - 0: Silent / programmatic / API mode -- no prints
+        - 1: Interactive / notebook / UI mode -- show timing, fit results,
+          and confidence intervals
 
     save_output : {-1, 0, 1}, default=0
         Save results to files:
@@ -487,7 +486,7 @@ def fit_wrapper(
     ...     par_names=model.par_names,
     ...     par=model.lmfit_pars,
     ...     fit_type=1,
-    ...     show_info=1
+    ...     show_output=1
     ... )
     >>> par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs = results
 
@@ -500,7 +499,7 @@ def fit_wrapper(
     ...     fit_type=2,
     ...     try_CI=1,
     ...     sigmas=[1, 2, 3],
-    ...     show_info=1,
+    ...     show_output=1,
     ...     save_output=1,
     ...     save_path='fit_results/baseline_fit'
     ... )
@@ -515,7 +514,7 @@ def fit_wrapper(
     ...     fit_type=2,
     ...     try_CI=1,
     ...     mc_settings=mc,
-    ...     show_info=1
+    ...     show_output=1
     ... )
 
     Notes
@@ -561,35 +560,25 @@ def fit_wrapper(
     # construct the lmfit parameters if necessary
     if isinstance(par, lmfit.parameter.Parameters):
         par_ini = copy.deepcopy(par)
-        prnt_str = "passed in "
     else:
         par_ini = ulmfit.par_construct(par_names=par_names, par_info=par)
-        prnt_str = "converted to "
-    if show_info >= 1.5:
-        print("Parameters " + prnt_str + "lmfit format:")
-        display(par_ini)
     # convert par_ini to pandas dataframe and save all lmfit info
     df_par_ini = ulmfit.par2df(par_ini, "ini", par_names)
 
-    if show_info >= 2:  # (optionally) show constants and args input
-        print("\nConstants input to residual function:")
-        display_pretty(const)
-        print("Arguments input to fit function:")
-        display_pretty(args)
-    if show_info >= 1:
+    if show_output >= 1:
         t_0 = time.time()  # start time
 
     # construct lmfit minimizer
     mini = lmfit.Minimizer(residual_fun, par_ini, fcn_args=(*const, "lmfit", args))
     # perform fit(s)
-    if show_info >= 1:
+    if show_output >= 1:
         t_ini = time.time()
         print(f"\nTime initialize: {t_ini - t_0} s")
     #
     if fit_type == 1:  # one fit only
         par_fin = mini.minimize(method=fit_alg_1)
         par_fin_params = _result_params(par_fin)
-        if show_info >= 1:
+        if show_output >= 1:
             print(f"\nResults fit (method={fit_alg_1}): ")
             lmfit.report_fit(par_fin_params)
             t_fit = time.time()
@@ -598,7 +587,7 @@ def fit_wrapper(
     if fit_type == 2:  # find global minimum + local optimization
         par_fin_GM = mini.minimize(method=fit_alg_1)
         par_fin_GM_params = _result_params(par_fin_GM)
-        if show_info >= 1:
+        if show_output >= 1:
             print(f"\nResults global minumum fit (method={fit_alg_1}): ")
             lmfit.report_fit(par_fin_GM_params)
             t_fit0 = time.time()
@@ -606,7 +595,7 @@ def fit_wrapper(
         #
         par_fin = mini.minimize(method=fit_alg_2, params=par_fin_GM_params)
         par_fin_params = _result_params(par_fin)
-        if show_info >= 1:
+        if show_output >= 1:
             print(f"\nResults local optimization fit (method={fit_alg_2}): ")
             lmfit.report_fit(par_fin_params)
             t_fit = time.time()
@@ -629,14 +618,14 @@ def fit_wrapper(
             ci_fin, _trace_fin = lmfit.conf_interval(
                 mini, par_fin, sigmas=sigmas, trace=True
             )
-            if show_info >= 1:
+            if show_output >= 1:
                 print()
                 lmfit.printfuncs.report_ci(ci_fin)
             # convert ci_fin to standard CI dataframe
             conf_CIs = ulmfit.conf_interval2df(ci_fin, CI_cols)
         else:
             conf_CIs = pd.DataFrame()
-            if show_info >= 1:
+            if show_output >= 1:
                 print("\nNo successful error bar determination via conf_interval")
             if mc_settings.use_emcee == 2:
                 # conf_interval didn't work -> use lmfit.emcee()
@@ -678,7 +667,7 @@ def fit_wrapper(
             getattr(emcee_fin, "acceptance_fraction", np.array([]))
         )
         # lmfit.emcee() results
-        if show_info >= 1:
+        if show_output >= 1:
             print("\nResults lmfit.emcee() confidence interval determination:")
             lmfit.report_fit(emcee_fin_params)
             t_emcee1 = time.time()
@@ -739,7 +728,7 @@ def fit_wrapper(
             value=list(emcee_fin_params.valuesdict().values()),
         )
         emcee_CIs.columns = CI_cols
-        if show_info >= 1:
+        if show_output >= 1:
             print(display(emcee_CIs))
     else:  # use_emcee equal to 0, or equal to 2 and conf_interval worked
         emcee_fin = None

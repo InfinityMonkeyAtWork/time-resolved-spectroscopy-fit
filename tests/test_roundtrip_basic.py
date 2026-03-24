@@ -17,7 +17,7 @@ def _make_project():
     """Create a silent project pointing to tests/ for YAML access."""
 
     project = Project(path="tests", name="roundtrip")
-    project.show_info = 0
+    project.show_output = 0
     return project
 
 

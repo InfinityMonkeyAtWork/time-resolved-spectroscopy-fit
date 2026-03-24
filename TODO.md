@@ -24,7 +24,7 @@
 
 - [ ] **ROI input for SNR**: `Simulator.snr()` uses full data array for signal power. Allow user to specify a region of interest for the calculation.
 - [x] **Consistent PlotConfig usage**: audit all plot functions across the codebase to ensure they respect `PlotConfig` settings (e.g. `Simulator.plot_comparison()` ignores `x_type`/`y_type`).
-- [ ] **API ergonomics audit**: rationalize `show_info` fractional verbosity levels, replace 0/1 flags with enums or bools, fix boolean-trap positional args (FBT001/FBT002). One pass to make the API more self-documenting.
+- [x] **API ergonomics audit**: rationalize `show_output` verbosity levels, replace 0/1 flags with enums or bools, fix boolean-trap positional args (FBT001/FBT002). One pass to make the API more self-documenting.
 - [ ] **AI-assisted YAML model creation**: use AI to help users build and validate YAML model files — smart autocorrect, suggesting parameter names, and potentially inspecting the data to propose initial guesses or flag mismatches.
 
 ## Performance & architecture
