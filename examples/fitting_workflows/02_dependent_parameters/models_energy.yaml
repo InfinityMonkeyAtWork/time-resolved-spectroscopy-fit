@@ -6,7 +6,7 @@ base:
     Offset:
       y0: [200, True, 0, 500]
     Shirley:
-        pShirley: [400, True, 1.0E-3, 1.0E+6]
+        pShirley: [4.0E-4, True, 1.0E-9, 1.0]
     GLP:
       A: [200, True, 0, 1000]
       x0: [84.5, True, 82, 88]
@@ -23,7 +23,7 @@ SbS:
     Offset:
       y0: [50, False, 0, 1000]
     Shirley:
-        pShirley: [800, False, 1.0E-3, 1.0E+6]
+        pShirley: [8.0E-4, False, 1.0E-9, 1.0]
     GLP:
       A: [300, False, 0, 1000]
       x0: [84.5, True, 82, 88]
@@ -40,7 +40,7 @@ SbS:
     Offset:
       y0: [50, False, 0, 1000]
     Shirley:
-        pShirley: [800, False, 1.0E-3, 1.0E+6]
+        pShirley: [8.0E-4, False, 1.0E-9, 1.0]
     GLP:
       A: [300, False, 0, 1000]
       x0: [84.5, True, 82, 88]

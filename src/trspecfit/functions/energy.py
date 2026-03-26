@@ -80,8 +80,8 @@ def Shirley(x: np.ndarray, pShirley: float, spectrum: np.ndarray) -> np.ndarray:
     x : ndarray
         Energy axis (not used in calculation, but required for signature)
     pShirley : float
-        Shirley scaling factor (internally multiplied by 1E-6 for numerical stability).
-        Controls the strength of the background relative to peak area.
+        Shirley scaling factor. Controls the strength of the background
+        relative to peak area. Typical values are on the order of 1E-4.
     spectrum : ndarray
         Current peak sum. The Shirley background is computed as cumulative integral
         of this spectrum. **Must have increasing kinetic energy (or decreasing
@@ -93,7 +93,7 @@ def Shirley(x: np.ndarray, pShirley: float, spectrum: np.ndarray) -> np.ndarray:
         Shirley background spectrum (same shape as spectrum)
     """
 
-    return 1e-6 * pShirley * np.cumsum(spectrum[::-1])[::-1]
+    return pShirley * np.cumsum(spectrum[::-1])[::-1]
 
 
 #

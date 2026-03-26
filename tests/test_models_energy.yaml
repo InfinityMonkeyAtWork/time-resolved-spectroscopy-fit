@@ -7,7 +7,7 @@ simple_energy:
       y0: [2, True, 0, 5]
     # define Shirley background
     Shirley:
-      pShirley: [400, False]
+      pShirley: [4.0E-4, False]
     # define peak type components 
     GLP:
       A: [20, True, 5, 25]
@@ -27,7 +27,7 @@ energy_expression:
       y0: [2, True, 0, 5]
     # define Shirley background
     Shirley:
-        pShirley: [400, True, 1.0E-6, 1.0E+3]
+        pShirley: [4.0E-4, True, 1.0E-12, 1.0E-3]
     # define peak type components
     GLP:
       A: [20, True, 5, 25]
@@ -41,13 +41,13 @@ energy_expression:
       m: ["GLP_01_m"]
 
 # one peak depends on another peak that is referenced before it is defined (forward reference)
-energy_expression_forward_reference: 
+energy_expression_forward_reference:
     # define Offset (y0) parameter
     Offset:
       y0: [2, True, 0, 5]
     # define Shirley background
     Shirley:
-        pShirley: [400, True, 1.0E-6, 1.0E+3]
+        pShirley: [4.0E-4, True, 1.0E-12, 1.0E-3]
     # define peak type components
     GLP:
       A: ["3/4*GLP_02_A"]

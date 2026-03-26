@@ -73,7 +73,7 @@ class TestShirley:
 
         x = make_energy_axis()
         spectrum = setUpSpectrum(x)
-        result = Shirley(x, pShirley=400, spectrum=spectrum)
+        result = Shirley(x, pShirley=4e-4, spectrum=spectrum)
         assert result.shape == spectrum.shape
         assert np.all(np.diff(result) <= 1e-12)
 
@@ -88,8 +88,8 @@ class TestShirley:
     def test_scales_linearly(self):
         x = make_energy_axis()
         spectrum = setUpSpectrum(x)
-        r1 = Shirley(x, pShirley=100, spectrum=spectrum)
-        r2 = Shirley(x, pShirley=200, spectrum=spectrum)
+        r1 = Shirley(x, pShirley=1e-4, spectrum=spectrum)
+        r2 = Shirley(x, pShirley=2e-4, spectrum=spectrum)
         np.testing.assert_allclose(r2, 2 * r1)
 
 

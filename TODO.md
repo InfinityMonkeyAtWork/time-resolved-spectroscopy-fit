@@ -12,7 +12,7 @@
 - [ ] **ML-based peak finder**: replace or augment current peak finder with ML approach for better initial guesses.
 - [ ] **Project-level fits**: allow parameters to vary at Project, File, or Static scope (multi-file fitting).
 - [ ] **Configurable `__lnsigma` for emcee**: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling. Allow users to pass these via `mc_settings`.
-- [ ] **pShirley `1e-6` scaling factor**: hardcoded scale factor in `energy.py` silently affects fit results. Needed to prevent numerical instability, but should be derived from data or made an explicit parameter.
+- [x] **pShirley `1e-6` scaling factor**: removed hidden `1e-6` multiplier from `Shirley()`. `pShirley` now directly represents the scaling applied to the cumulative integral. All YAML values updated (e.g. `400` → `4e-4`).
 
 ## Fit results: save & load (for model comparison)
 

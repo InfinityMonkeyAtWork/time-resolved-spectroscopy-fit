@@ -53,10 +53,10 @@ class TestEnergyParsing:
         # Shirley (should not be numbered) - now uses [value, vary] format
         assert model.components[1].fct_str == "Shirley"
         assert model.components[1].comp_name == "Shirley"
-        assert model.components[1].par_dict["pShirley"] == [400, False]
+        assert model.components[1].par_dict["pShirley"] == [4.0e-4, False]
         # Check that lmfit parameter was created with unbounded min/max
         shirley_par = model.lmfit_pars["Shirley_pShirley"]
-        assert shirley_par.value == 400
+        assert shirley_par.value == 4.0e-4
         assert not shirley_par.vary
         assert shirley_par.min == -np.inf
         assert shirley_par.max == np.inf
@@ -107,10 +107,10 @@ class TestEnergyParsing:
         assert model.components[1].fct_str == "Shirley"
         assert model.components[1].comp_name == "Shirley"
         assert model.components[1].par_dict["pShirley"] == [
-            400,
+            4.0e-4,
             True,
-            1.0e-6,
-            1.0e3,
+            1.0e-12,
+            1.0e-3,
         ]
 
         # GLP_01
@@ -150,10 +150,10 @@ class TestEnergyParsing:
         assert model.components[1].fct_str == "Shirley"
         assert model.components[1].comp_name == "Shirley"
         assert model.components[1].par_dict["pShirley"] == [
-            400,
+            4.0e-4,
             True,
-            1.0e-6,
-            1.0e3,
+            1.0e-12,
+            1.0e-3,
         ]
 
         # GLP_01
@@ -333,7 +333,7 @@ class Test2DModelParsing:
         assert model.components[1].fct_str == "Shirley"
         assert model.components[1].comp_name == "Shirley"
         # Updated to check [value, vary] format
-        assert model.components[1].par_dict["pShirley"] == [400, False]
+        assert model.components[1].par_dict["pShirley"] == [4.0e-4, False]
         # GLP_01
         assert model.components[2].fct_str == "GLP"
         assert model.components[2].comp_name == "GLP_01"
