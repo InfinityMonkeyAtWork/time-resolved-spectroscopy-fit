@@ -1,0 +1,85 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com),
+and this project adheres to [Semantic Versioning](https://semver.org/).
+This file is maintained using the `/changelog` skill in
+[`.claude/skills/changelog/`](.claude/skills/changelog/SKILL.md).
+
+## [0.6.1] - 2026-03-26
+
+### Added
+
+- `Project.describe()` for inspecting project configuration, attached files, and model summaries at multiple detail levels.
+- `File.get_fit_results()` to retrieve fit results as a DataFrame (`fit_type="baseline"`, `"sbs"`, or `"2d"`).
+- `PlotConfig` propagation throughout the codebase: `Component.plot()`, `Simulator.plot_comparison()`, and all fit plotting now respect project-level settings (axis direction, labels, log scales, colormaps).
+- Log color scale support for 2D plots via `z_type="log"` in `PlotConfig`.
+- Round-trip fitting tests (simulate, fit, recover) for both basic and profile workflows.
+- Parameter profile feature: `File.add_par_profile()` attaches depth/auxiliary-axis variation to any energy model parameter. Profile functions (`pExpDecay`, `pLinear`, `pGauss`) describe how a parameter varies over the auxiliary dimension.
+- Single-subcycle multi-cycle models: `model_info=["none", "MonoExp"]` is now valid for a single repeating model with a set frequency.
+- Python 3.13 and 3.14 support (tested in CI).
+
+### Changed
+
+- **Breaking:** All public API methods renamed to snake_case. Key renames:
+  - `fit_SliceBySlice` -> `fit_slice_by_slice`
+  - `fit_2Dmodel` -> `fit_2d`
+  - `save_SliceBySlice_fit` / `save_2Dmodel_fit` -> `save_sbs_fit` / `save_2d_fit`
+  - `model_SbS` / `model_2D` -> `model_sbs` / `model_2d`
+  - `simulate_2D` / `simulate_1D` / `simulate_N` -> `simulate_2d` / `simulate_1d` / `simulate_n`
+  - `plot_2D` / `plot_1D` -> `plot_2d` / `plot_1d`
+  - `show_info` -> `show_output` (simplified to binary 0/1)
+  - `par_names` -> `parameter_names` on `Model`
+  - `fit` parameter -> `stages` in all fit methods
+- **Breaking:** `pShirley` removed hidden 1e-6 multiplier. YAML values must be scaled accordingly (e.g. `400` -> `4E-4`).
+- **Breaking:** `Par.value()` returns a scalar `float` instead of a one-element list.
+- `load_model()` now always returns the loaded `Model` (previously returned `None` for energy models). `model_info` accepts both `str` and `list[str]`.
+- `add_time_dependence()` and `add_par_profile()` now take explicit `target_model` and `target_parameter` as first arguments.
+- Fit methods raise `ValueError` instead of silently warning when preconditions aren't met.
+- Error messages throughout the API now suggest available options and corrective actions.
+- `define_baseline()` time bounds are now inclusive on both ends, matching `set_fit_limits()` semantics.
+
+### Fixed
+
+- `PlotConfig.from_project()` regression where project YAML settings (colormap, axis labels, etc.) silently failed to load due to a global YAML constructor conflict.
+- Expression parameters referencing profiled parameters now correctly resolve the profile value.
+- Transitive expression chains through dynamic parameters (e.g. `A3=A2*0.5` where `A2` references a time-varying `A1`) now raise at analysis time instead of producing incorrect results.
+- `GLS` formula: Lorentzian term was missing the amplitude multiplier.
+- `lorentzCONV`: `W` parameter now correctly represents FWHM as documented (was FWHM/4); kernel width adjusted.
+- Fit limit slicing off-by-one: `e_lim` and `t_lim` now store proper `[start, stop)` slice indices.
+- `Simulator.simulate_n()` rejects `n <= 0` with a clear error.
+- `Simulator` sweep metadata now records actual `dim` used and correct seed-zero handling.
+
+### Removed
+
+- `fit_type=0` ("show initial guess only") path from `fit_wrapper`. Use `model.describe(detail=1)` to inspect initial guesses.
+- Fractional and debug verbosity levels (1.5, 3) from `show_output`.
+
+## [0.5.2] - 2026-03-17
+
+### Added
+
+- Parameter profile feature: depth-dependent parameter variation over an auxiliary axis.
+- Profile functions: `pExpDecay`, `pLinear`, `pGauss` in `functions/profile.py`.
+- Example workflow `04_par_profiles/` demonstrating profile fitting.
+- Model validation guardrails: background-last and convolution placement checks.
+
+### Fixed
+
+- `SinDivX` time function division-by-zero (replaced `np.sin` with `np.sinc`).
+- Various Pylance type errors across the codebase.
+
+## [0.4.3] - 2026-02-24
+
+### Added
+
+- Initial public release on PyPI.
+- Sphinx documentation on Read the Docs.
+- Core fitting workflow: `Project`, `File`, `load_model`, `fit_baseline`, `fit_slice_by_slice`, `fit_2d`.
+- Energy functions: `GLP`, `Gauss`, `Lorentz`, `GLS`, `DS`, `Shirley`, `LinBack`, `Offset`.
+- Time dynamics: `expFun`, `expRiseFun`, `SinFun`, `SinDivX`, `none`, with `gaussCONV`/`lorentzCONV`/`expDecayCONV`/`expRiseCONV` kernels.
+- `Simulator` for generating synthetic spectroscopy data.
+- Parameter sweeps via `ParameterSweep` for ML training data generation.
+- Multi-cycle dynamics with subcycle frequency support.
+- Expression-based parameter dependencies in YAML models.
