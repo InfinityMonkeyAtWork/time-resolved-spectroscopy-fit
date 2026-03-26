@@ -2,17 +2,17 @@
 
 ## Test coverage: round-trip fits
 
-- [ ] Basic 1D energy fit — known peaks, add noise, fit, assert recovered params
-- [ ] Multi-peak 2D — two or more peaks with independent dynamics
-- [ ] With profiles — depth-varying spectrum, add noise, fit, assert
-- [ ] Time-dependent profiles — spectral diffusion, add noise, fit, assert
+- [x] Basic 1D energy fit — clean + noisy
+- [x] Multi-peak 2D — with time-dependence
+- [x] With profiles — two profiles on same component, clean + noisy
+- [x] Time-dependent profiles — profiles + dynamics, clean + noisy
+- [ ] Mismatched initial guesses — one each for basic, profile, profile+dynamics
 
 ## Fitting
 
 - [ ] **ML-based peak finder**: replace or augment current peak finder with ML approach for better initial guesses.
 - [ ] **Project-level fits**: allow parameters to vary at Project, File, or Static scope (multi-file fitting).
 - [ ] **Configurable `__lnsigma` for emcee**: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling. Allow users to pass these via `mc_settings`.
-- [x] **pShirley `1e-6` scaling factor**: removed hidden `1e-6` multiplier from `Shirley()`. `pShirley` now directly represents the scaling applied to the cumulative integral. All YAML values updated (e.g. `400` → `4e-4`).
 
 ## Fit results: save & load (for model comparison)
 
