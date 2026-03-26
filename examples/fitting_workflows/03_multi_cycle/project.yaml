@@ -13,7 +13,7 @@ x_dir: 'rev'  # def(ault) or rev(erse)
 x_type: 'lin'  # lin or log
 y_dir: 'def'  # def(ault) or rev(erse)
 y_type: 'lin'  # lin or log
-z_colormap: 'RdBu' # colormap in 2D plots
+z_colormap: 'plasma' # colormap in 2D plots
 z_type: 'lin'  # lin or log (2D plots)
 dpi_plt: 100 # figure display dpi
 dpi_save: 300 # figure save dpi
