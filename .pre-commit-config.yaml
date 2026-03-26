@@ -24,7 +24,7 @@ repos:
 
   - id: mypy-trspecfit
     name: mypy (trspecfit)
-    entry: .venv/bin/mypy
+    entry: .venv/bin/mypy --no-incremental
     language: system
     pass_filenames: false
     stages: [pre-commit]
