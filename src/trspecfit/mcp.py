@@ -120,16 +120,16 @@ class Model:
         Names of all parameters in the model
     component_spectra : list of ndarray
         Individual component spectra from last evaluation (when store_1d=1)
-    value1D : ndarray or None
+    value_1d : ndarray or None
         1D spectrum (sum of all components) from last evaluation
-    value2D : ndarray or None
+    value_2d : ndarray or None
         2D spectrum (time × energy) from last evaluation
     const : tuple or None
         Constants for residual function (x, data, package, function_str, ...)
     args : tuple or None
         Arguments for fit function (model, dim)
     result : list
-        Fit results from fit_wrapper [par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs]
+        Fit results from fit_wrapper [par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]
     parent_file : File or None
         Parent File object (set when model is loaded)
     dim : int or None
@@ -190,10 +190,10 @@ class Model:
         # list of component spectra (from last evaluation/ current parameters)
         self.component_spectra: list[np.ndarray] = []
         # 1D spectrum (i.e. sum/ combination of all components)
-        self.value1D: np.ndarray | None = None
+        self.value_1d: np.ndarray | None = None
         # 2D spectrum (i.e. 1D spectra one per time step)
-        # self.value2D = np.empty((len(self.time), len(self.energy)))
-        self.value2D: np.ndarray | None = None
+        # self.value_2d = np.empty((len(self.time), len(self.energy)))
+        self.value_2d: np.ndarray | None = None
         # fit parameters and results
         self.const: tuple | None = None
         self.args: tuple | None = None
@@ -265,15 +265,15 @@ class Model:
         # plot initial guess of model
         if detail >= 1:
             if isinstance(self, Dynamics):
-                self.create_value1D(store_1d=1)
-                self.plot_1D()
+                self.create_value_1d(store_1d=1)
+                self.plot_1d()
             else:  # energy-resolved model
                 if self.dim == 1:
-                    self.create_value1D(store_1d=1)
-                    self.plot_1D()
+                    self.create_value_1d(store_1d=1)
+                    self.plot_1d()
                 elif self.dim == 2:
-                    self.create_value2D()
-                    self.plot_2D()
+                    self.create_value_2d()
+                    self.plot_2d()
 
     #
     def add_components(self, comps_list: list["Component"]) -> None:
@@ -339,7 +339,7 @@ class Model:
             if isinstance(self, Dynamics):
                 if self.time is None:
                     raise ValueError("Model time axis required for Dynamics components")
-                comp.time_N_sub = np.ones(len(self.time))  # initialize all active
+                comp.time_n_sub = np.ones(len(self.time))  # initialize all active
             # if comp should be convoluted it will be defined on a t_kernel axis
             if comp.comp_type == "conv":
                 comp.time = Component.create_t_kernel(comp)
@@ -447,8 +447,8 @@ class Model:
         -----
         Called by spectra.fit_model_mcp() on every iteration during fitting
         to update model parameters before evaluation.
-        Does not trigger model re-evaluation; call create_value1D() or
-        create_value2D() after updating values.
+        Does not trigger model re-evaluation; call create_value_1d() or
+        create_value_2d() after updating values.
         """
 
         p_count = 0  # initialize counter for parameters in par_select
@@ -576,8 +576,8 @@ class Model:
         # update target parameter
         target_par.p_vary = True
         target_par.p_model = profile_model
-        # evaluate profile to initialize value1D
-        profile_model.create_value1D()
+        # evaluate profile to initialize value_1d
+        profile_model.create_value_1d()
         # include profile parameters in this model's lmfit parameter list
         target_par.lmfit_par_list.extend(profile_model.lmfit_par_list)
 
@@ -702,7 +702,7 @@ class Model:
         raise ValueError(f"Unknown component type: {comp.comp_type}")
 
     #
-    def create_value1D(
+    def create_value_1d(
         self, t_ind: int = 0, *, store_1d: int = 0, return_1d: int = 0
     ) -> np.ndarray | None:
         """
@@ -723,13 +723,13 @@ class Model:
             for later plotting or analysis.
         return_1d : int, default=0
             If 1, return the computed spectrum. Otherwise return None and store
-            in self.value1D only.
+            in self.value_1d only.
 
         Returns
         -------
         ndarray or None
             If return_1d=1, returns the 1D spectrum. Otherwise returns None.
-            Spectrum is always stored in self.value1D regardless of return setting.
+            Spectrum is always stored in self.value_1d regardless of return setting.
 
         Notes
         -----
@@ -754,36 +754,38 @@ class Model:
         # re-initialize list containing individual component spectra
         if store_1d == 1:
             self.component_spectra = []
-        # initialize value1D by evaluating last component
-        self.value1D = self.components[-1].value(t_ind)
+        # initialize value_1d by evaluating last component
+        self.value_1d = self.components[-1].value(t_ind)
         if store_1d == 1:
-            self.component_spectra.append(self.value1D)
+            self.component_spectra.append(self.value_1d)
 
         # combine the components into a spectrum/ time dynamics curve
-        for N in range(len(self.components) - 1):
+        for i in range(len(self.components) - 1):
             if store_1d == 1:
-                current_spec = self.value1D.copy()
+                current_spec = self.value_1d.copy()
             #
-            self.value1D = Model.combine(self.value1D, self.components[-(N + 2)], t_ind)
+            self.value_1d = Model.combine(
+                self.value_1d, self.components[-(i + 2)], t_ind
+            )
             # check on last component value added to model
             if store_1d == 1:
-                self.component_spectra.append(self.value1D - current_spec)
+                self.component_spectra.append(self.value_1d - current_spec)
 
         # flip component spectra list as components are combined LIFO in this function
         if store_1d == 1:
             self.component_spectra = self.component_spectra[::-1]
         #
         if return_1d == 1:
-            return self.value1D
+            return self.value_1d
         return None
 
     #
-    def create_value2D(self, t_ind: list[int] | None = None) -> None:
+    def create_value_2d(self, t_ind: list[int] | None = None) -> None:
         """
         Evaluate model to create 2D spectrum (time × energy).
 
         Generates the complete time- and energy-resolved spectrum by calling
-        create_value1D() for each time point. This is where time-dependent
+        create_value_1d() for each time point. This is where time-dependent
         parameters dynamically modify the model at each time step.
 
         Parameters
@@ -802,7 +804,7 @@ class Model:
         - Model complexity (number of components, time-dependent parameters)
 
         **Memory:**
-        Result stored in self.value2D has shape (n_time, n_energy).
+        Result stored in self.value_2d has shape (n_time, n_energy).
         For 1000 time points × 500 energy points × 8 bytes/float:
         ~4 MB per model evaluation.
 
@@ -810,22 +812,22 @@ class Model:
         For each time point t_i:
         1. Time-dependent parameters evaluate their Dynamics at t_i
         2. Model components use these parameter values
-        3. 1D spectrum computed and stored in value2D[t_i, :]
+        3. 1D spectrum computed and stored in value_2d[t_i, :]
         """
 
         if self.time is None or self.energy is None:
             raise ValueError("Model time and energy axes required for 2D evaluation")
 
         time_slice = self.time if t_ind is None else self.time[t_ind[0] : t_ind[1]]
-        self.value2D = np.empty((len(time_slice), len(self.energy)))
+        self.value_2d = np.empty((len(time_slice), len(self.energy)))
         for ti, _t in enumerate(time_slice):
-            val = self.create_value1D(t_ind=ti, return_1d=1)
+            val = self.create_value_1d(t_ind=ti, return_1d=1)
             if val is None:
-                raise RuntimeError("create_value1D returned None during 2D eval")
-            self.value2D[ti, :] = val
+                raise RuntimeError("create_value_1d returned None during 2D eval")
+            self.value_2d[ti, :] = val
 
     #
-    def plot_1D(
+    def plot_1d(
         self,
         t_ind: int = 0,
         *,
@@ -886,15 +888,15 @@ class Model:
             info = f"[{config.y_label}={round(self.time[t_ind], 3)} (index={t_ind})]"
 
         # Populate component_spectra argument of the model
-        self.create_value1D(t_ind, store_1d=1)
-        if plot_sum and self.value1D is None:
-            raise RuntimeError("Model evaluation did not produce value1D")
+        self.create_value_1d(t_ind, store_1d=1)
+        if plot_sum and self.value_1d is None:
+            raise RuntimeError("Model evaluation did not produce value_1d")
 
         # Plot
         plot_data = (
-            [cast("np.ndarray", self.value1D)] if plot_sum else self.component_spectra
+            [cast("np.ndarray", self.value_1d)] if plot_sum else self.component_spectra
         )
-        uplt.plot_1D(
+        uplt.plot_1d(
             data=plot_data,
             x=x,
             config=config,
@@ -914,7 +916,7 @@ class Model:
         )
 
     #
-    def plot_2D(
+    def plot_2d(
         self,
         save_img: int = 0,
         save_path: str = "",
@@ -946,13 +948,13 @@ class Model:
             Color scale limits (min, max)
         """
 
-        if self.value2D is None:
-            self.create_value2D()
-        if self.value2D is None or self.energy is None or self.time is None:
-            raise ValueError("Model value2D, energy, and time required for plot_2D")
-        # Plot using the utility plot_2D
-        uplt.plot_2D(
-            data=self.value2D,
+        if self.value_2d is None:
+            self.create_value_2d()
+        if self.value_2d is None or self.energy is None or self.time is None:
+            raise ValueError("Model value_2d, energy, and time required for plot_2d")
+        # Plot using the utility plot_2d
+        uplt.plot_2d(
+            data=self.value_2d,
             x=self.energy,
             y=self.time,
             config=self.plot_config,
@@ -1008,7 +1010,7 @@ class Component:
         Parameter specifications from YAML: {name: [value, vary, min, max]}
     subcycle : int
         Subcycle number for multi-cycle dynamics
-    time_N_sub : ndarray or None
+    time_n_sub : ndarray or None
         Binary mask (1=active, 0=inactive) for subcycle timing
     time_norm : ndarray or None
         Normalized time axis (resets to 0 at each subcycle start)
@@ -1058,8 +1060,8 @@ class Component:
         self.comp_name: str = comp_name
         # parse the component name into function string and component number
         self.fct_str: str
-        self.N: int | None
-        self.fct_str, self.N = uparsing.parse_component_name(comp_name)
+        self.num: int | None
+        self.fct_str, self.num = uparsing.parse_component_name(comp_name)
         # determine component type: 'add', 'conv', 'back', or 'none'
         if self.fct_str in background_functions():
             self.comp_type: str = "back"
@@ -1075,7 +1077,7 @@ class Component:
         self.subcycle: int = (
             comp_subcycle  # see "t-dynamics.normalize_time" for details
         )
-        self.time_N_sub: np.ndarray | None = (
+        self.time_n_sub: np.ndarray | None = (
             None  # (0/)1 where component is (in/)active
         )
         self.time_norm: np.ndarray | None = None  # restarts at zero for every subcycle
@@ -1155,7 +1157,7 @@ class Component:
             comp_name + '_': For regular components
         """
 
-        # component number handled by self.N
+        # component number handled by self.num
         return self.comp_name + "_"
 
     # [automatic] create a name for this component
@@ -1459,7 +1461,7 @@ class Component:
         **Subcycle Handling:**
         For multi-cycle Dynamics models (subcycle != 0):
         - Uses time_norm instead of time (resets to 0 each subcycle)
-        - Multiplies result by time_N_sub mask (1=active, 0=inactive)
+        - Multiplies result by time_n_sub mask (1=active, 0=inactive)
 
         **Background Functions:**
         Background functions receive the 'spectrum' kwarg containing the
@@ -1502,12 +1504,12 @@ class Component:
             # multi-cycle
             # multpliy value with 1 where subcycle applies, 0 otherwise
             # use normalized time instead of standard time for sub!=0]
-            if self.time_norm is None or self.time_N_sub is None:
+            if self.time_norm is None or self.time_n_sub is None:
                 raise ValueError(
                     f"Subcycle axes not defined for component '{self.comp_name}'"
                 )
             return np.asarray(
-                self.fct(self.time_norm, *pars, **kwargs) * self.time_N_sub
+                self.fct(self.time_norm, *pars, **kwargs) * self.time_n_sub
             )
         raise ValueError(
             f"Unsupported function package for component '{self.comp_name}'"
@@ -1567,11 +1569,11 @@ class Component:
                 if p.p_vary and p.p_model is not None:
                     if i == 0:
                         # update profile once per time step (handles t_vary profiles)
-                        p.p_model.create_value1D(t_ind=t_ind)
-                    if p.p_model.value1D is None:
-                        raise ValueError(f"Profile value1D is None for par '{p.name}'")
+                        p.p_model.create_value_1d(t_ind=t_ind)
+                    if p.p_model.value_1d is None:
+                        raise ValueError(f"Profile value_1d is None for par '{p.name}'")
                     base = cast("list[Any]", ulmfit.par_extract(p.lmfit_par))
-                    pars_i.append(base[0] + p.p_model.value1D[i])
+                    pars_i.append(base[0] + p.p_model.value_1d[i])
                 else:
                     pars_i.append(
                         p.value(
@@ -1695,7 +1697,7 @@ class Component:
             x_dir = config.x_dir
 
         #
-        uplt.plot_1D(
+        uplt.plot_1d(
             data=plot_data,
             config=config,
             title=f"function: {self.fct_str} from {self.package_name}",
@@ -1762,7 +1764,7 @@ class Par:
 
     When t_vary=True, the parameter value at time t is::
 
-        value(t) = base_value + dynamics_model.value1D[t]
+        value(t) = base_value + dynamics_model.value_1d[t]
 
     **Profile Variation:**
 
@@ -1921,8 +1923,8 @@ class Par:
         self.t_vary = True
         # update t_model attribute
         self.t_model = t_model
-        # evaluate t_model to update/create model.value1D
-        self.t_model.create_value1D()
+        # evaluate t_model to update/create model.value_1d
+        self.t_model.create_value_1d()
         # add t_model pars to list of individual lmfit parameters
         self.lmfit_par_list.extend(self.t_model.lmfit_par_list)
 
@@ -1949,7 +1951,7 @@ class Par:
             Set False when calling repeatedly during 2D model evaluation.
         aux_ind : int or None, default=None
             Auxiliary axis index for profile evaluation. When set,
-            p_vary parameters return base + profile.value1D[aux_ind],
+            p_vary parameters return base + profile.value_1d[aux_ind],
             and expressions referencing p_vary parameters are
             re-evaluated with the profiled values.
 
@@ -1974,26 +1976,26 @@ class Par:
             if self.p_vary and aux_ind is not None and self.p_model is not None:
                 # Ensure profile is fresh for this t_ind (no-op if already
                 # evaluated via the owning component, cheap cache check).
-                self.p_model.create_value1D(t_ind=t_ind)
+                self.p_model.create_value_1d(t_ind=t_ind)
                 base = cast("list[float]", ulmfit.par_extract(self.lmfit_par))
-                if self.p_model.value1D is None:
+                if self.p_model.value_1d is None:
                     raise RuntimeError(
-                        f'Profile model "{self.p_model.name}" has no value1D'
+                        f'Profile model "{self.p_model.name}" has no value_1d'
                     )
-                return float(base[0] + self.p_model.value1D[aux_ind])
+                return float(base[0] + self.p_model.value_1d[aux_ind])
             # Standard lmfit evaluation
             value = cast("list[float]", ulmfit.par_extract(self.lmfit_par))[0]
 
         elif self.t_vary and self.t_model is not None:
             if update_t_model:
-                # update t_model, specifically self.t_model.value1D
-                self.t_model.create_value1D()
+                # update t_model, specifically self.t_model.value_1d
+                self.t_model.create_value_1d()
             base = cast("list[float]", ulmfit.par_extract(self.lmfit_par))
-            if self.t_model.value1D is None:
+            if self.t_model.value_1d is None:
                 raise RuntimeError(
-                    f'Dynamics model "{self.t_model.name}" has no value1D'
+                    f'Dynamics model "{self.t_model.name}" has no value_1d'
                 )
-            value = float(base[0] + self.t_model.value1D[t_ind])
+            value = float(base[0] + self.t_model.value_1d[t_ind])
 
         else:
             value = -1.0
@@ -2169,9 +2171,9 @@ class Dynamics(Model):
         - N>0: N different dynamics that activate sequentially
     time_norm : ndarray or None
         Normalized time that resets to 0 at start of each subcycle
-    N_sub : ndarray or None
+    n_sub : ndarray or None
         Subcycle number active at each time point (1, 2, ..., subcycles)
-    N_counter : ndarray or None
+    n_counter : ndarray or None
         Cumulative subcycle counter (increments each subcycle)
 
     Notes
@@ -2201,12 +2203,12 @@ class Dynamics(Model):
     **Time Normalization:**
     For multi-cycle dynamics:
     - time_norm resets to 0 at each subcycle start
-    - N_sub tracks which subcycle is active (1, 2, 3, ...)
-    - N_counter cumulative count of subcycles
+    - n_sub tracks which subcycle is active (1, 2, 3, ...)
+    - n_counter cumulative count of subcycles
 
     **Evaluation:**
-    The dynamics model evaluates to value1D, which is added to the base
-    parameter value: param_total(t) = param_base + dynamics.value1D[t]
+    The dynamics model evaluates to value_1d, which is added to the base
+    parameter value: param_total(t) = param_base + dynamics.value_1d[t]
     """
 
     #
@@ -2219,8 +2221,8 @@ class Dynamics(Model):
         self.subcycles: int = 0
         # "normalized time" attributes (all have same length as time axis)
         self.time_norm: np.ndarray | None = None  # restarts at 0 for every subcycle
-        self.N_sub: np.ndarray | None = None  # active subcycle at time step (t_i)
-        self.N_counter: np.ndarray | None = None  # cummulative counter of subcycles
+        self.n_sub: np.ndarray | None = None  # active subcycle at time step (t_i)
+        self.n_counter: np.ndarray | None = None  # cummulative counter of subcycles
         self.parent_model: Model | None = None
 
     #
@@ -2247,8 +2249,8 @@ class Dynamics(Model):
         Notes
         -----
         After setting frequency:
-        - time_norm, N_sub, N_counter are computed via normalize_time()
-        - Each component receives time_N_sub mask (1=active, 0=inactive)
+        - time_norm, n_sub, n_counter are computed via normalize_time()
+        - Each component receives time_n_sub mask (1=active, 0=inactive)
         - Components with subcycle>0 use time_norm instead of time
 
         **model_info length and subcycle assignment:**
@@ -2269,7 +2271,7 @@ class Dynamics(Model):
 
         **Component Updates:**
         For each component:
-        - time_N_sub mask applied (zeros where subcycle doesn't match)
+        - time_n_sub mask applied (zeros where subcycle doesn't match)
         - Normalized time axis inherited (if subcycle != 0)
         """
 
@@ -2282,14 +2284,14 @@ class Dynamics(Model):
             )
         self.frequency = frequency
         self.normalize_time()  # update the normalization of the time axis
-        if self.N_sub is None:
-            raise RuntimeError("N_sub not initialized; call normalize_time() first")
+        if self.n_sub is None:
+            raise RuntimeError("n_sub not initialized; call normalize_time() first")
         # update components accordingly
         for comp in self.components:
-            # <time_N_sub> is 0/1 where subcomponent is in-/active
+            # <time_n_sub> is 0/1 where subcomponent is in-/active
             # reset to all-active before applying mask (idempotent on re-call)
-            comp.time_N_sub = np.ones(len(self.N_sub))
-            comp.time_N_sub[self.N_sub != comp.subcycle] = 0
+            comp.time_n_sub = np.ones(len(self.n_sub))
+            comp.time_n_sub[self.n_sub != comp.subcycle] = 0
             # inherit normalized time from Dynamics model
             if comp.subcycle != 0:
                 comp.time_norm = self.time_norm
@@ -2322,9 +2324,9 @@ class Dynamics(Model):
         >>>
         >>> print(t_model.time_norm)  # Resets every 0.05 s (half period)
         [0, 0.05, 0, 0.05, 0, 0.05, 0]
-        >>> print(t_model.N_sub)  # Which subcycle (1 or 2)
+        >>> print(t_model.n_sub)  # Which subcycle (1 or 2)
         [1, 1, 2, 2, 1, 1, 2]
-        >>> print(t_model.N_counter)  # Cumulative count
+        >>> print(t_model.n_counter)  # Cumulative count
         [1, 1, 2, 2, 3, 3, 4]
 
         Notes
@@ -2332,19 +2334,19 @@ class Dynamics(Model):
         **Normalization Logic:**
         - Subcycle duration = 1 / (frequency * subcycles)
         - time_norm resets to 0 at start of each subcycle
-        - N_sub cycles through 1, 2, ..., subcycles
-        - N_counter increments by 1 each subcycle
+        - n_sub cycles through 1, 2, ..., subcycles
+        - n_counter increments by 1 each subcycle
 
         **Negative Times:**
         Times t < 0 are assigned:
         - time_norm = 0
-        - N_sub = 0 (baseline/pre-trigger)
-        - N_counter = 0
+        - n_sub = 0 (baseline/pre-trigger)
+        - n_counter = 0
 
         **No Repetition (frequency=-1):**
         - time_norm = time (unchanged)
-        - N_sub = 0 (all zeros)
-        - N_counter = 0 (all zeros)
+        - n_sub = 0 (all zeros)
+        - n_counter = 0 (all zeros)
 
         **Validation:**
         Raises ValueError for:
@@ -2373,25 +2375,25 @@ class Dynamics(Model):
                     f"Got subcycles={self.subcycles} with frequency=-1"
                 )
             self.time_norm = np.asarray(self.time)
-            self.N_sub = np.zeros(len(self.time))
-            self.N_counter = np.zeros(len(self.time))
+            self.n_sub = np.zeros(len(self.time))
+            self.n_counter = np.zeros(len(self.time))
 
         # Frequency >0 is passed
         else:
             # Compute repetition/normalization number
             norm = 10 ** (-time_unit) / self.frequency / self.subcycles
             t = np.asarray(self.time)
-            N_temp = np.floor(t / norm).astype(int)
+            n_temp = np.floor(t / norm).astype(int)
             mask = t >= 0  # Subcycles start at t=0
 
-            self.time_norm = np.where(mask, t - N_temp * norm, 0.0)
-            self.N_sub = np.where(mask, np.floor(N_temp % self.subcycles) + 1, 0.0)
-            self.N_counter = np.where(mask, N_temp + 1, 0.0)
+            self.time_norm = np.where(mask, t - n_temp * norm, 0.0)
+            self.n_sub = np.where(mask, np.floor(n_temp % self.subcycles) + 1, 0.0)
+            self.n_counter = np.where(mask, n_temp + 1, 0.0)
 
         if show_plot:
             legends = ["normalized time", "subcycle counter", "cummulative counter"]
-            uplt.plot_1D(
-                data=[self.time_norm, self.N_sub, self.N_counter],
+            uplt.plot_1d(
+                data=[self.time_norm, self.n_sub, self.n_counter],
                 x=self.time,
                 x_label=f"Time (1E{time_unit}s)",
                 y_type="log",

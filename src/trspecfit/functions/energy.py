@@ -138,8 +138,8 @@ def LinBack(
             f"LinBack requires xStart < xStop, got xStart={xStart}, xStop={xStop}"
         )
     y = m * (x - xStart) + b
-    yStop = m * (xStop - xStart) + b
-    return np.where(x < xStart, b, np.where(x > xStop, yStop, y))
+    y_stop = m * (xStop - xStart) + b
+    return np.where(x < xStart, b, np.where(x > xStop, y_stop, y))
 
 
 #

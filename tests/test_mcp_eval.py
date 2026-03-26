@@ -64,7 +64,7 @@ class TestEvaluation:
 
         file, model = self._make_file_with_model(["energy_expression"])
 
-        value_1d = model.create_value1D(return_1d=1)
+        value_1d = model.create_value_1d(return_1d=1)
         assert value_1d.shape == file.energy.shape
         assert np.isfinite(value_1d).all()
         assert np.max(value_1d) > 0  # spectrum has a peak
@@ -98,9 +98,9 @@ class TestEvaluation:
         v2_t0 = p_x0_2.value(t_ind=0)
         assert np.isclose(v2_t0, v1_t0 + 3.6)
 
-        model.create_value2D()
-        assert model.value2D.shape == (len(file.time), len(file.energy))
-        assert np.isfinite(model.value2D).all()
+        model.create_value_2d()
+        assert model.value_2d.shape == (len(file.time), len(file.energy))
+        assert np.isfinite(model.value_2d).all()
         # Expression link should hold at a late time index too
         v1_late = p_x0_1.value(t_ind=50)
         v2_late = p_x0_2.value(t_ind=50)
@@ -113,7 +113,7 @@ class TestEvaluation:
         file, model = self._make_file_with_model(["expression_fan_out"])
 
         # Evaluate 1D spectrum
-        value_1d = model.create_value1D(return_1d=1)
+        value_1d = model.create_value_1d(return_1d=1)
         assert np.isfinite(value_1d).all()
         assert np.max(value_1d) > 0
 
@@ -139,7 +139,7 @@ class TestEvaluation:
         file, model = self._make_file_with_model(["expression_chain"])
 
         # Evaluate 1D spectrum
-        value_1d = model.create_value1D(return_1d=1)
+        value_1d = model.create_value_1d(return_1d=1)
         assert np.isfinite(value_1d).all()
         assert np.max(value_1d) > 0
 
@@ -202,9 +202,9 @@ class TestEvaluation:
         assert x0_mid < x0_early, "MonoExpNeg should decrease x0"
 
         # 2D evaluation
-        model.create_value2D()
-        assert model.value2D.shape == (len(file.time), len(file.energy))
-        assert np.isfinite(model.value2D).all()
+        model.create_value_2d()
+        assert model.value_2d.shape == (len(file.time), len(file.energy))
+        assert np.isfinite(model.value_2d).all()
 
     #
     def test_eval_profile_averaging(self):
@@ -230,7 +230,7 @@ class TestEvaluation:
         )
 
         # Evaluate via the model
-        value_1d = model.create_value1D(return_1d=1)
+        value_1d = model.create_value_1d(return_1d=1)
 
         # Analytical expectation: GLP at mean effective A
         # profile = pLinear([0,1,2,3,4], m=-0.5, b=0) = [0, -0.5, -1, -1.5, -2]
@@ -250,7 +250,7 @@ class TestEvaluation:
 
         Since GLP is linear in A, the averaged spectrum at any time equals
         GLP(energy, base_A + mean(profile(t)), x0, F, m_glp).
-        We read the profile's value1D at each time step to get the exact
+        We read the profile's value_1d at each time step to get the exact
         analytical prediction.
         """
         file, model = self._make_file_with_profile_model(["single_glp"])
@@ -276,17 +276,17 @@ class TestEvaluation:
         assert profile is not None  # type guard: p_model is Model | None
 
         # --- t_ind=0 (t=-10, before t0): dynamics = 0, static profile ---
-        spec_early = model.create_value1D(t_ind=0, return_1d=1)
-        # profile value1D was evaluated at t_ind=0; read it for prediction
-        assert profile.value1D is not None  # type guard: value1D is ndarray | None
-        mean_A_early = 20.0 + np.mean(profile.value1D)
+        spec_early = model.create_value_1d(t_ind=0, return_1d=1)
+        # profile value_1d was evaluated at t_ind=0; read it for prediction
+        assert profile.value_1d is not None  # type guard: value_1d is ndarray | None
+        mean_A_early = 20.0 + np.mean(profile.value_1d)
         expected_early = GLP(file.energy, mean_A_early, 85.0, 1.0, 0.3)
         np.testing.assert_allclose(spec_early, expected_early, rtol=1e-10)
 
         # --- t_ind=10 (t=0, at t0): dynamics nonzero, profile changes ---
-        spec_at_t0 = model.create_value1D(t_ind=10, return_1d=1)
-        assert profile.value1D is not None  # type guard
-        mean_A_at_t0 = 20.0 + np.mean(profile.value1D)
+        spec_at_t0 = model.create_value_1d(t_ind=10, return_1d=1)
+        assert profile.value_1d is not None  # type guard
+        mean_A_at_t0 = 20.0 + np.mean(profile.value_1d)
         expected_at_t0 = GLP(file.energy, mean_A_at_t0, 85.0, 1.0, 0.3)
         np.testing.assert_allclose(spec_at_t0, expected_at_t0, rtol=1e-10)
 
@@ -294,10 +294,10 @@ class TestEvaluation:
         assert not np.allclose(spec_early, spec_at_t0)
 
         # 2D evaluation should succeed
-        model.create_value2D()
-        assert model.value2D is not None  # type guard
-        assert model.value2D.shape == (len(file.time), len(file.energy))
-        assert np.isfinite(model.value2D).all()
+        model.create_value_2d()
+        assert model.value_2d is not None  # type guard
+        assert model.value_2d.shape == (len(file.time), len(file.energy))
+        assert np.isfinite(model.value_2d).all()
 
     #
     def test_eval_expression_inherits_profile(self):
@@ -331,7 +331,7 @@ class TestEvaluation:
         )
 
         # Evaluate
-        value_1d = model.create_value1D(return_1d=1)
+        value_1d = model.create_value_1d(return_1d=1)
 
         # Analytical expectation
         offsets = pLinear(model.aux_axis, -0.5, 0.0)
@@ -379,10 +379,10 @@ class TestEvaluation:
         assert np.isclose(A2_late, 3 / 4 * A1_late)
 
         # 2D evaluation
-        model.create_value2D()
-        assert model.value2D is not None  # type guard: value2D is ndarray | None
-        assert model.value2D.shape == (len(file.time), len(file.energy))
-        assert np.isfinite(model.value2D).all()
+        model.create_value_2d()
+        assert model.value_2d is not None  # type guard: value_2d is ndarray | None
+        assert model.value_2d.shape == (len(file.time), len(file.energy))
+        assert np.isfinite(model.value_2d).all()
 
     #
     def test_eval_mixed_dynamics_and_profile(self):
@@ -426,23 +426,23 @@ class TestEvaluation:
         # Before t0: x0 at base, profile applied to A
         offsets = pLinear(model.aux_axis, -0.5, 0.0)
         mean_A = 20.0 + np.mean(offsets)  # 19.0
-        spec_early = model.create_value1D(t_ind=0, return_1d=1)
+        spec_early = model.create_value_1d(t_ind=0, return_1d=1)
         x0_early = p_x0.value(t_ind=0)
         expected_early = GLP(file.energy, mean_A, x0_early, 1.0, 0.3)
         np.testing.assert_allclose(spec_early, expected_early, rtol=1e-10)
 
         # After t0: x0 shifted, profile unchanged
-        spec_late = model.create_value1D(t_ind=15, return_1d=1)
+        spec_late = model.create_value_1d(t_ind=15, return_1d=1)
         x0_late = p_x0.value(t_ind=15)
         assert not np.isclose(x0_early, x0_late)
         expected_late = GLP(file.energy, mean_A, x0_late, 1.0, 0.3)
         np.testing.assert_allclose(spec_late, expected_late, rtol=1e-10)
 
         # 2D evaluation
-        model.create_value2D()
-        assert model.value2D is not None  # type guard
-        assert model.value2D.shape == (len(file.time), len(file.energy))
-        assert np.isfinite(model.value2D).all()
+        model.create_value_2d()
+        assert model.value_2d is not None  # type guard
+        assert model.value_2d.shape == (len(file.time), len(file.energy))
+        assert np.isfinite(model.value_2d).all()
 
     #
     def test_eval_expression_refs_profiled_par_per_aux(self):
@@ -459,7 +459,7 @@ class TestEvaluation:
         At each time step the averaged spectrum must equal:
           GLP(energy, mean(A1_eff), 85, 1, 0.3)
           + GLP(energy, mean(A1_eff * 0.5), 87, 1, 0.3)
-        where A1_eff[i] = 20 + profile.value1D[i] depends on the current
+        where A1_eff[i] = 20 + profile.value_1d[i] depends on the current
         profile slope (which changes with time via MonoExpPos dynamics).
         """
 
@@ -486,18 +486,18 @@ class TestEvaluation:
         assert profile is not None  # type guard
 
         # t_ind=0 (before t0): dynamics=0, slope = base (-0.5)
-        spec_early = model.create_value1D(t_ind=0, return_1d=1)
+        spec_early = model.create_value_1d(t_ind=0, return_1d=1)
         assert spec_early is not None  # type guard
-        A1_eff_early = 20.0 + profile.value1D
+        A1_eff_early = 20.0 + profile.value_1d
         expected_early = GLP(file.energy, np.mean(A1_eff_early), 85.0, 1.0, 0.3) + GLP(
             file.energy, np.mean(A1_eff_early * 0.5), 87.0, 1.0, 0.3
         )
         np.testing.assert_allclose(spec_early, expected_early, rtol=1e-10)
 
         # t_ind=15 (after t0): slope changed by dynamics
-        spec_late = model.create_value1D(t_ind=15, return_1d=1)
+        spec_late = model.create_value_1d(t_ind=15, return_1d=1)
         assert spec_late is not None  # type guard
-        A1_eff_late = 20.0 + profile.value1D
+        A1_eff_late = 20.0 + profile.value_1d
         expected_late = GLP(file.energy, np.mean(A1_eff_late), 85.0, 1.0, 0.3) + GLP(
             file.energy, np.mean(A1_eff_late * 0.5), 87.0, 1.0, 0.3
         )

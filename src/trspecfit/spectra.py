@@ -92,8 +92,8 @@ def fit_model_mcp(
     ...     plt.plot(energy, comp, label=f'Component {i}')
 
     >>> # During fitting (2D)
-    >>> spectrum_2D = fit_model_mcp(energy, par_values, True, model, 2)
-    >>> residual_2D = data_2D - spectrum_2D
+    >>> spectrum_2d = fit_model_mcp(energy, par_values, True, model, 2)
+    >>> residual_2d = data_2d - spectrum_2d
 
     Notes
     -----
@@ -115,7 +115,7 @@ def fit_model_mcp(
     with many time-dependent parameters. Consider:
     - Reducing time/energy grid density during initial fits
     - Using fit_slice_by_slice for quasi-independent time points
-    - Implementing parallel evaluation (model.create_value2D_parallel)
+    - Implementing parallel evaluation (model.create_value_2d_parallel)
     """
 
     par_values: list[float] | np.ndarray
@@ -128,17 +128,17 @@ def fit_model_mcp(
     # Create energy- (and time-)resolved spectrum/data
     if dim == 1:  # 1D
         if not plot_sum:  # Return individual components
-            model.create_value1D(store_1d=1)
+            model.create_value_1d(store_1d=1)
             return model.component_spectra
         # Return sum of all components
-        model.create_value1D()
-        if model.value1D is None:
-            raise RuntimeError("Model evaluation did not produce value1D")
-        return model.value1D
+        model.create_value_1d()
+        if model.value_1d is None:
+            raise RuntimeError("Model evaluation did not produce value_1d")
+        return model.value_1d
 
     if dim == 2:  # 2D
-        model.create_value2D()
-        if model.value2D is None:
-            raise RuntimeError("Model evaluation did not produce value2D")
-        return model.value2D
+        model.create_value_2d()
+        if model.value_2d is None:
+            raise RuntimeError("Model evaluation did not produce value_2d")
+        return model.value_2d
     raise ValueError(f"Unsupported dim={dim}; expected 1 or 2")

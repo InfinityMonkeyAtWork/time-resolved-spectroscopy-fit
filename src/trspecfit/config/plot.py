@@ -84,23 +84,23 @@ class PlotConfig:
     Create a configuration with custom settings:
 
     >>> config = PlotConfig(x_label='Energy (eV)', x_dir='rev', dpi_plot=150)
-    >>> plot_1D(data, x, config=config)
+    >>> plot_1d(data, x, config=config)
 
     Create from Project settings:
 
     >>> project = Project(path='...', config_file='project.yaml')
     >>> config = PlotConfig.from_project(project)
-    >>> plot_1D(data, x, config=config)
+    >>> plot_1d(data, x, config=config)
 
     Override Project settings:
 
     >>> config = PlotConfig.from_project(project, x_label='Binding Energy (eV)')
-    >>> plot_2D(data, x, y, config=config)
+    >>> plot_2d(data, x, y, config=config)
 
     Override config for a specific plot:
 
     >>> config = PlotConfig.from_project(project)
-    >>> plot_1D(data, x, config=config, x_dir='rev', linewidth=2)
+    >>> plot_1d(data, x, config=config, x_dir='rev', linewidth=2)
 
     Create multiple configs from one project:
 

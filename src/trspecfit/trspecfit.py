@@ -150,7 +150,7 @@ class Project:
     Only specified settings need to be included; others use defaults.
 
     **File I/O Settings:**
-    Attributes ext, fmt, delim, DA_fmt, and DA_slices_fmt control file
+    Attributes ext, fmt, delim, da_fmt, and da_slices_fmt control file
     export formats and can be customized per project via YAML or direct
     attribute assignment.
     """
@@ -200,8 +200,8 @@ class Project:
         self.ext = ".dat"
         self.fmt = "%.6e"
         self.delim = ","
-        self.DA_fmt = "%04d"
-        self.DA_slices_fmt = "%06d"
+        self.da_fmt = "%04d"
+        self.da_slices_fmt = "%06d"
         # Advanced settings
         self.spec_lib = spectra
         self.spec_fun_str = "fit_model_mcp"
@@ -287,8 +287,8 @@ class Project:
             print(f"    ext:        {self.ext}")
             print(f"    fmt:        {self.fmt}")
             print(f"    delim:      {repr(self.delim)}")
-            print(f"    DA_fmt:     {self.DA_fmt}")
-            print(f"    DA_slices:  {self.DA_slices_fmt}")
+            print(f"    da_fmt:     {self.da_fmt}")
+            print(f"    DA_slices:  {self.da_slices_fmt}")
 
     #
     def _load_config(self, config_file: PathLike) -> None:
@@ -372,7 +372,7 @@ class File:
         Parent project providing configuration
     path : str or Path
         File identifier
-    path_DA : Path
+    path_da : Path
         Directory path for saving this file's fit results
     data : ndarray
         Spectroscopy data (1D or 2D)
@@ -443,7 +443,7 @@ class File:
         self.p = parent_project if parent_project is not None else Project(path=None)
         self.p.files.append(self)  # register with parent project
         self.path = path  # path to load/save [?] data from
-        self.path_DA = self.p.path_run / path  # path to save fit results to
+        self.path_da = self.p.path_run / path  # path to save fit results to
         self._plot_config: PlotConfig | None = None  # create plot config from project
         self.data = data  # (time-[optional] and) energy-dependent data to fit
         self.dim = 0 if data is None else data.ndim  # 1/2 D for energy/+time
@@ -536,7 +536,7 @@ class File:
         config = self.plot_config
 
         if self.dim == 1:
-            uplt.plot_1D(
+            uplt.plot_1d(
                 data=[
                     self.data,
                 ],
@@ -546,7 +546,7 @@ class File:
             )
 
         elif self.dim == 2:
-            uplt.plot_2D(
+            uplt.plot_2d(
                 data=self.data,
                 x=self.energy,
                 y=self.time,
@@ -814,8 +814,8 @@ class File:
         mod.describe(detail=0)
 
         if detail == 1 and isinstance(mod, mcp.Dynamics):
-            mod.create_value1D(store_1d=1)  # update individual component spectra
-            mod.plot_1D(plot_sum=False)  # plot guess only (individual components)
+            mod.create_value_1d(store_1d=1)  # update individual component spectra
+            mod.plot_1d(plot_sum=False)  # plot guess only (individual components)
 
         if detail == 1 and mod.dim == 1:
             if self.energy is None or self.data_base is None:
@@ -825,14 +825,14 @@ class File:
                     stacklevel=2,
                 )
                 return
-            mod.create_value1D(store_1d=1)  # update individual component spectra
+            mod.create_value_1d(store_1d=1)  # update individual component spectra
             # plot initial guess (individual components), data, and residual
             title_mod = (
                 f"File: {self.path}, "
                 f'Model: "{model_info}" (from "{mod.yaml_f_name}.yaml")'
                 ": initial guess"
             )
-            fitlib.plt_fit_res_1D(
+            fitlib.plt_fit_res_1d(
                 x=self.energy,
                 y=self.data_base,
                 fit_fun_str=self.p.spec_fun_str,
@@ -849,17 +849,17 @@ class File:
             )
 
         if detail == 1 and mod.dim == 2:
-            mod.create_value2D()  # update spectrum
-            if self.data is None or mod.value2D is None:
+            mod.create_value_2d()  # update spectrum
+            if self.data is None or mod.value_2d is None:
                 warnings.warn(
                     "2D data/model values missing; cannot plot 2D model summary.",
                     stacklevel=2,
                 )
                 return
             # plot data, fit, and residual 2D maps
-            fitlib.plt_fit_res_2D(
+            fitlib.plt_fit_res_2d(
                 data=self.data,
-                fit=mod.value2D,
+                fit=mod.value_2d,
                 x=self.energy,
                 y=self.time,
                 config=self.plot_config,
@@ -940,13 +940,13 @@ class File:
                 f"Model '{model_name}' not found; using fallback output path.",
                 stacklevel=2,
             )
-            path_model = self.path_DA / "model_unknown" / model_name
+            path_model = self.path_da / "model_unknown" / model_name
         else:
             yaml_name = (
                 mod.yaml_f_name if mod.yaml_f_name is not None else "model_unknown"
             )
-            path_model = self.path_DA / yaml_name / model_name
-        # path_model = self.path_DA / self.model_base.yaml_f_name / model_name
+            path_model = self.path_da / yaml_name / model_name
+        # path_model = self.path_da / self.model_base.yaml_f_name / model_name
         path_model.mkdir(parents=True, exist_ok=True)
         if subfolders is None:
             subfolders = []
@@ -1026,7 +1026,7 @@ class File:
                     stacklevel=2,
                 )
                 return
-            uplt.plot_1D(
+            uplt.plot_1d(
                 data=[
                     self.data_base,
                 ],
@@ -1111,7 +1111,7 @@ class File:
                     return
                 x_cut = energy[self.e_lim[0] : self.e_lim[1]]
                 y_cut = self.data[self.e_lim[0] : self.e_lim[1]]
-                uplt.plot_1D(
+                uplt.plot_1d(
                     data=[self.data, y_cut],
                     x=[energy, x_cut],
                     config=self.plot_config,
@@ -1126,7 +1126,7 @@ class File:
                         stacklevel=2,
                     )
                     return
-                uplt.plot_2D(
+                uplt.plot_2d(
                     data=self.data,
                     x=energy,
                     y=self.time,
@@ -1196,7 +1196,7 @@ class File:
         )
 
         # update individual component spectra
-        # self.model_base.create_value1D(store_1d=1)
+        # self.model_base.create_value_1d(store_1d=1)
 
         # display/plot and save baseline fit summary
         title_base = (
@@ -1204,7 +1204,7 @@ class File:
             f'Model: "{model_name}" (from "{self.model_base.yaml_f_name}.yaml")'
         )
 
-        fitlib.plt_fit_res_1D(
+        fitlib.plt_fit_res_1d(
             x=self.energy,
             y=self.data_base,
             fit_fun_str=self.p.spec_fun_str,
@@ -1266,7 +1266,7 @@ class File:
         (NOT always a good idea!)
         """
 
-        t_SbS = time.time()  # start timing for SbS fit
+        t_sbs = time.time()  # start timing for SbS fit
 
         self.model_sbs = self._resolve_model(model_name)
         if self.model_base is None:
@@ -1284,7 +1284,7 @@ class File:
             )
 
         # define (and create) path where SbS fit results will be saved to
-        path_SbS_results = self.create_model_path(
+        path_sbs_results = self.create_model_path(
             model_name,
             subfolders=[
                 "slices",
@@ -1292,7 +1292,7 @@ class File:
         )
 
         # set all fixed SbS fit parameters equal to baseline model results
-        base_df = ulmfit.par2df(self.model_base.lmfit_pars, col_type="min")
+        base_df = ulmfit.par_to_df(self.model_base.lmfit_pars, col_type="min")
         self.model_sbs.update_value(
             new_par_values=list(base_df["value"]), par_select="all"
         )
@@ -1314,7 +1314,7 @@ class File:
             if s_i < self.p.skip_first_n_spec:
                 continue  # skip past baseline spectra for debugging
             # define path for files saved for this slice
-            path_slice = path_SbS_results / "slices" / str(self.p.DA_slices_fmt % s_i)
+            path_slice = path_sbs_results / "slices" / str(self.p.da_slices_fmt % s_i)
 
             # update the "x0" peak energy guess(es) using
             # "max(baseline) -(max current slice)" [ in eV]
@@ -1345,7 +1345,7 @@ class File:
             self.model_sbs.args = (self.model_sbs, 1)
 
             # fit with confidence intervals
-            result_SbS = fitlib.fit_wrapper(
+            result_sbs = fitlib.fit_wrapper(
                 const=self.model_sbs.const,
                 args=self.model_sbs.args,
                 par_names=self.model_sbs.parameter_names,
@@ -1358,16 +1358,16 @@ class File:
             )
 
             # add final fit parameters to list of fit parameters of all spectra
-            self.results_sbs.append(result_SbS)
+            self.results_sbs.append(result_sbs)
 
             # (optionally) plot and (always) save fit summary for this slice
-            fitlib.plt_fit_res_1D(
+            fitlib.plt_fit_res_1d(
                 x=self.model_sbs.const[0],
                 y=self.model_sbs.const[1],
                 fit_fun_str=self.p.spec_fun_str,
                 package=self.p.spec_lib,
                 par_init=initial_guess,
-                par_fin=result_SbS[1],
+                par_fin=result_sbs[1],
                 args=self.model_sbs.args,
                 plot_sum=False,
                 show_init=True,
@@ -1381,9 +1381,9 @@ class File:
                 break  # for debugging: only fit first N spectra
 
         if stages >= 1:
-            self.save_sbs_fit(save_path=path_SbS_results)
+            self.save_sbs_fit(save_path=path_sbs_results)
             fitlib.time_display(
-                t_start=t_SbS, print_str="Time elapsed for Slice-by-Slice fit: "
+                t_start=t_sbs, print_str="Time elapsed for Slice-by-Slice fit: "
             )
 
     #
@@ -1412,7 +1412,7 @@ class File:
             )
         # convert results, specifically par_fin to dataframe and save
         # this also plots all parameters as a function of time
-        df_SbS = fitlib.results2df(
+        df_sbs = fitlib.results_to_df(
             results=self.results_sbs,
             x=self.time,
             index=np.arange(0, len(self.time)),
@@ -1424,21 +1424,21 @@ class File:
         )
 
         # get slice-by-slice fit spectra as a 2D map
-        df_SbS_pars = df_SbS.loc[:, self.model_sbs.parameter_names]
-        fit2D_SbS = fitlib.results2fit2D(
-            results=df_SbS_pars,
+        df_sbs_pars = df_sbs.loc[:, self.model_sbs.parameter_names]
+        fit_2d_sbs = fitlib.results_to_fit_2d(
+            results=df_sbs_pars,
             const=self.model_sbs.const,
             args=self.model_sbs.args,
-            save_2D=-1 if self.p.show_output == 0 else 1,
+            save_2d=-1 if self.p.show_output == 0 else 1,
             save_path=save_path,
         )
 
         # plot data, fit, and residual 2D maps
         # (works if full 2D map is fitted/ no slices skipped)
         if self.p.first_n_spec_only == -1 and self.p.skip_first_n_spec == -1:
-            fitlib.plt_fit_res_2D(
+            fitlib.plt_fit_res_2d(
                 data=self.data,
-                fit=fit2D_SbS,
+                fit=fit_2d_sbs,
                 x=self.energy,
                 y=self.time,
                 config=self.plot_config,
@@ -1628,7 +1628,7 @@ class File:
             (see fitlib.fit_wrapper for details)
         """
 
-        t_2D = time.time()  # start timing for 2D fit
+        t_2d = time.time()  # start timing for 2D fit
 
         self.model_2d = self._resolve_model(model_name)
         if self.model_base is None:
@@ -1639,10 +1639,10 @@ class File:
             raise ValueError("Data/axes missing; cannot run 2D fit.")
 
         # define (and create) path where 2D fit results will be saved to
-        path_2D_results = self.create_model_path(model_name)
+        path_2d_results = self.create_model_path(model_name)
 
         # set all fixed 2D fit parameters equal to baseline model results
-        base_df = ulmfit.par2df(self.model_base.lmfit_pars, col_type="min")
+        base_df = ulmfit.par_to_df(self.model_base.lmfit_pars, col_type="min")
         self.model_2d.update_value(
             new_par_values=list(base_df["value"]), par_select=list(base_df["name"])
         )
@@ -1668,13 +1668,13 @@ class File:
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
             save_output=1,
-            save_path=path_2D_results / model_name,
+            save_path=path_2d_results / model_name,
             **fit_wrapper_kwargs,
         )
         if stages >= 1:
-            self.save_2d_fit(save_path=path_2D_results)
+            self.save_2d_fit(save_path=path_2d_results)
             fitlib.time_display(
-                t_start=t_2D, print_str="Time elapsed for 2D model fit: "
+                t_start=t_2d, print_str="Time elapsed for 2D model fit: "
             )
             display(self.model_2d.result[1].params)  # display final pars below figure
 
@@ -1699,15 +1699,15 @@ class File:
             or self.data is None
         ):
             raise ValueError("2D model/data/axes missing; nothing to save.")
-        self.model_2d.create_value2D()  # update 2D spectrum to final fit result
-        if self.model_2d.value2D is None:
+        self.model_2d.create_value_2d()  # update 2D spectrum to final fit result
+        if self.model_2d.value_2d is None:
             raise ValueError(
-                "2D model evaluation did not produce value2D; nothing to save."
+                "2D model evaluation did not produce value_2d; nothing to save."
             )
         # plot data, fit, and residual 2D maps
-        fitlib.plt_fit_res_2D(
+        fitlib.plt_fit_res_2d(
             data=self.data,
-            fit=self.model_2d.value2D,
+            fit=self.model_2d.value_2d,
             x=self.energy,
             y=self.time,
             config=self.plot_config,
@@ -1753,7 +1753,7 @@ class File:
         if fit_type == "baseline":
             if self.model_base is None or not self.model_base.result:
                 raise ValueError("No baseline fit results. Run fit_baseline() first.")
-            return ulmfit.par2df(
+            return ulmfit.par_to_df(
                 self.model_base.result[1].params,
                 col_type="min",
                 par_names=self.model_base.parameter_names,
@@ -1763,11 +1763,11 @@ class File:
                 raise ValueError(
                     "No Slice-by-Slice fit results. Run fit_slice_by_slice() first."
                 )
-            return ulmfit.list_of_par2df(self.results_sbs)
+            return ulmfit.list_of_par_to_df(self.results_sbs)
         if fit_type == "2d":
             if self.model_2d is None or not self.model_2d.result:
                 raise ValueError("No 2D fit results. Run fit_2d() first.")
-            return ulmfit.par2df(
+            return ulmfit.par_to_df(
                 self.model_2d.result[1].params,
                 col_type="min",
                 par_names=self.model_2d.parameter_names,

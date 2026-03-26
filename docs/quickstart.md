@@ -88,7 +88,7 @@ file.add_time_dependence(
 - Disallowed: attaching both profile and dynamics directly to the same base parameter (disabled to avoid strongly correlated fits).
 
 ## Notes
-- `add_time_dependence(...)` must be called before `create_value2D()` if you want dynamics in one or more parameters.
+- `add_time_dependence(...)` must be called before `create_value_2d()` if you want dynamics in one or more parameters.
 - `dynamics_model` in `add_time_dependence(...)` can contain multiple names for multi-cycle dynamics.
 - For repeating dynamics, pass `frequency=<Hz>` to `add_time_dependence(...)`.
 

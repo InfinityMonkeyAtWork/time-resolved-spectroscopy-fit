@@ -75,7 +75,7 @@ def format_float_scientific(
 
 
 #
-def OoM(x: float) -> int:
+def oom(x: float) -> int:
     """
     Get order of magnitude of a number.
 
@@ -88,7 +88,7 @@ def OoM(x: float) -> int:
     -------
     int
         Order of magnitude (power of 10)
-        [rounds down: OoM(9.99) returns 0, not 1]
+        [rounds down: oom(9.99) returns 0, not 1]
 
     Raises
     ------
@@ -362,6 +362,8 @@ def my_conv(
         raise ValueError(f"Unknown method '{method}'")
 
     # Remove padding and return
+    if pad_size == 0:
+        return cast("NDArray[np.float64]", y_conv_pad)
     return cast("NDArray[np.float64]", y_conv_pad[pad_size:-pad_size])
 
 
@@ -394,7 +396,7 @@ def phi_norm(phi: float, norm: float = 2 * np.pi) -> float:
 
 
 #
-def running_mean(x: ArrayLike, y: ArrayLike, N: int) -> NDArray[np.float64]:
+def running_mean(x: ArrayLike, y: ArrayLike, n: int) -> NDArray[np.float64]:
     """
     Calculate running (moving) average with proper edge handling.
 
@@ -408,7 +410,7 @@ def running_mean(x: ArrayLike, y: ArrayLike, N: int) -> NDArray[np.float64]:
         X-axis (independent variable)
     y : array_like
         Y-axis (signal to smooth)
-    N : int
+    n : int
         Window size (number of points to average)
 
     Returns
@@ -421,8 +423,8 @@ def running_mean(x: ArrayLike, y: ArrayLike, N: int) -> NDArray[np.float64]:
     Performance comparison:
     https://stackoverflow.com/questions/13728392/moving-average-or-running-mean
     - numpy.convolve: slowest
-    - cumsum: floating point errors for N > 1E5
+    - cumsum: floating point errors for n > 1E5
     - scipy with padding: fastest and most robust (this implementation)
     """
 
-    return my_conv(x, y, np.ones(N))
+    return my_conv(x, y, np.ones(n))

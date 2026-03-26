@@ -64,7 +64,7 @@ class TestEnergyParsing:
         # GLP_01 (should be numbered)
         assert model.components[2].fct_str == "GLP"
         assert model.components[2].comp_name == "GLP_01"
-        assert model.components[2].N == 1
+        assert model.components[2].num == 1
         assert model.components[2].par_dict["A"] == [20, True, 5, 25]
         assert model.components[2].par_dict["x0"] == [84.5, True, 82, 88]
         assert model.components[2].par_dict["F"] == [1.0, True, 0.75, 2.5]
@@ -73,7 +73,7 @@ class TestEnergyParsing:
         # GLP_02 (should be numbered) - x0 now uses [value, vary] format
         assert model.components[3].fct_str == "GLP"
         assert model.components[3].comp_name == "GLP_02"
-        assert model.components[3].N == 2
+        assert model.components[3].num == 2
         assert model.components[3].par_dict["A"] == [17, True, 5, 25]
         assert model.components[3].par_dict["x0"] == [88.1, True]
         # Check that lmfit parameter was created with unbounded min/max
@@ -116,7 +116,7 @@ class TestEnergyParsing:
         # GLP_01
         assert model.components[2].fct_str == "GLP"
         assert model.components[2].comp_name == "GLP_01"
-        assert model.components[2].N == 1
+        assert model.components[2].num == 1
         assert model.components[2].par_dict["A"] == [20, True, 5, 25]
         assert model.components[2].par_dict["x0"] == [84.5, True, 82, 88]
         assert model.components[2].par_dict["F"] == [1.0, True, 0.75, 2.5]
@@ -125,7 +125,7 @@ class TestEnergyParsing:
         # GLP_02
         assert model.components[3].fct_str == "GLP"
         assert model.components[3].comp_name == "GLP_02"
-        assert model.components[3].N == 2
+        assert model.components[3].num == 2
         assert model.components[3].par_dict["A"] == ["3/4*GLP_01_A"]
         assert model.components[3].par_dict["x0"] == ["GLP_01_x0 +3.6"]
         assert model.components[3].par_dict["F"] == ["GLP_01_F"]
@@ -159,7 +159,7 @@ class TestEnergyParsing:
         # GLP_01
         assert model.components[2].fct_str == "GLP"
         assert model.components[2].comp_name == "GLP_01"
-        assert model.components[2].N == 1
+        assert model.components[2].num == 1
         assert model.components[2].par_dict["A"] == ["3/4*GLP_02_A"]
         assert model.components[2].par_dict["x0"] == ["GLP_02_x0 +3.6"]
         assert model.components[2].par_dict["F"] == ["GLP_02_F"]
@@ -168,7 +168,7 @@ class TestEnergyParsing:
         # GLP_02
         assert model.components[3].fct_str == "GLP"
         assert model.components[3].comp_name == "GLP_02"
-        assert model.components[3].N == 2
+        assert model.components[3].num == 2
         assert model.components[3].par_dict["A"] == [20, True, 5, 25]
         assert model.components[3].par_dict["x0"] == [84.5, True, 82, 88]
         assert model.components[3].par_dict["F"] == [1.0, True, 0.75, 2.5]

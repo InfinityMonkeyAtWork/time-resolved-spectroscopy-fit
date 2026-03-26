@@ -20,7 +20,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from trspecfit.config.plot import PlotConfig
-from trspecfit.utils.arrays import OoM
+from trspecfit.utils.arrays import oom
 
 type PathLike = str | pathlib.Path
 
@@ -179,7 +179,7 @@ def plot_grid(
 
 
 #
-def plot_2D(
+def plot_2d(
     data: ArrayLike,
     x: ArrayLike | None = None,
     y: ArrayLike | None = None,
@@ -224,19 +224,19 @@ def plot_2D(
     Examples
     --------
     >>> # Basic plot
-    >>> plot_2D(data, x=energy, y=time)
+    >>> plot_2d(data, x=energy, y=time)
 
     >>> # With configuration
     >>> config = PlotConfig.from_project(project)
-    >>> plot_2D(data, x, y, config=config)
+    >>> plot_2d(data, x, y, config=config)
 
     >>> # Slice data and set color scale
-    >>> plot_2D(data, x, y, config=config,
+    >>> plot_2d(data, x, y, config=config,
     ...         data_slice=[[10, 100], [5, 50]],
     ...         z_lim=[0, 100])
 
     >>> # Reversed energy axis with reference lines
-    >>> plot_2D(data, x, y, config=config,
+    >>> plot_2d(data, x, y, config=config,
     ...         x_dir='rev',
     ...         vlines=[85.0, 87.5],
     ...         hlines=[0, 100])
@@ -311,16 +311,16 @@ def plot_2D(
 
     # Determine z-axis (color) range
     if z_lim is None:
-        min2D = np.min(data_plt)
-        max2D = np.max(data_plt)
+        min_2d = np.min(data_plt)
+        max_2d = np.max(data_plt)
         scale_txt = "autoscale min. and max. z (color)"
     elif isinstance(z_lim, list) and len(z_lim) == 2 and z_lim[1] == "max":
-        min2D = z_lim[0]
-        max2D = np.max(data_plt)
+        min_2d = z_lim[0]
+        max_2d = np.max(data_plt)
         scale_txt = f"autoscale max. z (color) [min={z_lim[0]}]"
     else:
-        min2D = z_lim[0]
-        max2D = z_lim[1]
+        min_2d = z_lim[0]
+        max_2d = z_lim[1]
         scale_txt = "user defined z scale (color)"
 
     # Create default axes if not provided
@@ -349,7 +349,7 @@ def plot_2D(
 
     # Plot data
     if z_type == "log":
-        norm = mcolors.LogNorm(vmin=min2D, vmax=max2D)
+        norm = mcolors.LogNorm(vmin=min_2d, vmax=max_2d)
         plt.pcolormesh(
             x_plt, y_plt, data_plt, cmap=z_colormap, norm=norm, shading="nearest"
         )
@@ -359,8 +359,8 @@ def plot_2D(
             y_plt,
             data_plt,
             cmap=z_colormap,
-            vmin=min2D,
-            vmax=max2D,
+            vmin=min_2d,
+            vmax=max_2d,
             shading="nearest",
         )
 
@@ -405,7 +405,7 @@ def plot_2D(
 
 
 #
-def plot_1D(
+def plot_1d(
     data: Sequence[ArrayLike] | ArrayLike,
     x: ArrayLike | list[ArrayLike] | None = None,
     config: PlotConfig | None = None,
@@ -453,20 +453,20 @@ def plot_1D(
     Examples
     --------
     >>> # Simple plot
-    >>> plot_1D([data1, data2], x=energy)
+    >>> plot_1d([data1, data2], x=energy)
 
     >>> # With project configuration
     >>> config = PlotConfig.from_project(project)
-    >>> plot_1D(data, x, config=config)
+    >>> plot_1d(data, x, config=config)
 
     >>> # Waterfall plot with custom styling
-    >>> plot_1D([trace1, trace2, trace3], x=time,
+    >>> plot_1d([trace1, trace2, trace3], x=time,
     ...         waterfall=0.5,
     ...         colors=['red', 'blue', 'green'],
     ...         legend=['Early', 'Mid', 'Late'])
 
     >>> # Normalized traces with reversed x-axis
-    >>> plot_1D(data, x=energy, config=config,
+    >>> plot_1d(data, x=energy, config=config,
     ...         y_norm=1, x_dir='rev',
     ...         vlines=[85.0, 87.5])
 
@@ -523,19 +523,19 @@ def plot_1D(
     y_scale = kwargs.get("y_scale", config.y_scale)
 
     # Determine number of plots
-    N_plots = len(data_series)
+    n_plots = len(data_series)
 
     # Create default values if not provided
     if linestyles is None:
-        linestyles = N_plots * ["-"]
+        linestyles = n_plots * ["-"]
     if colors is None:
         colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     if linewidths is None:
-        linewidths = N_plots * [1.5]
+        linewidths = n_plots * [1.5]
     if markers is None:
-        markers = N_plots * [None]
+        markers = n_plots * [None]
     if markersizes is None:
-        markersizes = N_plots * [6]
+        markersizes = n_plots * [6]
     if x is None:
         x_common = np.arange(0, data_series[0].shape[0], 1)
         x_list: list[NDArray[np.float64]] | None = None
@@ -546,11 +546,11 @@ def plot_1D(
         x_common = np.asarray(x, dtype=float)
         x_list = None
     if y_scale is None:
-        y_scale_arr = np.ones(N_plots, dtype=float)
+        y_scale_arr = np.ones(n_plots, dtype=float)
     else:
         y_scale_arr = np.asarray(y_scale, dtype=float)
     if legend is None:
-        legend = [i + 1 for i in range(N_plots)]
+        legend = [i + 1 for i in range(n_plots)]
 
     # Create figure
     _fig, ax = plt.subplots(1, 1, dpi=dpi_plot)
@@ -562,7 +562,7 @@ def plot_1D(
     plt.title(plot_title, loc="left", fontsize=10)
 
     # Plot each dataset
-    for i in range(N_plots):
+    for i in range(n_plots):
         x_plot = x_list[i] if x_list is not None else x_common
         if x_plot is None:
             raise ValueError("x axis could not be determined")
@@ -598,8 +598,8 @@ def plot_1D(
     if hlines is not None:
         if x_list is not None:
             x_minmax = [
-                np.min([np.min(x_list[i]) for i in range(N_plots)]),
-                np.max([np.max(x_list[i]) for i in range(N_plots)]),
+                np.min([np.min(x_list[i]) for i in range(n_plots)]),
+                np.max([np.max(x_list[i]) for i in range(n_plots)]),
             ]
         else:
             if x_common is None:
@@ -619,10 +619,10 @@ def plot_1D(
         else:
             y_minmax = [
                 np.min(
-                    [np.min(y_scale_arr[i] * data_series[i]) for i in range(N_plots)]
+                    [np.min(y_scale_arr[i] * data_series[i]) for i in range(n_plots)]
                 ),
                 np.max(
-                    [np.max(y_scale_arr[i] * data_series[i]) for i in range(N_plots)]
+                    [np.max(y_scale_arr[i] * data_series[i]) for i in range(n_plots)]
                 ),
             ]
         plt.vlines(
@@ -742,7 +742,7 @@ def major_locator_input(x: ArrayLike) -> float:
     """
 
     x_max = float(np.max(np.asarray(x, dtype=float)))
-    return float(10 ** OoM(x_max))
+    return float(10 ** oom(x_max))
 
 
 #
@@ -765,7 +765,7 @@ def minor_locator_input(x: ArrayLike) -> float:
     """
 
     x_max = float(np.max(np.asarray(x, dtype=float)))
-    return float(10 ** (OoM(x_max) - 1))
+    return float(10 ** (oom(x_max) - 1))
 
 
 #
@@ -787,11 +787,11 @@ def major_formatter_input(x: ArrayLike) -> str:
         Format string for matplotlib tick labels (e.g., '%0.2f', '%4.0f')
     """
 
-    axis_OoM = OoM(np.max(x))
+    axis_oom = oom(np.max(x))
 
-    if axis_OoM < 0:
-        return f"%0.{abs(axis_OoM)}f"
-    if axis_OoM == 0:
+    if axis_oom < 0:
+        return f"%0.{abs(axis_oom)}f"
+    if axis_oom == 0:
         return "%0.0f"
-    # axis_OoM > 0
-    return f"%{axis_OoM + 1}.0f"
+    # axis_oom > 0
+    return f"%{axis_oom + 1}.0f"

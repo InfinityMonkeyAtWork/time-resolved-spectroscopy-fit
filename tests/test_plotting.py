@@ -13,7 +13,7 @@ Strategy:
 # def test_my_new_feature(self, sample_1D_data, default_config):
 #     """Test description."""
 #     x, y_list = sample_1D_data
-#     plot_1D(
+#     plot_1d(
 #         y_list, x=x, config=default_config,
 #         my_new_param=value,
 #         save_img=-2 # don't display, don't save
@@ -35,7 +35,7 @@ from trspecfit import File, Project
 from trspecfit.config.plot import PlotConfig
 
 # Local imports
-from trspecfit.utils.plot import plot_1D, plot_2D
+from trspecfit.utils.plot import plot_1d, plot_2d
 
 
 #
@@ -128,7 +128,7 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
 
-        plot_1D(y_list, x=x, config=config, save_img=0)
+        plot_1d(y_list, x=x, config=config, save_img=0)
         ax = plt.gca()
         assert len(ax.get_lines()) >= 2
         assert ax.get_xlabel() == "x axis"  # default label
@@ -142,7 +142,7 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig(x_label="Energy (eV)", x_dir="rev", dpi_plot=150)
 
-        plot_1D(y_list, x=x, config=config, save_img=0)
+        plot_1d(y_list, x=x, config=config, save_img=0)
         ax = plt.gca()
         assert ax.get_xlabel() == "Energy (eV)"
         assert ax.xaxis_inverted()
@@ -156,7 +156,7 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
 
-        plot_1D(
+        plot_1d(
             y_list,
             x=x,
             config=config,
@@ -176,7 +176,7 @@ class TestPlot1D:
         y_list = [np.sin(np.linspace(0, 10, 100)), np.cos(np.linspace(0, 10, 100))]
         config = PlotConfig()
 
-        plot_1D(y_list, config=config, save_img=-2)
+        plot_1d(y_list, config=config, save_img=-2)
         plt.close("all")
 
     #
@@ -187,7 +187,7 @@ class TestPlot1D:
         y_list = [np.sin(x)]
         config = PlotConfig()
 
-        plot_1D(y_list, x=x, config=config, save_img=0)
+        plot_1d(y_list, x=x, config=config, save_img=0)
         ax = plt.gca()
         assert len(ax.get_lines()) >= 1
         plt.close("all")
@@ -200,7 +200,7 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
 
-        plot_1D(
+        plot_1d(
             y_list, x=x, config=config, x_lim=(2, 8), y_lim=(-1.5, 1.5), save_img=-2
         )
         plt.close("all")
@@ -213,7 +213,7 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
 
-        plot_1D(y_list, x=x, config=config, x_dir="rev", save_img=0)
+        plot_1d(y_list, x=x, config=config, x_dir="rev", save_img=0)
         ax = plt.gca()
         assert ax.xaxis_inverted()
         plt.close("all")
@@ -227,7 +227,7 @@ class TestPlot1D:
         y_list = [np.abs(np.sin(x)) + 0.1, np.abs(np.cos(x)) + 0.1]
         config = PlotConfig()
 
-        plot_1D(y_list, x=x, config=config, y_type="log", save_img=0)
+        plot_1d(y_list, x=x, config=config, y_type="log", save_img=0)
         ax = plt.gca()
         assert ax.get_yscale() == "log"
         plt.close("all")
@@ -240,7 +240,7 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
 
-        plot_1D(y_list, x=x, config=config, vlines=[3, 7], save_img=0)
+        plot_1d(y_list, x=x, config=config, vlines=[3, 7], save_img=0)
         ax = plt.gca()
         assert len(ax.get_lines()) >= 2  # data lines
         # vlines rendered as LineCollection
@@ -260,7 +260,7 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
 
-        plot_1D(y_list, x=x, config=config, waterfall=0.5, save_img=-2)
+        plot_1d(y_list, x=x, config=config, waterfall=0.5, save_img=-2)
         plt.close("all")
 
     #
@@ -273,7 +273,7 @@ class TestPlot1D:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             save_path = Path(tmpdir) / "test_plot.png"
-            plot_1D(y_list, x=x, config=config, save_img=-1, save_path=str(save_path))
+            plot_1d(y_list, x=x, config=config, save_img=-1, save_path=str(save_path))
             assert save_path.exists()
         plt.close("all")
 
@@ -285,7 +285,7 @@ class TestPlot1D:
         y_list = [np.sin(x), np.cos(x)]
         config = PlotConfig()
 
-        plot_1D(
+        plot_1d(
             y_list,
             x=x,
             config=config,
@@ -313,7 +313,7 @@ class TestPlot2D:
         data = rng.standard_normal((30, 50)) + np.outer(y, np.sin(x))
         config = PlotConfig()
 
-        plot_2D(data, x=x, y=y, config=config, save_img=0)
+        plot_2d(data, x=x, y=y, config=config, save_img=0)
         fig = plt.gcf()
         assert len(fig.axes) >= 1  # at least one axes (data panel)
         ax = fig.axes[0]
@@ -330,7 +330,7 @@ class TestPlot2D:
         data = rng.standard_normal((30, 50)) + np.outer(y, np.sin(x))
         config = PlotConfig(z_colormap="plasma", x_dir="rev")
 
-        plot_2D(data, x=x, y=y, config=config, save_img=0)
+        plot_2d(data, x=x, y=y, config=config, save_img=0)
         ax = plt.gcf().axes[0]
         assert ax.xaxis_inverted()
         plt.close("all")
@@ -345,7 +345,7 @@ class TestPlot2D:
         data = rng.standard_normal((30, 50)) + np.outer(y, np.sin(x))
         config = PlotConfig()
 
-        plot_2D(
+        plot_2d(
             data, x=x, y=y, config=config, z_colormap="plasma", x_dir="rev", save_img=0
         )
         ax = plt.gcf().axes[0]
@@ -361,7 +361,7 @@ class TestPlot2D:
         data = np.abs(np.outer(y + 1, np.sin(x) + 2))
         config = PlotConfig(z_type="log")
 
-        plot_2D(data, x=x, y=y, config=config, save_img=-2)
+        plot_2d(data, x=x, y=y, config=config, save_img=-2)
         plt.close("all")
 
     #
@@ -371,7 +371,7 @@ class TestPlot2D:
         data = np.random.default_rng().standard_normal((30, 50))
         config = PlotConfig()
 
-        plot_2D(data, config=config, save_img=-2)
+        plot_2d(data, config=config, save_img=-2)
         plt.close("all")
 
     #
@@ -384,7 +384,7 @@ class TestPlot2D:
         data = rng.standard_normal((30, 50)) + np.outer(y, np.sin(x))
         config = PlotConfig()
 
-        plot_2D(data, x=x, y=y, config=config, x_lim=(2, 8), y_lim=(1, 4), save_img=-2)
+        plot_2d(data, x=x, y=y, config=config, x_lim=(2, 8), y_lim=(1, 4), save_img=-2)
         plt.close("all")
 
     #
@@ -397,7 +397,7 @@ class TestPlot2D:
         data = rng.standard_normal((30, 50)) + np.outer(y, np.sin(x))
         config = PlotConfig()
 
-        plot_2D(data, x=x, y=y, config=config, z_lim=(-2, 2), save_img=-2)
+        plot_2d(data, x=x, y=y, config=config, z_lim=(-2, 2), save_img=-2)
         plt.close("all")
 
     #
@@ -410,7 +410,7 @@ class TestPlot2D:
         data = rng.standard_normal((30, 50)) + np.outer(y, np.sin(x))
         config = PlotConfig()
 
-        plot_2D(
+        plot_2d(
             data, x=x, y=y, config=config, data_slice=[[10, 40], [5, 25]], save_img=-2
         )
         plt.close("all")
@@ -425,7 +425,7 @@ class TestPlot2D:
         data = rng.standard_normal((30, 50)) + np.outer(y, np.sin(x))
         config = PlotConfig()
 
-        plot_2D(
+        plot_2d(
             data, x=x, y=y, config=config, vlines=[3, 7], hlines=[1, 4], save_img=-2
         )
         plt.close("all")
@@ -440,7 +440,7 @@ class TestPlot2D:
         data = rng.standard_normal((30, 50)) + np.outer(y, np.sin(x))
         config = PlotConfig()
 
-        plot_2D(data, x=x, y=y, config=config, x_dir="rev", y_dir="rev", save_img=0)
+        plot_2d(data, x=x, y=y, config=config, x_dir="rev", y_dir="rev", save_img=0)
         ax = plt.gcf().axes[0]
         assert ax.xaxis_inverted()
         assert ax.yaxis_inverted()
@@ -456,7 +456,7 @@ class TestPlot2D:
         data = rng.standard_normal((30, 50)) + np.outer(y, np.sin(x))
         config = PlotConfig()
 
-        plot_2D(data, x=x, y=y, config=config, z_colorbar="hor", save_img=-2)
+        plot_2d(data, x=x, y=y, config=config, z_colorbar="hor", save_img=-2)
         plt.close("all")
 
     #
@@ -471,7 +471,7 @@ class TestPlot2D:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             save_path = Path(tmpdir) / "test_2d_plot.png"
-            plot_2D(
+            plot_2d(
                 data, x=x, y=y, config=config, save_img=-1, save_path=str(save_path)
             )
             assert save_path.exists()
@@ -603,7 +603,7 @@ class TestPlotConfigPropagation:
         model = file.model_active
         assert model is not None  # type guard
         sim = Simulator(model, noise_level=0.05)
-        sim.simulate_2D()
+        sim.simulate_2d()
 
         sim.plot_comparison(dim=2)
         fig = plt.gcf()
@@ -623,7 +623,7 @@ class TestPlotConfigPropagation:
         model = file.model_active
         assert model is not None  # type guard
         sim = Simulator(model, noise_level=0.05)
-        sim.simulate_2D()
+        sim.simulate_2d()
 
         sim.plot_comparison(dim=2)
         fig = plt.gcf()
@@ -643,7 +643,7 @@ class TestEdgeCases:
         """Test plotting single data point"""
 
         config = PlotConfig()
-        plot_1D([[1]], x=[0], config=config, save_img=-2)
+        plot_1d([[1]], x=[0], config=config, save_img=-2)
         plt.close("all")
 
     #
@@ -655,7 +655,7 @@ class TestEdgeCases:
         y[10] = np.nan
         config = PlotConfig()
 
-        plot_1D([y], x=x, config=config, save_img=-2)
+        plot_1d([y], x=x, config=config, save_img=-2)
         plt.close("all")
 
 

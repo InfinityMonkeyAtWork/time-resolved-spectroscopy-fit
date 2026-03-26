@@ -33,9 +33,9 @@ class TestMCPModel:
         """Test model with spectral components (Au4f test from notebook)"""
 
         # Initialize 2D fit model
-        mod2D = Model("Au4f_test")
-        mod2D.energy = np.arange(75, 95, 0.1)[::-1]
-        mod2D.time = np.arange(-500, 2500, 10)
+        mod_2d = Model("Au4f_test")
+        mod_2d.energy = np.arange(75, 95, 0.1)[::-1]
+        mod_2d.time = np.arange(-500, 2500, 10)
 
         # Define Shirley background
         c_Shirley = Component("Shirley")
@@ -67,15 +67,15 @@ class TestMCPModel:
         )
 
         # Add components to model
-        mod2D.add_components([c_Offset, c_Shirley, c_peak1, c_peak2])
+        mod_2d.add_components([c_Offset, c_Shirley, c_peak1, c_peak2])
 
         # Check model structure
-        assert mod2D.name == "Au4f_test"
-        assert len(mod2D.components) == 4
-        assert mod2D.components[0].fct_str == "Offset"
-        assert mod2D.components[1].fct_str == "Shirley"
-        assert mod2D.components[2].fct_str == "GLP"
-        assert mod2D.components[3].fct_str == "GLP"
+        assert mod_2d.name == "Au4f_test"
+        assert len(mod_2d.components) == 4
+        assert mod_2d.components[0].fct_str == "Offset"
+        assert mod_2d.components[1].fct_str == "Shirley"
+        assert mod_2d.components[2].fct_str == "GLP"
+        assert mod_2d.components[3].fct_str == "GLP"
 
     #
     def test_model_parameter_profile(self):
@@ -99,7 +99,7 @@ class TestMCPModel:
         mod.add_components([c_peak])
 
         # Spectrum without profile (flat A=10)
-        val_flat = mod.create_value1D(return_1d=1)
+        val_flat = mod.create_value_1d(return_1d=1)
 
         p_model = Profile("GLP_01_A")
         p_model.aux_axis = aux
@@ -110,7 +110,7 @@ class TestMCPModel:
         mod.add_profile(p_model)
 
         # Spectrum with profile (A varies over aux_axis via exp decay)
-        val_prof = mod.create_value1D(return_1d=1)
+        val_prof = mod.create_value_1d(return_1d=1)
         assert val_prof.shape == energy.shape
         assert np.isfinite(val_prof).all()
 
@@ -130,7 +130,7 @@ class TestMCPComponent:
         comp = Component("GLP")
 
         assert comp.fct_str == "GLP"
-        assert comp.N is None  # Not numbered initially
+        assert comp.num is None  # Not numbered initially
         assert comp.par_dict == {}
         assert comp.pars == []
 
@@ -141,7 +141,7 @@ class TestMCPComponent:
         comp = Component("GLP_01")
 
         assert comp.fct_str == "GLP"
-        assert comp.N == 1
+        assert comp.num == 1
         assert comp.comp_name == "GLP_01"
 
     #
@@ -171,7 +171,7 @@ class TestMCPComponent:
         comp.add_pars({"A": [20, True, 5, 25], "x0": [84.5, True, 82, 88]})
 
         # Update component number and name
-        comp.N = 8
+        comp.num = 8
         comp.comp_name = "GLP_08"
         assert comp.prefix == "GLP_08_"
         assert comp.comp_name == "GLP_08"
@@ -271,8 +271,8 @@ class TestMCPDynamics:
         c_IRF.add_pars({"SD": [80, True, 0, 1e4]})
 
         # Define decay components
-        c_tD1 = Component("expFun", fcts_time)
-        c_tD1.add_pars(
+        c_td1 = Component("expFun", fcts_time)
+        c_td1.add_pars(
             {
                 "A": [2, True, 1, 1e2],
                 "tau": [5000, True, 1e3, 1e4],
@@ -281,8 +281,8 @@ class TestMCPDynamics:
             }
         )
 
-        c_tD2 = Component("expFun", fcts_time)
-        c_tD2.add_pars(
+        c_td2 = Component("expFun", fcts_time)
+        c_td2.add_pars(
             {
                 "A": [5, True, 1, 1e2],
                 "tau": [1250, True, 1e2, 1e3],
@@ -292,7 +292,7 @@ class TestMCPDynamics:
         )
 
         # Add components to dynamics model
-        t_mod.add_components([c_IRF, c_tD1, c_tD2])
+        t_mod.add_components([c_IRF, c_td1, c_td2])
 
         # Check model structure
         assert t_mod.name == "GLP_01_x0"
@@ -367,8 +367,8 @@ class TestMCPIntegration:
         assert model.dim == 2
 
         # Spectrum should differ at early vs late times (x0 shifts)
-        val_early = model.create_value1D(t_ind=0, return_1d=1)
-        val_late = model.create_value1D(t_ind=40, return_1d=1)
+        val_early = model.create_value_1d(t_ind=0, return_1d=1)
+        val_late = model.create_value_1d(t_ind=40, return_1d=1)
         assert np.isfinite(val_early).all()
         assert np.isfinite(val_late).all()
         assert not np.allclose(val_early, val_late)
@@ -422,7 +422,7 @@ class TestMCPNormalization:
         t_mod.frequency = frequency
         t_mod.subcycles = subcycles
         t_mod.normalize_time()
-        return t_mod.time_norm, t_mod.N_sub, t_mod.N_counter
+        return t_mod.time_norm, t_mod.n_sub, t_mod.n_counter
 
     #
     def test_time_normalization(self):
@@ -436,9 +436,9 @@ class TestMCPNormalization:
         assert t_mod.time_norm.shape == t_mod.time.shape
         # All values non-negative
         assert np.all(t_mod.time_norm >= -1e-15)
-        # N_sub cycles through 1, 2, 3
-        assert np.all(t_mod.N_sub >= 1)
-        assert np.all(t_mod.N_sub <= 3)
+        # n_sub cycles through 1, 2, 3
+        assert np.all(t_mod.n_sub >= 1)
+        assert np.all(t_mod.n_sub <= 3)
 
     #
     def test_two_subcycles_values(self):
@@ -451,9 +451,9 @@ class TestMCPNormalization:
         assert len(t_norm) == len(time)
         # time_norm resets at each subcycle boundary
         assert np.allclose(t_norm, [0, 0, 0, 0.05, 0, 0, 0.05], atol=1e-12)
-        # N_sub cycles through 1 and 2
+        # n_sub cycles through 1 and 2
         assert np.allclose(n_sub, [1, 2, 1, 1, 1, 2, 2])
-        # N_counter increments each subcycle
+        # n_counter increments each subcycle
         assert np.allclose(n_counter, [1, 2, 3, 3, 5, 6, 6])
 
     #
@@ -472,7 +472,7 @@ class TestMCPNormalization:
 
     #
     def test_three_subcycles(self):
-        """N_sub cycles through 1, 2, 3 with three subcycles."""
+        """n_sub cycles through 1, 2, 3 with three subcycles."""
 
         # norm = 1/(30*3) ≈ 0.0111, so use clean multiples
         freq, nsub = 30, 3
@@ -508,7 +508,7 @@ class TestMCPNormalization:
                 neg_mask = time < 0
                 assert np.allclose(t_norm[neg_mask], 0.0)
                 assert np.allclose(n_sub[neg_mask], 0.0)
-                # Positive-time N_sub is in [1, nsub]
+                # Positive-time n_sub is in [1, nsub]
                 pos_mask = time >= 0
                 assert np.all(n_sub[pos_mask] >= 1)
                 assert np.all(n_sub[pos_mask] <= nsub)
@@ -561,7 +561,7 @@ class TestMCPProfile:
 
         # Spectrum without profile
         file_flat = self._make_file()
-        val_flat = file_flat.model_active.create_value1D(return_1d=1)
+        val_flat = file_flat.model_active.create_value_1d(return_1d=1)
 
         # Spectrum with profile on A
         file = self._make_file(aux_axis=np.linspace(0, 5, 20))
@@ -572,7 +572,7 @@ class TestMCPProfile:
             profile_model=["profile_pExpDecay"],
         )
 
-        val_prof = file.model_active.create_value1D(return_1d=1)
+        val_prof = file.model_active.create_value_1d(return_1d=1)
         assert val_prof.shape == val_flat.shape
         assert np.isfinite(val_prof).all()
         # Profile adds positive values to A, so peak amplitude should increase
@@ -594,9 +594,9 @@ class TestMCPProfile:
 
         ci, pi = file.model_active.find_par_by_name("GLP_01_A")
         p_model = file.model_active.components[ci].pars[pi].p_model
-        assert p_model.value1D is not None  # type guard
-        assert len(p_model.value1D) == len(aux)
-        assert np.isfinite(p_model.value1D).all()
+        assert p_model.value_1d is not None  # type guard
+        assert len(p_model.value_1d) == len(aux)
+        assert np.isfinite(p_model.value_1d).all()
 
     #
     def test_profile_accesses_parent_energy(self):
@@ -614,14 +614,14 @@ class TestMCPProfile:
         )
 
         # Full model evaluation should produce spectrum over parent's energy axis
-        val = model.create_value1D(return_1d=1)
+        val = model.create_value_1d(return_1d=1)
         assert val.shape == model.energy.shape
         assert np.isfinite(val).all()
         assert np.max(val) > 0
 
     #
-    def test_profile_value1D_matches_analytical(self):
-        """Profile value1D should match the analytical pExpDecay curve."""
+    def test_profile_value_1d_matches_analytical(self):
+        """Profile value_1d should match the analytical pExpDecay curve."""
 
         aux = np.linspace(0, 5, 20)
         file = self._make_file(aux_axis=aux)
@@ -637,7 +637,7 @@ class TestMCPProfile:
         p_model = file.model_active.components[ci].pars[pi].p_model
         # pExpDecay: A * exp(-aux / tau), with A=200, tau=2.0
         expected = 200.0 * np.exp(-aux / 2.0)
-        np.testing.assert_allclose(p_model.value1D, expected, rtol=1e-10)
+        np.testing.assert_allclose(p_model.value_1d, expected, rtol=1e-10)
 
     #
     def test_component_value_averaging(self):
@@ -656,7 +656,7 @@ class TestMCPProfile:
             profile_model=["profile_pExpDecay"],
         )
 
-        val = model.create_value1D(return_1d=1)
+        val = model.create_value_1d(return_1d=1)
         # GLP is linear in A, so average over aux = GLP at mean(A_eff)
         # A_eff = base_A + profile_value (additive)
         profile_vals = 200.0 * np.exp(-aux / 2.0)
@@ -671,7 +671,7 @@ class TestMCPProfile:
         # Model without profile
         file_flat = self._make_file()
         model_flat = file_flat.model_active
-        val_flat = model_flat.create_value1D(return_1d=1)
+        val_flat = model_flat.create_value_1d(return_1d=1)
 
         # Model with profile
         file_prof = self._make_file(aux_axis=np.linspace(0, 5, 20))
@@ -682,7 +682,7 @@ class TestMCPProfile:
             profile_model=["profile_pExpDecay"],
         )
         model_prof = file_prof.model_active
-        val_prof = model_prof.create_value1D(return_1d=1)
+        val_prof = model_prof.create_value_1d(return_1d=1)
 
         # Profile adds positive values to A, so profiled peak should be larger
         assert np.max(val_prof) > np.max(val_flat)
@@ -711,7 +711,7 @@ class TestMCPProfile:
             profile_model=["profile_pLinear"],
         )
 
-        val = model.create_value1D(return_1d=1)
+        val = model.create_value_1d(return_1d=1)
         assert val.shape == file.energy.shape
         assert np.isfinite(val).all()
         # Both profiles active: should differ from single-profile result
@@ -722,7 +722,7 @@ class TestMCPProfile:
             profile_yaml="test_models_profile.yaml",
             profile_model=["profile_pExpDecay"],
         )
-        val_single = file_single.model_active.create_value1D(return_1d=1)
+        val_single = file_single.model_active.create_value_1d(return_1d=1)
         assert not np.allclose(val, val_single)
 
     #
@@ -814,8 +814,8 @@ class TestMCPProfile:
         assert model.dim == 2
 
         # Should evaluate and differ across time (dynamics active)
-        val_early = model.create_value1D(t_ind=0, return_1d=1)
-        val_late = model.create_value1D(t_ind=30, return_1d=1)
+        val_early = model.create_value_1d(t_ind=0, return_1d=1)
+        val_late = model.create_value_1d(t_ind=30, return_1d=1)
         assert val_early.shape == file.energy.shape
         assert np.isfinite(val_early).all()
         assert np.isfinite(val_late).all()

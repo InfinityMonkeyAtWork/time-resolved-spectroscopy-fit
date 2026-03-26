@@ -369,12 +369,12 @@ def load_and_number_yaml_components(
     try:
         with model_yaml_path.open() as f_yaml:
             # Load YAML file with custom constructor for numbering
-            model_info_ALL = yaml.load(f_yaml)
+            model_info_all = yaml.load(f_yaml)
 
             # Convert YAML structure to dictionary format
-            if isinstance(model_info_ALL, list):
+            if isinstance(model_info_all, list):
                 model_info_dict = {}
-                for model_entry in model_info_ALL:
+                for model_entry in model_info_all:
                     if not (isinstance(model_entry, tuple) and len(model_entry) == 2):
                         raise ValueError(f"Malformed model entry: {model_entry}")
                     model_name, components = model_entry

@@ -281,7 +281,7 @@ class TestSimulatorParameterSweep:
 
             sim.simulate_parameter_sweep(
                 parameter_sweep=sweep,
-                N_realizations=2,
+                n_realizations=2,
                 filepath=str(filepath),
                 show_progress=False,
             )
@@ -321,7 +321,7 @@ class TestSimulatorParameterSweep:
 
             sim.simulate_parameter_sweep(
                 parameter_sweep=sweep,
-                N_realizations=2,
+                n_realizations=2,
                 filepath=str(filepath),
                 show_progress=False,
             )
@@ -373,7 +373,7 @@ class TestSimulatorParameterSweep:
 
             sim.simulate_parameter_sweep(
                 parameter_sweep=sweep,
-                N_realizations=3,
+                n_realizations=3,
                 filepath=str(filepath),
                 show_progress=False,
             )
@@ -433,7 +433,7 @@ class TestSimulatorParameterSweep:
 
             sim.simulate_parameter_sweep(
                 parameter_sweep=sweep,
-                N_realizations=2,
+                n_realizations=2,
                 filepath=str(filepath),
                 show_progress=False,
             )
@@ -468,7 +468,7 @@ class TestSimulatorParameterSweep:
 
             sim.simulate_parameter_sweep(
                 parameter_sweep=sweep,
-                N_realizations=2,
+                n_realizations=2,
                 filepath=str(filepath),
                 show_progress=False,
             )
@@ -509,7 +509,7 @@ class TestSimulatorParameterSweep:
 
             sim_analog.simulate_parameter_sweep(
                 parameter_sweep=sweep,
-                N_realizations=1,
+                n_realizations=1,
                 filepath=str(filepath),
                 show_progress=False,
             )
@@ -534,7 +534,7 @@ class TestSimulatorParameterSweep:
 
             sim_photon.simulate_parameter_sweep(
                 parameter_sweep=sweep,
-                N_realizations=1,
+                n_realizations=1,
                 filepath=str(filepath),
                 show_progress=False,
             )
@@ -564,7 +564,7 @@ class TestSimulatorParameterSweep:
 
             sim.simulate_parameter_sweep(
                 parameter_sweep=sweep,
-                N_realizations=2,
+                n_realizations=2,
                 dim=1,
                 filepath=str(filepath),
                 show_progress=False,
@@ -594,8 +594,8 @@ class TestSimulatorParameterSweep:
                 assert clean.ndim == 1
 
     #
-    def test_simulate_N_rejects_zero(self):
-        """Test that simulate_N raises ValueError for N < 1."""
+    def test_simulate_n_rejects_zero(self):
+        """Test that simulate_n raises ValueError for N < 1."""
 
         sim = Simulator(
             model=self._make_2d_model(),
@@ -604,11 +604,11 @@ class TestSimulatorParameterSweep:
             seed=42,
         )
 
-        with pytest.raises(ValueError, match="N must be >= 1"):
-            sim.simulate_N(N=0, dim=2, show_progress=False)
+        with pytest.raises(ValueError, match="n must be >= 1"):
+            sim.simulate_n(n=0, dim=2, show_progress=False)
 
-        with pytest.raises(ValueError, match="N must be >= 1"):
-            sim.simulate_N(N=-1, dim=2, show_progress=False)
+        with pytest.raises(ValueError, match="n must be >= 1"):
+            sim.simulate_n(n=-1, dim=2, show_progress=False)
 
     #
     def test_sweep_seed_zero_metadata(self):
@@ -629,7 +629,7 @@ class TestSimulatorParameterSweep:
 
             sim.simulate_parameter_sweep(
                 parameter_sweep=sweep,
-                N_realizations=1,
+                n_realizations=1,
                 filepath=str(filepath),
                 show_progress=False,
             )

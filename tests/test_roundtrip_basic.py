@@ -103,19 +103,19 @@ class TestRoundTripClean:
             noise_type="none",
             seed=42,
         )
-        clean, _, _ = sim.simulate_2D()
+        clean, _, _ = sim.simulate_2d()
 
         fit_file = _make_fit_file(project, clean, truth_file.energy, truth_file.time)
 
         fit_file.fit_baseline(
             model_name="single_glp",
             stages=2,
-            try_CI=0,
+            try_ci=0,
         )
         fit_file.fit_2d(
             model_name="single_glp",
             stages=2,
-            try_CI=0,
+            try_ci=0,
         )
 
         fitted_pars = fit_file.model_2d.result[1].params
@@ -146,19 +146,19 @@ class TestRoundTripNoisy:
             noise_type="gaussian",
             seed=42,
         )
-        _, noisy, _ = sim.simulate_2D()
+        _, noisy, _ = sim.simulate_2d()
 
         fit_file = _make_fit_file(project, noisy, truth_file.energy, truth_file.time)
 
         fit_file.fit_baseline(
             model_name="single_glp",
             stages=2,
-            try_CI=0,
+            try_ci=0,
         )
         fit_file.fit_2d(
             model_name="single_glp",
             stages=1,
-            try_CI=0,
+            try_ci=0,
         )
 
         fitted_pars = fit_file.model_2d.result[1].params

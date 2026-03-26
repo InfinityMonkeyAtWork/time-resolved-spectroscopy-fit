@@ -36,8 +36,8 @@ Workflow
 
    - Create model with trspecfit.mcp.Model
    - Initialize Simulator with model and noise parameters
-   - Generate data with simulate_1D() or simulate_2D()
-     OR generate multiple realizations with simulate_N()
+   - Generate data with simulate_1d() or simulate_2d()
+     OR generate multiple realizations with simulate_n()
    - Save data and ground truth with save_data()
    - Fit simulated data to validate fitting pipeline
 
@@ -46,7 +46,7 @@ Workflow
    - Create model with trspecfit.mcp.Model
    - Define parameter space using trspecfit.utils.sweep.ParameterSweep
    - Initialize Simulator with model and noise parameters
-   - Generate multiple realizations (N) for each parameter combination
+   - Generate multiple realizations (n) for each parameter combination
      (data, ground truth, and relevant metadata get saved automatically)
 
 Examples
@@ -181,15 +181,15 @@ class Simulator:
 
     Large 2D datasets can use significant memory:
     - Single dataset: ~8 MB per 1000×500 spectrum (float64)
-    - simulate_N(N=100): ~800 MB for same size
-    - Consider smaller grids or batch processing for large N
+    - simulate_n(n=100): ~800 MB for same size
+    - Consider smaller grids or batch processing for large n
 
     See Also
     --------
     trspecfit.mcp.Model : Model class for simulation
-    simulate_1D : Generate 1D spectrum
-    simulate_2D : Generate 2D spectrum
-    simulate_N : Generate multiple realizations
+    simulate_1d : Generate 1D spectrum
+    simulate_2d : Generate 2D spectrum
+    simulate_n : Generate multiple realizations
     save_data : Save simulated data to HDF5
     """
 
@@ -314,12 +314,12 @@ class Simulator:
             # Generate clean data to get the scale
             if self.model.time is not None and len(self.model.time) > 0:
                 # 2D data
-                self.model.create_value2D()
-                clean_data = self.model.value2D
+                self.model.create_value_2d()
+                clean_data = self.model.value_2d
             else:
                 # 1D data
-                self.model.create_value1D()
-                clean_data = self.model.value1D
+                self.model.create_value_1d()
+                clean_data = self.model.value_1d
             if clean_data is None:
                 raise RuntimeError(
                     "Model evaluation did not produce clean data"
@@ -372,13 +372,13 @@ class Simulator:
         """
 
         if dim == 1:
-            self.model.create_value1D(t_ind=t_ind, return_1d=False)
-            assert self.model.value1D is not None
-            self.data_clean = self.model.value1D.copy()
+            self.model.create_value_1d(t_ind=t_ind, return_1d=False)
+            assert self.model.value_1d is not None
+            self.data_clean = self.model.value_1d.copy()
         elif dim == 2:
-            self.model.create_value2D()
-            assert self.model.value2D is not None
-            self.data_clean = self.model.value2D.copy()
+            self.model.create_value_2d()
+            assert self.model.value_2d is not None
+            self.data_clean = self.model.value_2d.copy()
         else:
             raise ValueError(f"dim must be 1 or 2, got {dim}")
 
@@ -409,9 +409,9 @@ class Simulator:
         if self.detection == "analog":
             # Use traditional noise addition
             if dim == 1:
-                noise = self._generate_noise_analog_1D(clean_data)
+                noise = self._generate_noise_analog_1d(clean_data)
             elif dim == 2:
-                noise = self._generate_noise_analog_2D(clean_data)
+                noise = self._generate_noise_analog_2d(clean_data)
             else:
                 raise ValueError(f"dim must be 1 or 2, got {dim}")
 
@@ -420,9 +420,9 @@ class Simulator:
         elif self.detection == "photon_counting":
             # Sample photons according to signal distribution
             if dim == 1:
-                noisy_data = self._sample_photons_1D(clean_data)
+                noisy_data = self._sample_photons_1d(clean_data)
             elif dim == 2:
-                noisy_data = self._sample_photons_2D(clean_data)
+                noisy_data = self._sample_photons_2d(clean_data)
             else:
                 raise ValueError(f"dim must be 1 or 2, got {dim}")
 
@@ -433,7 +433,7 @@ class Simulator:
         return noisy_data, noise
 
     #
-    def simulate_1D(self, t_ind: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def simulate_1d(self, t_ind: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Simulate 1D spectrum (energy-resolved) at a specific time point.
 
@@ -460,7 +460,7 @@ class Simulator:
         --------
         >>> # Simulate baseline spectrum
         >>> sim = Simulator(model, noise_level=0.05)
-        >>> clean, noisy, noise = sim.simulate_1D(t_ind=0)
+        >>> clean, noisy, noise = sim.simulate_1d(t_ind=0)
         >>>
         >>> # Plot comparison
         >>> plt.plot(model.energy, clean, 'k-', label='Clean')
@@ -468,12 +468,12 @@ class Simulator:
         >>> plt.legend()
 
         >>> # Calculate SNR
-        >>> snr = sim.get_SNR()
+        >>> snr = sim.get_snr()
         >>> print(f"Signal-to-noise ratio: {snr:.1f}")
 
         >>> # Simulate different time points
         >>> for t_i in [0, 50, 100]:
-        ...     clean, noisy, noise = sim.simulate_1D(t_ind=t_i)
+        ...     clean, noisy, noise = sim.simulate_1d(t_ind=t_i)
         ...     plt.plot(model.energy, noisy, label=f't={model.time[t_i]:.1f}')
 
         Notes
@@ -484,14 +484,14 @@ class Simulator:
         - self.noise: Last noise realization
 
         Can access these without re-simulation:
-        >>> sim.simulate_1D()
-        >>> snr = sim.get_SNR()  # Uses stored data
+        >>> sim.simulate_1d()
+        >>> snr = sim.get_snr()  # Uses stored data
         >>> sim.plot_comparison(dim=1)  # Uses stored data
 
         See Also
         --------
-        simulate_2D : Simulate full 2D spectrum
-        simulate_N : Generate multiple 1D realizations
+        simulate_2d : Simulate full 2D spectrum
+        simulate_n : Generate multiple 1D realizations
         plot_comparison : Visualize results
         """
 
@@ -509,7 +509,7 @@ class Simulator:
         return clean_data, noisy_data, noise
 
     #
-    def simulate_2D(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def simulate_2d(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Simulate 2D spectrum (time- and energy-resolved).
 
@@ -529,7 +529,7 @@ class Simulator:
         --------
         >>> # Basic 2D simulation
         >>> sim = Simulator(model, noise_level=0.05)
-        >>> clean, noisy, noise = sim.simulate_2D()
+        >>> clean, noisy, noise = sim.simulate_2d()
         >>>
         >>> # Visualize with built-in plotter
         >>> sim.plot_comparison(dim=2)
@@ -539,10 +539,10 @@ class Simulator:
         >>> ax1.pcolormesh(model.energy, model.time, clean)
         >>> ax1.set_title('Clean Model')
         >>> ax2.pcolormesh(model.energy, model.time, noisy)
-        >>> ax2.set_title(f'Noisy (SNR={sim.get_SNR():.1f})')
+        >>> ax2.set_title(f'Noisy (SNR={sim.get_snr():.1f})')
 
         >>> # Test fitting on simulated data
-        >>> clean, noisy, noise = sim.simulate_2D()
+        >>> clean, noisy, noise = sim.simulate_2d()
         >>> # ... set up fitting ...
         >>> file.data = noisy  # Use noisy data for fit
         >>> file.fit_2d(model_name='test', stages=2)
@@ -551,8 +551,8 @@ class Simulator:
         >>> # Vary noise level to study impact
         >>> for noise_level in [0.01, 0.05, 0.10]:
         ...     sim.set_noise_level(noise_level)
-        ...     clean, noisy, noise = sim.simulate_2D()
-        ...     snr = sim.get_SNR()
+        ...     clean, noisy, noise = sim.simulate_2d()
+        ...     snr = sim.get_snr()
         ...     print(f"Noise level {noise_level:.2f}: SNR = {snr:.1f}")
 
         Notes
@@ -584,8 +584,8 @@ class Simulator:
 
         See Also
         --------
-        simulate_1D : Simulate single spectrum
-        simulate_N : Generate multiple 2D realizations
+        simulate_1d : Simulate single spectrum
+        simulate_n : Generate multiple 2D realizations
         plot_comparison : Visualize results
         save_data : Save to HDF5 file
         """
@@ -604,19 +604,19 @@ class Simulator:
         return clean_data, noisy_data, noise
 
     #
-    def simulate_N(
-        self, N: int, *, dim: int = 2, t_ind: int = 0, show_progress: bool = True
+    def simulate_n(
+        self, n: int, *, dim: int = 2, t_ind: int = 0, show_progress: bool = True
     ) -> tuple[np.ndarray, list[np.ndarray], list[np.ndarray]]:
         """
-        Generate N simulated datasets with independent noise realizations.
+        Generate n simulated datasets with independent noise realizations.
 
-        Generates the clean data ONCE from the model, then adds N independent
+        Generates the clean data ONCE from the model, then adds n independent
         noise realizations. Use for statistical analysis of fitting algorithms
         and uncertainty quantification or machine learning model training.
 
         Parameters
         ----------
-        N : int
+        n : int
             Number of datasets to generate (must be >= 1)
         dim : {1, 2}, default=2
             Dimensionality:
@@ -631,19 +631,19 @@ class Simulator:
         -------
         clean_data : ndarray
             Single clean dataset (1D or 2D depending on dim).
-            Same for all N realizations (generated once).
+            Same for all n realizations (generated once).
         noisy_data_list : list of ndarray
-            List of N noisy datasets, each with independent noise.
+            List of n noisy datasets, each with independent noise.
             Each element has same shape as clean_data.
         noise_list : list of ndarray
-            List of N noise realizations (noisy - clean for each dataset).
+            List of n noise realizations (noisy - clean for each dataset).
             Each element has same shape as clean_data.
 
         Examples
         --------
         >>> # Generate 20 independent noisy datasets
         >>> sim = Simulator(model, noise_level=0.05)
-        >>> clean, noisy_list, noise_list = sim.simulate_N(N=20, dim=2)
+        >>> clean, noisy_list, noise_list = sim.simulate_n(n=20, dim=2)
         >>>
         >>> # Fit each dataset and analyze parameter distribution
         >>> fitted_params = []
@@ -669,27 +669,27 @@ class Simulator:
         >>> print(f"Noise std: {np.mean(noise_std):.2e}")
 
         >>> # Save multiple realizations for later use
-        >>> clean, noisy_list, noise_list = sim.simulate_N(N=100, dim=2)
+        >>> clean, noisy_list, noise_list = sim.simulate_n(n=100, dim=2)
         >>> sim.save_data(
         ...     filepath='simulations/batch_001.h5',
-        ...     N_data=noisy_list
+        ...     n_data=noisy_list
         ... )
 
-        >>> # Test convergence of fitted parameters with N
+        >>> # Test convergence of fitted parameters with n
         >>> for n_datasets in [5, 10, 20, 50]:
-        ...     clean, noisy_list, _ = sim.simulate_N(N=n_datasets, dim=2)
+        ...     clean, noisy_list, _ = sim.simulate_n(n=n_datasets, dim=2)
         ...     # ... fit each and compute parameter statistics ...
-        ...     print(f"N={n_datasets}: parameter std = {param_std:.3f}")
+        ...     print(f"n={n_datasets}: parameter std = {param_std:.3f}")
 
         Notes
         -----
         **Efficiency:**
 
-        Generating clean data once and adding N noise realizations is much
-        faster than generating N complete simulations:
+        Generating clean data once and adding n noise realizations is much
+        faster than generating n complete simulations:
 
-        - This method: 1 model evaluation + N noise additions
-        - N separate simulate_2D calls: N model evaluations + N noise additions
+        - This method: 1 model evaluation + n noise additions
+        - n separate simulate_2d calls: n model evaluations + n noise additions
 
         For complex models where evaluation is slow, this can save
         minutes to hours of computation time.
@@ -705,11 +705,11 @@ class Simulator:
 
         **Memory Considerations:**
 
-        All N datasets stored in memory as lists:
-        - Memory usage: N × (n_time × n_energy × 8 bytes)
+        All n datasets stored in memory as lists:
+        - Memory usage: n × (n_time × n_energy × 8 bytes)
         - Example: 100 datasets of 200×500 = ~800 MB
 
-        For very large N or large arrays, consider:
+        For very large n or large arrays, consider:
         - Processing in batches
         - Saving to disk incrementally
         - Using generator pattern instead of list
@@ -718,20 +718,20 @@ class Simulator:
 
         When show_progress=True, prints:
         - "Generating clean data from model... Done"
-        - "Adding noise to dataset N/M" (updates in place)
-        - "Generated M noisy datasets successfully"
+        - "Adding noise to dataset i/n" (updates in place)
+        - "Generated n noisy datasets successfully"
 
         Set show_progress=False for batch processing or when redirecting output.
 
         See Also
         --------
-        simulate_1D : Single 1D simulation
-        simulate_2D : Single 2D simulation
+        simulate_1d : Single 1D simulation
+        simulate_2d : Single 2D simulation
         save_data : Save multiple datasets to HDF5
         """
 
-        if N < 1:
-            raise ValueError(f"N must be >= 1, got {N}")
+        if n < 1:
+            raise ValueError(f"n must be >= 1, got {n}")
 
         # Generate clean data ONCE
         if show_progress:
@@ -740,13 +740,13 @@ class Simulator:
         if show_progress:
             print("Done")
 
-        # Generate N independent noise realizations
+        # Generate n independent noise realizations
         noisy_data_list = []
         noise_list = []
 
-        for i in range(N):
+        for i in range(n):
             if show_progress:
-                print(f"Adding noise to dataset {i + 1}/{N}", end="\r")
+                print(f"Adding noise to dataset {i + 1}/{n}", end="\r")
 
             # Just add noise to the same clean data
             noisy_data, noise = self.add_noise(clean_data, dim=dim)
@@ -755,7 +755,7 @@ class Simulator:
             noise_list.append(noise)
 
         if show_progress:
-            print(f"Generated {N} noisy datasets successfully")
+            print(f"Generated {n} noisy datasets successfully")
 
         # Store last realization for later use
         self.data_clean = clean_data
@@ -765,7 +765,7 @@ class Simulator:
         return clean_data, noisy_data_list, noise_list
 
     #
-    def _generate_noise_analog_1D(self, signal: np.ndarray) -> np.ndarray:
+    def _generate_noise_analog_1d(self, signal: np.ndarray) -> np.ndarray:
         """
         Generate 1D noise array for analog detectors.
 
@@ -813,7 +813,7 @@ class Simulator:
         )
 
     #
-    def _generate_noise_analog_2D(self, signal: np.ndarray) -> np.ndarray:
+    def _generate_noise_analog_2d(self, signal: np.ndarray) -> np.ndarray:
         """
         Generate 2D noise array for analog detectors.
 
@@ -860,7 +860,7 @@ class Simulator:
         )
 
     #
-    def _sample_photons_1D(self, signal: np.ndarray) -> np.ndarray:
+    def _sample_photons_1d(self, signal: np.ndarray) -> np.ndarray:
         """
         Sample photons for 1D photon counting detection.
 
@@ -905,7 +905,7 @@ class Simulator:
         return cast("np.ndarray", noisy_data)
 
     #
-    def _sample_photons_2D(self, signal: np.ndarray) -> np.ndarray:
+    def _sample_photons_2d(self, signal: np.ndarray) -> np.ndarray:
         """
         Sample photons for 2D photon counting detection.
 
@@ -1028,7 +1028,7 @@ class Simulator:
         self.rng = np.random.default_rng(seed)
 
     #
-    def get_SNR(self, scale: str = "linear") -> float:
+    def get_snr(self, scale: str = "linear") -> float:
         """
         Calculate Signal-to-Noise Ratio (SNR).
 
@@ -1051,28 +1051,28 @@ class Simulator:
         Raises
         ------
         ValueError
-            If no simulated data available (must call simulate_1D/2D/N first),
+            If no simulated data available (must call simulate_1d/2d/n first),
             or if scale is not 'linear' or 'dB'.
 
         Examples
         --------
         >>> # Calculate SNR after simulation
         >>> sim = Simulator(model, noise_level=0.05)
-        >>> clean, noisy, noise = sim.simulate_2D()
+        >>> clean, noisy, noise = sim.simulate_2d()
         >>>
-        >>> snr_linear = sim.get_SNR(scale='linear')
+        >>> snr_linear = sim.get_snr(scale='linear')
         >>> print(f"SNR: {snr_linear:.1f}")
         SNR: 25.3
         >>>
-        >>> snr_db = sim.get_SNR(scale='dB')
+        >>> snr_db = sim.get_snr(scale='dB')
         >>> print(f"SNR: {snr_db:.1f} dB")
         SNR: 14.0 dB
 
         >>> # Compare SNR across noise levels
         >>> for noise_level in [0.01, 0.05, 0.10, 0.20]:
         ...     sim.set_noise_level(noise_level)
-        ...     sim.simulate_2D()
-        ...     snr = sim.get_SNR()
+        ...     sim.simulate_2d()
+        ...     snr = sim.get_snr()
         ...     print(f"Noise {noise_level:.2f}: SNR = {snr:.1f}")
         Noise 0.01: SNR = 625.0
         Noise 0.05: SNR = 25.0
@@ -1085,8 +1085,8 @@ class Simulator:
         >>> for count in counts:
         ...     sim = Simulator(model, detection='photon_counting',
         ...                     counts_per_delay=count)
-        ...     sim.simulate_2D()
-        ...     snrs.append(sim.get_SNR())
+        ...     sim.simulate_2d()
+        ...     snrs.append(sim.get_snr())
         >>> plt.loglog(counts, snrs, 'o-')
         >>> plt.xlabel('Counts per delay')
         >>> plt.ylabel('SNR')
@@ -1136,14 +1136,14 @@ class Simulator:
 
         See Also
         --------
-        simulate_1D : Must call before get_SNR
-        simulate_2D : Must call before get_SNR
+        simulate_1d : Must call before get_snr
+        simulate_2d : Must call before get_snr
         plot_comparison : Shows SNR in title
         """
 
         if self.data_clean is None or self.noise is None:
             raise ValueError(
-                "No simulated data available. Run simulate_1D or simulate_2D first."
+                "No simulated data available. Run simulate_1d or simulate_2d first."
             )
         signal_power = np.mean(self.data_clean**2)
         noise_power = np.mean(self.noise**2)
@@ -1162,7 +1162,7 @@ class Simulator:
         self,
         t_ind: int = 0,
         dim: int = 1,
-        SNR_scale: str = "linear",
+        snr_scale: str = "linear",
         *,
         save_img: int = 0,
     ) -> None:
@@ -1181,7 +1181,7 @@ class Simulator:
             Dimensionality:
             - 1: Create 1D plot with clean, noisy, and noise curves
             - 2: Create three-panel 2D plot (clean, noisy, noise)
-        SNR_scale : {'linear', 'dB'}, default='linear'
+        snr_scale : {'linear', 'dB'}, default='linear'
             Scale for SNR display in title:
             - 'linear': Show as ratio (e.g., "SNR: 25.0 linear")
             - 'dB': Show in decibels (e.g., "SNR: 14.0 dB")
@@ -1192,27 +1192,27 @@ class Simulator:
         --------
         >>> # 1D comparison
         >>> sim = Simulator(model, noise_level=0.05)
-        >>> sim.simulate_1D(t_ind=0)
+        >>> sim.simulate_1d(t_ind=0)
         >>> sim.plot_comparison(dim=1)
 
         >>> # 2D comparison with dB scale
         >>> sim = Simulator(model, noise_level=0.05)
-        >>> sim.simulate_2D()
-        >>> sim.plot_comparison(dim=2, SNR_scale='dB')
+        >>> sim.simulate_2d()
+        >>> sim.plot_comparison(dim=2, snr_scale='dB')
 
         >>> # Compare different noise levels visually
         >>> fig, axes = plt.subplots(3, 1, figsize=(10, 12))
         >>> for i, noise_level in enumerate([0.01, 0.05, 0.10]):
         ...     sim.set_noise_level(noise_level)
-        ...     sim.simulate_1D()
+        ...     sim.simulate_1d()
         ...     # ... manual plotting on axes[i] ...
 
         >>> # Check photon counting vs analog
         >>> sim_analog = Simulator(model, detection='analog', noise_level=0.05)
         >>> sim_photon = Simulator(model, detection='photon_counting',
         ...                         counts_per_delay=1000)
-        >>> sim_analog.simulate_2D()
-        >>> sim_photon.simulate_2D()
+        >>> sim_analog.simulate_2d()
+        >>> sim_photon.simulate_2d()
         >>> # ... compare visually ...
 
         Notes
@@ -1258,20 +1258,20 @@ class Simulator:
 
         See Also
         --------
-        simulate_1D : Generate 1D data to plot
-        simulate_2D : Generate 2D data to plot
-        get_SNR : SNR calculation shown in title
+        simulate_1d : Generate 1D data to plot
+        simulate_2d : Generate 2D data to plot
+        get_snr : SNR calculation shown in title
         """
 
         detection_str = f" [{self.detection}]"
         plt_title = (
-            f"Simulated Data (SNR: {self.get_SNR(scale=SNR_scale):.1f}"
-            f" {SNR_scale}){detection_str}"
+            f"Simulated Data (SNR: {self.get_snr(scale=snr_scale):.1f}"
+            f" {snr_scale}){detection_str}"
         )
 
         if dim == 1:
             if self.data_clean is None:
-                self.simulate_1D(t_ind)
+                self.simulate_1d(t_ind)
             if self.data_clean is None or self.data_noisy is None or self.noise is None:
                 raise RuntimeError("Simulation data not available for plotting")
 
@@ -1279,7 +1279,7 @@ class Simulator:
             config = self.model.plot_config
 
             # Plot with noisy data as scatter
-            uplt.plot_1D(
+            uplt.plot_1d(
                 data=[self.data_clean, self.data_noisy, self.noise],
                 x=self.model.energy,
                 config=config,
@@ -1293,7 +1293,7 @@ class Simulator:
 
         elif dim == 2:
             if self.data_clean is None:
-                self.simulate_2D()
+                self.simulate_2d()
             if self.data_clean is None or self.data_noisy is None or self.noise is None:
                 raise RuntimeError("Simulation data not available for plotting")
 
@@ -1345,7 +1345,7 @@ class Simulator:
         *,
         filepath: str | None = None,
         save_format: str = "hdf5",
-        N_data: list[np.ndarray] | None = None,
+        n_data: list[np.ndarray] | None = None,
         overwrite: bool = True,
         show_output: int = 1,
     ) -> None:
@@ -1366,9 +1366,9 @@ class Simulator:
         save_format : str, default='hdf5'
             File format. Currently only 'hdf5' supported.
             Future: could add .mat, .npz, etc.
-        N_data : list of ndarray, optional
-            Multiple noisy datasets from simulate_N() to save.
-            If None, saves single dataset from simulate_1D() or simulate_2D().
+        n_data : list of ndarray, optional
+            Multiple noisy datasets from simulate_n() to save.
+            If None, saves single dataset from simulate_1d() or simulate_2d().
         overwrite : bool, default=True
             If True, overwrite existing files.
             If False, raise FileExistsError if file exists.
@@ -1390,15 +1390,15 @@ class Simulator:
         --------
         >>> # Save single simulation
         >>> sim = Simulator(model, noise_level=0.05, seed=42)
-        >>> clean, noisy, noise = sim.simulate_2D()
+        >>> clean, noisy, noise = sim.simulate_2d()
         >>> sim.save_data('simulation_001.h5')
         Data saved to: ./simulated_data/simulation_001.h5
 
         >>> # Save multiple realizations
-        >>> clean, noisy_list, noise_list = sim.simulate_N(N=50, dim=2)
+        >>> clean, noisy_list, noise_list = sim.simulate_n(n=50, dim=2)
         >>> sim.save_data(
         ...     filepath='batch_simulation.h5',
-        ...     N_data=noisy_list
+        ...     n_data=noisy_list
         ... )
         Data saved to: ./simulated_data/batch_simulation.h5
 
@@ -1481,7 +1481,7 @@ class Simulator:
 
         **Multiple Datasets:**
 
-        When N_data provided (from simulate_N), all realizations saved in
+        When n_data provided (from simulate_n), all realizations saved in
         simulated_data group with sequential names:
 
         - 000000, 000001, ..., 000099 for 100 datasets
@@ -1514,16 +1514,16 @@ class Simulator:
 
         See Also
         --------
-        simulate_N : Generate multiple datasets to save
-        simulate_1D : Generate 1D data
-        simulate_2D : Generate 2D data
+        simulate_n : Generate multiple datasets to save
+        simulate_1d : Generate 1D data
+        simulate_2d : Generate 2D data
         h5py : Python HDF5 library
         """
 
-        if self.data_noisy is None and N_data is None:
+        if self.data_noisy is None and n_data is None:
             raise ValueError(
                 "No simulated data available."
-                " Run simulate_1D, simulate_2D, or simulate_N first."
+                " Run simulate_1d, simulate_2d, or simulate_n first."
             )
 
         # Create simulated_data directory if it doesn't exist
@@ -1549,7 +1549,7 @@ class Simulator:
             )
 
         if save_format == "hdf5":
-            self._save_hdf5(filepath, N_data)
+            self._save_hdf5(filepath, n_data)
 
         # add other formats here
 
@@ -1560,7 +1560,7 @@ class Simulator:
             print(f"Data saved to: {filepath}")
 
     #
-    def _save_hdf5(self, filepath: str, N_data: list[np.ndarray] | None = None) -> None:
+    def _save_hdf5(self, filepath: str, n_data: list[np.ndarray] | None = None) -> None:
         """
         Save data to HDF5 format with proper structure
 
@@ -1592,10 +1592,10 @@ class Simulator:
             # Create simulated_data group for noisy datasets
             sim_group = f.create_group("simulated_data")
 
-            # Save noisy data - either from N_data list or single simulation
-            if N_data is not None:
-                # Multiple datasets from simulate_N
-                for i, noisy_data in enumerate(N_data):
+            # Save noisy data - either from n_data list or single simulation
+            if n_data is not None:
+                # Multiple datasets from simulate_n
+                for i, noisy_data in enumerate(n_data):
                     dataset_name = f"{i:06d}"
                     sim_group.create_dataset(dataset_name, data=noisy_data)
             elif self.data_noisy is not None:
@@ -1628,8 +1628,8 @@ class Simulator:
                     meta.attrs["dimension"] = 2
 
             # Save number of datasets
-            if N_data is not None:
-                meta.attrs["n_datasets"] = len(N_data)
+            if n_data is not None:
+                meta.attrs["n_datasets"] = len(n_data)
             else:
                 meta.attrs["n_datasets"] = 1
 
@@ -1653,7 +1653,7 @@ class Simulator:
     def simulate_parameter_sweep(
         self,
         parameter_sweep: ParameterSweep,
-        N_realizations: int,
+        n_realizations: int,
         *,
         dim: int = 2,
         filepath: str = "ml_training_data.h5",
@@ -1669,7 +1669,7 @@ class Simulator:
         ----------
         parameter_sweep : ParameterSweep
             Generator yielding parameter configurations
-        N_realizations : int
+        n_realizations : int
             Number of noisy realizations per parameter configuration
         dim : {1, 2}, default=2
             Dimensionality of simulated data:
@@ -1691,7 +1691,7 @@ class Simulator:
         >>> sim = Simulator(model, noise_level=0.05, seed=42)
         >>> sim.simulate_parameter_sweep(
         ...     parameter_sweep=sweep,
-        ...     N_realizations=20,
+        ...     n_realizations=20,
         ...     filepath='training_data.h5'
         ... )
         Processing config 1/100: {'GLP_01_A': 12.5, 'GLP_01_x0': 8.3}
@@ -1718,7 +1718,7 @@ class Simulator:
         See Also
         --------
         ParameterSweep : Define parameter space to sweep
-        simulate_N : Generate multiple noisy realizations
+        simulate_n : Generate multiple noisy realizations
         _initialize_sweep_hdf5 : HDF5 file structure
         _append_config_to_hdf5 : Incremental saving logic
         """
@@ -1744,14 +1744,14 @@ class Simulator:
             print(
                 f"Starting parameter sweep:\n"
                 f"  Total configurations: {n_configs}\n"
-                f"  Realizations per config: {N_realizations}\n"
-                f"  Total datasets: {n_configs * N_realizations}\n"
+                f"  Realizations per config: {n_realizations}\n"
+                f"  Total datasets: {n_configs * n_realizations}\n"
                 f"  Output file: {filepath}\n"
             )
 
         # Initialize HDF5 file with structure
         self._initialize_sweep_hdf5(
-            filepath, parameter_sweep, N_realizations, n_configs, dim
+            filepath, parameter_sweep, n_realizations, n_configs, dim
         )
 
         # Process each configuration
@@ -1769,8 +1769,8 @@ class Simulator:
             self.model.update_value(param_values, par_select=param_names)
 
             # Generate noisy realizations for this config
-            clean, noisy_list, _noise_list = self.simulate_N(
-                N=N_realizations,
+            clean, noisy_list, _noise_list = self.simulate_n(
+                n=n_realizations,
                 dim=dim,
                 show_progress=False,  # Don't clutter output
             )
@@ -1783,15 +1783,15 @@ class Simulator:
             if show_progress:
                 print(
                     f"  ✓ Saved config {config_idx + 1}"
-                    f" with {N_realizations} realizations"
+                    f" with {n_realizations} realizations"
                 )
 
         if show_progress:
             print(
                 f"\n{'=' * 60}\n"
                 f"Parameter sweep complete!\n"
-                f"Generated {n_configs} configs × {N_realizations} realizations\n"
-                f"Total datasets: {n_configs * N_realizations}\n"
+                f"Generated {n_configs} configs × {n_realizations} realizations\n"
+                f"Total datasets: {n_configs * n_realizations}\n"
                 f"Data saved to: {filepath}\n"
                 f"{'=' * 60}"
             )
@@ -1801,7 +1801,7 @@ class Simulator:
         self,
         filepath: str,
         parameter_sweep: ParameterSweep,
-        N_realizations: int,
+        n_realizations: int,
         n_configs: int,
         dim: int,
     ) -> None:
@@ -1837,7 +1837,7 @@ class Simulator:
             Path to HDF5 file to create
         parameter_sweep : ParameterSweep
             Parameter sweep object (for metadata)
-        N_realizations : int
+        n_realizations : int
             Number of noisy realizations per config
         n_configs : int
             Total number of parameter configurations
@@ -1860,8 +1860,8 @@ class Simulator:
             # Save sweep metadata
             meta = f.create_group("metadata")
             meta.attrs["n_configs"] = n_configs
-            meta.attrs["n_realizations_per_config"] = N_realizations
-            meta.attrs["total_datasets"] = n_configs * N_realizations
+            meta.attrs["n_realizations_per_config"] = n_realizations
+            meta.attrs["total_datasets"] = n_configs * n_realizations
 
             # Simulator settings
             meta.attrs["detection"] = self.detection

@@ -247,7 +247,7 @@ def par_construct(par_names: list[str], par_info: list[list[Any]]) -> lmfit.Para
 
 
 #
-def conf_interval2df(ci: dict[str, Any], CI_cols: list[str]) -> pd.DataFrame:
+def conf_interval_to_df(ci: dict[str, Any], ci_cols: list[str]) -> pd.DataFrame:
     """
     Convert lmfit confidence interval results to pandas DataFrame.
 
@@ -261,7 +261,7 @@ def conf_interval2df(ci: dict[str, Any], CI_cols: list[str]) -> pd.DataFrame:
     ci : dict
         Confidence interval results from lmfit.conf_interval.
         Structure: {param_name: [(sigma, value), ...]}
-    CI_cols : list of str
+    ci_cols : list of str
         Column headers for the output DataFrame.
         Typically: ['par[v]/sigma[>]', '-3', '-2', '-1', 'best fit', '+1', '+2', '+3']
 
@@ -274,27 +274,27 @@ def conf_interval2df(ci: dict[str, Any], CI_cols: list[str]) -> pd.DataFrame:
     --------
     >>> # After running confidence interval calculation
     >>> ci, trace = lmfit.conf_interval(minimizer, result, sigmas=[1,2,3], trace=True)
-    >>> CI_cols = ['parameter', '-3', '-2', '-1', 'best', '+1', '+2', '+3']
-    >>> df = conf_interval2df(ci, CI_cols)
+    >>> ci_cols = ['parameter', '-3', '-2', '-1', 'best', '+1', '+2', '+3']
+    >>> df = conf_interval_to_df(ci, ci_cols)
     >>> df.to_csv('confidence_intervals.csv', index=False)
     """
 
-    conf_CIs_list = []
+    conf_ci_list = []
 
     for param_name, values in ci.items():
-        conf_par_CIs = [param_name]  # Start with parameter name
+        conf_par_ci = [param_name]  # Start with parameter name
 
         # Extract parameter values at each sigma level
         # values is list of (sigma_percentage, param_value) tuples
-        conf_par_CIs.extend(val[1] for val in values)  # val[1] is the parameter value
+        conf_par_ci.extend(val[1] for val in values)  # val[1] is the parameter value
 
-        conf_CIs_list.append(conf_par_CIs)
+        conf_ci_list.append(conf_par_ci)
 
-    return pd.DataFrame(data=conf_CIs_list, columns=CI_cols)
+    return pd.DataFrame(data=conf_ci_list, columns=ci_cols)
 
 
 #
-def par2df(
+def par_to_df(
     lmfit_params: lmfit.Parameters,
     col_type: Literal["ini", "min"] | list[str],
     par_names: list[str] | None = None,
@@ -329,19 +329,19 @@ def par2df(
     >>> # Initial guess parameters
     >>> params = lmfit.Parameters()
     >>> params.add('amplitude', value=10, vary=True, min=0, max=100)
-    >>> df = par2df(params, col_type='ini')
+    >>> df = par_to_df(params, col_type='ini')
     >>> df.to_csv('initial_parameters.csv', index=False)
 
     >>> # Fit results
     >>> result = minimize(residual, params, ...)
-    >>> df = par2df(result.params, col_type='min')
+    >>> df = par_to_df(result.params, col_type='min')
     >>> print(df[['name', 'value', 'stderr']])
 
     >>> # Custom columns
-    >>> df = par2df(params, col_type=['name', 'value', 'vary'])
+    >>> df = par_to_df(params, col_type=['name', 'value', 'vary'])
 
     >>> # Subset of parameters
-    >>> df = par2df(params, col_type='ini', par_names=['amplitude', 'center'])
+    >>> df = par_to_df(params, col_type='ini', par_names=['amplitude', 'center'])
 
     Notes
     -----
@@ -370,7 +370,7 @@ def par2df(
 
 
 #
-def list_of_par2df(results: list[Any]) -> pd.DataFrame:
+def list_of_par_to_df(results: list[Any]) -> pd.DataFrame:
     """
     Extract parameter values from multiple fit results into DataFrame.
 
@@ -396,11 +396,11 @@ def list_of_par2df(results: list[Any]) -> pd.DataFrame:
     --------
     >>> # After slice-by-slice fitting
     >>> results_list = []
-    >>> for spectrum in data_2D:
+    >>> for spectrum in data_2d:
     ...     result = fit_wrapper(spectrum, ...)
     ...     results_list.append(result)
     >>>
-    >>> df = list_of_par2df(results_list)
+    >>> df = list_of_par_to_df(results_list)
     >>> df.columns
     Index(['amplitude', 'center', 'width', ...], dtype='object')
     >>>

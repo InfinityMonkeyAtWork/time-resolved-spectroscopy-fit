@@ -15,8 +15,8 @@ Key Functions
 -------------
 residual_fun : Compute residual for optimizer
 fit_wrapper : Main fitting function with CI and MCMC support
-plt_fit_res_1D : Plot 1D fit results with residuals
-plt_fit_res_2D : Plot 2D fit results with residual maps
+plt_fit_res_1d : Plot 1D fit results with residuals
+plt_fit_res_2d : Plot 2D fit results with residual maps
 """
 
 import copy
@@ -347,8 +347,10 @@ def sigma_start_stop_percent(sigma_list: Sequence[float]) -> list[list[float]]:
             borders_pc = []
         else:
             a2a_total = float(a2a_total_raw)
-            A_exclude2A_total = 100 - a2a_total
-            borders_pc.append([A_exclude2A_total / 2, 100 - A_exclude2A_total / 2])
+            a_exclude_to_a_total = 100 - a2a_total
+            borders_pc.append(
+                [a_exclude_to_a_total / 2, 100 - a_exclude_to_a_total / 2]
+            )
 
     return borders_pc
 
@@ -363,7 +365,7 @@ def fit_wrapper(
     par: Any,
     stages: int,
     sigmas: list[float] | None = None,
-    try_CI: int = 1,
+    try_ci: int = 1,
     mc_settings: ulmfit.MC | None = None,
     fit_alg_1: str = "Nelder",
     fit_alg_2: str = "leastsq",
@@ -409,7 +411,7 @@ def fit_wrapper(
 
     sigmas : list of int or float, default=[1,2,3]
         Confidence levels for CI and MCMC (e.g., [1,2,3] for 1σ, 2σ, 3σ)
-    try_CI : {0, 1}, default=1
+    try_ci : {0, 1}, default=1
         Confidence interval estimation:
 
         - 0: Skip CI calculation
@@ -452,27 +454,27 @@ def fit_wrapper(
     save_path : str or Path, default=''
         Base path for saved files (without extension).
         Files saved: _par_ini.csv, _par_fin.txt, _par_fin.csv,
-        _conf_CIs.csv, _emcee_fin.txt, _emcee_flatchain.csv,
-        _emcee_CIs.csv, _emcee_walker_acceptance_ratio.png,
+        _conf_ci.csv, _emcee_fin.txt, _emcee_flatchain.csv,
+        _emcee_ci.csv, _emcee_walker_acceptance_ratio.png,
         _emcee_corner_plot.png
 
     Returns
     -------
     list
         Five-element list containing results:
-        [par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs]
+        [par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]
 
         - **par_ini** (*lmfit.Parameters*) -- Initial parameter guess.
         - **par_fin** (*lmfit.MinimizerResult or []*) -- Final fit result
           from lmfit.minimize.
-        - **conf_CIs** (*pd.DataFrame*) -- Confidence intervals from
+        - **conf_ci** (*pd.DataFrame*) -- Confidence intervals from
           lmfit.conf_interval. Columns: ``['par[v]/sigma[>]', '-3σ',
           '-2σ', '-1σ', 'best', '+1σ', '+2σ', '+3σ']``.
           Empty DataFrame if CI not calculated/failed.
         - **emcee_fin** (*lmfit.MinimizerResult or []*) -- MCMC result
           from lmfit.emcee. Empty list if MCMC not used.
-        - **emcee_CIs** (*pd.DataFrame*) -- MCMC confidence intervals
-          from quantiles of flatchain. Same column structure as conf_CIs.
+        - **emcee_ci** (*pd.DataFrame*) -- MCMC confidence intervals
+          from quantiles of flatchain. Same column structure as conf_ci.
           Empty DataFrame if MCMC not used.
 
     Examples
@@ -488,7 +490,7 @@ def fit_wrapper(
     ...     stages=1,
     ...     show_output=1
     ... )
-    >>> par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs = results
+    >>> par_ini, par_fin, conf_ci, emcee_fin, emcee_ci = results
 
     >>> # Two-stage fit with confidence intervals
     >>> results = fit_wrapper(
@@ -497,7 +499,7 @@ def fit_wrapper(
     ...     par_names=model.parameter_names,
     ...     par=model.lmfit_pars,
     ...     stages=2,
-    ...     try_CI=1,
+    ...     try_ci=1,
     ...     sigmas=[1, 2, 3],
     ...     show_output=1,
     ...     save_output=1,
@@ -512,7 +514,7 @@ def fit_wrapper(
     ...     par_names=model.parameter_names,
     ...     par=model.lmfit_pars,
     ...     stages=2,
-    ...     try_CI=1,
+    ...     try_ci=1,
     ...     mc_settings=mc,
     ...     show_output=1
     ... )
@@ -563,7 +565,7 @@ def fit_wrapper(
     else:
         par_ini = ulmfit.par_construct(par_names=par_names, par_info=par)
     # convert par_ini to pandas dataframe and save all lmfit info
-    df_par_ini = ulmfit.par2df(par_ini, "ini", par_names)
+    df_par_ini = ulmfit.par_to_df(par_ini, "ini", par_names)
 
     if show_output >= 1:
         t_0 = time.time()  # start time
@@ -585,15 +587,15 @@ def fit_wrapper(
             print(f"Time fit: {t_fit - t_ini} s")
     #
     if stages == 2:  # find global minimum + local optimization
-        par_fin_GM = mini.minimize(method=fit_alg_1)
-        par_fin_GM_params = _result_params(par_fin_GM)
+        par_fin_gm = mini.minimize(method=fit_alg_1)
+        par_fin_gm_params = _result_params(par_fin_gm)
         if show_output >= 1:
             print(f"\nResults global minumum fit (method={fit_alg_1}): ")
-            lmfit.report_fit(par_fin_GM_params)
+            lmfit.report_fit(par_fin_gm_params)
             t_fit0 = time.time()
             print(f"Time fit (global minimum): {t_fit0 - t_ini} s")
         #
-        par_fin = mini.minimize(method=fit_alg_2, params=par_fin_GM_params)
+        par_fin = mini.minimize(method=fit_alg_2, params=par_fin_gm_params)
         par_fin_params = _result_params(par_fin)
         if show_output >= 1:
             print(f"\nResults local optimization fit (method={fit_alg_2}): ")
@@ -605,7 +607,7 @@ def fit_wrapper(
 
     # define column headers for the confidence interval dataframes
     # (conf_interval and emcee)
-    CI_cols = (
+    ci_cols = (
         ["par[v]/sigma[>]"]
         + ["-" + str(sigma) for sigma in sigmas[::-1]]
         + ["best fit"]
@@ -613,7 +615,7 @@ def fit_wrapper(
     )
 
     # conf_interval (https://lmfit.github.io/lmfit-py/confidence.html)
-    if try_CI == 1:
+    if try_ci == 1:
         if _result_errorbars(par_fin):
             ci_fin, _trace_fin = lmfit.conf_interval(
                 mini, par_fin, sigmas=sigmas, trace=True
@@ -622,16 +624,16 @@ def fit_wrapper(
                 print()
                 lmfit.printfuncs.report_ci(ci_fin)
             # convert ci_fin to standard CI dataframe
-            conf_CIs = ulmfit.conf_interval2df(ci_fin, CI_cols)
+            conf_ci = ulmfit.conf_interval_to_df(ci_fin, ci_cols)
         else:
-            conf_CIs = pd.DataFrame()
+            conf_ci = pd.DataFrame()
             if show_output >= 1:
                 print("\nNo successful error bar determination via conf_interval")
             if mc_settings.use_emcee == 2:
                 # conf_interval didn't work -> use lmfit.emcee()
                 mc_settings.use_emcee = 1
-    elif try_CI == 0:
-        conf_CIs = pd.DataFrame()
+    elif try_ci == 0:
+        conf_ci = pd.DataFrame()
 
     # lmfit.emcee() [not a fit, it is a way to sample the parameter space!]
     if mc_settings.use_emcee == 1:
@@ -697,20 +699,20 @@ def fit_wrapper(
         sigma_borders = sigma_start_stop_percent(sigmas)
         # go through all combinations of parameters and sigmas to find
         # lmfit.emcee() confidence intervals
-        emcee_CIs_list = []  # initialize results
+        emcee_ci_list = []  # initialize results
         for par_name in [*par_names, "__lnsigma"]:
-            emcee_par_CIs: list[Any] = [par_name]  # initialize results for parameter
+            emcee_par_ci: list[Any] = [par_name]  # initialize results for parameter
             if par_name in emcee_var_names:
                 # get quantiles if fit parameter is variable
                 for sigma_b in sigma_borders:
                     # get cutoff values that meet this sigma threshold (+/-)
                     quantiles = np.percentile(emcee_flatchain[par_name], sigma_b)
                     # lower threshold (0 is par_name)
-                    emcee_par_CIs.insert(1, quantiles[0])
+                    emcee_par_ci.insert(1, quantiles[0])
                     # upper threshold
-                    emcee_par_CIs.insert(len(emcee_par_CIs), quantiles[1])
+                    emcee_par_ci.insert(len(emcee_par_ci), quantiles[1])
             else:  # pass a list of "-1" (int) as confidence intervals
-                emcee_par_CIs.extend(
+                emcee_par_ci.extend(
                     2
                     * len(sigmas)
                     * [
@@ -718,21 +720,21 @@ def fit_wrapper(
                     ]
                 )
             # append this line to list containing all parameters
-            emcee_CIs_list.append(emcee_par_CIs)
+            emcee_ci_list.append(emcee_par_ci)
         # convert confidence interval cutoffs to a dataframe
         # and add the "best fit result" in the middle
-        emcee_CIs = pd.DataFrame(data=emcee_CIs_list)
-        emcee_CIs.insert(
+        emcee_ci = pd.DataFrame(data=emcee_ci_list)
+        emcee_ci.insert(
             loc=len(sigmas) + 1,
             column="bla",
             value=list(emcee_fin_params.valuesdict().values()),
         )
-        emcee_CIs.columns = CI_cols
+        emcee_ci.columns = ci_cols
         if show_output >= 1:
-            print(display(emcee_CIs))
+            print(display(emcee_ci))
     else:  # use_emcee equal to 0, or equal to 2 and conf_interval worked
         emcee_fin = None
-        emcee_CIs = pd.DataFrame()
+        emcee_ci = pd.DataFrame()
 
     # optional save (figures are saved above)
     # [if statements check for empty list/dataframe]
@@ -744,11 +746,11 @@ def fit_wrapper(
             with pathlib.Path(f"{save_path}_par_fin.txt").open("w") as par_fin_file:
                 par_fin_file.write(lmfit.fit_report(par_fin))
         # par_fin variables as csv file
-        df_par_fin = ulmfit.par2df(_result_params(par_fin), "min", par_names)
+        df_par_fin = ulmfit.par_to_df(_result_params(par_fin), "min", par_names)
         df_par_fin.to_csv(str(save_path) + "_par_fin.csv", index=False)
-        # conf_CIs using pandas as it is a pd.DataFrame
-        if not conf_CIs.empty:
-            conf_CIs.to_csv(str(save_path) + "_conf_CIs.csv", index=False)
+        # conf_ci using pandas as it is a pd.DataFrame
+        if not conf_ci.empty:
+            conf_ci.to_csv(str(save_path) + "_conf_ci.csv", index=False)
         # emcee_fin (fit_report) as text dump, emcee flatchain as csv
         if emcee_fin is not None:
             with pathlib.Path(f"{save_path}_emcee_fin.txt").open("w") as emcee_fin_file:
@@ -757,11 +759,11 @@ def fit_wrapper(
                 "pd.DataFrame", getattr(emcee_fin, "flatchain", pd.DataFrame())
             )
             emcee_flatchain.to_csv(f"{save_path}_emcee_flatchain.csv", index=False)
-        # emcee_CIs using pandas as it is a pd.DataFrame
-        if not emcee_CIs.empty:
-            emcee_CIs.to_csv(str(save_path) + "_emcee_CIs.csv", index=False)
+        # emcee_ci using pandas as it is a pd.DataFrame
+        if not emcee_ci.empty:
+            emcee_ci.to_csv(str(save_path) + "_emcee_ci.csv", index=False)
 
-    return [par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs]
+    return [par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]
 
 
 #
@@ -770,7 +772,7 @@ def fit_wrapper(
 
 
 #
-def results_select(data: Any, skip: int = -1, N: int = -1, dim: int = 1) -> Any:
+def results_select(data: Any, skip: int = -1, n: int = -1, dim: int = 1) -> Any:
     """
     Select slice of results array for partial fitting analysis.
 
@@ -780,7 +782,7 @@ def results_select(data: Any, skip: int = -1, N: int = -1, dim: int = 1) -> Any:
         Data array to slice
     skip : int, default=-1
         Number of initial elements to skip. -1 means skip none.
-    N : int, default=-1
+    n : int, default=-1
         Number of elements to include. -1 means include all (after skip).
     dim : int, default=1
         Dimensionality (currently only dim=1 supported).
@@ -799,22 +801,22 @@ def results_select(data: Any, skip: int = -1, N: int = -1, dim: int = 1) -> Any:
     >>> results_select(data, skip=10)
 
     >>> # Get first 50 points only
-    >>> results_select(data, N=50)
+    >>> results_select(data, n=50)
 
     >>> # Get points 10-60
-    >>> results_select(data, skip=10, N=60)
+    >>> results_select(data, skip=10, n=60)
     """
 
     if dim == 1:
-        if N == -1:
+        if n == -1:
             if skip == -1:
                 return data  # full data set
             out = data[skip:]
         else:  # "+1" accounts for Python's exclusive upper bound
             if skip == -1:
-                out = data[: N + 1]
+                out = data[: n + 1]
             else:
-                out = data[skip : N + 1]
+                out = data[skip : n + 1]
     else:
         raise ValueError(f"Unsupported dim={dim}; only dim=1 is implemented")
 
@@ -822,7 +824,7 @@ def results_select(data: Any, skip: int = -1, N: int = -1, dim: int = 1) -> Any:
 
 
 #
-def results2df(
+def results_to_df(
     results: list[Any],
     x: ArrayLike | None = None,
     index: ArrayLike | None = None,
@@ -843,7 +845,7 @@ def results2df(
     ----------
     results : list
         List of fit results from fit_wrapper, one per time slice.
-        Each element: [par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs]
+        Each element: [par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]
     x : array-like, optional
         Time axis values. If provided, included as column in DataFrame.
     index : array-like, optional
@@ -880,23 +882,25 @@ def results2df(
         config = PlotConfig()
 
     # transform lmfit_wrapper results to dataframe
-    df = ulmfit.list_of_par2df(results)
+    df = ulmfit.list_of_par_to_df(results)
     # get columns names for plot before adding x/index
     cols_plt = df.columns
 
     # select x (time) and index data if passed
     if x is not None:
-        x_save = results_select(data=x, skip=skip_first_n_spec, N=first_n_spec_only)
+        x_save = results_select(data=x, skip=skip_first_n_spec, n=first_n_spec_only)
         df.insert(0, config.y_label, x_save)  # and insert into dataframe
     if index is not None:
         ind_save = results_select(
-            data=index, skip=skip_first_n_spec, N=first_n_spec_only
+            data=index, skip=skip_first_n_spec, n=first_n_spec_only
         )
         df.insert(0, "index", ind_save)  # and insert into dataframe
 
     # get par_fin([1]) of first slice(index=0)
     # (their "vary" attribute is the same for all)
-    df_par_fin_slice0 = ulmfit.par2df(lmfit_params=results[0][1].params, col_type="min")
+    df_par_fin_slice0 = ulmfit.par_to_df(
+        lmfit_params=results[0][1].params, col_type="min"
+    )
     save_array = [-1 if not vary else 1 for vary in df_par_fin_slice0["vary"]]
 
     if save_df != 0:
@@ -915,13 +919,13 @@ def results2df(
 
 
 #
-def results2fit2D(
+def results_to_fit_2d(
     results: list[Any] | pd.DataFrame,
     const: tuple[Any, ...],
     args: tuple[Any, ...],
     num_fmt: str = "%.6e",
     delim: str = ",",
-    save_2D: int = 0,
+    save_2d: int = 0,
     save_path: PathLike = "",
 ) -> np.ndarray:
     """
@@ -937,8 +941,8 @@ def results2fit2D(
         Fit results, either:
 
         - list: Output from fit_wrapper for each slice.
-          Each element: ``[par_ini, par_fin, conf_CIs, emcee_fin, emcee_CIs]``
-        - pd.DataFrame: From results2df() with parameters as columns
+          Each element: ``[par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]``
+        - pd.DataFrame: From results_to_df() with parameters as columns
 
     const : tuple
         Constants for residual_fun:
@@ -951,7 +955,7 @@ def results2fit2D(
         Number format for saving (scientific notation with 6 decimals)
     delim : str, default=','
         Delimiter for CSV output
-    save_2D : {-1, 0, 1}, default=0
+    save_2d : {-1, 0, 1}, default=0
         Save 2D fit to file:
 
         - 0: Don't save
@@ -959,7 +963,7 @@ def results2fit2D(
         - -1: Save to CSV (same as 1)
 
     save_path : str or Path, default=''
-        Directory path for saving. File saved as: save_path/fit2D.csv
+        Directory path for saving. File saved as: save_path/fit_2d.csv
         Directory created if doesn't exist.
 
     Returns
@@ -979,12 +983,12 @@ def results2fit2D(
         t_lim_const,
     ) = const
     lst = []  # intialize
-    for N in range(len(results)):
+    for i in range(len(results)):
         # list of lmfit_wrapper fit results
         if isinstance(results, list):
             lst.append(
                 residual_fun(
-                    results[N][1].params,
+                    results[i][1].params,
                     x_const,
                     np.asarray(data_const),
                     package_const,
@@ -1000,7 +1004,7 @@ def results2fit2D(
         elif isinstance(results, pd.DataFrame):
             lst.append(
                 residual_fun(
-                    results.iloc[N].values,
+                    results.iloc[i].values,
                     x_const,
                     np.asarray(data_const),
                     package_const,
@@ -1012,14 +1016,14 @@ def results2fit2D(
                     args=args,
                 )
             )
-    fit2D = np.asarray(lst)
+    fit_2d = np.asarray(lst)
     #
-    if abs(save_2D) == 1:
+    if abs(save_2d) == 1:
         np.savetxt(
-            pathlib.Path(save_path) / "fit2D.csv", fit2D, fmt=num_fmt, delimiter=delim
+            pathlib.Path(save_path) / "fit_2d.csv", fit_2d, fmt=num_fmt, delimiter=delim
         )
 
-    return fit2D
+    return fit_2d
 
 
 #
@@ -1028,7 +1032,7 @@ def results2fit2D(
 
 
 #
-def plt_fit_res_1D(
+def plt_fit_res_1d(
     x: ArrayLike,
     y: ArrayLike,
     fit_fun_str: str,
@@ -1243,7 +1247,7 @@ def plt_fit_res_1D(
 
 
 #
-def plt_fit_res_2D(
+def plt_fit_res_2d(
     data: np.ndarray,
     fit: np.ndarray,
     x: ArrayLike | None = None,
@@ -1472,7 +1476,7 @@ def plt_fit_res_pars(
     Parameters
     ----------
     df : pd.DataFrame
-        DataFrame with parameters as columns. Typically from results2df().
+        DataFrame with parameters as columns. Typically from results_to_df().
         Each row represents one fitted slice/time point.
     x : array-like, optional
         X-axis (time) values for plotting. If None, uses row indices.
@@ -1508,7 +1512,7 @@ def plt_fit_res_pars(
 
     # plot all parameters as function of time
     for c, col in enumerate(df.columns):
-        uplt.plot_1D(
+        uplt.plot_1d(
             data=[df[col]],
             x=x,
             config=config,
