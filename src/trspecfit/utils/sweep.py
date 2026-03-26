@@ -265,7 +265,10 @@ class ParameterSweep:
             return cast("np.ndarray", self.rng.normal(spec["mean"], spec["std"], n))
         if spec["type"] == "lognormal":
             return cast("np.ndarray", self.rng.lognormal(spec["mean"], spec["std"], n))
-        raise ValueError(f"Unknown distribution type: {spec['type']}")
+        raise ValueError(
+            f"Unknown distribution type: '{spec['type']}'. "
+            "Must be 'uniform', 'normal', or 'lognormal'."
+        )
 
     #
     def _generate_grid(self) -> Generator[dict[str, float], None, None]:

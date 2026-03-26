@@ -1160,7 +1160,10 @@ class File:
 
         self.model_base = self._resolve_model(model_name)
         if self.energy is None or self.data_base is None:
-            raise ValueError("Baseline data/energy axis missing; cannot fit baseline.")
+            raise ValueError(
+                "Baseline data/energy axis missing; cannot fit baseline.\n"
+                "Run define_baseline() first to extract the baseline region."
+            )
 
         # get initial guess
         initial_guess = ulmfit.par_extract(
@@ -1458,11 +1461,20 @@ class File:
 
         if model_name is None:
             if self.model_active is None:
-                raise ValueError("No active model set. Pass target_model explicitly.")
+                available = [m.name for m in self.models]
+                raise ValueError(
+                    "No active model set. Call set_active_model() first "
+                    "or pass target_model explicitly.\n"
+                    f"Available models: {available or 'none loaded'}"
+                )
             return self.model_active
         mod = self.select_model(model_name)
         if mod is None:
-            raise ValueError(f"Model '{model_name}' not found.")
+            available = [m.name for m in self.models]
+            raise ValueError(
+                f"Model '{model_name}' not found.\n"
+                f"Available models: {available or 'none loaded'}"
+            )
         return mod
 
     #
@@ -1542,9 +1554,18 @@ class File:
                         return
 
         # Not found in energy model or any attached profile
+        available = model.parameter_names
+        profile_pars: list[str] = []
+        for comp in model.components:
+            for par in comp.pars:
+                if par.p_vary and par.p_model is not None:
+                    profile_pars.extend(par.p_model.parameter_names)
+        if profile_pars:
+            available = available + profile_pars
         raise ValueError(
             f"Parameter '{target_parameter}' not found in model "
-            f"'{model.name}' or any attached profile models."
+            f"'{model.name}' or any attached profile models.\n"
+            f"Available parameters: {available}"
         )
 
     #
@@ -1592,7 +1613,8 @@ class File:
         ci, pi = model.find_par_by_name(target_parameter)
         if ci is None or pi is None:
             raise ValueError(
-                f"Parameter '{target_parameter}' not found in model '{model.name}'."
+                f"Parameter '{target_parameter}' not found in model '{model.name}'.\n"
+                f"Available parameters: {model.parameter_names}"
             )
         target_par = model.components[ci].pars[pi]
         if target_par.t_vary:

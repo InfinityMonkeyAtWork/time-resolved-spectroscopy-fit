@@ -492,7 +492,9 @@ class Model:
         ci, pi = self.find_par_by_name(dynamics_model.name)
         if ci is None or pi is None:
             raise ValueError(
-                f'Parameter "{dynamics_model.name}" not found in model {self.name}'
+                f'Parameter "{dynamics_model.name}" not found in model '
+                f"{self.name}.\n"
+                f"Available parameters: {self.parameter_names}"
             )
         target_par = self.components[ci].pars[pi]
 
@@ -547,7 +549,9 @@ class Model:
         ci, pi = self.find_par_by_name(profile_model.name)
         if ci is None or pi is None:
             raise ValueError(
-                f'Parameter "{profile_model.name}" not found in model {self.name}'
+                f'Parameter "{profile_model.name}" not found in model '
+                f"{self.name}.\n"
+                f"Available parameters: {self.parameter_names}"
             )
         target_par = self.components[ci].pars[pi]
 
