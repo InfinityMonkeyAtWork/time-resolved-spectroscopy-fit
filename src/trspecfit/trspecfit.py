@@ -302,7 +302,7 @@ class Project:
             Name or path of config file (looks in self.path)
         """
 
-        yaml = YAML()  # Standard YAML loading
+        yaml = YAML(typ="safe")
         config_path = self.path / config_file
 
         try:

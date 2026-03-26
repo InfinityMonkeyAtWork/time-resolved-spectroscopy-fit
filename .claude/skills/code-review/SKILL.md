@@ -1,13 +1,26 @@
 ---
 name: code-review
-description: Run a 20-point code-review checklist on the codebase (or a specified scope). Covers correctness, style, architecture, and test quality.
-disable-model-invocation: true
+description: "Run a  code-review checklist. Default: review diff vs main. Args: `full`(whole codebase), `diff` (default), or a file/directory/glob path."
+disable-model-invocation: false
 allowed-tools: Bash, Read, Grep, Glob, Agent
 ---
 
-Run every check below against the target scope. Default scope is all Python
-source under `src/` and `tests/`. If the user supplies an argument (file, directory,
-or glob), restrict the review to that scope.
+## Scope
+
+This skill accepts one optional argument:
+
+- **`diff`** (default) — review only files changed relative to `main`.
+  Run `git diff main --name-only -- '*.py'` to get the file list, then
+  apply every check below to those files only. Read the full diff with
+  `git diff main` for context on what changed.
+- **`full`** — review all Python source under `src/` and `tests/`.
+- **file / directory / glob** — restrict the review to that scope.
+
+**Naming exclusion**: function registry names (`GLP`, `pExpDecay`, `LinBack`,
+`gaussCONV`, etc.) and their parameters (`A`, `x0`, `SD`, `xStart`, `xStop`)
+use camelCase/PascalCase because `_` is the component ID delimiter. Exclude
+`src/trspecfit/functions/` from naming checks, and ignore variables/parameters
+that match registry parameter names elsewhere.
 
 For each item report one of:
 - **PASS** — no issues found
@@ -20,76 +33,71 @@ are independent.
 
 ---
 
-## 1. Mutable default arguments
+## 1. Bugs and correctness
 
-Search for function/method definitions whose default values are mutable
-(`[]`, `{}`, `set()`). Each should use `None` with an `if arg is None` guard.
+Read the code in scope looking for:
+- Logic errors: wrong condition, off-by-one, inverted boolean, wrong variable
+- Incorrect indexing or slicing of arrays/axes
+- Wrong variable reuse (e.g., mutating an input that is used later)
+- Boundary mishandling (empty arrays, single-element edge cases)
+- Silent type coercion that changes meaning (int vs float, list vs array)
+- Regressions: if reviewing a diff, check whether changed code breaks
+  existing callers, contracts, or assumptions documented in docstrings
 
-```
-pattern: def \w+\(.*[=]\s*(\[\]|\{\}|set\(\))
-```
+## 2. Performance
 
-## 2. Bare / broad exception handling
+Look for:
+- Unnecessary copies of large arrays (`np.array(x)` when `x` is already an
+  ndarray, `.copy()` without reason)
+- Repeated expensive computations inside loops that could be hoisted
+- O(n^2) or worse patterns where O(n) or O(n log n) alternatives exist
+  (e.g., nested list scans, repeated `in` checks on lists instead of sets)
+- Allocation inside tight loops (creating arrays/lists per iteration when
+  pre-allocation or vectorization would work)
+- Unvectorized element-wise loops over numpy arrays
+Report as WARN only for patterns with measurable impact in typical use
+(not micro-optimizations).
+
+## 3. Bare / broad exception handling
 
 Find `except Exception`, `except BaseException`, and bare `except:`.
 Flag any that silently swallow errors (no re-raise, no logging).
 Acceptable: top-level CLI entry points, describe/repr methods guarding display.
 
-## 3. God classes / long methods
+## 4. God classes / long methods
 
 Flag any single method or function longer than 200 lines (excluding docstring
 and blank lines). Flag any class with more than 30 public methods.
 Report as INFO with a note on whether the size is justified.
 
-## 4. Magic numbers
-
-Search for bare numeric literals (not 0, 1, -1, 2) used in logic or
-computation outside of test files. Flag any that lack an explanatory comment
-or named constant. Ignore array indexing, range/shape arguments, and standard
-mathematical constants (pi, 2*pi, etc.).
-
-## 5. Inconsistent naming
-
-Check for:
-- camelCase or mixedCase variable/function names (should be snake_case per PEP 8)
-- ALL_CAPS names that are not module-level constants
-- Boolean parameters/variables not named with is_/has_/should_/can_ prefix (INFO only)
-- Bare `0`/`1` used as boolean values in function calls
-
-## 6. Dead code
+## 5. Dead code
 
 Search for:
 - Commented-out code blocks (3+ consecutive commented lines that look like code)
 - Unreachable code after `return`/`raise`/`break`/`continue`
-- Imports that are never referenced in the file
 - `Optional[X]` or `Union[X, Y]` (should be `X | Y` per project style, Python 3.12+)
 
-## 7. DRY violations
+## 6. Docstring coverage
 
-Look for repeated code blocks (5+ similar consecutive lines appearing in
-multiple places). Suggest extraction into a helper if the duplication is
-non-trivial. Ignore test files for this check.
-
-## 8. Excessive nesting
-
-Flag any code block nested 5+ levels deep (excluding class/def). Report the
-deepest nesting level per function. Mark as WARN only if nesting harms
-readability (not when it is structural, e.g., nested loops over axes).
-
-## 9. String formatting inconsistency
-
-All string interpolation should use f-strings. Flag `str.format()`,
-`%`-formatting, and `+` concatenation used for building strings.
-Ignore format-spec literals for numpy/matplotlib (e.g., `"%.2f"`).
-
-## 10. Type hint gaps
-
-Check all public functions and methods in `src/` for:
-- Missing return type annotation
-- Missing parameter type annotations (exclude `self`, `cls`)
+Check all public functions, methods, and classes in `src/` for:
+- Missing docstrings entirely
+- Docstrings that are not NumPy-style (missing Parameters/Returns sections)
+User-facing API (`trspecfit.py`, `functions/`) should have extensive docstrings
+with Parameters, Returns, and Notes. Internal modules can keep method docstrings
+minimal but must have module and class-level docstrings.
 Report count and list the worst offenders.
 
-## 11. Numpy anti-patterns
+## 7. Abstractions and duplication
+
+Read `src/` modules looking for:
+- Poor or missing abstractions — repeated patterns that should be extracted
+  into a shared helper, base class method, or utility
+- Copy-pasted logic across files or classes (similar blocks of 5+ lines)
+- Overly concrete code that handles special cases inline instead of through
+  polymorphism or configuration
+Suggest specific refactorings where the improvement is clear. Ignore test files.
+
+## 8. Numpy anti-patterns
 
 Search for:
 - `np.concatenate` where `np.where` would suffice (piecewise assignment)
@@ -98,42 +106,36 @@ Search for:
 - `np.arange(0, n, 1)` instead of `np.arange(n)`
 - Manual loops over array elements that could be vectorized
 
-## 12. Fragile array comparisons
+## 9. Fragile array comparisons
 
 Flag `==` or `!=` on floating-point arrays/values from computation.
 Should use `np.isclose`, `np.allclose`, or tolerance-based comparison.
 Ignore comparisons against integer values or input validation checks.
 
-## 13. Ignored warnings
+## 10. Ignored warnings
 
 Search for `warnings.filterwarnings("ignore")` or `warnings.simplefilter("ignore")`.
 These can mask real issues. Flag unless scoped to a specific known warning.
 
-## 14. Plotting mixed with logic
+## 11. Plotting mixed with logic
 
 Flag functions that both compute results AND produce plots without a
 `show_plot`/`debug` flag to disable the plotting side. Plotting should be
 separable from computation.
 
-## 15. Poor separation of concerns
+## 12. Poor separation of concerns
 
 Check for:
 - Circular imports (A imports B imports A)
 - Business logic in UI/plotting code
 - I/O operations (file read/write) mixed into computation functions
 
-## 16. Missing `__repr__` / `__str__`
+## 13. Missing `__repr__` / `__str__`
 
 Check main domain classes for a `__repr__` method. Classes that appear in
 debugging output or collections should be representable. Report as INFO.
 
-## 17. Overuse of isinstance
-
-Flag `isinstance(self, ...)` in base class methods (base class knowing about
-subclasses). Also flag long isinstance chains (4+ branches) that could use
-a dispatch dict or polymorphism. Report as INFO if count is low.
-
-## 18. Global mutable state
+## 14. Global mutable state
 
 Search for:
 - `global` keyword usage
@@ -141,7 +143,17 @@ Search for:
   at runtime (not just defined as constants)
 - Module-level variables reassigned after import time
 
-## 19. Missing edge-case tests
+## 15. Security
+
+Search for:
+- `eval()` or `exec()` usage
+- `pickle.load()` / `pickle.loads()` on potentially untrusted data
+- `yaml.load()` without `Loader=SafeLoader` (or not using `yaml.safe_load()`)
+- Hardcoded file paths or credentials
+- `subprocess` calls with `shell=True`
+- `os.system()` calls
+
+## 16. Missing edge-case tests
 
 Scan test files for coverage of:
 - Empty/None inputs to public API functions
@@ -149,14 +161,6 @@ Scan test files for coverage of:
 - Invalid YAML/config inputs
 - NaN/Inf in numeric inputs
 Report as INFO with suggestions for what to add.
-
-## 20. Assertions without messages
-
-**In production code (`src/`)**: flag any bare `assert` statement — these are
-stripped by `python -O` and should be replaced with explicit `raise`.
-
-**In test code (`tests/`)**: report count of assertions without messages as
-INFO only (pytest introspection makes messages optional).
 
 ---
 
@@ -166,9 +170,21 @@ Print a summary table:
 
 | # | Check | Status | Issues |
 |---|-------|--------|--------|
-| 1 | Mutable defaults | ... | ... |
-| 2 | Broad exceptions | ... | ... |
-| ... | ... | ... | ... |
-| 20 | Assert messages | ... | ... |
+| 1 | Bugs & correctness | ... | ... |
+| 2 | Performance | ... | ... |
+| 3 | Broad exceptions | ... | ... |
+| 4 | God classes / long methods | ... | ... |
+| 5 | Dead code | ... | ... |
+| 6 | Docstring coverage | ... | ... |
+| 7 | Abstractions & duplication | ... | ... |
+| 8 | Numpy anti-patterns | ... | ... |
+| 9 | Fragile array comparisons | ... | ... |
+| 10 | Ignored warnings | ... | ... |
+| 11 | Plotting mixed with logic | ... | ... |
+| 12 | Separation of concerns | ... | ... |
+| 13 | Missing __repr__ | ... | ... |
+| 14 | Global mutable state | ... | ... |
+| 15 | Security | ... | ... |
+| 16 | Edge-case tests | ... | ... |
 
 Then list any FAIL or WARN items with actionable next steps.
