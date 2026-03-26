@@ -8,8 +8,11 @@ import matplotlib
 matplotlib.use("Agg")
 
 import numpy as np
+import pytest
 
 from trspecfit import File, Project, Simulator
+
+pytestmark = pytest.mark.slow
 
 
 #

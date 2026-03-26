@@ -82,6 +82,8 @@ typeCheckingMode = "basic"
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = "-m 'not slow'"
+markers = ["slow: long-running round-trip tests (skipped by default, use -m slow)"]
 filterwarnings = [
     "ignore:FigureCanvasAgg is non-interactive:UserWarning",
     "ignore:invalid value encountered in scalar divide:RuntimeWarning:lmfit",
