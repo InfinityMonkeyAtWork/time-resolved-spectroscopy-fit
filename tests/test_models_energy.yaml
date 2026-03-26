@@ -101,6 +101,14 @@ expression_chain:
       F: ["GLP_02_F"]
       m: ["GLP_02_m"]
 
+# single Gauss peak (no background) — used for profile round-trip tests
+# A fixed at 0; amplitude comes entirely from pExpDecay profile
+single_gauss:
+    Gauss:
+      A: [0, False]
+      x0: [85.0, True, 82, 88]
+      SD: [1.0, True, 0.5, 3.0]
+
 # single GLP peak (no background) — used for profile averaging tests
 # GLP is linear in A, so averaging over aux_axis = evaluating at mean(A_eff)
 single_glp:

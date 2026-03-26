@@ -121,7 +121,7 @@ class TestRoundTripClean:
         fitted_pars = fit_file.model_2d.result[1].params
         for name, true_val in truth_pars.items():
             fit_val = fitted_pars[name].value
-            assert np.isclose(true_val, fit_val, rtol=1e-2, atol=1e-6), (
+            assert np.isclose(true_val, fit_val, rtol=1e-10, atol=1e-12), (
                 f"{name}: true={true_val:.6f}, fit={fit_val:.6f}"
             )
 

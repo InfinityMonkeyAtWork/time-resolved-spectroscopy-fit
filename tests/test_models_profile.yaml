@@ -11,3 +11,17 @@ profile_pLinear:
     pLinear:
         m: [-0.5, True, -2, 2]
         b: [0.0, False, -1.0, 1.0]
+
+# round-trip test profiles (moderate values for reliable convergence)
+
+# linear shift of x0 over depth: x0(z) = 0.5*z, max shift 2.0 eV
+roundtrip_pLinear_x0:
+    pLinear:
+        m: [0.5, True, -1, 1]
+        b: [0.0, False, -1.0, 1.0]
+
+# exponential decay of amplitude over depth: A(z) = 10*exp(-z/4)
+roundtrip_pExpDecay_A:
+    pExpDecay:
+        A:   [10.0, True, 1, 30]
+        tau: [4.0, True, 2.0, 10.0]
