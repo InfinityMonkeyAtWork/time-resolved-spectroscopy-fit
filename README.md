@@ -37,16 +37,24 @@ Links:
 
 ## Installation
 
+These instructions assume Python 3.12+, `pip`, and virtual environment support are already installed.
+
 Install from PyPI:
 
 ```bash
-pip install trspecfit
+python -m pip install trspecfit
+```
+
+Recommended if you want to run the included example notebooks:
+
+```bash
+python -m pip install "trspecfit[lab]"
 ```
 
 Install from GitHub:
 
 ```bash
-pip install git+https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit.git
+python -m pip install git+https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit.git
 ```
 
 ## Quick Usage

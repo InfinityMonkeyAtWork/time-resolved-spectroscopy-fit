@@ -47,9 +47,15 @@ Each example is self-contained with:
 - `models_time.yaml` - Time-resolved model definitions
 - `project.yaml` - Project configuration
 
+Install the notebook dependencies first:
+
+```bash
+python -m pip install "trspecfit[lab]"
+```
+
 To run an example:
 
 ```bash
 cd examples/fitting_workflows/01_basic_fitting
-jupyter notebook example.ipynb
+jupyter lab example.ipynb
 ```
