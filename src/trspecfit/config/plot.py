@@ -160,7 +160,7 @@ class PlotConfig:
     y_scale: list[float] | None = None
 
     @classmethod
-    def from_project(cls, project, **overrides):
+    def from_project(cls, project, **overrides) -> "PlotConfig":
         """
         Create PlotConfig from Project settings.
 
@@ -199,7 +199,7 @@ class PlotConfig:
         return cls(**config_dict)
 
     #
-    def update(self, **kwargs):
+    def update(self, **kwargs) -> "PlotConfig":
         """
         Update configuration attributes.
 
@@ -223,7 +223,7 @@ class PlotConfig:
         return self
 
     #
-    def copy(self, **overrides):
+    def copy(self, **overrides) -> "PlotConfig":
         """
         Create a copy of this config with optional overrides.
 
