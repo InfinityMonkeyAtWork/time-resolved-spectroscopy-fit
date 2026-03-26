@@ -29,7 +29,18 @@ class ModelValidationError(ValueError):
 
 
 #
-def construct_yaml_map(self, node) -> Generator[list[tuple[str, Any]], None, None]:
+#
+class _ComponentNumberingConstructor(SafeConstructor):
+    """SafeConstructor subclass that auto-numbers duplicate component keys.
+
+    Scoped to model-YAML parsing only so the global SafeConstructor
+    (used by ``Project._load_config`` and other standard YAML consumers)
+    stays unmodified.
+    """
+
+
+#
+def _construct_yaml_map(self, node) -> Generator[list[tuple[str, Any]], None, None]:
     """
     Enable multiple components of the same type with automatic numbering.
 
@@ -40,7 +51,7 @@ def construct_yaml_map(self, node) -> Generator[list[tuple[str, Any]], None, Non
 
     Parameters
     ----------
-    self : SafeConstructor
+    self : _ComponentNumberingConstructor
         YAML constructor instance
     node : yaml.Node
         YAML node being constructed
@@ -86,8 +97,11 @@ def construct_yaml_map(self, node) -> Generator[list[tuple[str, Any]], None, Non
             data.append((key, val))
 
 
-SafeConstructor.add_constructor("tag:yaml.org,2002:map", construct_yaml_map)
+_ComponentNumberingConstructor.add_constructor(
+    "tag:yaml.org,2002:map", _construct_yaml_map
+)
 yaml = YAML(typ="safe")
+yaml.Constructor = _ComponentNumberingConstructor
 
 
 #

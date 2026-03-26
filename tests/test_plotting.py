@@ -529,6 +529,128 @@ class TestPlotConfigHierarchy:
 
 #
 #
+class TestPlotConfigFromYAML:
+    """Regression: project.yaml values must propagate through the full hierarchy."""
+
+    YAML_CONTENT = (
+        "e_label: 'Binding energy (eV)'\n"
+        "t_label: 'Delay (ps)'\n"
+        "z_label: 'Counts'\n"
+        "x_dir: 'rev'\n"
+        "z_colormap: 'RdBu'\n"
+    )
+
+    EXPECTED = {
+        "x_label": "Binding energy (eV)",
+        "y_label": "Delay (ps)",
+        "z_label": "Counts",
+        "x_dir": "rev",
+        "z_colormap": "RdBu",
+    }
+
+    #
+    def _make_project_dir(self, tmpdir):
+        """Write project.yaml and a minimal model YAML into *tmpdir*."""
+
+        (Path(tmpdir) / "project.yaml").write_text(self.YAML_CONTENT)
+
+        # Copy test model YAML so load_model can find it
+        import shutil
+
+        src = Path("tests") / "test_models_energy.yaml"
+        shutil.copy(src, Path(tmpdir) / "test_models_energy.yaml")
+
+    #
+    def test_project_loads_yaml_values(self):
+        """Project attributes reflect non-default YAML values."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_project_dir(tmpdir)
+            project = Project(path=tmpdir, name="test")
+
+            assert project.e_label == "Binding energy (eV)"
+            assert project.t_label == "Delay (ps)"
+            assert project.z_label == "Counts"
+            assert project.x_dir == "rev"
+            assert project.z_colormap == "RdBu"
+
+    #
+    def test_file_plot_config_inherits_yaml(self):
+        """File.plot_config must carry every non-default YAML value."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_project_dir(tmpdir)
+            project = Project(path=tmpdir, name="test")
+            file = File(
+                parent_project=project,
+                data=np.random.default_rng(0).standard_normal((30, 50)),
+                energy=np.linspace(80, 90, 50),
+                time=np.linspace(0, 100, 30),
+            )
+
+            config = file.plot_config
+            for attr, expected in self.EXPECTED.items():
+                assert getattr(config, attr) == expected, (
+                    f"File.plot_config.{attr}: "
+                    f"expected {expected!r}, got {getattr(config, attr)!r}"
+                )
+
+    #
+    def test_model_plot_config_inherits_yaml(self):
+        """Model.plot_config must match File.plot_config."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_project_dir(tmpdir)
+            project = Project(path=tmpdir, name="test")
+            file = File(
+                parent_project=project,
+                data=np.random.default_rng(0).standard_normal((30, 201)),
+                energy=np.linspace(80, 90, 201),
+                time=np.linspace(0, 100, 30),
+            )
+            file.load_model(
+                model_yaml="test_models_energy.yaml",
+                model_info=["single_glp"],
+            )
+            model = file.model_active
+            assert model is not None  # type guard
+
+            for attr, expected in self.EXPECTED.items():
+                assert getattr(model.plot_config, attr) == expected, (
+                    f"Model.plot_config.{attr}: "
+                    f"expected {expected!r}, got {getattr(model.plot_config, attr)!r}"
+                )
+
+    #
+    def test_component_plot_sees_yaml_config(self):
+        """Component.plot() must use config values from project.yaml."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_project_dir(tmpdir)
+            project = Project(path=tmpdir, name="test")
+            file = File(
+                parent_project=project,
+                data=np.random.default_rng(0).standard_normal((30, 201)),
+                energy=np.linspace(80, 90, 201),
+                time=np.linspace(0, 100, 30),
+            )
+            file.load_model(
+                model_yaml="test_models_energy.yaml",
+                model_info=["single_glp"],
+            )
+            model = file.model_active
+            assert model is not None  # type guard
+            component = model.components[0]
+
+            component.plot()
+            ax = plt.gca()
+            assert ax.get_xlabel() == "Binding energy (eV)"
+            assert ax.xaxis_inverted(), "x_dir='rev' from YAML not applied"
+            plt.close("all")
+
+
+#
+#
 class TestPlotConfigPropagation:
     """Test that PlotConfig propagates to mcp.py and simulator."""
 
