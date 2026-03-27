@@ -15,26 +15,6 @@
 - Parameter-sweep simulation for validation and ML training data generation
 - Centralized plot configuration via `PlotConfig` with per-plot overrides
 
-## Documentation
-
-Full docs are hosted on Read the Docs:
-- Docs home: https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/
-- Installation: https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/installation.html
-- Quick start: https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/quickstart.html
-- Examples: https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/examples/index.html
-- API reference: https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/api/index.html
-
-## Support and Community
-
-- Questions and usage help: GitHub Discussions (Q&A category)
-- Ideas and brainstorming: GitHub Discussions (Ideas category)
-- Reproducible bugs and trackable feature requests: GitHub Issues
-- Maintainer response target: within 7 days
-
-Links:
-- Discussions: https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/discussions
-- Issues: https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/issues
-
 ## Installation
 
 These instructions assume Python 3.12+, `pip`, and virtual environment support are already installed.
@@ -82,6 +62,21 @@ df = file.get_fit_results(fit_type='2d')
 For global fits, dynamics, profiles, and advanced workflows see the
 [Quick Start](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/quickstart.html)
 and [Examples](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/examples/index.html).
+
+## Documentation
+
+Full docs are hosted on [Read the Docs](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/):
+[Installation](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/installation.html) |
+[Quick Start](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/quickstart.html) |
+[Examples](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/examples/index.html) |
+[API Reference](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/api/index.html)
+
+## Support and Community
+
+- Questions and usage help: [Discussions (Q&A)](https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/discussions)
+- Ideas and brainstorming: [Discussions (Ideas)](https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/discussions)
+- Reproducible bugs and feature requests: [Issues](https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/issues)
+- Maintainer response target: within 7 days
 
 ## Development
 
