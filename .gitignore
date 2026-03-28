@@ -216,4 +216,5 @@ examples/simulatorBL931/
 *_fits/
 
 # Generated simulated data (from simulator and ML training examples)
+/simulated_data/
 examples/**/simulated_data/

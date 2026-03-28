@@ -382,9 +382,15 @@ class Model:
     def print_all_pars(self, detail: int = 0) -> None:
         """
         Print information on all parameters individually.
+
         Debugging utility to inspect parameter structure and values.
         For routine parameter inspection, use model.describe() or
         model.lmfit_pars.pretty_print().
+
+        Parameters
+        ----------
+        detail : int, default=0
+            Verbosity level passed to each Par.describe() call.
         """
 
         for c in self.components:

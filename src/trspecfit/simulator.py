@@ -954,7 +954,14 @@ class Simulator:
 
     #
     def set_noise_level(self, noise_level: float) -> None:
-        """Update noise level (analog detectors only)"""
+        """
+        Update noise level (analog detectors only).
+
+        Parameters
+        ----------
+        noise_level : float
+            Standard deviation of Gaussian noise (absolute units).
+        """
 
         if self.detection != "analog":
             warnings.warn(
@@ -965,7 +972,14 @@ class Simulator:
 
     #
     def set_noise_type(self, noise_type: str) -> None:
-        """Update noise type (analog detectors only)"""
+        """
+        Update noise type (analog detectors only).
+
+        Parameters
+        ----------
+        noise_type : str
+            Noise distribution: ``'gaussian'`` or ``'uniform'``.
+        """
 
         if self.detection != "analog":
             warnings.warn(
@@ -976,7 +990,14 @@ class Simulator:
 
     #
     def set_counts_per_delay(self, counts_per_delay: int) -> None:
-        """Update counts per delay (photon counting only)"""
+        """
+        Update counts per delay (photon counting only).
+
+        Parameters
+        ----------
+        counts_per_delay : int
+            Total photon counts collected per delay step.
+        """
 
         if self.detection != "photon_counting":
             warnings.warn(
@@ -1022,7 +1043,14 @@ class Simulator:
 
     #
     def set_seed(self, seed: int | None) -> None:
-        """Update random seed"""
+        """
+        Update random seed.
+
+        Parameters
+        ----------
+        seed : int or None
+            Random seed for reproducibility. None for non-deterministic.
+        """
 
         self.seed = seed
         self.rng = np.random.default_rng(seed)
