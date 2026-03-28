@@ -2,7 +2,6 @@
 name: check-docs
 description: Audit documentation quality before a merge or release.
 disable-model-invocation: true
-allowed-tools: Bash, Read, Grep, Glob, Agent
 ---
 
 Run the following documentation checks in order. Report a summary at the end

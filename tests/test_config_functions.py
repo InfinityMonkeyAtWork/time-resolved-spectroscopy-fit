@@ -58,6 +58,7 @@ class TestGetFunctionParameters:
 
     def test_none_has_no_params(self):
         """none() takes only t, so parameters should be empty."""
+
         assert get_function_parameters("none") == []
 
     #

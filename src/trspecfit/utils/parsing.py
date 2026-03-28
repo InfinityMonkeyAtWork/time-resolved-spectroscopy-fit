@@ -15,6 +15,7 @@ from ruamel.yaml.error import YAMLError
 
 from trspecfit.config.functions import (
     all_functions,
+    background_functions,
     energy_functions,
     get_function_parameters,
     numbering_exceptions,
@@ -28,7 +29,18 @@ class ModelValidationError(ValueError):
 
 
 #
-def construct_yaml_map(self, node) -> Generator[list[tuple[str, Any]], None, None]:
+#
+class _ComponentNumberingConstructor(SafeConstructor):
+    """SafeConstructor subclass that auto-numbers duplicate component keys.
+
+    Scoped to model-YAML parsing only so the global SafeConstructor
+    (used by ``Project._load_config`` and other standard YAML consumers)
+    stays unmodified.
+    """
+
+
+#
+def _construct_yaml_map(self, node) -> Generator[list[tuple[str, Any]], None, None]:
     """
     Enable multiple components of the same type with automatic numbering.
 
@@ -39,7 +51,7 @@ def construct_yaml_map(self, node) -> Generator[list[tuple[str, Any]], None, Non
 
     Parameters
     ----------
-    self : SafeConstructor
+    self : _ComponentNumberingConstructor
         YAML constructor instance
     node : yaml.Node
         YAML node being constructed
@@ -85,8 +97,11 @@ def construct_yaml_map(self, node) -> Generator[list[tuple[str, Any]], None, Non
             data.append((key, val))
 
 
-SafeConstructor.add_constructor("tag:yaml.org,2002:map", construct_yaml_map)
+_ComponentNumberingConstructor.add_constructor(
+    "tag:yaml.org,2002:map", _construct_yaml_map
+)
 yaml = YAML(typ="safe")
+yaml.Constructor = _ComponentNumberingConstructor
 
 
 #
@@ -294,13 +309,38 @@ def validate_model_components(
                         f"See 'models_energy.yaml' in example directory: {example_dir}"
                     )
 
+        # Check component ordering: last component must not be background or
+        # convolution, because these require a pre-existing spectrum to
+        # operate on and the last component is evaluated first (standalone).
+        comp_names = list(components.keys())
+        if comp_names:
+            last_base, _ = parse_component_name(comp_names[-1])
+            if last_base in background_functions():
+                raise ModelValidationError(
+                    f"Last component '{comp_names[-1]}' in model "
+                    f"'{model_name}' is a background function.\n"
+                    f"Background components (Offset, Shirley, LinBack) need a "
+                    f"spectrum to operate on, so they cannot be the last "
+                    f"component.\nMove a peak component after the background "
+                    f"in {model_yaml_path}"
+                )
+            if "CONV" in last_base or last_base.endswith("CONV"):
+                raise ModelValidationError(
+                    f"Last component '{comp_names[-1]}' in model "
+                    f"'{model_name}' is a convolution function.\n"
+                    f"Convolution components need a spectrum to convolve with, "
+                    f"so they cannot be the last component.\n"
+                    f"Move a peak component after the convolution "
+                    f"in {model_yaml_path}"
+                )
+
 
 #
 def load_and_number_yaml_components(
     model_yaml_path: Path,
     model_info: list[str],
+    *,
     is_dynamics: bool = False,
-    debug: bool = False,
 ) -> dict[str, dict[str, dict[str, Any]]]:
     """
     Load model YAML file and apply appropriate component numbering strategy.
@@ -319,8 +359,6 @@ def load_and_number_yaml_components(
     is_dynamics : bool, default=False
         If True, applies dynamics numbering conflict resolution across subcycles.
         If False, treats as energy model (numbering already complete after parsing).
-    debug : bool, default=False
-        If True, print detailed information during loading and numbering
 
     Returns
     -------
@@ -345,12 +383,12 @@ def load_and_number_yaml_components(
     try:
         with model_yaml_path.open() as f_yaml:
             # Load YAML file with custom constructor for numbering
-            model_info_ALL = yaml.load(f_yaml)
+            model_info_all = yaml.load(f_yaml)
 
             # Convert YAML structure to dictionary format
-            if isinstance(model_info_ALL, list):
+            if isinstance(model_info_all, list):
                 model_info_dict = {}
-                for model_entry in model_info_ALL:
+                for model_entry in model_info_all:
                     if not (isinstance(model_entry, tuple) and len(model_entry) == 2):
                         raise ValueError(f"Malformed model entry: {model_entry}")
                     model_name, components = model_entry
@@ -367,17 +405,11 @@ def load_and_number_yaml_components(
             else:  # should never happen unless construct_yaml_map is broken
                 raise TypeError(f"Unexpected YAML structure in {model_yaml_path}")
 
-            if debug:
-                print("model_info_ALL:")
-                print(model_info_ALL)
-                print("model_info_dict:")
-                print(model_info_dict)
-
             # Apply appropriate numbering strategy
             if is_dynamics:
                 # Resolve numbering conflicts across subcycles
                 model_info_dict = resolve_dynamics_numbering_conflicts(
-                    model_info_dict, model_info, debug
+                    model_info_dict, model_info
                 )
 
             # Validate the loaded model structure
@@ -422,7 +454,6 @@ def load_and_number_yaml_components(
 def resolve_dynamics_numbering_conflicts(
     model_info_dict: dict[str, dict[str, dict[str, Any]]],
     model_info: list[str],
-    debug: bool = False,
 ) -> dict[str, dict[str, dict[str, Any]]]:
     """
     Resolve numbering conflicts for dynamics models across subcycles.
@@ -438,22 +469,12 @@ def resolve_dynamics_numbering_conflicts(
         Nested dictionary of model definitions before conflict resolution
     model_info : list of str
         List of model names to process
-    debug : bool, default=False
-        If True, print detailed information during conflict resolution
 
     Returns
     -------
     dict
         Model dictionary with all numbering conflicts resolved
     """
-
-    if debug:
-        print("=== STARTING CONFLICT RESOLUTION ===")
-        print(f"model_info: {model_info}")
-        print("\nmodel_info_dict BEFORE resolution:")
-        for submodel, comps in model_info_dict.items():
-            if submodel in model_info:
-                print(f"  {submodel}: {list(comps.keys())}")
 
     # Get all available function names and exceptions
     available_functions = all_functions()
@@ -485,10 +506,6 @@ def resolve_dynamics_numbering_conflicts(
                 global_next_available[base_name] = max(
                     global_next_available[base_name], number + 1
                 )
-
-    if debug:
-        print(f"\nAfter first pass - used_numbers: {used_numbers}")
-        print(f"global_next_available: {global_next_available}")
 
     # Second pass: resolve conflicts by reassigning duplicate numbers
     processed_dict: dict[str, dict[str, Any]] = {}
@@ -522,11 +539,6 @@ def resolve_dynamics_numbering_conflicts(
                     new_number = global_next_available[base_name]
                     global_next_available[base_name] += 1
 
-                    if debug:
-                        print(
-                            f"Conflict resolved: {comp_name} -> "
-                            f"{base_name}_{new_number:02d} in {submodel}"
-                        )
                 else:
                     # No conflict, use current number
                     new_number = current_number
@@ -541,16 +553,6 @@ def resolve_dynamics_numbering_conflicts(
             else:
                 # Not a component function, keep as-is
                 processed_dict[submodel][comp_name] = comp_params
-
-        if debug:
-            print(f"\nProcessed submodel: {submodel}")
-            print(f"  {submodel}: {list(processed_dict[submodel].keys())}")
-
-    if debug:
-        print("\nFINAL processed_dict:")
-        for submodel in model_info:
-            if submodel in processed_dict:
-                print(f"  {submodel}: {list(processed_dict[submodel].keys())}")
 
     return processed_dict
 

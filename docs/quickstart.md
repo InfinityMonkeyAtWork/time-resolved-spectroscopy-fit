@@ -1,93 +1,111 @@
 # Quick Start
 
-This guide shows three common patterns:
-1. basic energy-model loading,
-2. adding dynamics, and
-3. adding profiles (and recommended profile+dynamics composition).
+## Get running in 3 steps
 
-## Basic
-```python
-from trspecfit import Project, File
+**1. Install with Jupyter notebook support**
 
-# Create a project and file wrapper
-project = Project(path='my_project', name='my_experiment')
-file = File(parent_project=project, path='my_dataset')
-
-# Load an energy model (this becomes file.model_active)
-# models_energy.yaml can define generic components like:
-#   some_background_function, some_peak_function
-file.load_model('models_energy.yaml', ['some_energy_model'])
-
-# See which energy parameters are available in the loaded model
-file.describe_model()
+```bash
+python -m pip install "trspecfit[lab]"
 ```
 
-## Dynamics
-```python
-# Fix well-known energy parameters via a baseline fit
-file.define_baseline(t_ind=0)
-file.fit_baseline()
+**2. Download the examples**
 
-# Add time dependence to one parameter in the active energy model
-# par_name must match a loaded parameter name exactly
-file.add_time_dependence(
-    model_yaml='models_time.yaml',
-    model_info=['some_dynamics_model'],
-    par_name='some_base_parameter',
-)
+The [example notebooks](examples/index.rst) and data are not included in the pip package.
+Download them from GitHub:
 
-# Inspect updated parameters
-file.describe_model()
-
-# Global 2D fit
-file.fit_2Dmodel()
+```bash
+curl -L https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/archive/refs/heads/main.zip -o trspecfit-examples.zip
+unzip trspecfit-examples.zip "time-resolved-spectroscopy-fit-main/examples/*" -d .
+mv time-resolved-spectroscopy-fit-main/examples ./trspecfit-examples
+rm -rf time-resolved-spectroscopy-fit-main trspecfit-examples.zip
 ```
 
-## Profile
-```python
-import numpy as np
-from trspecfit import Project, File
+Or clone the full repo:
 
-project = Project(path='my_project', name='my_experiment')
-file = File(
-    parent_project=project,
-    path='my_dataset',
-    aux_axis=np.linspace(0, 10, 21),  # required for profile models
-)
-
-file.load_model('models_energy.yaml', ['some_energy_model'])
-
-# Attach profile to a base parameter
-file.add_par_profile(
-    model_yaml='models_profile.yaml',
-    model_info=['some_profile_model'],   # profile model name
-    par_name='some_base_parameter',      # base parameter name
-)
-
-# Add dynamics to a base parameter (most common use case)
-file.add_time_dependence(
-    model_yaml='models_time.yaml',
-    model_info=['some_dynamics_model'],
-    par_name='some_base_parameter',
-)
-
-# Optionally: attach dynamics to a profile parameter (series composition)
-file.add_time_dependence(
-    model_yaml='models_time.yaml',
-    model_info=['another_dynamics_model'],
-    par_name='some_profile_parameter',
-)
+```bash
+git clone https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit.git
+mv time-resolved-spectroscopy-fit/examples ./trspecfit-examples
 ```
 
-## Supported and Disallowed Paths
-- Supported: `base parameter -> profile`, then `profile parameter -> dynamics`.
-- Disallowed: attaching both profile and dynamics directly to the same base parameter (disabled to avoid strongly correlated fits).
+**3. Open the first example**
 
-## Notes
-- `add_time_dependence(...)` must be called before `create_value2D()` if you want dynamics in one or more parameters.
-- `model_info` in `add_time_dependence(...)` can contain multiple names for multi-cycle dynamics.
-- For repeating dynamics, pass `frequency=<Hz>` to `add_time_dependence(...)`.
+Start with **01** and work forward — each builds on the previous one.
 
-## Next Steps
+```bash
+cd trspecfit-examples/fitting_workflows/01_basic_fitting
+jupyter lab example.ipynb
+```
 
-See [Examples](examples/index.rst) and [API Reference](api/index.rst) for full workflows and parameter naming details.
+Run all cells. The notebook will load data, build a model, fit it, and plot the results.
+
+## Examples overview
+
+Fitting workflow examples:
+
+| Example | What you learn |
+|---------|---------------|
+| 01_basic_fitting | Load data, define a model, fit baseline + 2D, visualize results |
+| 02_dependent_parameters | Link parameters with expressions (e.g. spin-orbit doublets) |
+| 03_multi_cycle | Multi-cycle dynamics with subcycles and frequency |
+| 04_par_profiles | Depth-dependent parameters with profile functions |
+
+Data generation examples (for testing/ML):
+
+| Example | What you learn |
+|---------|---------------|
+| simulator | Generate synthetic noisy data from a known model |
+| ml_training | Sweep parameter space for ML training datasets |
+
+## Typical workflow
+
+Every fitting workflow follows the same pattern:
+
+```
+1. Project(path=...)                    # set up workspace
+2. File(data=..., energy=..., time=...) # load your data
+3. file.define_baseline(...)            # select baseline time region
+4. file.load_model('models.yaml', ...)  # load baseline model from YAML
+5. file.fit_baseline(...)               # fit the baseline spectrum
+6. file.load_model('models.yaml', ...)  # load 2D energy model from YAML
+7. file.add_time_dependence(...)        # make a parameter evolve in time
+8. file.fit_2d(...)                     # global 2D fit
+9. file.get_fit_results(fit_type='2d')  # extract results as DataFrame
+```
+
+Optional extension after step 6:
+`file.add_par_profile(...)` — make a parameter vary over an auxiliary axis
+
+## YAML model format
+
+Models are defined in YAML files. Each file can contain multiple named models.
+Each model lists components (functions) and their parameters:
+
+```yaml
+model_name:
+    ComponentFunction:
+      param: [initial_value, vary?, min, max]  # full form
+      param: [initial_value, False]             # fixed parameter (short form)
+      param: ["expression"]                     # expression dependency
+```
+
+**Available component types:**
+
+- **Peaks**: `GLP`, `Gauss`, `Lorentz`, `GLS`, `DS`
+- **Backgrounds**: `LinBack`, `Shirley`, `Offset`
+- **Time dynamics**: `expFun`, `expRiseFun`, `SinFun`, `SinDivX`
+- **Convolution kernels**: `gaussCONV`, `lorentzCONV`, `expDecayCONV`, `expRiseCONV`
+- **Profile functions**: `pExpDecay`, `pLinear`, `pGauss`
+
+See the [API Reference](api/index.rst) for all function signatures and
+parameter descriptions.
+
+## Model composition rules
+
+- **Supported:** base parameter -> profile, then profile parameter -> dynamics
+- **Disallowed:** profile + dynamics on the same base parameter
+  (disabled to avoid strongly correlated fits)
+
+## Next steps
+
+- [Examples](examples/index.rst) — full notebooks with real data
+- [API Reference](api/index.rst) — complete method and function documentation

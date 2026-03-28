@@ -15,18 +15,32 @@ repos:
     types: [python]
     stages: [pre-commit]
 
-  - id: pyright-trspecfit
-    name: pyright (trspecfit)
-    entry: .venv/bin/pyright
-    language: system
-    pass_filenames: false
-    stages: [pre-commit]
+  # - id: pyright-trspecfit
+  #   name: pyright (trspecfit)
+  #   entry: .venv/bin/pyright
+  #   language: system
+  #   pass_filenames: false
+  #   stages: [pre-commit]
 
   - id: mypy-trspecfit
     name: mypy (trspecfit)
     entry: .venv/bin/mypy --no-incremental
     language: system
     pass_filenames: false
+    stages: [pre-commit]
+
+  - id: pytest
+    name: pytest
+    entry: .venv/bin/pytest -q
+    language: system
+    pass_filenames: false
+    stages: [pre-commit]
+
+  - id: nbstripout
+    name: nbstripout
+    entry: .venv/bin/nbstripout
+    language: system
+    types: [jupyter]
     stages: [pre-commit]
 
   - id: deptry

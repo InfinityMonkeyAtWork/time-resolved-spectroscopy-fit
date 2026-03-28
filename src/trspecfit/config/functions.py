@@ -19,7 +19,7 @@ from trspecfit.functions import time as fcts_time
 
 
 #
-def all_functions():
+def all_functions() -> tuple[str, ...]:
     """
     Dynamically discover all available function names from the functions modules.
     Returns a set of all function names that can be used as components.
@@ -38,7 +38,7 @@ def all_functions():
 
 
 #
-def numbering_exceptions():
+def numbering_exceptions() -> tuple[str, ...]:
     """
     Get function names that should not receive automatic numbering.
 
@@ -58,7 +58,7 @@ def numbering_exceptions():
 
 
 #
-def background_functions():
+def background_functions() -> tuple[str, ...]:
     """
     Get names of all background functions.
 
@@ -76,7 +76,7 @@ def background_functions():
 
 
 #
-def energy_functions():
+def energy_functions() -> tuple[str, ...]:
     """
     Get names of all energy/spectral component functions.
 
@@ -98,7 +98,7 @@ def energy_functions():
 
 
 #
-def time_functions():
+def time_functions() -> tuple[str, ...]:
     """
     Get names of all time dynamics functions.
 
@@ -124,7 +124,7 @@ def time_functions():
 
 
 #
-def convolution_functions():
+def convolution_functions() -> tuple[str, ...]:
     """
     Get names of all convolution kernel functions.
 
@@ -149,7 +149,7 @@ def convolution_functions():
 
 
 #
-def get_function_parameters(function_name):
+def get_function_parameters(function_name) -> list[str]:
     """
     Get expected parameter names for a function by inspecting its signature.
 

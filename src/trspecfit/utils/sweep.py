@@ -92,6 +92,11 @@ class ParameterSweep:
         self.rng = np.random.default_rng(seed)
 
     #
+    def __repr__(self) -> str:
+        n_pars = len(self.parameter_specs)
+        return f"ParameterSweep(strategy='{self.strategy}', n_parameters={n_pars})"
+
+    #
     def add_range(self, par_name: str, values: Sequence[float]) -> None:
         """
         Add discrete parameter values to sweep.
@@ -265,7 +270,10 @@ class ParameterSweep:
             return cast("np.ndarray", self.rng.normal(spec["mean"], spec["std"], n))
         if spec["type"] == "lognormal":
             return cast("np.ndarray", self.rng.lognormal(spec["mean"], spec["std"], n))
-        raise ValueError(f"Unknown distribution type: {spec['type']}")
+        raise ValueError(
+            f"Unknown distribution type: '{spec['type']}'. "
+            "Must be 'uniform', 'normal', or 'lognormal'."
+        )
 
     #
     def _generate_grid(self) -> Generator[dict[str, float], None, None]:
@@ -543,7 +551,7 @@ class SweepDataset:
                 parameters = {
                     key: value
                     for key, value in config_group.attrs.items()
-                    if key != "all_parameters"
+                    if key not in ("all_parameters", "all_parameter_values")
                 }
                 param_data.append(parameters)
 
@@ -555,7 +563,7 @@ class SweepDataset:
 
     #
     def load_config(
-        self, config_idx: int, load_clean: bool = True, load_noisy: bool = True
+        self, config_idx: int, *, load_clean: bool = True, load_noisy: bool = True
     ) -> dict[str, Any]:
         """
         Load a single parameter configuration and its data.
@@ -577,7 +585,7 @@ class SweepDataset:
         dict
             Dictionary with keys:
             - parameters: Dict of swept parameter values
-            - all_parameters: Dict of all model parameters (if available)
+            - all_parameter_values: Dict of all model parameter values (if available)
             - clean: Clean data (if load_clean=True)
             - noisy: List of noisy realizations (if load_noisy=True)
 
@@ -603,13 +611,18 @@ class SweepDataset:
             parameters = {
                 key: value
                 for key, value in config_group.attrs.items()
-                if key != "all_parameters"
+                if key not in ("all_parameters", "all_parameter_values")
             }
             result["parameters"] = parameters
 
-            # Get all parameters (JSON)
-            if "all_parameters" in config_group.attrs:
-                result["all_parameters"] = json_loads_attr(
+            # Get all parameter values (JSON)
+            if "all_parameter_values" in config_group.attrs:
+                result["all_parameter_values"] = json_loads_attr(
+                    config_group.attrs["all_parameter_values"]
+                )
+            elif "all_parameters" in config_group.attrs:
+                # Legacy format (pre-rename)
+                result["all_parameter_values"] = json_loads_attr(
                     config_group.attrs["all_parameters"]
                 )
 

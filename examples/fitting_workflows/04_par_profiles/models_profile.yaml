@@ -10,8 +10,8 @@
 #     e.g.  GLP_01_A_pExpDecay_01_A,  GLP_01_x0_pLinear_01_m
 #
 # Load with:
-#   file.add_par_profile("models_profile.yaml", ["GLP_01_A"], "GLP_01_A")
-#   file.add_par_profile("models_profile.yaml", ["GLP_01_x0"], "GLP_01_x0")
+#   file.add_par_profile("2D", "GLP_01_A", "models_profile.yaml", ["GLP_01_A"])
+#   file.add_par_profile("2D", "GLP_01_x0", "models_profile.yaml", ["GLP_01_x0"])
 
 # ----------------------------------------------------------------------------
 # IMFP-weighted amplitude profile (applied to GLP_01_A)

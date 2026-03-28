@@ -1,7 +1,7 @@
 # Project configuration for trspecfit ML training data generation example
 
 # Display settings (general verbosity)
-show_info: 1  # 0: no output, 1: important, 2: all, 3+: debugging
+show_output: 1  # 0: silent/API mode, 1: interactive/notebook mode
 
 # Axis labels
 e_label: 'Energy (arb. units)' # x -> energy

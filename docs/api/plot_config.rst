@@ -22,7 +22,7 @@ Create a standalone PlotConfig and pass it to plotting helpers.
 
    # Create config with custom settings
    config = PlotConfig(x_label='Energy (eV)', x_dir='rev', dpi_plot=150)
-   uplt.plot_1D(data, x, config=config)
+   uplt.plot_1d(data, x, config=config)
 
 Using project settings
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -39,8 +39,8 @@ reuse the resulting config across plots.
    config = PlotConfig.from_project(project)
 
    # All plots use project settings
-   uplt.plot_1D(data, x, config=config)
-   uplt.plot_2D(data, x, y, config=config)
+   uplt.plot_1d(data, x, config=config)
+   uplt.plot_2d(data, x, y, config=config)
 
 Per-plot overrides
 ^^^^^^^^^^^^^^^^^^
@@ -50,7 +50,7 @@ underlying config object.
 
 .. code-block:: python
 
-   uplt.plot_1D(data, x, config=config, x_dir='rev', colors=['red', 'blue'])
+   uplt.plot_1d(data, x, config=config, x_dir='rev', colors=['red', 'blue'])
 
 Create alternate configs
 ^^^^^^^^^^^^^^^^^^^^^^^^

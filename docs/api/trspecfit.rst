@@ -44,10 +44,10 @@ Fitting Workflow
 .. automethod:: trspecfit.trspecfit.File.define_baseline
 .. automethod:: trspecfit.trspecfit.File.set_fit_limits
 .. automethod:: trspecfit.trspecfit.File.fit_baseline
-.. automethod:: trspecfit.trspecfit.File.fit_SliceBySlice
+.. automethod:: trspecfit.trspecfit.File.fit_slice_by_slice
 .. automethod:: trspecfit.trspecfit.File.add_par_profile
 .. automethod:: trspecfit.trspecfit.File.add_time_dependence
-.. automethod:: trspecfit.trspecfit.File.fit_2Dmodel
+.. automethod:: trspecfit.trspecfit.File.fit_2d
 
 Utility Methods
 ~~~~~~~~~~~~~~~
@@ -58,5 +58,5 @@ Utility Methods
 
 .. automethod:: trspecfit.trspecfit.File.model_list_to_name
 .. automethod:: trspecfit.trspecfit.File.create_model_path
-.. automethod:: trspecfit.trspecfit.File.save_SliceBySlice_fit
-.. automethod:: trspecfit.trspecfit.File.save_2Dmodel_fit
+.. automethod:: trspecfit.trspecfit.File.save_sbs_fit
+.. automethod:: trspecfit.trspecfit.File.save_2d_fit

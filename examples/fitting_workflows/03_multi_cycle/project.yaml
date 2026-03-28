@@ -1,7 +1,7 @@
 # Project configuration for trspecfit multi_cycle example
 
 # Display settings (general verbosity)
-show_info: 1  # 0: no output, 1: important, 2: all, 3+: debugging
+show_output: 1  # 0: silent/API mode, 1: interactive/notebook mode
 
 # Axis labels
 e_label: 'Binding energy (eV)' # x -> energy
@@ -13,7 +13,7 @@ x_dir: 'rev'  # def(ault) or rev(erse)
 x_type: 'lin'  # lin or log
 y_dir: 'def'  # def(ault) or rev(erse)
 y_type: 'lin'  # lin or log
-z_colormap: 'RdBu' # colormap in 2D plots
+z_colormap: 'plasma' # colormap in 2D plots
 z_type: 'lin'  # lin or log (2D plots)
 dpi_plt: 100 # figure display dpi
 dpi_save: 300 # figure save dpi

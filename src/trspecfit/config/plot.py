@@ -42,11 +42,13 @@ class PlotConfig:
         Y-axis direction: 'def' (default) or 'rev' (reversed)
     y_type : str
         Y-axis scale: 'lin' (linear) or 'log' (logarithmic)
-    x_lim : Optional[Tuple[float, float]]
+    x_lim : tuple[float, float] | None
         X-axis limits (min, max)
-    y_lim : Optional[Tuple[float, float]]
+    y_lim : tuple[float, float] | None
         Y-axis limits (min, max)
-    z_lim : Optional[Tuple[float, float]]
+    z_type : str
+        Color scale type: 'lin' (linear) or 'log' (logarithmic)
+    z_lim : tuple[float, float] | None
         Color scale limits for 2D plots (min, max)
     dpi_plot : int
         DPI for displaying plots
@@ -54,27 +56,27 @@ class PlotConfig:
         DPI for saving plots
     z_colormap : str
         Colormap name for 2D plots
-    data_slice : Optional[List[List[int]]]
+    data_slice : list[list[int]] | None
         Data slicing indices for 2D plots: [[x_start, x_stop], [y_start, y_stop]]
-    colors : Optional[List[str]]
+    colors : list[str] | None
         List of colors for line plots
-    linestyles : Optional[List[str]]
+    linestyles : list[str] | None
         List of line styles
-    linewidths : Optional[List[float]]
+    linewidths : list[float] | None
         List of line widths
-    markers : Optional[List[str]]
+    markers : list[str] | None
         List of marker styles
-    markersizes : Optional[List[float]]
+    markersizes : list[float] | None
         List of marker sizes
-    legend : Optional[List[str]]
+    legend : list[str] | None
         List of legend labels
     waterfall : float
         Y-offset between plots for waterfall display
-    vlines : Optional[List[float]]
+    vlines : list[float] | None
         X-coordinates for vertical lines
-    hlines : Optional[List[float]]
+    hlines : list[float] | None
         Y-coordinates for horizontal lines
-    ticksize : Optional[float]
+    ticksize : float | None
         Font size for tick labels
 
     Examples
@@ -82,23 +84,23 @@ class PlotConfig:
     Create a configuration with custom settings:
 
     >>> config = PlotConfig(x_label='Energy (eV)', x_dir='rev', dpi_plot=150)
-    >>> plot_1D(data, x, config=config)
+    >>> plot_1d(data, x, config=config)
 
     Create from Project settings:
 
     >>> project = Project(path='...', config_file='project.yaml')
     >>> config = PlotConfig.from_project(project)
-    >>> plot_1D(data, x, config=config)
+    >>> plot_1d(data, x, config=config)
 
     Override Project settings:
 
     >>> config = PlotConfig.from_project(project, x_label='Binding Energy (eV)')
-    >>> plot_2D(data, x, y, config=config)
+    >>> plot_2d(data, x, y, config=config)
 
     Override config for a specific plot:
 
     >>> config = PlotConfig.from_project(project)
-    >>> plot_1D(data, x, config=config, x_dir='rev', linewidth=2)
+    >>> plot_1d(data, x, config=config, x_dir='rev', linewidth=2)
 
     Create multiple configs from one project:
 
@@ -134,6 +136,7 @@ class PlotConfig:
     # 2D plot settings
     z_colormap: str = "viridis"
     z_colorbar: str = "ver"  # 'ver' or 'hor'
+    z_type: str = "lin"  # 'lin' or 'log' for color scale
     # 2D data handling
     data_slice: list[list[int]] | None = None
     z_lim: tuple[float, float] | None = None
@@ -157,7 +160,7 @@ class PlotConfig:
     y_scale: list[float] | None = None
 
     @classmethod
-    def from_project(cls, project, **overrides):
+    def from_project(cls, project, **overrides) -> "PlotConfig":
         """
         Create PlotConfig from Project settings.
 
@@ -186,6 +189,7 @@ class PlotConfig:
             "dpi_save": project.dpi_save,
             "z_colormap": project.z_colormap,
             "z_colorbar": project.z_colorbar,
+            "z_type": project.z_type,
             "res_mult": project.res_mult,
         }
 
@@ -195,7 +199,7 @@ class PlotConfig:
         return cls(**config_dict)
 
     #
-    def update(self, **kwargs):
+    def update(self, **kwargs) -> "PlotConfig":
         """
         Update configuration attributes.
 
@@ -219,7 +223,7 @@ class PlotConfig:
         return self
 
     #
-    def copy(self, **overrides):
+    def copy(self, **overrides) -> "PlotConfig":
         """
         Create a copy of this config with optional overrides.
 

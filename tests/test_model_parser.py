@@ -18,12 +18,12 @@ class TestEnergyParsing:
     #
     def _load_energy_model(self, model_info):
         """Create project, file, and load energy model."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=model_info,
-            debug=False,
         )
         model = file.model_active
         assert model is not None, "Model loading failed in setup"
@@ -53,10 +53,10 @@ class TestEnergyParsing:
         # Shirley (should not be numbered) - now uses [value, vary] format
         assert model.components[1].fct_str == "Shirley"
         assert model.components[1].comp_name == "Shirley"
-        assert model.components[1].par_dict["pShirley"] == [400, False]
+        assert model.components[1].par_dict["pShirley"] == [4.0e-4, False]
         # Check that lmfit parameter was created with unbounded min/max
         shirley_par = model.lmfit_pars["Shirley_pShirley"]
-        assert shirley_par.value == 400
+        assert shirley_par.value == 4.0e-4
         assert not shirley_par.vary
         assert shirley_par.min == -np.inf
         assert shirley_par.max == np.inf
@@ -64,7 +64,7 @@ class TestEnergyParsing:
         # GLP_01 (should be numbered)
         assert model.components[2].fct_str == "GLP"
         assert model.components[2].comp_name == "GLP_01"
-        assert model.components[2].N == 1
+        assert model.components[2].num == 1
         assert model.components[2].par_dict["A"] == [20, True, 5, 25]
         assert model.components[2].par_dict["x0"] == [84.5, True, 82, 88]
         assert model.components[2].par_dict["F"] == [1.0, True, 0.75, 2.5]
@@ -73,7 +73,7 @@ class TestEnergyParsing:
         # GLP_02 (should be numbered) - x0 now uses [value, vary] format
         assert model.components[3].fct_str == "GLP"
         assert model.components[3].comp_name == "GLP_02"
-        assert model.components[3].N == 2
+        assert model.components[3].num == 2
         assert model.components[3].par_dict["A"] == [17, True, 5, 25]
         assert model.components[3].par_dict["x0"] == [88.1, True]
         # Check that lmfit parameter was created with unbounded min/max
@@ -107,16 +107,16 @@ class TestEnergyParsing:
         assert model.components[1].fct_str == "Shirley"
         assert model.components[1].comp_name == "Shirley"
         assert model.components[1].par_dict["pShirley"] == [
-            400,
+            4.0e-4,
             True,
-            1.0e-6,
-            1.0e3,
+            1.0e-12,
+            1.0e-3,
         ]
 
         # GLP_01
         assert model.components[2].fct_str == "GLP"
         assert model.components[2].comp_name == "GLP_01"
-        assert model.components[2].N == 1
+        assert model.components[2].num == 1
         assert model.components[2].par_dict["A"] == [20, True, 5, 25]
         assert model.components[2].par_dict["x0"] == [84.5, True, 82, 88]
         assert model.components[2].par_dict["F"] == [1.0, True, 0.75, 2.5]
@@ -125,7 +125,7 @@ class TestEnergyParsing:
         # GLP_02
         assert model.components[3].fct_str == "GLP"
         assert model.components[3].comp_name == "GLP_02"
-        assert model.components[3].N == 2
+        assert model.components[3].num == 2
         assert model.components[3].par_dict["A"] == ["3/4*GLP_01_A"]
         assert model.components[3].par_dict["x0"] == ["GLP_01_x0 +3.6"]
         assert model.components[3].par_dict["F"] == ["GLP_01_F"]
@@ -134,6 +134,7 @@ class TestEnergyParsing:
     #
     def test_energy_expression_fwd_ref_model(self):
         """Test energy parameters with forward reference expressions"""
+
         model = self._load_energy_model(["energy_expression_forward_reference"])
         assert model.name == "energy_expression_forward_reference"
         assert model.dim == 1
@@ -149,16 +150,16 @@ class TestEnergyParsing:
         assert model.components[1].fct_str == "Shirley"
         assert model.components[1].comp_name == "Shirley"
         assert model.components[1].par_dict["pShirley"] == [
-            400,
+            4.0e-4,
             True,
-            1.0e-6,
-            1.0e3,
+            1.0e-12,
+            1.0e-3,
         ]
 
         # GLP_01
         assert model.components[2].fct_str == "GLP"
         assert model.components[2].comp_name == "GLP_01"
-        assert model.components[2].N == 1
+        assert model.components[2].num == 1
         assert model.components[2].par_dict["A"] == ["3/4*GLP_02_A"]
         assert model.components[2].par_dict["x0"] == ["GLP_02_x0 +3.6"]
         assert model.components[2].par_dict["F"] == ["GLP_02_F"]
@@ -167,7 +168,7 @@ class TestEnergyParsing:
         # GLP_02
         assert model.components[3].fct_str == "GLP"
         assert model.components[3].comp_name == "GLP_02"
-        assert model.components[3].N == 2
+        assert model.components[3].num == 2
         assert model.components[3].par_dict["A"] == [20, True, 5, 25]
         assert model.components[3].par_dict["x0"] == [84.5, True, 82, 88]
         assert model.components[3].par_dict["F"] == [1.0, True, 0.75, 2.5]
@@ -182,6 +183,7 @@ class TestTimeParsing:
     #
     def _load_dynamics_model(self, model_info):
         """Create project, file, and load dynamics model."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         file.time = np.linspace(-10, 100, 111)  # needed for time-dependent models
@@ -189,10 +191,8 @@ class TestTimeParsing:
             model_yaml="test_models_time.yaml",
             model_info=model_info,
             par_name="parTEST",  # this is the name of the time-dependent parameter
-            debug=True,
             model_type="dynamics",
         )
-        assert model is not None, "Model loading failed in setup"
         return model
 
     #
@@ -305,7 +305,6 @@ class Test2DModelParsing:
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=model_energy,
-            debug=False,
         )
         file.time = np.linspace(-10, 100, 111)  # needed for time-dependent models
         return file
@@ -316,9 +315,10 @@ class Test2DModelParsing:
 
         file = self._make_file_with_energy_model(model_energy=["simple_energy"])
         file.add_time_dependence(
-            model_yaml="test_models_time.yaml",
-            model_info=["MonoExpPosIRF"],
-            par_name="GLP_01_x0",
+            target_model="simple_energy",
+            target_parameter="GLP_01_x0",
+            dynamics_yaml="test_models_time.yaml",
+            dynamics_model=["MonoExpPosIRF"],
         )
         model = file.model_active
         assert model is not None, "Model loading failed in setup"
@@ -333,7 +333,7 @@ class Test2DModelParsing:
         assert model.components[1].fct_str == "Shirley"
         assert model.components[1].comp_name == "Shirley"
         # Updated to check [value, vary] format
-        assert model.components[1].par_dict["pShirley"] == [400, False]
+        assert model.components[1].par_dict["pShirley"] == [4.0e-4, False]
         # GLP_01
         assert model.components[2].fct_str == "GLP"
         assert model.components[2].comp_name == "GLP_01"
@@ -341,7 +341,7 @@ class Test2DModelParsing:
         assert model.components[2].par_dict["x0"] == [84.5, True, 82, 88]
         # x0 is the time-dependent parameter
         td_par_model = model.components[2].pars[1].t_model
-        assert td_par_model is not None
+        assert td_par_model is not None  # type guard
         assert td_par_model.components[0].comp_name == "gaussCONV"
         assert td_par_model.components[0].par_dict["SD"] == [5.0e-2, True, 0, 1]
         assert td_par_model.components[1].fct_str == "expFun"
@@ -364,34 +364,39 @@ class Test2DModelParsing:
     #
     def test_time_dependence_on_expression_parameter_raises(self):
         """Adding dynamics to expression-linked parameter should fail."""
+
         file = self._make_file_with_energy_model(model_energy=["energy_expression"])
 
         with pytest.raises(
             ValueError, match="Cannot add time dependence to expression parameter"
         ):
             file.add_time_dependence(
-                model_yaml="test_models_time.yaml",
-                model_info=["MonoExpPosIRF"],
-                par_name="GLP_02_x0",
+                target_model="energy_expression",
+                target_parameter="GLP_02_x0",
+                dynamics_yaml="test_models_time.yaml",
+                dynamics_model=["MonoExpPosIRF"],
             )
 
     #
     def test_time_dependence_on_profiled_parameter_raises(self):
         """Adding dynamics directly to a profiled parameter should fail."""
+
         file = self._make_file_with_energy_model(
             model_energy=["single_glp"], aux_axis=np.linspace(0, 10, 21)
         )
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pLinear"],
-            par_name="GLP_01_A",
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            profile_yaml="test_models_profile.yaml",
+            profile_model=["profile_pLinear"],
         )
 
         with pytest.raises(ValueError, match="already has a profile"):
             file.add_time_dependence(
-                model_yaml="test_models_time.yaml",
-                model_info=["MonoExpPos"],
-                par_name="GLP_01_A",
+                target_model="single_glp",
+                target_parameter="GLP_01_A",
+                dynamics_yaml="test_models_time.yaml",
+                dynamics_model=["MonoExpPos"],
             )
 
 
@@ -407,27 +412,29 @@ class TestProfileParsing:
         aux_axis: np.ndarray | None = None,
     ) -> File:
         """Create a File with loaded energy model and optional aux axis."""
+
         project = Project(path="tests")
         file = File(parent_project=project, aux_axis=aux_axis)
         file.energy = np.linspace(80, 90, 201)
         file.load_model(
             model_yaml="test_models_energy.yaml",
             model_info=model_energy,
-            debug=False,
         )
         return file
 
     #
     def _load_profile_model(self, model_info, par_name):
         """Create project, file with energy model, and load profile."""
+
         file = self._make_file(
             model_energy=["simple_energy"],
             aux_axis=np.linspace(0, 10, 21),
         )
         file.add_par_profile(
-            model_yaml="test_models_profile.yaml",
-            model_info=model_info,
-            par_name=par_name,
+            target_model="simple_energy",
+            target_parameter=par_name,
+            profile_yaml="test_models_profile.yaml",
+            profile_model=model_info,
         )
         model = file.model_active
         assert model is not None, "Model loading failed in setup"
@@ -436,15 +443,16 @@ class TestProfileParsing:
     #
     def test_pExpDecay_profile(self):
         """Test pExpDecay profile attached to GLP_01_A"""
+
         model, file = self._load_profile_model(["profile_pExpDecay"], "GLP_01_A")
 
         # target parameter should have p_vary set
         ci, pi = model.find_par_by_name("GLP_01_A")
-        assert ci is not None
-        assert pi is not None
+        assert ci is not None  # type guard
+        assert pi is not None  # type guard
         par = model.components[ci].pars[pi]
         assert par.p_vary is True
-        assert par.p_model is not None
+        assert par.p_model is not None  # type guard
 
         # profile model should be a Profile with correct components
         p_mod = par.p_model
@@ -461,18 +469,19 @@ class TestProfileParsing:
     #
     def test_pLinear_profile(self):
         """Test pLinear profile attached to GLP_01_x0"""
+
         model, file = self._load_profile_model(["profile_pLinear"], "GLP_01_x0")
 
         # target parameter should have p_vary set
         ci, pi = model.find_par_by_name("GLP_01_x0")
-        assert ci is not None
-        assert pi is not None
+        assert ci is not None  # type guard
+        assert pi is not None  # type guard
         par = model.components[ci].pars[pi]
         assert par.p_vary is True
 
         # profile model components
         p_mod = par.p_model
-        assert p_mod is not None
+        assert p_mod is not None  # type guard
         assert len(p_mod.components) == 1
         assert p_mod.components[0].fct_str == "pLinear"
         assert p_mod.components[0].comp_name == "pLinear_01"
@@ -486,20 +495,22 @@ class TestProfileParsing:
     #
     def test_profile_aux_axis_propagated(self):
         """Profile model should carry the aux_axis from File"""
+
         model, file = self._load_profile_model(["profile_pExpDecay"], "GLP_01_A")
 
         ci, pi = model.find_par_by_name("GLP_01_A")
-        assert ci is not None
-        assert pi is not None
+        assert ci is not None  # type guard
+        assert pi is not None  # type guard
         par = model.components[ci].pars[pi]
         p_mod = par.p_model
-        assert p_mod is not None
-        assert p_mod.aux_axis is not None
+        assert p_mod is not None  # type guard
+        assert p_mod.aux_axis is not None  # type guard
         np.testing.assert_array_equal(p_mod.aux_axis, file.aux_axis)
 
     #
     def test_profile_on_expression_parameter_raises(self):
         """Adding a profile to an expression-linked parameter should fail."""
+
         file = self._make_file(
             model_energy=["energy_expression"],
             aux_axis=np.linspace(0, 10, 21),
@@ -507,30 +518,34 @@ class TestProfileParsing:
 
         with pytest.raises(ValueError):
             file.add_par_profile(
-                model_yaml="test_models_profile.yaml",
-                model_info=["profile_pExpDecay"],
-                par_name="GLP_02_A",
+                target_model="energy_expression",
+                target_parameter="GLP_02_A",
+                profile_yaml="test_models_profile.yaml",
+                profile_model=["profile_pExpDecay"],
             )
 
     #
     def test_profile_on_time_dependent_parameter_raises(self):
         """Adding a profile to a time-dependent parameter should fail."""
+
         file = self._make_file(
             model_energy=["single_glp"],
             aux_axis=np.linspace(0, 10, 21),
         )
         file.time = np.linspace(-10, 100, 111)
         file.add_time_dependence(
-            model_yaml="test_models_time.yaml",
-            model_info=["MonoExpPos"],
-            par_name="GLP_01_A",
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml="test_models_time.yaml",
+            dynamics_model=["MonoExpPos"],
         )
 
         with pytest.raises(ValueError, match="already has time dependence"):
             file.add_par_profile(
-                model_yaml="test_models_profile.yaml",
-                model_info=["profile_pExpDecay"],
-                par_name="GLP_01_A",
+                target_model="single_glp",
+                target_parameter="GLP_01_A",
+                profile_yaml="test_models_profile.yaml",
+                profile_model=["profile_pExpDecay"],
             )
 
 
@@ -542,6 +557,7 @@ class TestYAMLValidationErrors:
     #
     def test_wrong_parameter_order_accepted(self):
         """Parameters in non-standard order should still parse correctly."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         file.load_model(
@@ -549,7 +565,7 @@ class TestYAMLValidationErrors:
             model_info=["wrong_order"],
         )
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
         # Values should be correctly assigned despite m/F swap in YAML
         assert model.components[1].par_dict["m"] == [0.3, True, 0, 1]
         assert model.components[1].par_dict["F"] == [1.0, True, 0.75, 2.5]
@@ -557,6 +573,7 @@ class TestYAMLValidationErrors:
     #
     def test_wrong_parameter_name_raises(self):
         """Unknown parameter name (q instead of m for GLP) should fail validation."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         with pytest.raises(ModelValidationError, match="Invalid parameter"):
@@ -568,6 +585,7 @@ class TestYAMLValidationErrors:
     #
     def test_nonexistent_model_raises(self):
         """Loading a model name that doesn't exist in the YAML should fail."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
         with pytest.raises(ValueError, match="not found in"):
@@ -577,14 +595,30 @@ class TestYAMLValidationErrors:
             )
 
     #
-    def test_model_info_not_list_raises(self):
-        """Passing a string instead of a list for model_info should fail."""
+    def test_background_last_raises(self):
+        """Background as last component should fail ordering validation."""
+
         project = Project(path="tests")
         file = File(parent_project=project)
-        with pytest.raises(TypeError, match="model_info must be a list"):
+        with pytest.raises(ModelValidationError, match="background function"):
             file.load_model(
                 model_yaml="test_models_energy.yaml",
-                model_info="simple_energy",  # type: ignore[arg-type]
+                model_info=["background_last"],
+            )
+
+    #
+    def test_conv_last_raises(self):
+        """Convolution as last component should fail ordering validation."""
+
+        project = Project(path="tests")
+        file = File(parent_project=project)
+        file.time = np.linspace(-10, 100, 111)
+        with pytest.raises(ModelValidationError, match="convolution function"):
+            file.load_model(
+                model_yaml="test_models_time.yaml",
+                model_info=["conv_last"],
+                par_name="parTEST",
+                model_type="dynamics",
             )
 
 

@@ -12,13 +12,15 @@ import pathlib
 from collections.abc import Sequence
 from typing import Any
 
+import matplotlib.axes
+import matplotlib.colors as mcolors
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from trspecfit.config.plot import PlotConfig
-from trspecfit.utils.arrays import OoM
+from trspecfit.utils.arrays import oom
 
 type PathLike = str | pathlib.Path
 
@@ -28,7 +30,7 @@ type PathLike = str | pathlib.Path
 
 
 #
-def load_plot(path: PathLike, dpi_fig: int = 75) -> None:
+def load_plot(path: PathLike, dpi_fig: int = 75, *, save_img: int = 0) -> None:
     """
     Load and display a saved figure as an image.
 
@@ -41,6 +43,8 @@ def load_plot(path: PathLike, dpi_fig: int = 75) -> None:
         Path to the image file to load
     dpi_fig : int, default=75
         Display DPI (actual DPI multiplied by 1.25)
+    save_img : {-1, 0, 1}, default=0
+        -1 save only, 0 display only, 1 save and display.
     """
 
     # 1.25x factor accounts for typical whitespace/margins in saved figures
@@ -48,7 +52,7 @@ def load_plot(path: PathLike, dpi_fig: int = 75) -> None:
     img = mpimg.imread(path)
     plt.imshow(img)
     plt.axis("off")
-    plt.show()
+    _finalize_plot(save_img)
 
 
 #
@@ -56,7 +60,11 @@ def load_plot_grid(
     paths: Sequence[PathLike],
     columns: int = 3,
     fig_width: float = 16,
-    debug: bool = False,
+    *,
+    show_info: bool = False,
+    save_img: int = 0,
+    save_path: PathLike = "",
+    dpi_save: int = 300,
 ) -> None:
     """
     Load and display multiple images in a grid layout.
@@ -72,12 +80,26 @@ def load_plot_grid(
         Number of columns in grid
     fig_width : float, default=16
         Total figure width in inches
-    debug : bool, default=False
-        Print layout info if debug is True
+    show_info : bool, default=False
+        Print layout info.
+    save_img : {-1, 0, 1}, default=0
+        -1 save only, 0 display only, 1 save and display.
+    save_path : str or Path, default=""
+        File path for saving.
+    dpi_save : int, default=300
+        DPI for saved image.
     """
 
     images = [plt.imread(path) for path in paths]
-    plot_grid(images, columns, fig_width, debug)
+    plot_grid(
+        images,
+        columns,
+        fig_width,
+        show_info=show_info,
+        save_img=save_img,
+        save_path=save_path,
+        dpi_save=dpi_save,
+    )
 
 
 #
@@ -85,7 +107,11 @@ def plot_grid(
     images: Sequence[NDArray[np.generic]],
     columns: int = 3,
     fig_width: float = 16,
-    debug: bool = False,
+    *,
+    show_info: bool = False,
+    save_img: int = 0,
+    save_path: PathLike = "",
+    dpi_save: int = 300,
 ) -> None:
     """
     Display multiple images in a grid layout.
@@ -101,8 +127,14 @@ def plot_grid(
         Number of columns in grid
     fig_width : float, default=16
         Total figure width in inches
-    debug : bool, default=0
-        If True, print layout calculations (rows, aspect ratio, height)
+    show_info : bool, default=False
+        If True, print layout calculations (rows, aspect ratio, height).
+    save_img : {-1, 0, 1}, default=0
+        -1 save only, 0 display only, 1 save and display.
+    save_path : str or Path, default=""
+        File path for saving.
+    dpi_save : int, default=300
+        DPI for saved image.
 
     Notes
     -----
@@ -114,11 +146,11 @@ def plot_grid(
     rows = np.ceil(len(images) / columns).astype(int)
 
     # Calculate figure height to maintain aspect ratio
-    img_shape = np.shape(images[0])
+    img_shape = images[0].shape
     ratio = img_shape[1] / img_shape[0]  # width/height
     fig_height = fig_width * rows / (ratio * columns)
 
-    if debug >= 1:
+    if show_info:
         print(f"rows {rows}")
         print(f"image shape {img_shape}")
         print(f"aspect ratio {ratio}")
@@ -138,7 +170,7 @@ def plot_grid(
         ax.set_axis_off()
 
     plt.subplots_adjust(hspace=0, wspace=0.05)
-    plt.show()
+    _finalize_plot(save_img, save_path, dpi_save)
 
 
 #
@@ -147,7 +179,7 @@ def plot_grid(
 
 
 #
-def plot_2D(
+def plot_2d(
     data: ArrayLike,
     x: ArrayLike | None = None,
     y: ArrayLike | None = None,
@@ -180,6 +212,7 @@ def plot_2D(
         - x_dir, y_dir : 'def' or 'rev' for axis direction
         - x_type, y_type : 'lin' or 'log' for axis scale
         - z_colormap : Colormap name (default 'viridis')
+        - z_type : 'lin' or 'log' for color scale type
         - z_colorbar : 'ver' or 'hor' for colorbar orientation
         - data_slice : [[x_start, x_stop], [y_start, y_stop]] for slicing by index
         - vlines, hlines : List of coordinates for reference lines
@@ -191,19 +224,19 @@ def plot_2D(
     Examples
     --------
     >>> # Basic plot
-    >>> plot_2D(data, x=energy, y=time)
+    >>> plot_2d(data, x=energy, y=time)
 
     >>> # With configuration
     >>> config = PlotConfig.from_project(project)
-    >>> plot_2D(data, x, y, config=config)
+    >>> plot_2d(data, x, y, config=config)
 
     >>> # Slice data and set color scale
-    >>> plot_2D(data, x, y, config=config,
+    >>> plot_2d(data, x, y, config=config,
     ...         data_slice=[[10, 100], [5, 50]],
     ...         z_lim=[0, 100])
 
     >>> # Reversed energy axis with reference lines
-    >>> plot_2D(data, x, y, config=config,
+    >>> plot_2d(data, x, y, config=config,
     ...         x_dir='rev',
     ...         vlines=[85.0, 87.5],
     ...         hlines=[0, 100])
@@ -241,6 +274,7 @@ def plot_2D(
     dpi_save = kwargs.get("dpi_save", config.dpi_save)
     z_colormap = kwargs.get("z_colormap", config.z_colormap)
     z_colorbar = kwargs.get("z_colorbar", config.z_colorbar)
+    z_type = kwargs.get("z_type", config.z_type)
     vlines = kwargs.get("vlines", config.vlines)
     hlines = kwargs.get("hlines", config.hlines)
     ticksize = kwargs.get("ticksize", config.ticksize)
@@ -277,23 +311,23 @@ def plot_2D(
 
     # Determine z-axis (color) range
     if z_lim is None:
-        min2D = np.min(data_plt)
-        max2D = np.max(data_plt)
+        min_2d = np.min(data_plt)
+        max_2d = np.max(data_plt)
         scale_txt = "autoscale min. and max. z (color)"
     elif isinstance(z_lim, list) and len(z_lim) == 2 and z_lim[1] == "max":
-        min2D = z_lim[0]
-        max2D = np.max(data_plt)
+        min_2d = z_lim[0]
+        max_2d = np.max(data_plt)
         scale_txt = f"autoscale max. z (color) [min={z_lim[0]}]"
     else:
-        min2D = z_lim[0]
-        max2D = z_lim[1]
+        min_2d = z_lim[0]
+        max_2d = z_lim[1]
         scale_txt = "user defined z scale (color)"
 
     # Create default axes if not provided
     if x_plt is None:
-        x_plt = np.arange(0, np.shape(data_plt)[1], 1)
+        x_plt = np.arange(data_plt.shape[1])
     if y_plt is None:
-        y_plt = np.arange(0, np.shape(data_plt)[0], 1)
+        y_plt = np.arange(data_plt.shape[0])
 
     # Create figure
     fig, ax = plt.subplots(1, 1, dpi=dpi_plot)
@@ -304,7 +338,7 @@ def plot_2D(
     plot_title = title
     if plot_title:
         plot_title += "\n"
-    plot_title += f"{scale_txt}\nsize 2D data set: {np.shape(data_plt)}"
+    plot_title += f"{scale_txt}\nsize 2D data set: {data_plt.shape}"
     plt.title(plot_title, loc="left", fontsize=10)
 
     # Set axis labels
@@ -314,15 +348,21 @@ def plot_2D(
         ax.set_ylabel(y_label)
 
     # Plot data
-    plt.pcolormesh(
-        x_plt,
-        y_plt,
-        data_plt,
-        cmap=z_colormap,
-        vmin=min2D,
-        vmax=max2D,
-        shading="nearest",
-    )
+    if z_type == "log":
+        norm = mcolors.LogNorm(vmin=min_2d, vmax=max_2d)
+        plt.pcolormesh(
+            x_plt, y_plt, data_plt, cmap=z_colormap, norm=norm, shading="nearest"
+        )
+    else:
+        plt.pcolormesh(
+            x_plt,
+            y_plt,
+            data_plt,
+            cmap=z_colormap,
+            vmin=min_2d,
+            vmax=max_2d,
+            shading="nearest",
+        )
 
     # Colorbar
     if z_colorbar == "ver":
@@ -339,18 +379,7 @@ def plot_2D(
             cbar.ax.tick_params(labelsize=ticksize)
 
     # Axis settings
-    if x_type == "log":
-        ax.set_xscale("log")
-    if x_lim is not None:
-        ax.set_xlim(x_lim[0], x_lim[1])
-    if x_dir == "rev":
-        plt.gca().invert_xaxis()
-    if y_type == "log":
-        ax.set_yscale("log")
-    if y_lim is not None:
-        ax.set_ylim(y_lim[0], y_lim[1])
-    if y_dir == "rev":
-        plt.gca().invert_yaxis()
+    _apply_axis_settings(ax, x_type, x_dir, y_type, y_dir, x_lim, y_lim)
 
     # Reference lines
     if hlines is not None:
@@ -371,19 +400,12 @@ def plot_2D(
             linestyle=":",
         )
 
-    # Save figure
-    if abs(save_img) == 1:
-        img_save(save_path, dpi_save)
-
-    # Show/close plot
-    if save_img >= 0:
-        plt.show()
-    else:
-        plt.close()
+    # Save/show/close
+    _finalize_plot(save_img, save_path, dpi_save)
 
 
 #
-def plot_1D(
+def plot_1d(
     data: Sequence[ArrayLike] | ArrayLike,
     x: ArrayLike | list[ArrayLike] | None = None,
     config: PlotConfig | None = None,
@@ -431,20 +453,20 @@ def plot_1D(
     Examples
     --------
     >>> # Simple plot
-    >>> plot_1D([data1, data2], x=energy)
+    >>> plot_1d([data1, data2], x=energy)
 
     >>> # With project configuration
     >>> config = PlotConfig.from_project(project)
-    >>> plot_1D(data, x, config=config)
+    >>> plot_1d(data, x, config=config)
 
     >>> # Waterfall plot with custom styling
-    >>> plot_1D([trace1, trace2, trace3], x=time,
+    >>> plot_1d([trace1, trace2, trace3], x=time,
     ...         waterfall=0.5,
     ...         colors=['red', 'blue', 'green'],
     ...         legend=['Early', 'Mid', 'Late'])
 
     >>> # Normalized traces with reversed x-axis
-    >>> plot_1D(data, x=energy, config=config,
+    >>> plot_1d(data, x=energy, config=config,
     ...         y_norm=1, x_dir='rev',
     ...         vlines=[85.0, 87.5])
 
@@ -501,19 +523,19 @@ def plot_1D(
     y_scale = kwargs.get("y_scale", config.y_scale)
 
     # Determine number of plots
-    N_plots = len(data_series)
+    n_plots = len(data_series)
 
     # Create default values if not provided
     if linestyles is None:
-        linestyles = N_plots * ["-"]
+        linestyles = n_plots * ["-"]
     if colors is None:
         colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     if linewidths is None:
-        linewidths = N_plots * [1.5]
+        linewidths = n_plots * [1.5]
     if markers is None:
-        markers = N_plots * [None]
+        markers = n_plots * [None]
     if markersizes is None:
-        markersizes = N_plots * [6]
+        markersizes = n_plots * [6]
     if x is None:
         x_common = np.arange(0, data_series[0].shape[0], 1)
         x_list: list[NDArray[np.float64]] | None = None
@@ -524,11 +546,11 @@ def plot_1D(
         x_common = np.asarray(x, dtype=float)
         x_list = None
     if y_scale is None:
-        y_scale_arr = np.ones(N_plots, dtype=float)
+        y_scale_arr = np.ones(n_plots, dtype=float)
     else:
         y_scale_arr = np.asarray(y_scale, dtype=float)
     if legend is None:
-        legend = [i + 1 for i in range(N_plots)]
+        legend = [i + 1 for i in range(n_plots)]
 
     # Create figure
     _fig, ax = plt.subplots(1, 1, dpi=dpi_plot)
@@ -540,7 +562,7 @@ def plot_1D(
     plt.title(plot_title, loc="left", fontsize=10)
 
     # Plot each dataset
-    for i in range(N_plots):
+    for i in range(n_plots):
         x_plot = x_list[i] if x_list is not None else x_common
         if x_plot is None:
             raise ValueError("x axis could not be determined")
@@ -576,8 +598,8 @@ def plot_1D(
     if hlines is not None:
         if x_list is not None:
             x_minmax = [
-                np.min([np.min(x_list[i]) for i in range(N_plots)]),
-                np.max([np.max(x_list[i]) for i in range(N_plots)]),
+                np.min([np.min(x_list[i]) for i in range(n_plots)]),
+                np.max([np.max(x_list[i]) for i in range(n_plots)]),
             ]
         else:
             if x_common is None:
@@ -597,10 +619,10 @@ def plot_1D(
         else:
             y_minmax = [
                 np.min(
-                    [np.min(y_scale_arr[i] * data_series[i]) for i in range(N_plots)]
+                    [np.min(y_scale_arr[i] * data_series[i]) for i in range(n_plots)]
                 ),
                 np.max(
-                    [np.max(y_scale_arr[i] * data_series[i]) for i in range(N_plots)]
+                    [np.max(y_scale_arr[i] * data_series[i]) for i in range(n_plots)]
                 ),
             ]
         plt.vlines(
@@ -612,18 +634,7 @@ def plot_1D(
         )
 
     # Axis settings
-    if x_type == "log":
-        ax.set_xscale("log")
-    if x_lim is not None:
-        ax.set_xlim(x_lim[0], x_lim[1])
-    if x_dir == "rev":
-        plt.gca().invert_xaxis()
-    if y_type == "log":
-        ax.set_yscale("log")
-    if y_lim is not None:
-        ax.set_ylim(y_lim[0], y_lim[1])
-    if y_dir == "rev":
-        plt.gca().invert_yaxis()
+    _apply_axis_settings(ax, x_type, x_dir, y_type, y_dir, x_lim, y_lim)
 
     # Tick size
     if ticksize is not None:
@@ -632,11 +643,48 @@ def plot_1D(
     # Legend
     plt.legend(bbox_to_anchor=(1, 1))
 
-    # Save
+    # Save/show/close
+    _finalize_plot(save_img, save_path, dpi_save)
+
+
+#
+def _apply_axis_settings(
+    ax: matplotlib.axes.Axes,
+    x_type: str | None = None,
+    x_dir: str | None = None,
+    y_type: str | None = None,
+    y_dir: str | None = None,
+    x_lim: Sequence[float] | None = None,
+    y_lim: Sequence[float] | None = None,
+) -> None:
+    """Apply scale, limits, and direction settings to a matplotlib axes."""
+
+    if x_type == "log":
+        ax.set_xscale("log")
+    if x_lim is not None:
+        ax.set_xlim(x_lim[0], x_lim[1])
+    if x_dir == "rev":
+        ax.invert_xaxis()
+    if y_type == "log":
+        ax.set_yscale("log")
+    if y_lim is not None:
+        ax.set_ylim(y_lim[0], y_lim[1])
+    if y_dir == "rev":
+        ax.invert_yaxis()
+
+
+#
+def _finalize_plot(
+    save_img: int, save_path: PathLike = "", dpi_save: int = 300
+) -> None:
+    """Save, show, or close the current figure.
+
+    When saving, uses tight bounding box, 0.05-inch padding,
+    white facecolor, and auto edgecolor (same defaults as ``img_save``).
+    """
+
     if abs(save_img) == 1:
         img_save(save_path, dpi_save)
-
-    # Show/close
     if save_img >= 0:
         plt.show()
     else:
@@ -694,7 +742,7 @@ def major_locator_input(x: ArrayLike) -> float:
     """
 
     x_max = float(np.max(np.asarray(x, dtype=float)))
-    return float(10 ** OoM(x_max))
+    return float(10 ** oom(x_max))
 
 
 #
@@ -717,7 +765,7 @@ def minor_locator_input(x: ArrayLike) -> float:
     """
 
     x_max = float(np.max(np.asarray(x, dtype=float)))
-    return float(10 ** (OoM(x_max) - 1))
+    return float(10 ** (oom(x_max) - 1))
 
 
 #
@@ -739,11 +787,11 @@ def major_formatter_input(x: ArrayLike) -> str:
         Format string for matplotlib tick labels (e.g., '%0.2f', '%4.0f')
     """
 
-    axis_OoM = OoM(np.max(x))
+    axis_oom = oom(np.max(x))
 
-    if axis_OoM < 0:
-        return f"%0.{abs(axis_OoM)}f"
-    if axis_OoM == 0:
+    if axis_oom < 0:
+        return f"%0.{abs(axis_oom)}f"
+    if axis_oom == 0:
         return "%0.0f"
-    # axis_OoM > 0
-    return f"%{axis_OoM + 1}.0f"
+    # axis_oom > 0
+    return f"%{axis_oom + 1}.0f"
