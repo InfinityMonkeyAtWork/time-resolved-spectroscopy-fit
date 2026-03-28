@@ -25,7 +25,7 @@ Install from PyPI:
 python -m pip install trspecfit
 ```
 
-Recommended if you want to run the included example notebooks:
+Or install with Jupyter support for the [example notebooks](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/quickstart.html):
 
 ```bash
 python -m pip install "trspecfit[lab]"
@@ -46,11 +46,13 @@ project = Project(path='my_project', name='my_experiment')
 file = File(parent_project=project, path='my_dataset',
             data=..., energy=..., time=...)
 
-# Load model from YAML, set limits, fit
+# Define baseline, load model, fit
+file.define_baseline(time_start=0, time_stop=3)
 file.load_model('models_energy.yaml', 'my_base_model')
 file.set_fit_limits(energy_limits=[...], time_limits=[...])
 file.fit_baseline('my_base_model')
 
+# Load 2D energy model, add time dependence, fit
 file.load_model('models_energy.yaml', 'my_2d_model')
 file.add_time_dependence('my_2d_model', 'my_par', 'models_time.yaml', 'my_dynamics')
 file.fit_2d('my_2d_model')

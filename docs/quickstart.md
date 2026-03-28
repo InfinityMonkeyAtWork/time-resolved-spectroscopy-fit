@@ -2,7 +2,7 @@
 
 ## Get running in 3 steps
 
-**1. Install with jupyter notebook support**
+**1. Install with Jupyter notebook support**
 
 ```bash
 python -m pip install "trspecfit[lab]"
@@ -10,11 +10,10 @@ python -m pip install "trspecfit[lab]"
 
 **2. Download the examples**
 
-The example notebooks and data are not included in the pip package.
+The [example notebooks](examples/index.rst) and data are not included in the pip package.
 Download them from GitHub:
 
 ```bash
-# Download and unzip the examples directory
 curl -L https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/archive/refs/heads/main.zip -o trspecfit-examples.zip
 unzip trspecfit-examples.zip "time-resolved-spectroscopy-fit-main/examples/*" -d .
 mv time-resolved-spectroscopy-fit-main/examples ./trspecfit-examples
@@ -25,36 +24,37 @@ Or clone the full repo:
 
 ```bash
 git clone https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit.git
-cd time-resolved-spectroscopy-fit/examples
+mv time-resolved-spectroscopy-fit/examples ./trspecfit-examples
 ```
 
 **3. Open the first example**
+
+Start with **01** and work forward — each builds on the previous one.
 
 ```bash
 cd trspecfit-examples/fitting_workflows/01_basic_fitting
 jupyter lab example.ipynb
 ```
 
-Run all cells. The notebook will load example data, build a model,
-fit it, and plot the results.
+Run all cells. The notebook will load data, build a model, fit it, and plot the results.
 
-## What's in each example
+## Examples overview
 
-Start with **01** and work forward — each builds on the previous one.
+Fitting workflow examples:
 
 | Example | What you learn |
 |---------|---------------|
-| [01_basic_fitting](examples/fitting_workflows/01_basic_fitting/) | Load data, define a model, fit baseline + 2D, visualize results |
-| [02_dependent_parameters](examples/fitting_workflows/02_dependent_parameters/) | Link parameters with expressions (e.g. spin-orbit doublets) |
-| [03_multi_cycle](examples/fitting_workflows/03_multi_cycle/) | Multi-cycle dynamics with subcycles and frequency |
-| [04_par_profiles](examples/fitting_workflows/04_par_profiles/) | Depth-dependent parameters with profile functions |
+| 01_basic_fitting | Load data, define a model, fit baseline + 2D, visualize results |
+| 02_dependent_parameters | Link parameters with expressions (e.g. spin-orbit doublets) |
+| 03_multi_cycle | Multi-cycle dynamics with subcycles and frequency |
+| 04_par_profiles | Depth-dependent parameters with profile functions |
 
 Data generation examples (for testing/ML):
 
 | Example | What you learn |
 |---------|---------------|
-| [simulator](examples/data_generation/simulator/) | Generate synthetic noisy data from a known model |
-| [ml_training](examples/data_generation/ml_training/) | Sweep parameter space for ML training datasets |
+| simulator | Generate synthetic noisy data from a known model |
+| ml_training | Sweep parameter space for ML training datasets |
 
 ## Typical workflow
 
@@ -72,8 +72,8 @@ Every fitting workflow follows the same pattern:
 9. file.get_fit_results(fit_type='2d')  # extract results as DataFrame
 ```
 
-Optional extensions after step 6:
-- `file.add_par_profile(...)` — make a parameter vary over an auxiliary axis
+Optional extension after step 6:
+`file.add_par_profile(...)` — make a parameter vary over an auxiliary axis
 
 ## YAML model format
 
@@ -99,7 +99,7 @@ model_name:
 See the [API Reference](api/index.rst) for all function signatures and
 parameter descriptions.
 
-## Composition rules
+## Model composition rules
 
 - **Supported:** base parameter -> profile, then profile parameter -> dynamics
 - **Disallowed:** profile + dynamics on the same base parameter
