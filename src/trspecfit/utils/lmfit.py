@@ -525,6 +525,12 @@ class MC:
         self.workers = workers
         self.is_weighted = is_weighted
 
+    #
+    def __repr__(self) -> str:
+        return (
+            f"MC(use_mc={self.use_emcee}, steps={self.steps}, nwalkers={self.nwalkers})"
+        )
+
 
 #
 #

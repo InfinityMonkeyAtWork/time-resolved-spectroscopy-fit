@@ -2,7 +2,6 @@
 name: code-review
 description: "Run a  code-review checklist. Default: review diff vs main. Args: `full`(whole codebase), `diff` (default), or a file/directory/glob path."
 disable-model-invocation: false
-allowed-tools: Bash, Read, Grep, Glob, Agent
 ---
 
 ## Scope
@@ -96,6 +95,9 @@ Read `src/` modules looking for:
 - Overly concrete code that handles special cases inline instead of through
   polymorphism or configuration
 Suggest specific refactorings where the improvement is clear. Ignore test files.
+Note: repeated blocks that extract *different subsets* of fields from a config
+object are not duplication — a generic helper would just move the per-site
+variation elsewhere without reducing complexity.
 
 ## 8. Numpy anti-patterns
 
@@ -121,7 +123,9 @@ These can mask real issues. Flag unless scoped to a specific known warning.
 
 Flag functions that both compute results AND produce plots without a
 `show_plot`/`debug` flag to disable the plotting side. Plotting should be
-separable from computation.
+separable from computation. Also check functions that *do* have a display
+flag (e.g. `show_output`, `save_img`) but contain plot blocks that bypass
+it — plots should save-and-close (not display) when the flag is off.
 
 ## 12. Poor separation of concerns
 

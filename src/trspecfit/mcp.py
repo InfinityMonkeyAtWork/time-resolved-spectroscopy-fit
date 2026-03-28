@@ -192,7 +192,6 @@ class Model:
         # 1D spectrum (i.e. sum/ combination of all components)
         self.value_1d: np.ndarray | None = None
         # 2D spectrum (i.e. 1D spectra one per time step)
-        # self.value_2d = np.empty((len(self.time), len(self.energy)))
         self.value_2d: np.ndarray | None = None
         # fit parameters and results
         self.const: tuple | None = None

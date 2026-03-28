@@ -92,6 +92,11 @@ class ParameterSweep:
         self.rng = np.random.default_rng(seed)
 
     #
+    def __repr__(self) -> str:
+        n_pars = len(self.parameter_specs)
+        return f"ParameterSweep(strategy='{self.strategy}', n_parameters={n_pars})"
+
+    #
     def add_range(self, par_name: str, values: Sequence[float]) -> None:
         """
         Add discrete parameter values to sweep.

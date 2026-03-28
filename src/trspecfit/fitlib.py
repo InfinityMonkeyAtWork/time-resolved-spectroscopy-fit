@@ -675,12 +675,13 @@ def fit_wrapper(
             t_emcee1 = time.time()
             print(f"Time lmfit.emcee: {t_emcee1 - t_emcee0} s")
         # acceptence fraction of all walkers (plot)
+        emcee_save = save_output if show_output >= 1 else -abs(save_output)
         fig_emcee_walker, _ax = plt.subplots(1, 1, dpi=75)
         plt.plot(emcee_acceptance_fraction, "o")
         plt.xlabel("Walker number")
         plt.ylabel("Acceptance fraction")
         uplt._finalize_plot(
-            save_output, f"{save_path}_emcee_walker_acceptance_ratio.png"
+            emcee_save, f"{save_path}_emcee_walker_acceptance_ratio.png"
         )
         # draw all combinations of the typically ellipsoidal chi plot
         # [<x=par1, y=par2, z=chi2> plot]
@@ -694,7 +695,7 @@ def fit_wrapper(
             truths=emcee_truths,
             fig=fig_emcee_corner,
         )
-        uplt._finalize_plot(save_output, f"{save_path}_emcee_corner_plot.png")
+        uplt._finalize_plot(emcee_save, f"{save_path}_emcee_corner_plot.png")
         # get percentage borders to categorize emcee.flatchain data
         sigma_borders = sigma_start_stop_percent(sigmas)
         # go through all combinations of parameters and sigmas to find

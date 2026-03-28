@@ -451,13 +451,13 @@ class File:
         if energy is not None or data is None:
             self.energy = energy
         elif self.dim == 1:
-            self.energy = np.arange(0, data.shape[0])
+            self.energy = np.arange(data.shape[0])
         else:
-            self.energy = np.arange(0, data.shape[1])
+            self.energy = np.arange(data.shape[1])
         if time is not None or self.dim <= 1 or data is None:
             self.time = time
         else:
-            self.time = np.arange(0, data.shape[0])
+            self.time = np.arange(data.shape[0])
         self.aux_axis: np.ndarray | None = (
             aux_axis  # auxiliary physical axis (e.g. depth)
         )
@@ -946,7 +946,6 @@ class File:
                 mod.yaml_f_name if mod.yaml_f_name is not None else "model_unknown"
             )
             path_model = self.path_da / yaml_name / model_name
-        # path_model = self.path_da / self.model_base.yaml_f_name / model_name
         path_model.mkdir(parents=True, exist_ok=True)
         if subfolders is None:
             subfolders = []
