@@ -167,3 +167,12 @@ background_last:
       m: [0.3, True, 0, 1]
     Offset:
       y0: [2, True, 0, 5]
+
+# Integer vary value — used to verify 0/1 are rejected by validation
+# (Python 0 == False would pass the old set-membership check silently)
+vary_int_bad:
+    GLP:
+      A: [20, 0, 5, 25]
+      x0: [85.0, True, 82, 88]
+      F: [1.0, False, 0.75, 2.5]
+      m: [0.3, False, 0, 1]

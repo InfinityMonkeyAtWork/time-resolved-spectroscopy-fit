@@ -344,7 +344,7 @@ class TestMCPIntegration:
         file.energy = np.linspace(80, 90, 100)
         file.time = np.linspace(0, 10, 50)
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["simple_energy"],
         )
         assert file.model_active is not None  # type guard
@@ -360,7 +360,7 @@ class TestMCPIntegration:
         file.add_time_dependence(
             target_model="simple_energy",
             target_parameter="GLP_01_x0",
-            dynamics_yaml="test_models_time.yaml",
+            dynamics_yaml="models/file_time.yaml",
             dynamics_model=["MonoExpPosIRF"],
         )
 
@@ -384,7 +384,7 @@ class TestMCPIntegration:
         file.energy = np.linspace(80, 90, 100)
         file.time = np.linspace(0, 10, 50)
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["single_glp"],
         )
         model = file.model_active
@@ -540,7 +540,7 @@ class TestMCPProfile:
         file.energy = np.linspace(80, 90, 100)
         file.time = np.linspace(-10, 50, 60)
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["single_glp"],
         )
         assert file.model_active is not None  # type guard
@@ -568,7 +568,7 @@ class TestMCPProfile:
         file.add_par_profile(
             target_model="single_glp",
             target_parameter="GLP_01_A",
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=["profile_pExpDecay"],
         )
 
@@ -588,7 +588,7 @@ class TestMCPProfile:
         file.add_par_profile(
             target_model="single_glp",
             target_parameter="GLP_01_A",
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=["profile_pExpDecay"],
         )
 
@@ -609,7 +609,7 @@ class TestMCPProfile:
         file.add_par_profile(
             target_model="single_glp",
             target_parameter="GLP_01_A",
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=["profile_pExpDecay"],
         )
 
@@ -629,7 +629,7 @@ class TestMCPProfile:
         file.add_par_profile(
             target_model="single_glp",
             target_parameter="GLP_01_A",
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=["profile_pExpDecay"],
         )
 
@@ -652,7 +652,7 @@ class TestMCPProfile:
         file.add_par_profile(
             target_model="single_glp",
             target_parameter="GLP_01_A",
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=["profile_pExpDecay"],
         )
 
@@ -678,7 +678,7 @@ class TestMCPProfile:
         file_prof.add_par_profile(
             target_model="single_glp",
             target_parameter="GLP_01_A",
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=["profile_pExpDecay"],
         )
         model_prof = file_prof.model_active
@@ -699,7 +699,7 @@ class TestMCPProfile:
         file.add_par_profile(
             target_model="single_glp",
             target_parameter="GLP_01_A",
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=["profile_pExpDecay"],
         )
 
@@ -707,7 +707,7 @@ class TestMCPProfile:
         file.add_par_profile(
             target_model="single_glp",
             target_parameter="GLP_01_x0",
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=["profile_pLinear"],
         )
 
@@ -719,7 +719,7 @@ class TestMCPProfile:
         file_single.add_par_profile(
             target_model="single_glp",
             target_parameter="GLP_01_A",
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=["profile_pExpDecay"],
         )
         val_single = file_single.model_active.create_value_1d(return_1d=1)
@@ -736,7 +736,7 @@ class TestMCPProfile:
             file.add_par_profile(
                 target_model="single_glp",
                 target_parameter="GLP_01_A",
-                profile_yaml="test_models_profile.yaml",
+                profile_yaml="models/file_profile.yaml",
                 profile_model=["profile_pExpDecay"],
             )
 
@@ -754,7 +754,7 @@ class TestMCPProfile:
         file.energy = np.linspace(80, 90, 100)
         file.time = np.linspace(-10, 50, 60)
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["two_glp_expr_amplitude"],
         )
 
@@ -763,7 +763,7 @@ class TestMCPProfile:
             file.add_par_profile(
                 target_model="two_glp_expr_amplitude",
                 target_parameter="GLP_02_A",
-                profile_yaml="test_models_profile.yaml",
+                profile_yaml="models/file_profile.yaml",
                 profile_model=["profile_pExpDecay"],
             )
 
@@ -780,7 +780,7 @@ class TestMCPProfile:
         file.aux_axis = np.linspace(0, 5, 20)
 
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["energy_expression"],
         )
         assert file.model_active is not None  # type guard
@@ -799,7 +799,7 @@ class TestMCPProfile:
         file.add_par_profile(
             target_model="single_glp",
             target_parameter="GLP_01_A",
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=["profile_pExpDecay"],
         )
 
@@ -807,7 +807,7 @@ class TestMCPProfile:
         file.add_time_dependence(
             target_model="single_glp",
             target_parameter="GLP_01_x0",
-            dynamics_yaml="test_models_time.yaml",
+            dynamics_yaml="models/file_time.yaml",
             dynamics_model=["MonoExpPos"],
         )
 

@@ -37,13 +37,13 @@ def _make_truth_file(project):
     file.dim = 2
 
     file.load_model(
-        model_yaml="test_models_energy.yaml",
+        model_yaml="models/file_energy.yaml",
         model_info=["single_glp"],
     )
     file.add_time_dependence(
         target_model="single_glp",
         target_parameter="GLP_01_A",
-        dynamics_yaml="test_models_time.yaml",
+        dynamics_yaml="models/file_time.yaml",
         dynamics_model=["MonoExpPos"],
     )
     return file
@@ -61,13 +61,13 @@ def _make_fit_file(project, data, energy, time):
     )
 
     file.load_model(
-        model_yaml="test_models_energy.yaml",
+        model_yaml="models/file_energy.yaml",
         model_info=["single_glp"],
     )
     file.add_time_dependence(
         target_model="single_glp",
         target_parameter="GLP_01_A",
-        dynamics_yaml="test_models_time.yaml",
+        dynamics_yaml="models/file_time.yaml",
         dynamics_model=["MonoExpPos"],
     )
 

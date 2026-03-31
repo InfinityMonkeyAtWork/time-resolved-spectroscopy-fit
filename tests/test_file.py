@@ -37,7 +37,7 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["simple_energy"],
         )
         assert file.model_active is not None  # type guard
@@ -51,11 +51,11 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["simple_energy"],
         )
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["single_glp"],
         )
         assert len(file.models) == 2
@@ -68,7 +68,7 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         result = file.load_model(
-            model_yaml="test_models_time.yaml",
+            model_yaml="models/file_time.yaml",
             model_info=["MonoExpPos"],
             par_name="GLP_01_A",
             model_type="dynamics",
@@ -83,7 +83,7 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         result = file.load_model(
-            model_yaml="test_models_profile.yaml",
+            model_yaml="models/file_profile.yaml",
             model_info=["profile_pLinear"],
             par_name="GLP_01_A",
             model_type="profile",
@@ -97,7 +97,7 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info="simple_energy",
         )
         assert file.model_active is not None  # type guard
@@ -110,7 +110,7 @@ class TestModelManagement:
         file = self._make_file_with_axes()
         with pytest.raises(ValueError, match="single model"):
             file.load_model(
-                model_yaml="test_models_energy.yaml",
+                model_yaml="models/file_energy.yaml",
                 model_info=["simple_energy", "single_glp"],
             )
 
@@ -120,12 +120,12 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["simple_energy"],
         )
         with pytest.raises(ValueError, match="already exists"):
             file.load_model(
-                model_yaml="test_models_energy.yaml",
+                model_yaml="models/file_energy.yaml",
                 model_info=["simple_energy"],
             )
 
@@ -136,7 +136,7 @@ class TestModelManagement:
         file = self._make_file_with_axes()
         with pytest.raises(ValueError, match="not found"):
             file.load_model(
-                model_yaml="test_models_energy.yaml",
+                model_yaml="models/file_energy.yaml",
                 model_info=["this_model_does_not_exist"],
             )
 
@@ -147,7 +147,7 @@ class TestModelManagement:
         file = self._make_file_with_axes()
         with pytest.raises(ValueError, match="not recognized"):
             file.load_model(
-                model_yaml="test_models_energy.yaml",
+                model_yaml="models/file_energy.yaml",
                 model_info=["simple_energy"],
                 model_type="bogus",  # type: ignore[arg-type]
             )
@@ -158,7 +158,7 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["simple_energy"],
         )
         model = file.model_active
@@ -173,11 +173,11 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["simple_energy"],
         )
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["single_glp"],
         )
         model = file.select_model("simple_energy")
@@ -190,11 +190,11 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["simple_energy"],
         )
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["single_glp"],
         )
         model = file.select_model(0)
@@ -210,7 +210,7 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["simple_energy"],
         )
         assert file.select_model("nonexistent") is None
@@ -222,11 +222,11 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["simple_energy"],
         )
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["single_glp"],
         )
         mod = file.select_model("single_glp")
@@ -239,7 +239,7 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["simple_energy"],
         )
         model = file.select_model(["simple_energy"])
@@ -252,11 +252,11 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["simple_energy"],
         )
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["single_glp"],
         )
         file.delete_model("simple_energy")
@@ -269,11 +269,11 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["simple_energy"],
         )
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["single_glp"],
         )
         file.delete_model(0)
@@ -286,11 +286,11 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["simple_energy"],
         )
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["single_glp"],
         )
         # active is single_glp (last loaded)
@@ -313,7 +313,7 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["simple_energy"],
         )
         with pytest.warns(UserWarning, match="not found"):
@@ -329,11 +329,11 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["simple_energy"],
         )
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["single_glp"],
         )
         assert len(file.models) == 2
@@ -657,14 +657,14 @@ class TestFitLimitsSlicing:
         else:
             file.data = np.random.default_rng(42).normal(size=len(energy))
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["single_glp"],
         )
         if time is not None:
             file.add_time_dependence(
                 target_model="single_glp",
                 target_parameter="GLP_01_A",
-                dynamics_yaml="test_models_time.yaml",
+                dynamics_yaml="models/file_time.yaml",
                 dynamics_model=["MonoExpPos"],
             )
         file.set_fit_limits(
@@ -907,7 +907,7 @@ class TestFitPreconditions:
         )
         file.dim = 2
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["simple_energy"],
         )
         return file

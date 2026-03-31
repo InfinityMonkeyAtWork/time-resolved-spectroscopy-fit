@@ -1,0 +1,28 @@
+# Dynamics models for project-level fitting tests.
+
+# Exponential decay on x0 — tau shared across project, A per file.
+MonoExpProject:
+    expFun:
+        A: [5, "file", 0, 15]
+        tau: [5, "project", 1, 100]
+        t0: [0, "static", 0, 1]
+        y0: [0, "static", 0, 1]
+
+# Bi-exponential decay with Gaussian IRF — t0 of second component is
+# an expression referencing t0 of first (project-vary). Tests that
+# expressions referencing project-vary params keep unprefixed names.
+# gaussCONV first (LIFO) smooths the step at t0, making t0 a
+# well-defined Gaussian center rather than a hard discontinuity.
+BiExpProject:
+    gaussCONV:
+        SD: [0.5, "static", 0.1, 2]
+    expFun:
+        A: [2, "file", -20, 20]
+        tau: [2, "project", 0.1, 50]
+        t0: [3, "project", -5, 10]
+        y0: [0, "static", 0, 1]
+    expFun:
+        A: [1, "file", -20, 20]
+        tau: [20, "project", 1, 200]
+        t0: ["expFun_01_t0"]
+        y0: [0, "static", 0, 1]

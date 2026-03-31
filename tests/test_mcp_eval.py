@@ -26,7 +26,7 @@ class TestEvaluation:
         file.energy = np.linspace(80, 90, 201)
         file.time = np.linspace(-10, 100, 111)
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=model_info,
         )
         model = file.model_active
@@ -43,7 +43,7 @@ class TestEvaluation:
         file.energy = np.linspace(80, 90, 201)
         file.time = np.linspace(-10, 100, 111)
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=model_info,
         )
         model = file.model_active
@@ -85,7 +85,7 @@ class TestEvaluation:
         file.add_time_dependence(
             target_model="energy_expression",
             target_parameter="GLP_01_x0",
-            dynamics_yaml="test_models_time.yaml",
+            dynamics_yaml="models/file_time.yaml",
             dynamics_model=["MonoExpPosIRF"],
         )
 
@@ -173,14 +173,14 @@ class TestEvaluation:
         file.add_time_dependence(
             target_model="simple_energy",
             target_parameter="GLP_01_A",
-            dynamics_yaml="test_models_time.yaml",
+            dynamics_yaml="models/file_time.yaml",
             dynamics_model=["MonoExpPosIRF"],
         )
         # Attach MonoExpNeg to GLP_01_x0
         file.add_time_dependence(
             target_model="simple_energy",
             target_parameter="GLP_01_x0",
-            dynamics_yaml="test_models_time.yaml",
+            dynamics_yaml="models/file_time.yaml",
             dynamics_model=["MonoExpNeg"],
         )
 
@@ -225,7 +225,7 @@ class TestEvaluation:
         file.add_par_profile(
             target_model="single_glp",
             target_parameter="GLP_01_A",
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=["profile_pLinear"],
         )
 
@@ -259,14 +259,14 @@ class TestEvaluation:
         file.add_par_profile(
             target_model="single_glp",
             target_parameter="GLP_01_A",
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=["profile_pLinear"],
         )
         # Make the profile slope time-dependent
         file.add_time_dependence(
             target_model="single_glp",
             target_parameter="GLP_01_A_pLinear_01_m",
-            dynamics_yaml="test_models_time.yaml",
+            dynamics_yaml="models/file_time.yaml",
             dynamics_model=["MonoExpPos"],
         )
 
@@ -326,7 +326,7 @@ class TestEvaluation:
         file.add_par_profile(
             target_model="two_glp_expr_amplitude",
             target_parameter="GLP_01_A",
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=["profile_pLinear"],
         )
 
@@ -359,7 +359,7 @@ class TestEvaluation:
         file.add_time_dependence(
             target_model="energy_expression",
             target_parameter="GLP_01_A",
-            dynamics_yaml="test_models_time.yaml",
+            dynamics_yaml="models/file_time.yaml",
             dynamics_model=["MonoExpPos"],
         )
 
@@ -406,13 +406,13 @@ class TestEvaluation:
         file.add_par_profile(
             target_model="single_glp",
             target_parameter="GLP_01_A",
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=["profile_pLinear"],
         )
         file.add_time_dependence(
             target_model="single_glp",
             target_parameter="GLP_01_x0",
-            dynamics_yaml="test_models_time.yaml",
+            dynamics_yaml="models/file_time.yaml",
             dynamics_model=["MonoExpNeg"],
         )
 
@@ -470,13 +470,13 @@ class TestEvaluation:
         file.add_par_profile(
             target_model="two_glp_expr_amplitude",
             target_parameter="GLP_01_A",
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=["profile_pLinear"],
         )
         file.add_time_dependence(
             target_model="two_glp_expr_amplitude",
             target_parameter="GLP_01_A_pLinear_01_m",
-            dynamics_yaml="test_models_time.yaml",
+            dynamics_yaml="models/file_time.yaml",
             dynamics_model=["MonoExpPos"],
         )
 
@@ -522,7 +522,7 @@ class TestEvaluation:
             file.add_time_dependence(
                 target_model="expression_chain",
                 target_parameter="GLP_01_A",
-                dynamics_yaml="test_models_time.yaml",
+                dynamics_yaml="models/file_time.yaml",
                 dynamics_model=["MonoExpPosIRF"],
             )
 
@@ -542,6 +542,6 @@ class TestEvaluation:
             file.add_par_profile(
                 target_model="expression_chain",
                 target_parameter="GLP_01_A",
-                profile_yaml="test_models_profile.yaml",
+                profile_yaml="models/file_profile.yaml",
                 profile_model=["profile_pLinear"],
             )

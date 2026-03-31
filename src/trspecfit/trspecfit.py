@@ -52,16 +52,19 @@ See examples/ directory for complete workflows.
 """
 
 import pathlib
+import re
 import time
+import types
 import warnings
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 # TYPE_CHECKING is False at runtime so this import is skipped during execution.
 # Exists only for type checkers (mypy/pyright) to resolve types.ModuleType annotations.
 if TYPE_CHECKING:
     import types
 
+import lmfit
 import numpy as np
 import pandas as pd
 from IPython.display import display
@@ -169,6 +172,7 @@ class Project:
 
         self._config_file: PathLike | None = None
         self.files: list[File] = []
+        self._project_fit_result: list[Any] | None = None
 
         # Set defaults first
         self._set_defaults()
@@ -331,6 +335,310 @@ class Project:
             if self.show_output >= 1:
                 print(f"Error loading config: {e}")
                 print("Using default settings")
+
+    # ------------------------------------------------------------------
+    # Project-level fitting
+    # ------------------------------------------------------------------
+
+    #
+    def _build_fit_params(
+        self,
+        *,
+        model_name: str,
+    ) -> tuple[lmfit.Parameters, dict]:
+        """
+        Build combined lmfit.Parameters and mapping for project-level fit.
+
+        Walks every File's active 2D model, reads each parameter's
+        ``vary_level`` (``"project"``/``"file"``/``"static"``), and
+        assembles:
+
+        * A single ``lmfit.Parameters`` object for the optimizer.
+        * A ``project_fit_info`` dict consumed by
+          ``spectra.fit_project_mcp``.
+
+        Parameters
+        ----------
+        model_name : str
+            Name of the model to fit (must exist on every File).
+
+        Returns
+        -------
+        combined_pars : lmfit.Parameters
+            Optimizer parameters (project-vary once, file-vary per file).
+        project_fit_info : dict
+            Context dict for ``fit_project_mcp`` containing mapping,
+            file/model references, and parameter names.
+        """
+
+        # (project_param_name, file_index, local_param_name)
+        mapping: list[tuple[str, int, str]] = []
+        # Track which project-vary params we've already added
+        project_seen: set[str] = set()
+
+        models: list[mcp.Model] = []
+
+        # Pass 1: collect models, build per-file name remapping, create
+        # parameters (without expressions — those need the full remap).
+        # name_remap[file_idx] maps local_name -> project_name
+        name_remaps: list[dict[str, str]] = []
+        # Deferred expression params: (project_name, file_idx, expr)
+        expr_deferred: list[tuple[str, int, str]] = []
+
+        combined_pars = lmfit.Parameters()
+
+        for file_idx, f in enumerate(self.files):
+            model = f.select_model(model_name)
+            if model is None:
+                raise ValueError(f'File "{f.path}" does not have model "{model_name}"')
+            models.append(model)
+
+            vary_levels = model.get_vary_levels()
+            name_remap: dict[str, str] = {}
+
+            for local_name, lmf_par in model.lmfit_pars.items():
+                level = vary_levels.get(local_name, "static")
+
+                if level == "project":
+                    proj_name = local_name
+                    name_remap[local_name] = proj_name
+                    if local_name not in project_seen:
+                        combined_pars.add(
+                            lmfit.Parameter(
+                                proj_name,
+                                value=lmf_par.value,
+                                vary=lmf_par.vary,
+                                min=lmf_par.min,
+                                max=lmf_par.max,
+                            )
+                        )
+                        project_seen.add(local_name)
+                    else:
+                        existing = combined_pars[proj_name]
+                        if not np.isclose(existing.value, lmf_par.value):
+                            warnings.warn(
+                                f'Project-vary param "{local_name}" has '
+                                f"different initial values across files: "
+                                f"using {existing.value} (file 0), "
+                                f"ignoring {lmf_par.value} "
+                                f"(file {file_idx}).",
+                                stacklevel=2,
+                            )
+                        if not np.isclose(existing.min, lmf_par.min):
+                            warnings.warn(
+                                f'Project-vary param "{local_name}" has '
+                                f"different min bounds across files: "
+                                f"using {existing.min} (file 0), "
+                                f"ignoring {lmf_par.min} "
+                                f"(file {file_idx}).",
+                                stacklevel=2,
+                            )
+                        if not np.isclose(existing.max, lmf_par.max):
+                            warnings.warn(
+                                f'Project-vary param "{local_name}" has '
+                                f"different max bounds across files: "
+                                f"using {existing.max} (file 0), "
+                                f"ignoring {lmf_par.max} "
+                                f"(file {file_idx}).",
+                                stacklevel=2,
+                            )
+                    mapping.append((proj_name, file_idx, local_name))
+
+                else:
+                    proj_name = f"file{file_idx:02d}_{local_name}"
+                    name_remap[local_name] = proj_name
+                    vary = lmf_par.vary if level == "file" else False
+
+                    if lmf_par.expr:
+                        # Defer — need full remap to rewrite references
+                        combined_pars.add(
+                            lmfit.Parameter(
+                                proj_name,
+                                value=lmf_par.value,
+                                vary=False,
+                            )
+                        )
+                        expr_deferred.append((proj_name, file_idx, lmf_par.expr))
+                    else:
+                        combined_pars.add(
+                            lmfit.Parameter(
+                                proj_name,
+                                value=lmf_par.value,
+                                vary=vary,
+                                min=lmf_par.min,
+                                max=lmf_par.max,
+                            )
+                        )
+                    mapping.append((proj_name, file_idx, local_name))
+
+            name_remaps.append(name_remap)
+
+        # Pass 2: resolve deferred expressions using per-file name remaps.
+        for proj_name, file_idx, expr in expr_deferred:
+            remap = name_remaps[file_idx]
+            # Replace longest names first to avoid partial substitution
+            rewritten = expr
+            for local_name in sorted(remap, key=len, reverse=True):
+                rewritten = re.sub(
+                    rf"\b{re.escape(local_name)}\b",
+                    remap[local_name],
+                    rewritten,
+                )
+            combined_pars[proj_name].set(expr=rewritten)
+
+        par_names = list(combined_pars.keys())
+
+        project_fit_info: dict = {
+            "mapping": mapping,
+            "files": self.files,
+            "models": models,
+            "par_names": par_names,
+        }
+
+        return combined_pars, project_fit_info
+
+    #
+    def fit_2d(
+        self,
+        *,
+        model_name: str,
+        stages: int = 2,
+        **fit_wrapper_kwargs,
+    ) -> None:
+        """
+        Fit all files simultaneously with shared/independent parameters.
+
+        Builds a combined parameter set from all files, runs the optimizer
+        once, and distributes final results back to each file's model.
+        Parameter sharing is controlled by the ``vary`` field in each
+        model's YAML (``"project"``/``"file"``/``"static"``).
+
+        Parameters
+        ----------
+        model_name : str
+            Model name (must exist on every File in the project).
+        stages : {1, 2}, default=2
+            Number of optimization stages (see ``fitlib.fit_wrapper``).
+        **fit_wrapper_kwargs
+            Additional keyword arguments passed to ``fitlib.fit_wrapper``.
+        """
+
+        t_start = time.time()
+
+        if not self.files:
+            raise ValueError("Project has no files to fit.")
+
+        # Validate: each file must have baseline fitted and 2D model ready
+        for f in self.files:
+            if f.model_base is None:
+                raise ValueError(
+                    f'File "{f.path}": baseline not fitted. '
+                    f"Run file.fit_baseline() first."
+                )
+            model = f.select_model(model_name)
+            if model is None:
+                raise ValueError(f'File "{f.path}" does not have model "{model_name}"')
+            if f.energy is None or f.time is None or f.data is None:
+                raise ValueError(f'File "{f.path}": data or axes missing.')
+
+            # Set fixed params from baseline (same as File.fit_2d does)
+            base_df = ulmfit.par_to_df(f.model_base.lmfit_pars, col_type="min")
+            model.update_value(
+                new_par_values=list(base_df["value"]),
+                par_select=list(base_df["name"]),
+            )
+
+        # Build combined parameters and project fit context
+        combined_pars, project_fit_info = self._build_fit_params(
+            model_name=model_name,
+        )
+
+        # Build concatenated data array (sliced per file)
+        data_slices: list[np.ndarray] = []
+        for f in self.files:
+            assert f.data is not None  # type guard
+            d = f.data
+            if f.e_lim and f.t_lim:
+                d = d[f.t_lim[0] : f.t_lim[1], f.e_lim[0] : f.e_lim[1]]
+            elif f.e_lim:
+                d = d[:, f.e_lim[0] : f.e_lim[1]]
+            elif f.t_lim:
+                d = d[f.t_lim[0] : f.t_lim[1], :]
+            data_slices.append(d.flatten())
+        concat_data = np.concatenate(data_slices)
+
+        # const: (x, data, package, fit_fun_str, unpack, e_lim, t_lim)
+        # e_lim and t_lim are empty — slicing is handled inside
+        # fit_project_mcp
+        const: tuple[Any, ...] = (
+            np.array([]),  # x — unused by fit_project_mcp
+            concat_data,
+            spectra,
+            "fit_project_mcp",
+            0,
+            [],  # no additional e_lim slicing
+            [],  # no additional t_lim slicing
+        )
+        args = (project_fit_info, 2)
+
+        par_names = project_fit_info["par_names"]
+
+        if self.show_output >= 1:
+            n_project = sum(
+                1
+                for p in combined_pars.values()
+                if p.vary and not p.name.startswith("file")
+            )
+            n_file = sum(
+                1
+                for p in combined_pars.values()
+                if p.vary and p.name.startswith("file")
+            )
+            n_static = sum(1 for p in combined_pars.values() if not p.vary)
+            print(
+                f"Project fit: {len(self.files)} files, "
+                f"{n_project} project-vary, {n_file} file-vary, "
+                f"{n_static} static params"
+            )
+
+        result = fitlib.fit_wrapper(
+            const=const,
+            args=args,
+            par_names=par_names,
+            par=combined_pars,
+            stages=stages,
+            show_output=1 if self.show_output >= 1 else 0,
+            save_output=0,
+            **fit_wrapper_kwargs,
+        )
+
+        # Distribute final parameters back to file models and hook into
+        # the standard File 2D-fit lifecycle so that save_2d_fit() and
+        # get_fit_results("2d") work on project-fitted files.
+        mapping = project_fit_info["mapping"]
+        models = project_fit_info["models"]
+        if result[1]:
+            final_pars = result[1].params
+            for proj_name, file_idx, local_name in mapping:
+                if proj_name in final_pars:
+                    models[file_idx].lmfit_pars[local_name].value = final_pars[
+                        proj_name
+                    ].value
+
+        for _file_idx, (f, model) in enumerate(zip(self.files, models, strict=True)):
+            f.model_2d = model
+            # Synthetic result satisfying result[1].params used by
+            # get_fit_results("2d"). Project fits do not produce per-file
+            # stderr/CI — those fields are absent by design.
+            model.result = (None, types.SimpleNamespace(params=model.lmfit_pars))
+
+        self._project_fit_result = result
+
+        if self.show_output >= 1:
+            fitlib.time_display(
+                t_start=t_start,
+                print_str="Time elapsed for project-level 2D fit: ",
+            )
 
 
 #

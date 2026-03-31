@@ -24,6 +24,50 @@ from lmfit.minimizer import MinimizerResult
 #
 
 
+# Valid string values for the vary field in YAML parameter specs
+VARY_LEVELS = {"project", "file", "static"}
+
+
+#
+def _vary_to_bool(vary: bool | str) -> bool:
+    """Convert vary specification to bool for lmfit.
+
+    Maps ``"project"`` and ``"file"`` to ``True`` (optimized),
+    ``"static"`` to ``False`` (fixed). Bool values pass through.
+    """
+
+    if isinstance(vary, bool):
+        return vary
+    if vary in ("project", "file"):
+        return True
+    if vary == "static":
+        return False
+    raise ValueError(
+        f"Invalid vary value: {vary!r}. "
+        f"Must be True, False, 'project', 'file', or 'static'."
+    )
+
+
+#
+def vary_to_level(vary: bool | str) -> str:
+    """Convert vary specification to a canonical level string.
+
+    Maps ``True`` → ``"file"``, ``False`` → ``"static"``.
+    String values ``"project"``/``"file"``/``"static"`` pass through.
+    """
+
+    if vary is True:
+        return "file"
+    if vary is False:
+        return "static"
+    if isinstance(vary, str) and vary in VARY_LEVELS:
+        return vary
+    raise ValueError(
+        f"Invalid vary value: {vary!r}. "
+        f"Must be True, False, 'project', 'file', or 'static'."
+    )
+
+
 #
 def par_create(
     par_name: str,
@@ -66,10 +110,13 @@ def par_create(
 
     # Standard parameter: [value, vary, min, max]
     if len(par_info) == 4:
-        lmf_par.set(*par_info)
+        value, vary, pmin, pmax = par_info
+        vary = _vary_to_bool(vary)
+        lmf_par.set(value, vary, pmin, pmax)
     # Unbound fit parameter: [value, vary]
     elif len(par_info) == 2:
-        lmf_par.set(par_info[0], par_info[1], -np.inf, np.inf)
+        vary = _vary_to_bool(par_info[1])
+        lmf_par.set(par_info[0], vary, -np.inf, np.inf)
     # Expression parameter: [expr_string]
     elif len(par_info) == 1:
         try:
@@ -232,9 +279,10 @@ def par_construct(par_names: list[str], par_info: list[list[Any]]) -> lmfit.Para
     # Add parameters one by one
     for par_name, p_info in zip(par_names, par_info, strict=True):
         if len(p_info) == 4:  # [value, vary, min, max]
-            lmf_pars.add(par_name, *p_info)
+            value, vary, pmin, pmax = p_info
+            lmf_pars.add(par_name, value, _vary_to_bool(vary), pmin, pmax)
         elif len(p_info) == 2:  # [value, vary]
-            lmf_pars.add(par_name, p_info[0], p_info[1], -np.inf, np.inf)
+            lmf_pars.add(par_name, p_info[0], _vary_to_bool(p_info[1]), -np.inf, np.inf)
         elif len(p_info) == 1:  # [expr]
             lmf_pars.add(par_name, expr=p_info[0])
 

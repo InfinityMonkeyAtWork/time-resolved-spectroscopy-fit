@@ -22,7 +22,7 @@ class TestEnergyParsing:
         project = Project(path="tests")
         file = File(parent_project=project)
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=model_info,
         )
         model = file.model_active
@@ -188,7 +188,7 @@ class TestTimeParsing:
         file = File(parent_project=project)
         file.time = np.linspace(-10, 100, 111)  # needed for time-dependent models
         model = file.load_model(
-            model_yaml="test_models_time.yaml",
+            model_yaml="models/file_time.yaml",
             model_info=model_info,
             par_name="parTEST",  # this is the name of the time-dependent parameter
             model_type="dynamics",
@@ -303,7 +303,7 @@ class Test2DModelParsing:
         project = Project(path="tests")
         file = File(parent_project=project, aux_axis=aux_axis)
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=model_energy,
         )
         file.time = np.linspace(-10, 100, 111)  # needed for time-dependent models
@@ -317,7 +317,7 @@ class Test2DModelParsing:
         file.add_time_dependence(
             target_model="simple_energy",
             target_parameter="GLP_01_x0",
-            dynamics_yaml="test_models_time.yaml",
+            dynamics_yaml="models/file_time.yaml",
             dynamics_model=["MonoExpPosIRF"],
         )
         model = file.model_active
@@ -373,7 +373,7 @@ class Test2DModelParsing:
             file.add_time_dependence(
                 target_model="energy_expression",
                 target_parameter="GLP_02_x0",
-                dynamics_yaml="test_models_time.yaml",
+                dynamics_yaml="models/file_time.yaml",
                 dynamics_model=["MonoExpPosIRF"],
             )
 
@@ -387,7 +387,7 @@ class Test2DModelParsing:
         file.add_par_profile(
             target_model="single_glp",
             target_parameter="GLP_01_A",
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=["profile_pLinear"],
         )
 
@@ -395,7 +395,7 @@ class Test2DModelParsing:
             file.add_time_dependence(
                 target_model="single_glp",
                 target_parameter="GLP_01_A",
-                dynamics_yaml="test_models_time.yaml",
+                dynamics_yaml="models/file_time.yaml",
                 dynamics_model=["MonoExpPos"],
             )
 
@@ -417,7 +417,7 @@ class TestProfileParsing:
         file = File(parent_project=project, aux_axis=aux_axis)
         file.energy = np.linspace(80, 90, 201)
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=model_energy,
         )
         return file
@@ -433,7 +433,7 @@ class TestProfileParsing:
         file.add_par_profile(
             target_model="simple_energy",
             target_parameter=par_name,
-            profile_yaml="test_models_profile.yaml",
+            profile_yaml="models/file_profile.yaml",
             profile_model=model_info,
         )
         model = file.model_active
@@ -520,7 +520,7 @@ class TestProfileParsing:
             file.add_par_profile(
                 target_model="energy_expression",
                 target_parameter="GLP_02_A",
-                profile_yaml="test_models_profile.yaml",
+                profile_yaml="models/file_profile.yaml",
                 profile_model=["profile_pExpDecay"],
             )
 
@@ -536,7 +536,7 @@ class TestProfileParsing:
         file.add_time_dependence(
             target_model="single_glp",
             target_parameter="GLP_01_A",
-            dynamics_yaml="test_models_time.yaml",
+            dynamics_yaml="models/file_time.yaml",
             dynamics_model=["MonoExpPos"],
         )
 
@@ -544,7 +544,7 @@ class TestProfileParsing:
             file.add_par_profile(
                 target_model="single_glp",
                 target_parameter="GLP_01_A",
-                profile_yaml="test_models_profile.yaml",
+                profile_yaml="models/file_profile.yaml",
                 profile_model=["profile_pExpDecay"],
             )
 
@@ -561,7 +561,7 @@ class TestYAMLValidationErrors:
         project = Project(path="tests")
         file = File(parent_project=project)
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["wrong_order"],
         )
         model = file.model_active
@@ -578,7 +578,7 @@ class TestYAMLValidationErrors:
         file = File(parent_project=project)
         with pytest.raises(ModelValidationError, match="Invalid parameter"):
             file.load_model(
-                model_yaml="test_models_energy.yaml",
+                model_yaml="models/file_energy.yaml",
                 model_info=["wrong_parameter_name"],
             )
 
@@ -590,7 +590,7 @@ class TestYAMLValidationErrors:
         file = File(parent_project=project)
         with pytest.raises(ValueError, match="not found in"):
             file.load_model(
-                model_yaml="test_models_energy.yaml",
+                model_yaml="models/file_energy.yaml",
                 model_info=["this_model_does_not_exist"],
             )
 
@@ -602,7 +602,7 @@ class TestYAMLValidationErrors:
         file = File(parent_project=project)
         with pytest.raises(ModelValidationError, match="background function"):
             file.load_model(
-                model_yaml="test_models_energy.yaml",
+                model_yaml="models/file_energy.yaml",
                 model_info=["background_last"],
             )
 
@@ -615,11 +615,64 @@ class TestYAMLValidationErrors:
         file.time = np.linspace(-10, 100, 111)
         with pytest.raises(ModelValidationError, match="convolution function"):
             file.load_model(
-                model_yaml="test_models_time.yaml",
+                model_yaml="models/file_time.yaml",
                 model_info=["conv_last"],
                 par_name="parTEST",
                 model_type="dynamics",
             )
+
+    #
+    def test_integer_vary_value_rejected(self):
+        """vary=0 (int) must be caught by validation, not silently treated as False.
+
+        Python's 0 == False means 0 passes a {True, False, ...} set membership
+        check but is not a valid vary specification. The validator must use
+        isinstance(vary, bool) to distinguish 0 from False.
+        """
+
+        project = Project(path="tests")
+        file = File(parent_project=project)
+        with pytest.raises(ModelValidationError, match="vary"):
+            file.load_model(
+                model_yaml="models/file_energy.yaml",
+                model_info=["vary_int_bad"],
+            )
+
+
+#
+#
+class TestParConstruct:
+    """Unit tests for par_construct — the batch lmfit.Parameters builder."""
+
+    #
+    def test_string_vary_mapped_to_bool(self):
+        """par_construct must call _vary_to_bool so 'project'/'file'/'static'
+        become True/True/False on Parameter.vary, not raw strings.
+
+        Previously par_construct passed vary through as-is to lmfit.add(),
+        yielding Parameter.vary == 'project' instead of True.
+        """
+
+        from trspecfit.utils.lmfit import par_construct
+
+        pars = par_construct(
+            par_names=["a", "b", "c"],
+            par_info=[
+                [1.0, "project", 0.0, 2.0],
+                [2.0, "file", 0.0, 5.0],
+                [3.0, "static", 0.0, 10.0],
+            ],
+        )
+
+        assert pars["a"].vary is True, (
+            f"'project' should map to vary=True, got {pars['a'].vary!r}"
+        )
+        assert pars["b"].vary is True, (
+            f"'file' should map to vary=True, got {pars['b'].vary!r}"
+        )
+        assert pars["c"].vary is False, (
+            f"'static' should map to vary=False, got {pars['c'].vary!r}"
+        )
 
 
 if __name__ == "__main__":

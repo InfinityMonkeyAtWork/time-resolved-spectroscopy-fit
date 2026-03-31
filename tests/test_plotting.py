@@ -553,12 +553,13 @@ class TestPlotConfigFromYAML:
         """Write project.yaml and a minimal model YAML into *tmpdir*."""
 
         (Path(tmpdir) / "project.yaml").write_text(self.YAML_CONTENT)
+        (Path(tmpdir) / "models").mkdir(exist_ok=True)
 
         # Copy test model YAML so load_model can find it
         import shutil
 
-        src = Path("tests") / "test_models_energy.yaml"
-        shutil.copy(src, Path(tmpdir) / "test_models_energy.yaml")
+        src = Path("tests") / "models/file_energy.yaml"
+        shutil.copy(src, Path(tmpdir) / "models/file_energy.yaml")
 
     #
     def test_project_loads_yaml_values(self):
@@ -609,7 +610,7 @@ class TestPlotConfigFromYAML:
                 time=np.linspace(0, 100, 30),
             )
             file.load_model(
-                model_yaml="test_models_energy.yaml",
+                model_yaml="models/file_energy.yaml",
                 model_info=["single_glp"],
             )
             model = file.model_active
@@ -635,7 +636,7 @@ class TestPlotConfigFromYAML:
                 time=np.linspace(0, 100, 30),
             )
             file.load_model(
-                model_yaml="test_models_energy.yaml",
+                model_yaml="models/file_energy.yaml",
                 model_info=["single_glp"],
             )
             model = file.model_active
@@ -671,7 +672,7 @@ class TestPlotConfigPropagation:
         file.dim = 2
 
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info=["single_glp"],
         )
         return file
