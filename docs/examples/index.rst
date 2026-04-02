@@ -14,6 +14,8 @@ Fitting Workflows
   Multi-cycle, time-dependent modeling workflows.
 - ``examples/fitting_workflows/04_par_profiles/``
   Profile-aware fitting with auxiliary-axis parameter profiles and profile-parameter dynamics.
+- ``examples/fitting_workflows/05_project_level_fitting/``
+  Project-level fitting with shared parameters across multiple files.
 
 Data Generation
 ---------------
@@ -30,5 +32,6 @@ Notebooks
 - `02 dependent parameters notebook <../../examples/fitting_workflows/02_dependent_parameters/example.ipynb>`_
 - `03 multi-cycle notebook <../../examples/fitting_workflows/03_multi_cycle/example.ipynb>`_
 - `04 parameter profiles notebook <../../examples/fitting_workflows/04_par_profiles/example.ipynb>`_
+- `05 project-level fitting notebook <../../examples/fitting_workflows/05_project_level_fitting/example.ipynb>`_
 - `Simulator data generation notebook <../../examples/data_generation/simulator/example.ipynb>`_
 - `ML training data generation notebook <../../examples/data_generation/ml_training/example.ipynb>`_

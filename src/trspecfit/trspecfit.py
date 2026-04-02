@@ -264,10 +264,11 @@ class Project:
         ----------
         detail : int, default=0
             Verbosity level.
-            0: project paths and config source.
-            1: also list attached Files (path, dim, shape, models)
-               and plot 2D data grid.
-            2: also show plot and file I/O settings.
+
+            - 0: project paths and config source.
+            - 1: also list attached Files (path, dim, shape, models)
+              and plot 2D data grid.
+            - 2: also show plot and file I/O settings.
         """
 
         if self.show_output < 1:
