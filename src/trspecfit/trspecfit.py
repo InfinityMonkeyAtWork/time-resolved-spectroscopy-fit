@@ -1015,11 +1015,18 @@ class File:
     path_da : Path
         Directory path for saving this file's fit results
     data : ndarray
-        Spectroscopy data (1D or 2D)
+        Spectroscopy data (1D or 2D), with dark subtraction and sensitivity
+        calibration applied (if any)
+    data_raw : ndarray
+        Original unmodified spectroscopy data as passed to the constructor
     dim : int
         Data dimensionality (1 or 2)
     energy : ndarray
         Energy axis
+    dark : ndarray
+        Dark/background spectrum subtracted from data (zeros by default)
+    calibration : ndarray
+        Sensitivity calibration spectrum dividing data (ones by default)
     time : ndarray or None
         Time axis (None for 1D data)
     aux_axis : ndarray or None
@@ -1096,6 +1103,7 @@ class File:
         self.path_da = self.p.path_run / path  # path to save fit results to
         self._plot_config: PlotConfig | None = None  # create plot config from project
         self.data = data  # (time-[optional] and) energy-dependent data to fit
+        self.data_raw: np.ndarray | None = data.copy() if data is not None else None
         self.dim = 0 if data is None else data.ndim  # 1/2 D for energy/+time
         # take energy and time input or create a generic axis if None is passed
         if energy is not None or data is None:
@@ -1110,6 +1118,12 @@ class File:
             self.time = np.arange(data.shape[0])
         self.aux_axis: np.ndarray | None = (
             aux_axis  # auxiliary physical axis (e.g. depth)
+        )
+        # data correction arrays (dark subtraction, sensitivity calibration)
+        n_energy = self.energy.shape[0] if self.energy is not None else 0
+        self.dark: np.ndarray | None = np.zeros(n_energy) if data is not None else None
+        self.calibration: np.ndarray | None = (
+            np.ones(n_energy) if data is not None else None
         )
         # keep track of models that are used to fit this file/data
         self.models: list[mcp.Model] = []
@@ -1609,6 +1623,108 @@ class File:
             (path_model / subfolder).mkdir(parents=True, exist_ok=True)
 
         return path_model
+
+    #
+    def _apply_corrections(self) -> None:
+        """Rebuild ``data`` from ``data_raw`` by applying dark and calibration."""
+
+        assert self.data_raw is not None  # type guard
+        assert self.dark is not None  # type guard
+        assert self.calibration is not None  # type guard
+        self.data = (self.data_raw - self.dark) / self.calibration
+        # recompute baseline if it was previously defined
+        if self.base_t_abs:
+            self.define_baseline(
+                self.base_t_abs[0], self.base_t_abs[1], show_plot=False
+            )
+
+    #
+    def subtract_dark(self, dark: np.ndarray) -> None:
+        """
+        Subtract a dark/background spectrum from the data.
+
+        The dark spectrum is subtracted from every row (time slice) of the
+        data before dividing by the sensitivity calibration. Replaces any
+        previously set dark spectrum.
+
+        Parameters
+        ----------
+        dark : ndarray, shape (n_energy,)
+            Dark/background spectrum to subtract. Must have the same length
+            as the energy axis.
+
+        Notes
+        -----
+        Apply dark subtraction before fitting. The correction is stored and
+        can be replaced by calling this method again, or removed with
+        ``reset_dark()``. The original data is always preserved in
+        ``data_raw``.
+        """
+
+        if self.data_raw is None or self.energy is None:
+            raise ValueError("No data loaded; cannot subtract dark.")
+        n_energy = self.energy.shape[0]
+        if dark.ndim != 1 or dark.shape[0] != n_energy:
+            raise ValueError(
+                f"dark must be 1D with length {n_energy}, got shape {dark.shape}."
+            )
+        self.dark = dark
+        self._apply_corrections()
+
+    #
+    def calibrate_data(self, calibration: np.ndarray) -> None:
+        """
+        Apply sensitivity calibration by dividing the data.
+
+        The (dark-subtracted) data is divided by the calibration spectrum.
+        Replaces any previously set calibration.
+
+        Parameters
+        ----------
+        calibration : ndarray, shape (n_energy,)
+            Sensitivity/response spectrum to divide by. Must have the same
+            length as the energy axis and must not contain zeros.
+
+        Notes
+        -----
+        Apply calibration before fitting. The correction is stored and can
+        be replaced by calling this method again, or removed with
+        ``reset_calibration()``. The original data is always preserved in
+        ``data_raw``.
+        """
+
+        if self.data_raw is None or self.energy is None:
+            raise ValueError("No data loaded; cannot calibrate.")
+        n_energy = self.energy.shape[0]
+        if calibration.ndim != 1 or calibration.shape[0] != n_energy:
+            raise ValueError(
+                f"calibration must be 1D with length {n_energy}, "
+                f"got shape {calibration.shape}."
+            )
+        if np.any(calibration == 0):
+            raise ValueError(
+                "calibration contains zeros; division by zero is not allowed."
+            )
+        self.calibration = calibration
+        self._apply_corrections()
+
+    #
+    def reset_dark(self) -> None:
+        """Reset dark subtraction to zeros (no subtraction)."""
+
+        if self.data_raw is None or self.energy is None:
+            raise ValueError("No data loaded; cannot reset dark.")
+        self.dark = np.zeros(self.energy.shape[0])
+        self._apply_corrections()
+
+    #
+    def reset_calibration(self) -> None:
+        """Reset sensitivity calibration to ones (no calibration)."""
+
+        if self.data_raw is None or self.energy is None:
+            raise ValueError("No data loaded; cannot reset calibration.")
+        self.calibration = np.ones(self.energy.shape[0])
+        self._apply_corrections()
 
     #
     def define_baseline(
