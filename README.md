@@ -84,9 +84,6 @@ software record:
   Lawrence Berkeley National Laboratory, 2025.
   DOI: [10.11578/dc.20251009.2](https://doi.org/10.11578/dc.20251009.2)
 
-GitHub will also surface this citation automatically from
-[`CITATION.cff`](CITATION.cff).
-
 ## Support and Community
 
 - Questions and usage help: [Discussions (Q&A)](https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/discussions)
