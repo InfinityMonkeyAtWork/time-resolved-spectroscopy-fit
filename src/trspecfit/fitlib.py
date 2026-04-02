@@ -1128,7 +1128,7 @@ def plt_fit_res_1d(
     y_lim = kwargs.get("y_lim", config.y_lim)
     dpi_plot = kwargs.get("dpi_plot", config.dpi_plot)
     dpi_save = kwargs.get("dpi_save", config.dpi_save)
-    res_mult = kwargs.get("res_mult", 5)
+    res_mult = kwargs.get("res_mult", config.res_mult)
     save_img = kwargs.get("save_img", 0)
     save_path = kwargs.get("save_path", "")
 
