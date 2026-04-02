@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the `/changelog` skill in
 [`.claude/skills/changelog/`](.claude/skills/changelog/SKILL.md).
 
+## [0.7.0] - 2026-04-02
+
+### Added
+
+- **Project-level fitting**: fit shared models across multiple files in a single workflow. New `Project` methods: `load_models()`, `set_fit_limits()`, `define_baselines()`, `fit_baselines()`, `add_time_dependences()`, and project-level `fit_2d()` with per-file result plots and grid summaries.
+- File access by name or index: `project["file_name"]` and `project[index]`.
+- `File(name=...)` parameter for explicit file identifiers (defaults to path stem); duplicate names are rejected.
+- `CITATION.cff` with DOI for citing trspecfit in research.
+- Example workflow `05_project_level_fitting/` demonstrating multi-file project-level fitting.
+
+### Changed
+
+- `model_info` now accepts `str` for single models (e.g. `model_info="GLP"`) in addition to `list[str]`; `list[str]` is still required for multi-cycle submodels.
+- Shared "project" parameters are validated to have matching bounds across individual file-level models.
+- `Project.describe(detail=1)` now shows energy/time/z ranges per file and plots a 2D data grid with auto-column layout.
+
+### Fixed
+
+- Residual multiplier (`res_mult`) now read from `PlotConfig` / `project.yaml` instead of being hardcoded.
+
 ## [0.6.1] - 2026-03-26
 
 ### Added
