@@ -1123,6 +1123,23 @@ class TestFileNameAndProjectAccess:
         with pytest.raises(IndexError):
             project[99]
 
+    #
+    def test_duplicate_name_raises(self):
+        project = Project(path="tests", name="dup")
+        project.show_output = 0
+        File(parent_project=project, path="scan1/data.csv")
+        with pytest.raises(ValueError, match="Duplicate file name"):
+            File(parent_project=project, path="scan2/data.csv")
+
+    #
+    def test_duplicate_name_resolved_with_explicit_name(self):
+        project = Project(path="tests", name="dup2")
+        project.show_output = 0
+        File(parent_project=project, path="scan1/data.csv")
+        File(parent_project=project, path="scan2/data.csv", name="data_2")
+        assert project["data"].path == "scan1/data.csv"
+        assert project["data_2"].path == "scan2/data.csv"
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

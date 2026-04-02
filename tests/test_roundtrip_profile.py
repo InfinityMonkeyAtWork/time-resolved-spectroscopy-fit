@@ -62,7 +62,7 @@ def _extract_par_dict(model):
 def _make_truth_two_profiles(project):
     """Gauss + pLinear on x0 + pExpDecay on A (two profiles, no dynamics)."""
 
-    file = File(parent_project=project, aux_axis=_make_aux_axis())
+    file = File(parent_project=project, name="truth", aux_axis=_make_aux_axis())
     file.energy = _make_energy_axis()
     file.time = _make_time_axis()
     file.dim = 2
@@ -90,7 +90,7 @@ def _make_truth_two_profiles(project):
 def _make_truth_profile_dynamics(project):
     """Gauss + two profiles + expFun dynamics on pExpDecay A."""
 
-    file = File(parent_project=project, aux_axis=_make_aux_axis())
+    file = File(parent_project=project, name="truth", aux_axis=_make_aux_axis())
     file.energy = _make_energy_axis()
     file.time = _make_time_axis()
     file.dim = 2
@@ -129,6 +129,7 @@ def _make_fit_two_profiles(project, data, energy, time, aux):
 
     file = File(
         parent_project=project,
+        name="fit",
         data=data,
         energy=energy.copy(),
         time=time.copy(),
@@ -160,6 +161,7 @@ def _make_fit_profile_dynamics(project, data, energy, time, aux):
 
     file = File(
         parent_project=project,
+        name="fit",
         data=data,
         energy=energy.copy(),
         time=time.copy(),

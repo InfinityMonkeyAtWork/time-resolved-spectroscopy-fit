@@ -270,6 +270,9 @@ class Project:
             2: also show plot and file I/O settings.
         """
 
+        if self.show_output < 1:
+            return
+
         print("Project")
         print(f"  path:         {self.path}")
         print(f"  results:      {self.path_results}")
@@ -301,10 +304,15 @@ class Project:
                 parts = [p for p in [e_range, t_range, z_range] if p]
                 print(f"    {f.name}: {f.dim}D {f.data.shape}, {', '.join(parts)}")
 
-            # Plot 2D data grid
+            # Plot 2D data grid (only if all files share axes)
             if self.show_output >= 1:
                 files_2d = [f for f in self.files if f.dim == 2 and f.data is not None]
-                if files_2d:
+                try:
+                    self._validate_shared_axes()
+                    axes_ok = True
+                except ValueError:
+                    axes_ok = False
+                if files_2d and axes_ok:
                     config = files_2d[0].plot_config
                     datasets = [f.data for f in files_2d if f.data is not None]
                     uplt.plot_2d_grid(
@@ -315,6 +323,11 @@ class Project:
                         config=config,
                         vlines=[f.e_lim_abs for f in files_2d],
                         hlines=[f.t_lim_abs for f in files_2d],
+                    )
+                elif files_2d:
+                    print(
+                        "  (2D grid plot skipped: files have"
+                        " different axis shapes and/or values)"
                     )
 
         if detail >= 2:
@@ -380,6 +393,251 @@ class Project:
             if self.show_output >= 1:
                 print(f"Error loading config: {e}")
                 print("Using default settings")
+
+    # ------------------------------------------------------------------
+    # Project-level model loading and baseline fitting
+    # ------------------------------------------------------------------
+
+    #
+    def _validate_shared_axes(self) -> None:
+        """Verify all files share the same energy and time axes."""
+
+        files_with_data = [f for f in self.files if f.data is not None]
+        if len(files_with_data) < 2:
+            return
+        ref = files_with_data[0]
+        for f in files_with_data[1:]:
+            if f.energy is not None and ref.energy is not None:
+                if f.energy.shape != ref.energy.shape or not np.allclose(
+                    f.energy, ref.energy
+                ):
+                    raise ValueError(
+                        f'Energy axis mismatch: "{ref.name}" vs "{f.name}". '
+                        f"Project-level methods require shared axes."
+                    )
+            if f.time is not None and ref.time is not None:
+                if f.time.shape != ref.time.shape or not np.allclose(f.time, ref.time):
+                    raise ValueError(
+                        f'Time axis mismatch: "{ref.name}" vs "{f.name}". '
+                        f"Project-level methods require shared axes."
+                    )
+
+    #
+    def load_models(
+        self,
+        *,
+        model_yaml: PathLike,
+        model_info: str | list[str],
+    ) -> None:
+        """
+        Load the same energy model onto every file in the project.
+
+        Parameters
+        ----------
+        model_yaml : str or Path
+            YAML file name (located in project path) defining the model.
+        model_info : str or list of str
+            Model name(s) to load (see ``File.load_model``).
+        """
+
+        if not self.files:
+            raise ValueError("Project has no files.")
+        saved = self.show_output
+        self.show_output = 0
+        try:
+            for f in self.files:
+                f.load_model(model_yaml=model_yaml, model_info=model_info)
+        finally:
+            self.show_output = saved
+        if self.show_output >= 1:
+            name = model_info if isinstance(model_info, str) else "_".join(model_info)
+            print(f"Model '{name}' loaded for {len(self.files)} files")
+
+    #
+    def add_time_dependences(
+        self,
+        *,
+        target_model: str,
+        target_parameter: str,
+        dynamics_yaml: PathLike,
+        dynamics_model: str | list[str],
+        frequency: float = -1,
+    ) -> None:
+        """
+        Add time dependence to a parameter on every file in the project.
+
+        Parameters
+        ----------
+        target_model : str
+            Name of the energy model (must exist on every file).
+        target_parameter : str
+            Parameter to make time-dependent (e.g. ``'GLP_01_x0'``).
+        dynamics_yaml : str or Path
+            YAML file defining the dynamics model.
+        dynamics_model : str or list of str
+            Dynamics model name(s) (see ``File.add_time_dependence``).
+        frequency : float, default=-1
+            Sub-cycle frequency (-1 = single cycle).
+        """
+
+        if not self.files:
+            raise ValueError("Project has no files.")
+        saved = self.show_output
+        self.show_output = 0
+        try:
+            for f in self.files:
+                f.add_time_dependence(
+                    target_model=target_model,
+                    target_parameter=target_parameter,
+                    dynamics_yaml=dynamics_yaml,
+                    dynamics_model=dynamics_model,
+                    frequency=frequency,
+                )
+        finally:
+            self.show_output = saved
+        if self.show_output >= 1:
+            print(
+                f"Time dependence '{target_parameter}' added "
+                f"for {len(self.files)} files"
+            )
+
+    #
+    def set_fit_limits(
+        self,
+        energy_limits: Sequence[float] | None,
+        *,
+        time_limits: Sequence[float] | None = None,
+    ) -> None:
+        """
+        Set energy and time fitting limits on every file in the project.
+
+        Parameters
+        ----------
+        energy_limits : list of float or None
+            Energy range ``[min, max]`` in absolute values.
+            If None, uses each file's full energy range.
+        time_limits : list of float, optional
+            Time range ``[min, max]`` in absolute values.
+        """
+
+        if not self.files:
+            raise ValueError("Project has no files.")
+        for f in self.files:
+            f.set_fit_limits(
+                energy_limits,
+                time_limits=time_limits,
+                show_plot=False,
+            )
+        if self.show_output >= 1:
+            e_str = (
+                f"energy {list(energy_limits)}"
+                if energy_limits is not None
+                else "energy [full]"
+            )
+            t_str = f", time {list(time_limits)}" if time_limits is not None else ""
+            print(f"Fit limits set for {len(self.files)} files: {e_str}{t_str}")
+
+    #
+    def define_baselines(
+        self,
+        *,
+        time_start: float,
+        time_stop: float,
+        time_type: str = "abs",
+    ) -> None:
+        """
+        Define baseline on every file in the project.
+
+        Parameters
+        ----------
+        time_start : float or int
+            Start of baseline region (absolute value or index).
+        time_stop : float or int
+            End of baseline region (absolute value or index).
+        time_type : {'abs', 'ind'}, default='abs'
+            Interpretation of time_start/time_stop.
+        """
+
+        if not self.files:
+            raise ValueError("Project has no files.")
+        self._validate_shared_axes()
+        for f in self.files:
+            f.define_baseline(
+                time_start=time_start,
+                time_stop=time_stop,
+                time_type=time_type,
+                show_plot=False,
+            )
+        if self.show_output >= 1:
+            type_label = "index" if time_type == "ind" else "absolute"
+            print(
+                f"Baseline defined for {len(self.files)} files: "
+                f"time ({type_label}) [{time_start}, {time_stop}]"
+            )
+
+    #
+    def fit_baselines(
+        self,
+        *,
+        model_name: str,
+        stages: int = 2,
+        **fit_wrapper_kwargs,
+    ) -> None:
+        """
+        Fit baseline on every file in the project.
+
+        Each file must already have the named model loaded and a baseline
+        defined (via ``define_baselines`` or ``File.define_baseline``).
+
+        Parameters
+        ----------
+        model_name : str
+            Name of baseline model (must exist on every file).
+        stages : {1, 2}, default=2
+            Number of optimization stages.
+        **fit_wrapper_kwargs
+            Additional keyword arguments passed to ``fitlib.fit_wrapper``.
+        """
+
+        if not self.files:
+            raise ValueError("Project has no files.")
+        for f in self.files:
+            if f.select_model(model_name) is None:
+                raise ValueError(f'File "{f.name}": model "{model_name}" not loaded.')
+            if f.data_base is None:
+                raise ValueError(
+                    f'File "{f.name}": baseline not defined. '
+                    f"Run define_baselines() first."
+                )
+
+        t_start = time.time()
+        saved = self.show_output
+        self.show_output = 0
+        try:
+            for f in self.files:
+                f.fit_baseline(
+                    model_name=model_name,
+                    stages=stages,
+                    **fit_wrapper_kwargs,
+                )
+        finally:
+            self.show_output = saved
+
+        if self.show_output >= 1:
+            fitlib.time_display(
+                t_start=t_start,
+                print_str=(f"Baseline fit complete for {len(self.files)} files: "),
+            )
+            # Show saved baseline fit plots in a grid
+            import matplotlib.image as mpimg
+
+            images = []
+            for f in self.files:
+                img_path = f.create_model_path(model_name) / "base_fit.png"
+                if img_path.exists():
+                    images.append(mpimg.imread(str(img_path)))
+            if images:
+                uplt.plot_grid(images, columns=min(3, len(images)))
 
     # ------------------------------------------------------------------
     # Project-level fitting
@@ -577,8 +835,9 @@ class Project:
         for f in self.files:
             if f.model_base is None:
                 raise ValueError(
-                    f'File "{f.path}": baseline not fitted. '
-                    f"Run file.fit_baseline() first."
+                    f'File "{f.name}": baseline not fitted. '
+                    f"Fit individual baselines with file.fit_baseline() "
+                    f"or all at once with project.fit_baselines()."
                 )
             model = f.select_model(model_name)
             if model is None:
@@ -672,18 +931,40 @@ class Project:
 
         for _file_idx, (f, model) in enumerate(zip(self.files, models, strict=True)):
             f.model_2d = model
+            assert model is not None  # type guard
             # Synthetic result satisfying result[1].params used by
             # get_fit_results("2d"). Project fits do not produce per-file
             # stderr/CI — those fields are absent by design.
-            model.result = (None, types.SimpleNamespace(params=model.lmfit_pars))
+            model.result = [None, types.SimpleNamespace(params=model.lmfit_pars)]
 
         self._project_fit_result = result
+
+        # Save per-file 2D fit results (silently)
+        saved = self.show_output
+        self.show_output = 0
+        try:
+            for f in self.files:
+                if f.model_2d is not None:
+                    path_2d = f.create_model_path(model_name)
+                    f.save_2d_fit(save_path=path_2d)
+        finally:
+            self.show_output = saved
 
         if self.show_output >= 1:
             fitlib.time_display(
                 t_start=t_start,
                 print_str="Time elapsed for project-level 2D fit: ",
             )
+            # Show saved 2D fit plots in a grid
+            import matplotlib.image as mpimg
+
+            images = []
+            for f in self.files:
+                img_path = f.create_model_path(model_name) / "2D_data_fit_res.png"
+                if img_path.exists():
+                    images.append(mpimg.imread(str(img_path)))
+            if images:
+                uplt.plot_grid(images, columns=min(3, len(images)))
 
 
 #
@@ -800,9 +1081,17 @@ class File:
     ) -> None:
         # pass parent project or (default) create a functioning test project environment
         self.p = parent_project if parent_project is not None else Project(path=None)
-        self.p.files.append(self)  # register with parent project
         self.path = path  # path to load/save [?] data from
         self.name = name if name is not None else pathlib.Path(path).stem
+        # Check for duplicate names before registering
+        existing = [f.name for f in self.p.files]
+        if self.name in existing:
+            raise ValueError(
+                f'Duplicate file name "{self.name}". '
+                f"Pass an explicit name= to disambiguate "
+                f'(e.g. name="{self.name}_2").'
+            )
+        self.p.files.append(self)  # register with parent project
         self.path_da = self.p.path_run / path  # path to save fit results to
         self._plot_config: PlotConfig | None = None  # create plot config from project
         self.data = data  # (time-[optional] and) energy-dependent data to fit
@@ -1167,6 +1456,9 @@ class File:
             - 0: Show parameter table only
             - 1: Show parameters and plot data/initial guess/residual
         """
+
+        if self.p.show_output < 1:
+            return
 
         mod = self.model_active if model_info is None else self.select_model(model_info)
         if mod is None:
@@ -1587,7 +1879,7 @@ class File:
             save_path=path_base_results / "base_fit.png",
         )
 
-        if stages >= 1:
+        if stages >= 1 and self.p.show_output >= 1:
             fitlib.time_display(
                 t_start=t_base, print_str="Time elapsed for baseline fit: "
             )

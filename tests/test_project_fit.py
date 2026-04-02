@@ -70,7 +70,7 @@ def _make_truth_file(*, amplitude=20.0, x0_shift=3.0, tau=5.0):
 
 
 #
-def _make_fit_file(project, data, energy, time_ax):
+def _make_fit_file(project, data, energy, time_ax, *, name="test"):
     """Create a fresh file with baseline + 2D model, ready to fit.
 
     Mirrors real workflow: load baseline model → define_baseline →
@@ -79,6 +79,7 @@ def _make_fit_file(project, data, energy, time_ax):
 
     file = File(
         parent_project=project,
+        name=name,
         data=data,
         energy=energy.copy(),
         time=time_ax.copy(),
@@ -142,8 +143,12 @@ class TestProjectFitClean:
         clean2, _, _ = sim2.simulate_2d()
 
         # Create fit files (baseline already fitted inside _make_fit_file)
-        fit1 = _make_fit_file(project, clean1, truth1.energy, truth1.time)
-        fit2 = _make_fit_file(project, clean2, truth2.energy, truth2.time)
+        fit1 = _make_fit_file(
+            project, clean1, truth1.energy, truth1.time, name="file_1"
+        )
+        fit2 = _make_fit_file(
+            project, clean2, truth2.energy, truth2.time, name="file_2"
+        )
 
         # Project-level 2D fit
         project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
@@ -228,7 +233,7 @@ class TestProjectFitClean:
             truth_files.append((tf, seed))
 
         # --- simulate and build fit files ---
-        for tf, seed in truth_files:
+        for file_idx, (tf, seed) in enumerate(truth_files):
             sim = Simulator(
                 model=tf.model_active,
                 detection="analog",
@@ -240,6 +245,7 @@ class TestProjectFitClean:
 
             ff = File(
                 parent_project=project,
+                name=f"file_{file_idx}",
                 data=clean,
                 energy=tf.energy.copy(),
                 time=tf.time.copy(),
@@ -439,8 +445,8 @@ class TestBuildFitParams:
 
         project = _make_project()
 
-        for _ in range(2):
-            f = File(parent_project=project)
+        for i in range(2):
+            f = File(parent_project=project, name=f"file_{i}")
             f.energy = np.linspace(83, 87, 10)
             f.time = np.linspace(-2, 10, 10)
             f.dim = 2
@@ -477,8 +483,8 @@ class TestBuildFitParams:
 
         project = _make_project()
 
-        for _ in range(2):
-            f = File(parent_project=project)
+        for i in range(2):
+            f = File(parent_project=project, name=f"file_{i}")
             f.energy = np.linspace(83, 87, 10)
             f.time = np.linspace(-2, 10, 10)
             f.dim = 2
@@ -504,8 +510,8 @@ class TestBuildFitParams:
 
         project = _make_project()
 
-        for _ in range(2):
-            f = File(parent_project=project)
+        for i in range(2):
+            f = File(parent_project=project, name=f"file_{i}")
             f.energy = np.linspace(83, 87, 10)
             f.time = np.linspace(-2, 10, 10)
             f.dim = 2
@@ -540,8 +546,8 @@ class TestBuildFitParams:
 
         project = _make_project()
 
-        for _ in range(2):
-            f = File(parent_project=project)
+        for i in range(2):
+            f = File(parent_project=project, name=f"file_{i}")
             f.energy = np.linspace(83, 87, 10)
             f.time = np.linspace(-2, 10, 10)
             f.dim = 2
@@ -570,8 +576,8 @@ class TestBuildFitParams:
 
         project = _make_project()
 
-        for _ in range(2):
-            f = File(parent_project=project)
+        for i in range(2):
+            f = File(parent_project=project, name=f"file_{i}")
             f.energy = np.linspace(83, 87, 10)
             f.time = np.linspace(-2, 10, 10)
             f.dim = 2
@@ -617,8 +623,8 @@ class TestProjectFitLifecycle:
         )
         clean, _, _ = sim.simulate_2d()
 
-        for _ in range(2):
-            _make_fit_file(project, clean, truth.energy, truth.time)
+        for i in range(2):
+            _make_fit_file(project, clean, truth.energy, truth.time, name=f"file_{i}")
 
         project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
 
@@ -640,8 +646,8 @@ class TestProjectFitLifecycle:
         )
         clean, _, _ = sim.simulate_2d()
 
-        for _ in range(2):
-            _make_fit_file(project, clean, truth.energy, truth.time)
+        for i in range(2):
+            _make_fit_file(project, clean, truth.energy, truth.time, name=f"file_{i}")
 
         project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
 
@@ -665,8 +671,8 @@ class TestProjectFitLifecycle:
         )
         clean, _, _ = sim.simulate_2d()
 
-        for _ in range(2):
-            _make_fit_file(project, clean, truth.energy, truth.time)
+        for i in range(2):
+            _make_fit_file(project, clean, truth.energy, truth.time, name=f"file_{i}")
 
         project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
 

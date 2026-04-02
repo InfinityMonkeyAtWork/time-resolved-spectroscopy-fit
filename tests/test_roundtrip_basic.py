@@ -31,7 +31,7 @@ def _make_truth_file(project):
     energy = np.linspace(83, 87, 30)
     time = np.linspace(-2, 10, 24)
 
-    file = File(parent_project=project)
+    file = File(parent_project=project, name="truth")
     file.energy = energy
     file.time = time
     file.dim = 2
@@ -55,6 +55,7 @@ def _make_fit_file(project, data, energy, time):
 
     file = File(
         parent_project=project,
+        name="fit",
         data=data,
         energy=energy.copy(),
         time=time.copy(),
