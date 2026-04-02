@@ -225,6 +225,37 @@ class Project:
         return f"Project(path='{self.path}', name='{self.name}')"
 
     #
+    def __getitem__(self, key: int | str) -> "File":
+        """
+        Access a File by index or name.
+
+        Parameters
+        ----------
+        key : int or str
+            Integer index into ``self.files``, or string matching a
+            File's ``name`` attribute.
+
+        Returns
+        -------
+        File
+
+        Raises
+        ------
+        KeyError
+            If string key does not match any file name.
+        IndexError
+            If integer index is out of range.
+        """
+
+        if isinstance(key, int):
+            return self.files[key]
+        for f in self.files:
+            if f.name == key:
+                return f
+        available = [f.name for f in self.files]
+        raise KeyError(f"No file with name '{key}'. Available: {available}")
+
+    #
     def describe(self, detail: int = 0) -> None:
         """
         Display project configuration summary.
@@ -234,7 +265,8 @@ class Project:
         detail : int, default=0
             Verbosity level.
             0: project paths and config source.
-            1: also list attached Files (path, dim, shape, models).
+            1: also list attached Files (path, dim, shape, models)
+               and plot 2D data grid.
             2: also show plot and file I/O settings.
         """
 
@@ -252,25 +284,38 @@ class Project:
             if not self.files:
                 print("    (none)")
             for f in self.files:
-                shape = f"shape {f.data.shape}" if f.data is not None else "no data"
-                n_models = len(f.models)
-                model_names = (
-                    ", ".join(m.name for m in f.models) if n_models else "none"
-                )
-                active = (
-                    f" [active: {f.model_active.name}]"
-                    if f.model_active is not None
+                if f.data is None:
+                    print(f"    {f.name}: no data")
+                    continue
+                e_range = (
+                    f"energy [{f.energy.min():.2f}, {f.energy.max():.2f}]"
+                    if f.energy is not None
                     else ""
                 )
-                aux = (
-                    f", aux_axis len {len(f.aux_axis)}"
-                    if f.aux_axis is not None
+                t_range = (
+                    f"time [{f.time.min():.2f}, {f.time.max():.2f}]"
+                    if f.time is not None
                     else ""
                 )
-                print(
-                    f"    {f.path}: {f.dim}D {shape}{aux}, "
-                    f"models ({n_models}): {model_names}{active}"
-                )
+                z_range = f"z [{f.data.min():.4g}, {f.data.max():.4g}]"
+                parts = [p for p in [e_range, t_range, z_range] if p]
+                print(f"    {f.name}: {f.dim}D {f.data.shape}, {', '.join(parts)}")
+
+            # Plot 2D data grid
+            if self.show_output >= 1:
+                files_2d = [f for f in self.files if f.dim == 2 and f.data is not None]
+                if files_2d:
+                    config = files_2d[0].plot_config
+                    datasets = [f.data for f in files_2d if f.data is not None]
+                    uplt.plot_2d_grid(
+                        datasets=datasets,
+                        x=files_2d[0].energy,
+                        y=files_2d[0].time,
+                        titles=[f.name for f in files_2d],
+                        config=config,
+                        vlines=[f.e_lim_abs for f in files_2d],
+                        hlines=[f.t_lim_abs for f in files_2d],
+                    )
 
         if detail >= 2:
             print("\n  Plot settings:")
@@ -658,7 +703,12 @@ class File:
         Parent Project instance for configuration. If None, creates default
         test project internally.
     path : str or Path, default='test'
-        Identifier for this file (used in result directory structure and plots)
+        File path for result directory structure and data I/O.
+    name : str, optional
+        Human-readable identifier used for ``project["name"]`` lookup and
+        plot titles. Defaults to the stem of ``path`` (e.g. ``"data_1"``
+        for ``path="data_1.h5"``). Useful when multiple files share a
+        path (e.g. HDF5 groups) or when the path is not descriptive.
     data : ndarray, optional
         Spectroscopy data to fit:
 
@@ -742,6 +792,7 @@ class File:
         self,
         parent_project: Project | None = None,
         path: PathLike = "test",
+        name: str | None = None,
         data: np.ndarray | None = None,
         energy: np.ndarray | None = None,
         time: np.ndarray | None = None,
@@ -751,6 +802,7 @@ class File:
         self.p = parent_project if parent_project is not None else Project(path=None)
         self.p.files.append(self)  # register with parent project
         self.path = path  # path to load/save [?] data from
+        self.name = name if name is not None else pathlib.Path(path).stem
         self.path_da = self.p.path_run / path  # path to save fit results to
         self._plot_config: PlotConfig | None = None  # create plot config from project
         self.data = data  # (time-[optional] and) energy-dependent data to fit
@@ -817,7 +869,7 @@ class File:
         shape = self.data.shape if self.data is not None else None
         n_models = len(self.models)
         return (
-            f"File(path='{self.path}', data={shape}, {n_models} models, dim={self.dim})"
+            f"File(name='{self.name}', data={shape}, {n_models} models, dim={self.dim})"
         )
 
     #
@@ -830,7 +882,10 @@ class File:
         shows time- and energy-resolved map.
         """
 
-        print(f"File # x [path: {self.path}]")
+        if self.p.show_output < 1:
+            return
+
+        print(f"File: {self.name} [path: {self.path}]")
         if self.data is None:
             warnings.warn("No data loaded; nothing to describe.", stacklevel=2)
             return

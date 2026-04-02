@@ -1037,5 +1037,92 @@ class TestFitPreconditions:
             file.save_2d_fit("/tmp/dummy")
 
 
+#
+#
+class TestFileNameAndProjectAccess:
+    """File.name and Project[key] lookup."""
+
+    #
+    def _make_project(self):
+        """Create a silent project with three files."""
+
+        project = Project(path="tests", name="access")
+        project.show_output = 0
+
+        energy = np.arange(10)
+        time_ax = np.arange(5)
+        data = np.zeros((5, 10))
+
+        File(
+            parent_project=project,
+            path="folder/sample_a.h5",
+            data=data,
+            energy=energy,
+            time=time_ax,
+        )
+        File(
+            parent_project=project,
+            path="sample_b",
+            data=data,
+            energy=energy,
+            time=time_ax,
+        )
+        File(
+            parent_project=project,
+            path="raw/deep/experiment.csv",
+            name="custom",
+            data=data,
+            energy=energy,
+            time=time_ax,
+        )
+        return project
+
+    #
+    def test_name_defaults_to_stem(self):
+        project = self._make_project()
+        assert project.files[0].name == "sample_a"
+
+    #
+    def test_name_no_extension(self):
+        project = self._make_project()
+        assert project.files[1].name == "sample_b"
+
+    #
+    def test_custom_name_overrides_stem(self):
+        project = self._make_project()
+        assert project.files[2].name == "custom"
+
+    #
+    def test_getitem_int(self):
+        project = self._make_project()
+        assert project[0] is project.files[0]
+        assert project[2] is project.files[2]
+
+    #
+    def test_getitem_str(self):
+        project = self._make_project()
+        assert project["sample_a"] is project.files[0]
+        assert project["sample_b"] is project.files[1]
+        assert project["custom"] is project.files[2]
+
+    #
+    def test_getitem_custom_name_resolves_path(self):
+        project = self._make_project()
+        f = project["custom"]
+        assert f.path == "raw/deep/experiment.csv"
+
+    #
+    def test_getitem_missing_raises_key_error(self):
+        project = self._make_project()
+        with pytest.raises(KeyError, match="nonexistent"):
+            project["nonexistent"]
+
+    #
+    def test_getitem_int_out_of_range_raises(self):
+        project = self._make_project()
+        with pytest.raises(IndexError):
+            project[99]
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
