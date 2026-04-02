@@ -728,22 +728,22 @@ class Project:
                                 stacklevel=2,
                             )
                         if not np.isclose(existing.min, lmf_par.min):
-                            warnings.warn(
+                            raise ValueError(
                                 f'Project-vary param "{local_name}" has '
                                 f"different min bounds across files: "
-                                f"using {existing.min} (file 0), "
-                                f"ignoring {lmf_par.min} "
-                                f"(file {file_idx}).",
-                                stacklevel=2,
+                                f"{existing.min} (file 0) vs "
+                                f"{lmf_par.min} (file {file_idx}). "
+                                f"Shared parameters must use identical bounds "
+                                f"across all files."
                             )
                         if not np.isclose(existing.max, lmf_par.max):
-                            warnings.warn(
+                            raise ValueError(
                                 f'Project-vary param "{local_name}" has '
                                 f"different max bounds across files: "
-                                f"using {existing.max} (file 0), "
-                                f"ignoring {lmf_par.max} "
-                                f"(file {file_idx}).",
-                                stacklevel=2,
+                                f"{existing.max} (file 0) vs "
+                                f"{lmf_par.max} (file {file_idx}). "
+                                f"Shared parameters must use identical bounds "
+                                f"across all files."
                             )
                     mapping.append((proj_name, file_idx, local_name))
 

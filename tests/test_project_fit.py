@@ -571,8 +571,8 @@ class TestBuildFitParams:
             project._build_fit_params(model_name="project_glp")
 
     #
-    def test_project_vary_bound_conflict_warns(self):
-        """Warn when project-vary param has different min or max across files."""
+    def test_project_vary_bound_conflict_raises(self):
+        """Raise when project-vary param has different min or max across files."""
 
         project = _make_project()
 
@@ -597,9 +597,8 @@ class TestBuildFitParams:
         model1.lmfit_pars["GLP_01_x0_expFun_01_tau"].min = 0.01
         model1.lmfit_pars["GLP_01_x0_expFun_01_tau"].max = 999.0
 
-        with pytest.warns(UserWarning, match="different min bounds"):
-            with pytest.warns(UserWarning, match="different max bounds"):
-                project._build_fit_params(model_name="project_glp")
+        with pytest.raises(ValueError, match="different min bounds"):
+            project._build_fit_params(model_name="project_glp")
 
 
 #
