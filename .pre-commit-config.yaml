@@ -31,7 +31,7 @@ repos:
 
   - id: pytest
     name: pytest
-    entry: .venv/bin/pytest -q
+    entry: .venv/bin/pytest -q -m "not slow"
     language: system
     pass_filenames: false
     stages: [pre-commit]

@@ -97,8 +97,13 @@ pip install -U pip
 pip install -e ".[dev]"
 python -m pre_commit install --install-hooks
 
-# Commit changes
+# Quick local test run (same pytest selection used by the pre-commit hook)
 pytest
+
+# Full suite, including slow tests (matches CI and release)
+pytest -m ""
+
+# Run all configured pre-commit hooks, including the quick pytest hook
 python -m pre_commit run --all-files
 ```
 

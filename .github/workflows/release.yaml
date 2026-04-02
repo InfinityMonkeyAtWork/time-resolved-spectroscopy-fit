@@ -35,7 +35,7 @@ jobs:
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/pip install -e ".[dev]"
       - name: Run tests
-        run: .venv/bin/pytest -q
+        run: .venv/bin/pytest -q -m ""
       - name: Run ruff
         run: |
           .venv/bin/ruff check .
