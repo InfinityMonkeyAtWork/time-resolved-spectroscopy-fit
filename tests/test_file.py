@@ -865,15 +865,13 @@ class TestFitLimitsOutOfRange:
 
     #
     def test_time_limits_entirely_outside(self):
-        """Time limits entirely outside time axis produce zero-length t_lim."""
+        """Time limits entirely outside time axis raise ValueError."""
 
         energy = np.linspace(80, 90, 201)
         time = np.linspace(-10, 100, 111)
         file = self._make_file(energy=energy, time=time)
-        file.set_fit_limits([80, 90], time_limits=[200, 300], show_plot=False)
-
-        n_selected = file.t_lim[1] - file.t_lim[0]
-        assert n_selected == 0
+        with pytest.raises(ValueError, match="out-of-range"):
+            file.set_fit_limits([80, 90], time_limits=[200, 300], show_plot=False)
 
     #
     def test_descending_energy_limits_outside(self):

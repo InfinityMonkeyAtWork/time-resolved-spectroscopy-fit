@@ -1145,6 +1145,11 @@ class File:
         self.model_2d: mcp.Model | None = None
         # all Slice-by-Slice fit results (different from model_sbs.result)
         self.results_sbs: list = []
+        #
+        self.model_spec: mcp.Model | None = None  # model for individual spectrum fit
+        self.data_spec: np.ndarray | None = None  # extracted 1D spectrum
+        self.spec_t_abs: list[float] = []  # time bounds (absolute)
+        self.spec_t_ind: list[int] = []  # time bounds (indices)
         # default fit limits to entire dataset (energy is None only for bare File())
         if self.energy is not None:
             self.set_fit_limits(energy_limits=None, show_plot=False)
@@ -1770,19 +1775,13 @@ class File:
         if self.energy is None:
             self.energy = np.arange(self.data.shape[1])
             warnings.warn("Energy axis missing; using index axis.", stacklevel=2)
-        if time_type not in ("abs", "ind"):
-            raise ValueError(
-                f"Unknown time_type '{time_type}'. Expected 'abs' or 'ind'."
-            )
-
-        if time_type == "abs":
-            t_ind_start = int(np.searchsorted(self.time, time_start, side="left"))
-            t_ind_stop = int(np.searchsorted(self.time, time_stop, side="right"))
-        elif time_type == "ind":
-            t_ind_start = int(time_start)
-            t_ind_stop = int(time_stop + 1)
-        self.base_t_ind = [t_ind_start, t_ind_stop]
-        self.base_t_abs = [self.time[t_ind_start], self.time[t_ind_stop - 1]]
+        self.base_t_ind = self._resolve_time_selection(
+            time_start, time_stop, time_type=time_type
+        )
+        self.base_t_abs = [
+            self.time[self.base_t_ind[0]],
+            self.time[self.base_t_ind[1] - 1],
+        ]
 
         # cut and average
         self.data_base = np.mean(
@@ -1871,9 +1870,9 @@ class File:
                     stacklevel=2,
                 )
             self.t_lim_abs = list(time_limits)
-            t_start = int(np.searchsorted(self.time, np.min(time_limits), side="left"))
-            t_stop = int(np.searchsorted(self.time, np.max(time_limits), side="right"))
-            self.t_lim = [t_start, t_stop]
+            self.t_lim = self._resolve_time_selection(
+                float(np.min(time_limits)), float(np.max(time_limits))
+            )
 
         if show_plot:  # show data with limits
             if self.dim == 1:
@@ -2001,6 +2000,179 @@ class File:
                 t_start=t_base, print_str="Time elapsed for baseline fit: "
             )
             display(self.model_base.result[1].params)  # display final pars below figure
+
+    #
+    def fit_spectrum(
+        self,
+        model_name: str,
+        *,
+        time_point: float | None = None,
+        time_range: tuple[float, float] | None = None,
+        time_type: Literal["abs", "ind"] = "abs",
+        stages: int = 1,
+        show_plot: bool = True,
+        **lmfit_wrapper_kwargs,
+    ) -> None:
+        """
+        Fit a 1D model to an individual spectrum at a selected time point or range.
+
+        Extracts a single spectrum from 2D data at the given time point or by
+        averaging over a time range, then fits it with the specified model.
+
+        Parameters
+        ----------
+        model_name : str
+            Name of a previously loaded model (use File.load_model first).
+        time_point : float or int, optional
+            Single time value to extract the spectrum at.  Mutually exclusive
+            with *time_range*.
+        time_range : tuple of (float, float), optional
+            ``(start, stop)`` time bounds (inclusive).  Slices in this window
+            are averaged to produce the spectrum.  Mutually exclusive with
+            *time_point*.
+        time_type : {'abs', 'ind'}, default='abs'
+            How *time_point* / *time_range* values are interpreted:
+
+            - ``'abs'``: absolute time-axis values
+            - ``'ind'``: integer indices into the time array
+
+        stages : {1, 2}, default=1
+            Number of optimization stages:
+
+            - 1: single optimization with ``fit_alg_1``
+            - 2: two-stage fit (``fit_alg_1`` then ``fit_alg_2``)
+
+        show_plot : bool, default=True
+            If True, display the fit result plot.
+        **lmfit_wrapper_kwargs
+            Additional keyword arguments passed to ``fitlib.fit_wrapper``.
+
+        Raises
+        ------
+        ValueError
+            If the data is not 2D, or neither *time_point* nor *time_range*
+            is provided, or *time_type* is invalid.
+        """
+
+        t_spec = time.time()  # start timing for spectrum fit
+
+        if self.dim != 2:
+            raise ValueError(
+                "fit_spectrum() requires 2D data. "
+                "For 1D data use fit_baseline() instead."
+            )
+        if self.data is None or self.energy is None or self.time is None:
+            raise ValueError(
+                "Data, energy axis, or time axis is missing; "
+                "cannot fit individual spectrum."
+            )
+        if time_point is None and time_range is None:
+            raise ValueError(
+                "Provide either time_point or time_range to select a spectrum."
+            )
+        if time_point is not None and time_range is not None:
+            raise ValueError("time_point and time_range are mutually exclusive.")
+
+        self.model_spec = self._resolve_model(model_name)
+        if self.model_spec.dim == 2:
+            raise ValueError(
+                f'Model "{model_name}" has time dependence (dim=2) and cannot '
+                "be used for a 1D spectrum fit. Use a model without dynamics, "
+                "or use fit_slice_by_slice() / fit_2d() instead."
+            )
+
+        # extract 1D spectrum at selected time point / range
+        if time_point is not None:
+            self.spec_t_ind = self._resolve_time_selection(
+                time_point, time_point, time_type=time_type
+            )
+            self.spec_t_abs = [
+                float(self.time[self.spec_t_ind[0]]),
+                float(self.time[self.spec_t_ind[0]]),
+            ]
+            self.data_spec = self.data[self.spec_t_ind[0], :]
+        else:
+            assert time_range is not None  # type guard
+            self.spec_t_ind = self._resolve_time_selection(
+                time_range[0], time_range[1], time_type=time_type
+            )
+            self.spec_t_abs = [
+                float(self.time[self.spec_t_ind[0]]),
+                float(self.time[self.spec_t_ind[1] - 1]),
+            ]
+            self.data_spec = np.mean(
+                self.data[self.spec_t_ind[0] : self.spec_t_ind[1], :], axis=0
+            )
+
+        assert self.data_spec is not None  # type guard
+        # get initial guess
+        initial_guess = ulmfit.par_extract(
+            self.model_spec.lmfit_pars, return_type="list"
+        )
+        # define (and create) path where spectrum fit results will be saved to
+        path_spec_results = self.create_model_path(model_name)
+
+        # const = (x, data, package, fnctn string, unpack, energy limits, time limits)
+        self.model_spec.const = (
+            self.energy,
+            self.data_spec,
+            self.p.spec_lib,
+            self.p.spec_fun_str,
+            0,
+            self.e_lim,
+            [],
+        )
+        # args [for fit function called in residual function]
+        # model, dimension (dim =1 for spectrum fit, =2 for 2D (global) fit)
+        self.model_spec.args = (self.model_spec, 1)
+        # fit
+        self.model_spec.result = fitlib.fit_wrapper(
+            const=self.model_spec.const,
+            args=self.model_spec.args,
+            par_names=self.model_spec.parameter_names,
+            par=self.model_spec.lmfit_pars,
+            stages=stages,
+            show_output=1 if self.p.show_output >= 1 else 0,
+            save_output=1,
+            save_path=path_spec_results / model_name,
+            **lmfit_wrapper_kwargs,
+        )
+
+        # display/plot and save spectrum fit summary
+        time_label = (
+            f"t = {self.spec_t_abs[0]}"
+            if self.spec_t_abs[0] == self.spec_t_abs[1]
+            else f"t in [{self.spec_t_abs[0]}, {self.spec_t_abs[1]}]"
+        )
+        title_spec = (
+            f"File: {self.path}, {time_label}, "
+            f'Model: "{model_name}" '
+            f'(from "{self.model_spec.yaml_f_name}.yaml")'
+        )
+
+        fitlib.plt_fit_res_1d(
+            x=self.energy,
+            y=self.data_spec,
+            fit_fun_str=self.p.spec_fun_str,
+            package=self.p.spec_lib,
+            par_init=initial_guess,
+            par_fin=self.model_spec.result[1],
+            args=self.model_spec.args,
+            plot_sum=False,
+            show_init=True,
+            title=title_spec,
+            fit_lim=self.e_lim,
+            config=self.plot_config,
+            legend=[comp.name for comp in self.model_spec.components],
+            save_img=-1 if not show_plot or self.p.show_output < 1 else 1,
+            save_path=path_spec_results / "spec_fit.png",
+        )
+
+        if stages >= 1 and self.p.show_output >= 1:
+            fitlib.time_display(
+                t_start=t_spec, print_str="Time elapsed for spectrum fit: "
+            )
+            display(self.model_spec.result[1].params)
 
     #
     def load_fit(self) -> None:
@@ -2247,6 +2419,50 @@ class File:
                 f"Available models: {available or 'none loaded'}"
             )
         return mod
+
+    #
+    def _resolve_time_selection(
+        self,
+        t_start: float,
+        t_stop: float,
+        *,
+        time_type: str = "abs",
+    ) -> list[int]:
+        """
+        Convert time bounds to validated ``[ind_start, ind_stop)`` slice indices.
+
+        For a single time point pass ``t_start == t_stop``.
+        Both bounds are inclusive in the input; the returned stop is exclusive.
+
+        Raises ValueError if the result is out of range or empty.
+        """
+
+        if self.time is None:
+            raise ValueError("Time axis is not set.")
+        n = len(self.time)
+        if time_type == "abs":
+            if t_start == t_stop:
+                ind_start = int(np.searchsorted(self.time, t_start, side="left"))
+                ind_stop = ind_start + 1
+            else:
+                ind_start = int(np.searchsorted(self.time, t_start, side="left"))
+                ind_stop = int(np.searchsorted(self.time, t_stop, side="right"))
+        elif time_type == "ind":
+            ind_start = int(t_start)
+            ind_stop = int(t_stop) + 1 if t_start == t_stop else int(t_stop + 1)
+        else:
+            raise ValueError(
+                f"Unknown time_type '{time_type}'. Expected 'abs' or 'ind'."
+            )
+        if ind_start >= ind_stop or ind_start >= n or ind_stop <= 0:
+            raise ValueError(
+                f"Time selection resolves to an empty or out-of-range slice "
+                f"[{ind_start}:{ind_stop}). "
+                f"Time axis has {n} points [{self.time[0]}, {self.time[-1]}]."
+            )
+        ind_start = max(ind_start, 0)
+        ind_stop = min(ind_stop, n)
+        return [ind_start, ind_stop]
 
     #
     def add_time_dependence(
