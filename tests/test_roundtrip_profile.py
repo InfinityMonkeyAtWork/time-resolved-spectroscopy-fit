@@ -69,7 +69,7 @@ def _make_truth_two_profiles(project):
 
     file.load_model(
         model_yaml="models/file_energy.yaml",
-        model_info=["single_gauss"],
+        model_info="single_gauss",
     )
     file.add_par_profile(
         target_model="single_gauss",
@@ -97,7 +97,7 @@ def _make_truth_profile_dynamics(project):
 
     file.load_model(
         model_yaml="models/file_energy.yaml",
-        model_info=["single_gauss"],
+        model_info="single_gauss",
     )
     file.add_par_profile(
         target_model="single_gauss",
@@ -137,7 +137,7 @@ def _make_fit_two_profiles(project, data, energy, time, aux):
     )
     file.load_model(
         model_yaml="models/file_energy.yaml",
-        model_info=["single_gauss"],
+        model_info="single_gauss",
     )
     file.add_par_profile(
         target_model="single_gauss",
@@ -169,7 +169,7 @@ def _make_fit_profile_dynamics(project, data, energy, time, aux):
     )
     file.load_model(
         model_yaml="models/file_energy.yaml",
-        model_info=["single_gauss"],
+        model_info="single_gauss",
     )
     file.add_par_profile(
         target_model="single_gauss",

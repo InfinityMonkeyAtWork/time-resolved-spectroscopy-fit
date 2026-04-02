@@ -46,7 +46,7 @@ def _make_truth_file(*, amplitude=20.0, x0_shift=3.0, tau=5.0):
 
     file.load_model(
         model_yaml="models/project_energy.yaml",
-        model_info=["project_glp"],
+        model_info="project_glp",
     )
     file.add_time_dependence(
         target_model="project_glp",
@@ -88,7 +88,7 @@ def _make_fit_file(project, data, energy, time_ax, *, name="test"):
     # Step 1: baseline model (energy-only, all vary=True)
     file.load_model(
         model_yaml="models/project_energy.yaml",
-        model_info=["project_glp_base"],
+        model_info="project_glp_base",
     )
     file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
     file.fit_baseline(model_name="project_glp_base", stages=2, try_ci=0)
@@ -96,7 +96,7 @@ def _make_fit_file(project, data, energy, time_ax, *, name="test"):
     # Step 2: 2D model with dynamics (project/file/static vary levels)
     file.load_model(
         model_yaml="models/project_energy.yaml",
-        model_info=["project_glp"],
+        model_info="project_glp",
     )
     file.add_time_dependence(
         target_model="project_glp",
@@ -209,7 +209,7 @@ class TestProjectFitClean:
             tf.dim = 2
             tf.load_model(
                 model_yaml="models/project_energy.yaml",
-                model_info=["project_glp"],
+                model_info="project_glp",
             )
             tf.add_time_dependence(
                 target_model="project_glp",
@@ -252,7 +252,7 @@ class TestProjectFitClean:
             )
             ff.load_model(
                 model_yaml="models/project_energy.yaml",
-                model_info=["project_glp_base"],
+                model_info="project_glp_base",
             )
             ff.define_baseline(
                 time_start=-5,
@@ -263,7 +263,7 @@ class TestProjectFitClean:
             ff.fit_baseline(model_name="project_glp_base", stages=2, try_ci=0)
             ff.load_model(
                 model_yaml="models/project_energy.yaml",
-                model_info=["project_glp"],
+                model_info="project_glp",
             )
             ff.add_time_dependence(
                 target_model="project_glp",
@@ -320,7 +320,7 @@ class TestVaryLevelParsing:
 
         file.load_model(
             model_yaml="models/project_energy.yaml",
-            model_info=["project_glp"],
+            model_info="project_glp",
         )
 
         model = file.model_active
@@ -344,7 +344,7 @@ class TestVaryLevelParsing:
 
         file.load_model(
             model_yaml="models/project_energy.yaml",
-            model_info=["project_glp"],
+            model_info="project_glp",
         )
         file.add_time_dependence(
             target_model="project_glp",
@@ -384,7 +384,7 @@ class TestVaryLevelParsing:
 
         file.load_model(
             model_yaml="models/project_energy.yaml",
-            model_info=["project_glp"],
+            model_info="project_glp",
         )
         file.add_par_profile(
             target_model="project_glp",
@@ -422,7 +422,7 @@ class TestVaryLevelParsing:
 
         file.load_model(
             model_yaml="models/project_energy.yaml",
-            model_info=["project_glp"],
+            model_info="project_glp",
         )
 
         model = file.model_active
@@ -452,7 +452,7 @@ class TestBuildFitParams:
             f.dim = 2
             f.load_model(
                 model_yaml="models/project_energy.yaml",
-                model_info=["project_glp"],
+                model_info="project_glp",
             )
             f.add_time_dependence(
                 target_model="project_glp",
@@ -490,7 +490,7 @@ class TestBuildFitParams:
             f.dim = 2
             f.load_model(
                 model_yaml="models/project_energy.yaml",
-                model_info=["project_glp_expr"],
+                model_info="project_glp_expr",
             )
 
         combined, info = project._build_fit_params(
@@ -517,7 +517,7 @@ class TestBuildFitParams:
             f.dim = 2
             f.load_model(
                 model_yaml="models/project_energy.yaml",
-                model_info=["project_glp"],
+                model_info="project_glp",
             )
             f.add_time_dependence(
                 target_model="project_glp",
@@ -553,7 +553,7 @@ class TestBuildFitParams:
             f.dim = 2
             f.load_model(
                 model_yaml="models/project_energy.yaml",
-                model_info=["project_glp"],
+                model_info="project_glp",
             )
             f.add_time_dependence(
                 target_model="project_glp",
@@ -583,7 +583,7 @@ class TestBuildFitParams:
             f.dim = 2
             f.load_model(
                 model_yaml="models/project_energy.yaml",
-                model_info=["project_glp"],
+                model_info="project_glp",
             )
             f.add_time_dependence(
                 target_model="project_glp",

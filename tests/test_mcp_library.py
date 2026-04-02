@@ -345,7 +345,7 @@ class TestMCPIntegration:
         file.time = np.linspace(0, 10, 50)
         file.load_model(
             model_yaml="models/file_energy.yaml",
-            model_info=["simple_energy"],
+            model_info="simple_energy",
         )
         assert file.model_active is not None  # type guard
         return file
@@ -385,7 +385,7 @@ class TestMCPIntegration:
         file.time = np.linspace(0, 10, 50)
         file.load_model(
             model_yaml="models/file_energy.yaml",
-            model_info=["single_glp"],
+            model_info="single_glp",
         )
         model = file.model_active
 
@@ -541,7 +541,7 @@ class TestMCPProfile:
         file.time = np.linspace(-10, 50, 60)
         file.load_model(
             model_yaml="models/file_energy.yaml",
-            model_info=["single_glp"],
+            model_info="single_glp",
         )
         assert file.model_active is not None  # type guard
         return file
@@ -755,7 +755,7 @@ class TestMCPProfile:
         file.time = np.linspace(-10, 50, 60)
         file.load_model(
             model_yaml="models/file_energy.yaml",
-            model_info=["two_glp_expr_amplitude"],
+            model_info="two_glp_expr_amplitude",
         )
 
         # GLP_02_A is an expression ("GLP_01_A * 0.5") — profile should be rejected
@@ -781,7 +781,7 @@ class TestMCPProfile:
 
         file.load_model(
             model_yaml="models/file_energy.yaml",
-            model_info=["energy_expression"],
+            model_info="energy_expression",
         )
         assert file.model_active is not None  # type guard
         assert file.model_active.aux_axis is not None  # type guard

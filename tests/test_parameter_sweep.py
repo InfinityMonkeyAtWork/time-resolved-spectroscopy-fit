@@ -237,7 +237,7 @@ class TestSimulatorParameterSweep:
             time=np.arange(-10, 100, 5),  # Coarse for speed
         )
         file.load_model(
-            model_yaml="models/file_energy.yaml", model_info=["simple_energy"]
+            model_yaml="models/file_energy.yaml", model_info="simple_energy"
         )
         assert file.model_active is not None  # type guard
         return file.model_active
@@ -253,7 +253,7 @@ class TestSimulatorParameterSweep:
             time=np.arange(-10, 100, 5),  # Coarse for speed
         )
         file.load_model(
-            model_yaml="models/file_energy.yaml", model_info=["simple_energy"]
+            model_yaml="models/file_energy.yaml", model_info="simple_energy"
         )
         file.add_time_dependence(
             target_model="simple_energy",

@@ -562,7 +562,7 @@ class TestYAMLValidationErrors:
         file = File(parent_project=project)
         file.load_model(
             model_yaml="models/file_energy.yaml",
-            model_info=["wrong_order"],
+            model_info="wrong_order",
         )
         model = file.model_active
         assert model is not None  # type guard
@@ -579,7 +579,7 @@ class TestYAMLValidationErrors:
         with pytest.raises(ModelValidationError, match="Invalid parameter"):
             file.load_model(
                 model_yaml="models/file_energy.yaml",
-                model_info=["wrong_parameter_name"],
+                model_info="wrong_parameter_name",
             )
 
     #
@@ -591,7 +591,7 @@ class TestYAMLValidationErrors:
         with pytest.raises(ValueError, match="not found in"):
             file.load_model(
                 model_yaml="models/file_energy.yaml",
-                model_info=["this_model_does_not_exist"],
+                model_info="this_model_does_not_exist",
             )
 
     #
@@ -603,7 +603,7 @@ class TestYAMLValidationErrors:
         with pytest.raises(ModelValidationError, match="background function"):
             file.load_model(
                 model_yaml="models/file_energy.yaml",
-                model_info=["background_last"],
+                model_info="background_last",
             )
 
     #
@@ -616,7 +616,7 @@ class TestYAMLValidationErrors:
         with pytest.raises(ModelValidationError, match="convolution function"):
             file.load_model(
                 model_yaml="models/file_time.yaml",
-                model_info=["conv_last"],
+                model_info="conv_last",
                 par_name="parTEST",
                 model_type="dynamics",
             )
@@ -635,7 +635,7 @@ class TestYAMLValidationErrors:
         with pytest.raises(ModelValidationError, match="vary"):
             file.load_model(
                 model_yaml="models/file_energy.yaml",
-                model_info=["vary_int_bad"],
+                model_info="vary_int_bad",
             )
 
 

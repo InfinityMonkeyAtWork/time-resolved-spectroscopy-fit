@@ -38,7 +38,7 @@ def _make_truth_file(project):
 
     file.load_model(
         model_yaml="models/file_energy.yaml",
-        model_info=["single_glp"],
+        model_info="single_glp",
     )
     file.add_time_dependence(
         target_model="single_glp",
@@ -63,7 +63,7 @@ def _make_fit_file(project, data, energy, time):
 
     file.load_model(
         model_yaml="models/file_energy.yaml",
-        model_info=["single_glp"],
+        model_info="single_glp",
     )
     file.add_time_dependence(
         target_model="single_glp",

@@ -611,7 +611,7 @@ class TestPlotConfigFromYAML:
             )
             file.load_model(
                 model_yaml="models/file_energy.yaml",
-                model_info=["single_glp"],
+                model_info="single_glp",
             )
             model = file.model_active
             assert model is not None  # type guard
@@ -637,7 +637,7 @@ class TestPlotConfigFromYAML:
             )
             file.load_model(
                 model_yaml="models/file_energy.yaml",
-                model_info=["single_glp"],
+                model_info="single_glp",
             )
             model = file.model_active
             assert model is not None  # type guard
@@ -673,7 +673,7 @@ class TestPlotConfigPropagation:
 
         file.load_model(
             model_yaml="models/file_energy.yaml",
-            model_info=["single_glp"],
+            model_info="single_glp",
         )
         return file
 
