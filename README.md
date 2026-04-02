@@ -80,9 +80,9 @@ Full docs are hosted on [Read the Docs](https://time-resolved-spectroscopy-fit.r
 If `trspecfit` contributes to published research, please cite the DOE CODE / OSTI
 software record:
 
-- Johannes Mahl; Ethan Crumlin. *time-resolved spectroscopy fit (trspecfit) v0.01*.
-  Lawrence Berkeley National Laboratory, 2025.
-  DOI: [10.11578/dc.20251009.2](https://doi.org/10.11578/dc.20251009.2)
+Johannes Mahl; Ethan Crumlin. *time-resolved spectroscopy fit (trspecfit) v0.01*.
+Lawrence Berkeley National Laboratory, 2025.
+DOI: [10.11578/dc.20251009.2](https://doi.org/10.11578/dc.20251009.2)
 
 ## Support and Community
 
