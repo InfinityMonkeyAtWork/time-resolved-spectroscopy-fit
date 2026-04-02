@@ -62,25 +62,25 @@ def _extract_par_dict(model):
 def _make_truth_two_profiles(project):
     """Gauss + pLinear on x0 + pExpDecay on A (two profiles, no dynamics)."""
 
-    file = File(parent_project=project, aux_axis=_make_aux_axis())
+    file = File(parent_project=project, name="truth", aux_axis=_make_aux_axis())
     file.energy = _make_energy_axis()
     file.time = _make_time_axis()
     file.dim = 2
 
     file.load_model(
-        model_yaml="test_models_energy.yaml",
-        model_info=["single_gauss"],
+        model_yaml="models/file_energy.yaml",
+        model_info="single_gauss",
     )
     file.add_par_profile(
         target_model="single_gauss",
         target_parameter="Gauss_01_x0",
-        profile_yaml="test_models_profile.yaml",
+        profile_yaml="models/file_profile.yaml",
         profile_model=["roundtrip_pLinear_x0"],
     )
     file.add_par_profile(
         target_model="single_gauss",
         target_parameter="Gauss_01_A",
-        profile_yaml="test_models_profile.yaml",
+        profile_yaml="models/file_profile.yaml",
         profile_model=["roundtrip_pExpDecay_A"],
     )
     return file
@@ -90,31 +90,31 @@ def _make_truth_two_profiles(project):
 def _make_truth_profile_dynamics(project):
     """Gauss + two profiles + expFun dynamics on pExpDecay A."""
 
-    file = File(parent_project=project, aux_axis=_make_aux_axis())
+    file = File(parent_project=project, name="truth", aux_axis=_make_aux_axis())
     file.energy = _make_energy_axis()
     file.time = _make_time_axis()
     file.dim = 2
 
     file.load_model(
-        model_yaml="test_models_energy.yaml",
-        model_info=["single_gauss"],
+        model_yaml="models/file_energy.yaml",
+        model_info="single_gauss",
     )
     file.add_par_profile(
         target_model="single_gauss",
         target_parameter="Gauss_01_x0",
-        profile_yaml="test_models_profile.yaml",
+        profile_yaml="models/file_profile.yaml",
         profile_model=["roundtrip_pLinear_x0"],
     )
     file.add_par_profile(
         target_model="single_gauss",
         target_parameter="Gauss_01_A",
-        profile_yaml="test_models_profile.yaml",
+        profile_yaml="models/file_profile.yaml",
         profile_model=["roundtrip_pExpDecay_A"],
     )
     file.add_time_dependence(
         target_model="single_gauss",
         target_parameter="Gauss_01_A_pExpDecay_01_A",
-        dynamics_yaml="test_models_time.yaml",
+        dynamics_yaml="models/file_time.yaml",
         dynamics_model=["MonoExpPosStrong"],
     )
     return file
@@ -129,25 +129,26 @@ def _make_fit_two_profiles(project, data, energy, time, aux):
 
     file = File(
         parent_project=project,
+        name="fit",
         data=data,
         energy=energy.copy(),
         time=time.copy(),
         aux_axis=aux.copy(),
     )
     file.load_model(
-        model_yaml="test_models_energy.yaml",
-        model_info=["single_gauss"],
+        model_yaml="models/file_energy.yaml",
+        model_info="single_gauss",
     )
     file.add_par_profile(
         target_model="single_gauss",
         target_parameter="Gauss_01_x0",
-        profile_yaml="test_models_profile.yaml",
+        profile_yaml="models/file_profile.yaml",
         profile_model=["roundtrip_pLinear_x0"],
     )
     file.add_par_profile(
         target_model="single_gauss",
         target_parameter="Gauss_01_A",
-        profile_yaml="test_models_profile.yaml",
+        profile_yaml="models/file_profile.yaml",
         profile_model=["roundtrip_pExpDecay_A"],
     )
     file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
@@ -160,31 +161,32 @@ def _make_fit_profile_dynamics(project, data, energy, time, aux):
 
     file = File(
         parent_project=project,
+        name="fit",
         data=data,
         energy=energy.copy(),
         time=time.copy(),
         aux_axis=aux.copy(),
     )
     file.load_model(
-        model_yaml="test_models_energy.yaml",
-        model_info=["single_gauss"],
+        model_yaml="models/file_energy.yaml",
+        model_info="single_gauss",
     )
     file.add_par_profile(
         target_model="single_gauss",
         target_parameter="Gauss_01_x0",
-        profile_yaml="test_models_profile.yaml",
+        profile_yaml="models/file_profile.yaml",
         profile_model=["roundtrip_pLinear_x0"],
     )
     file.add_par_profile(
         target_model="single_gauss",
         target_parameter="Gauss_01_A",
-        profile_yaml="test_models_profile.yaml",
+        profile_yaml="models/file_profile.yaml",
         profile_model=["roundtrip_pExpDecay_A"],
     )
     file.add_time_dependence(
         target_model="single_gauss",
         target_parameter="Gauss_01_A_pExpDecay_01_A",
-        dynamics_yaml="test_models_time.yaml",
+        dynamics_yaml="models/file_time.yaml",
         dynamics_model=["MonoExpPosStrong"],
     )
     file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)

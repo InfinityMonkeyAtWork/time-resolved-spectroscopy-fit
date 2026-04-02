@@ -52,16 +52,19 @@ See examples/ directory for complete workflows.
 """
 
 import pathlib
+import re
 import time
+import types
 import warnings
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 # TYPE_CHECKING is False at runtime so this import is skipped during execution.
 # Exists only for type checkers (mypy/pyright) to resolve types.ModuleType annotations.
 if TYPE_CHECKING:
     import types
 
+import lmfit
 import numpy as np
 import pandas as pd
 from IPython.display import display
@@ -169,6 +172,7 @@ class Project:
 
         self._config_file: PathLike | None = None
         self.files: list[File] = []
+        self._project_fit_result: list[Any] | None = None
 
         # Set defaults first
         self._set_defaults()
@@ -221,6 +225,37 @@ class Project:
         return f"Project(path='{self.path}', name='{self.name}')"
 
     #
+    def __getitem__(self, key: int | str) -> "File":
+        """
+        Access a File by index or name.
+
+        Parameters
+        ----------
+        key : int or str
+            Integer index into ``self.files``, or string matching a
+            File's ``name`` attribute.
+
+        Returns
+        -------
+        File
+
+        Raises
+        ------
+        KeyError
+            If string key does not match any file name.
+        IndexError
+            If integer index is out of range.
+        """
+
+        if isinstance(key, int):
+            return self.files[key]
+        for f in self.files:
+            if f.name == key:
+                return f
+        available = [f.name for f in self.files]
+        raise KeyError(f"No file with name '{key}'. Available: {available}")
+
+    #
     def describe(self, detail: int = 0) -> None:
         """
         Display project configuration summary.
@@ -230,9 +265,13 @@ class Project:
         detail : int, default=0
             Verbosity level.
             0: project paths and config source.
-            1: also list attached Files (path, dim, shape, models).
+            1: also list attached Files (path, dim, shape, models)
+               and plot 2D data grid.
             2: also show plot and file I/O settings.
         """
+
+        if self.show_output < 1:
+            return
 
         print("Project")
         print(f"  path:         {self.path}")
@@ -248,25 +287,48 @@ class Project:
             if not self.files:
                 print("    (none)")
             for f in self.files:
-                shape = f"shape {f.data.shape}" if f.data is not None else "no data"
-                n_models = len(f.models)
-                model_names = (
-                    ", ".join(m.name for m in f.models) if n_models else "none"
-                )
-                active = (
-                    f" [active: {f.model_active.name}]"
-                    if f.model_active is not None
+                if f.data is None:
+                    print(f"    {f.name}: no data")
+                    continue
+                e_range = (
+                    f"energy [{f.energy.min():.2f}, {f.energy.max():.2f}]"
+                    if f.energy is not None
                     else ""
                 )
-                aux = (
-                    f", aux_axis len {len(f.aux_axis)}"
-                    if f.aux_axis is not None
+                t_range = (
+                    f"time [{f.time.min():.2f}, {f.time.max():.2f}]"
+                    if f.time is not None
                     else ""
                 )
-                print(
-                    f"    {f.path}: {f.dim}D {shape}{aux}, "
-                    f"models ({n_models}): {model_names}{active}"
-                )
+                z_range = f"z [{f.data.min():.4g}, {f.data.max():.4g}]"
+                parts = [p for p in [e_range, t_range, z_range] if p]
+                print(f"    {f.name}: {f.dim}D {f.data.shape}, {', '.join(parts)}")
+
+            # Plot 2D data grid (only if all files share axes)
+            if self.show_output >= 1:
+                files_2d = [f for f in self.files if f.dim == 2 and f.data is not None]
+                try:
+                    self._validate_shared_axes()
+                    axes_ok = True
+                except ValueError:
+                    axes_ok = False
+                if files_2d and axes_ok:
+                    config = files_2d[0].plot_config
+                    datasets = [f.data for f in files_2d if f.data is not None]
+                    uplt.plot_2d_grid(
+                        datasets=datasets,
+                        x=files_2d[0].energy,
+                        y=files_2d[0].time,
+                        titles=[f.name for f in files_2d],
+                        config=config,
+                        vlines=[f.e_lim_abs for f in files_2d],
+                        hlines=[f.t_lim_abs for f in files_2d],
+                    )
+                elif files_2d:
+                    print(
+                        "  (2D grid plot skipped: files have"
+                        " different axis shapes and/or values)"
+                    )
 
         if detail >= 2:
             print("\n  Plot settings:")
@@ -332,6 +394,578 @@ class Project:
                 print(f"Error loading config: {e}")
                 print("Using default settings")
 
+    # ------------------------------------------------------------------
+    # Project-level model loading and baseline fitting
+    # ------------------------------------------------------------------
+
+    #
+    def _validate_shared_axes(self) -> None:
+        """Verify all files share the same energy and time axes."""
+
+        files_with_data = [f for f in self.files if f.data is not None]
+        if len(files_with_data) < 2:
+            return
+        ref = files_with_data[0]
+        for f in files_with_data[1:]:
+            if f.energy is not None and ref.energy is not None:
+                if f.energy.shape != ref.energy.shape or not np.allclose(
+                    f.energy, ref.energy
+                ):
+                    raise ValueError(
+                        f'Energy axis mismatch: "{ref.name}" vs "{f.name}". '
+                        f"Project-level methods require shared axes."
+                    )
+            if f.time is not None and ref.time is not None:
+                if f.time.shape != ref.time.shape or not np.allclose(f.time, ref.time):
+                    raise ValueError(
+                        f'Time axis mismatch: "{ref.name}" vs "{f.name}". '
+                        f"Project-level methods require shared axes."
+                    )
+
+    #
+    def load_models(
+        self,
+        *,
+        model_yaml: PathLike,
+        model_info: str | list[str],
+    ) -> None:
+        """
+        Load the same energy model onto every file in the project.
+
+        Parameters
+        ----------
+        model_yaml : str or Path
+            YAML file name (located in project path) defining the model.
+        model_info : str or list of str
+            Model name(s) to load (see ``File.load_model``).
+        """
+
+        if not self.files:
+            raise ValueError("Project has no files.")
+        saved = self.show_output
+        self.show_output = 0
+        try:
+            for f in self.files:
+                f.load_model(model_yaml=model_yaml, model_info=model_info)
+        finally:
+            self.show_output = saved
+        if self.show_output >= 1:
+            name = model_info if isinstance(model_info, str) else "_".join(model_info)
+            print(f"Model '{name}' loaded for {len(self.files)} files")
+
+    #
+    def add_time_dependences(
+        self,
+        *,
+        target_model: str,
+        target_parameter: str,
+        dynamics_yaml: PathLike,
+        dynamics_model: str | list[str],
+        frequency: float = -1,
+    ) -> None:
+        """
+        Add time dependence to a parameter on every file in the project.
+
+        Parameters
+        ----------
+        target_model : str
+            Name of the energy model (must exist on every file).
+        target_parameter : str
+            Parameter to make time-dependent (e.g. ``'GLP_01_x0'``).
+        dynamics_yaml : str or Path
+            YAML file defining the dynamics model.
+        dynamics_model : str or list of str
+            Dynamics model name(s) (see ``File.add_time_dependence``).
+        frequency : float, default=-1
+            Sub-cycle frequency (-1 = single cycle).
+        """
+
+        if not self.files:
+            raise ValueError("Project has no files.")
+        saved = self.show_output
+        self.show_output = 0
+        try:
+            for f in self.files:
+                f.add_time_dependence(
+                    target_model=target_model,
+                    target_parameter=target_parameter,
+                    dynamics_yaml=dynamics_yaml,
+                    dynamics_model=dynamics_model,
+                    frequency=frequency,
+                )
+        finally:
+            self.show_output = saved
+        if self.show_output >= 1:
+            print(
+                f"Time dependence '{target_parameter}' added "
+                f"for {len(self.files)} files"
+            )
+
+    #
+    def set_fit_limits(
+        self,
+        energy_limits: Sequence[float] | None,
+        *,
+        time_limits: Sequence[float] | None = None,
+    ) -> None:
+        """
+        Set energy and time fitting limits on every file in the project.
+
+        Parameters
+        ----------
+        energy_limits : list of float or None
+            Energy range ``[min, max]`` in absolute values.
+            If None, uses each file's full energy range.
+        time_limits : list of float, optional
+            Time range ``[min, max]`` in absolute values.
+        """
+
+        if not self.files:
+            raise ValueError("Project has no files.")
+        for f in self.files:
+            f.set_fit_limits(
+                energy_limits,
+                time_limits=time_limits,
+                show_plot=False,
+            )
+        if self.show_output >= 1:
+            e_str = (
+                f"energy {list(energy_limits)}"
+                if energy_limits is not None
+                else "energy [full]"
+            )
+            t_str = f", time {list(time_limits)}" if time_limits is not None else ""
+            print(f"Fit limits set for {len(self.files)} files: {e_str}{t_str}")
+
+    #
+    def define_baselines(
+        self,
+        *,
+        time_start: float,
+        time_stop: float,
+        time_type: str = "abs",
+    ) -> None:
+        """
+        Define baseline on every file in the project.
+
+        Parameters
+        ----------
+        time_start : float or int
+            Start of baseline region (absolute value or index).
+        time_stop : float or int
+            End of baseline region (absolute value or index).
+        time_type : {'abs', 'ind'}, default='abs'
+            Interpretation of time_start/time_stop.
+        """
+
+        if not self.files:
+            raise ValueError("Project has no files.")
+        self._validate_shared_axes()
+        for f in self.files:
+            f.define_baseline(
+                time_start=time_start,
+                time_stop=time_stop,
+                time_type=time_type,
+                show_plot=False,
+            )
+        if self.show_output >= 1:
+            type_label = "index" if time_type == "ind" else "absolute"
+            print(
+                f"Baseline defined for {len(self.files)} files: "
+                f"time ({type_label}) [{time_start}, {time_stop}]"
+            )
+
+    #
+    def fit_baselines(
+        self,
+        *,
+        model_name: str,
+        stages: int = 2,
+        **fit_wrapper_kwargs,
+    ) -> None:
+        """
+        Fit baseline on every file in the project.
+
+        Each file must already have the named model loaded and a baseline
+        defined (via ``define_baselines`` or ``File.define_baseline``).
+
+        Parameters
+        ----------
+        model_name : str
+            Name of baseline model (must exist on every file).
+        stages : {1, 2}, default=2
+            Number of optimization stages.
+        **fit_wrapper_kwargs
+            Additional keyword arguments passed to ``fitlib.fit_wrapper``.
+        """
+
+        if not self.files:
+            raise ValueError("Project has no files.")
+        for f in self.files:
+            if f.select_model(model_name) is None:
+                raise ValueError(f'File "{f.name}": model "{model_name}" not loaded.')
+            if f.data_base is None:
+                raise ValueError(
+                    f'File "{f.name}": baseline not defined. '
+                    f"Run define_baselines() first."
+                )
+
+        t_start = time.time()
+        saved = self.show_output
+        self.show_output = 0
+        try:
+            for f in self.files:
+                f.fit_baseline(
+                    model_name=model_name,
+                    stages=stages,
+                    **fit_wrapper_kwargs,
+                )
+        finally:
+            self.show_output = saved
+
+        if self.show_output >= 1:
+            fitlib.time_display(
+                t_start=t_start,
+                print_str=(f"Baseline fit complete for {len(self.files)} files: "),
+            )
+            # Show saved baseline fit plots in a grid
+            import matplotlib.image as mpimg
+
+            images = []
+            for f in self.files:
+                img_path = f.create_model_path(model_name) / "base_fit.png"
+                if img_path.exists():
+                    images.append(mpimg.imread(str(img_path)))
+            if images:
+                uplt.plot_grid(images, columns=min(3, len(images)))
+
+    # ------------------------------------------------------------------
+    # Project-level fitting
+    # ------------------------------------------------------------------
+
+    #
+    def _build_fit_params(
+        self,
+        *,
+        model_name: str,
+    ) -> tuple[lmfit.Parameters, dict]:
+        """
+        Build combined lmfit.Parameters and mapping for project-level fit.
+
+        Walks every File's active 2D model, reads each parameter's
+        ``vary_level`` (``"project"``/``"file"``/``"static"``), and
+        assembles:
+
+        * A single ``lmfit.Parameters`` object for the optimizer.
+        * A ``project_fit_info`` dict consumed by
+          ``spectra.fit_project_mcp``.
+
+        Parameters
+        ----------
+        model_name : str
+            Name of the model to fit (must exist on every File).
+
+        Returns
+        -------
+        combined_pars : lmfit.Parameters
+            Optimizer parameters (project-vary once, file-vary per file).
+        project_fit_info : dict
+            Context dict for ``fit_project_mcp`` containing mapping,
+            file/model references, and parameter names.
+        """
+
+        # (project_param_name, file_index, local_param_name)
+        mapping: list[tuple[str, int, str]] = []
+        # Track which project-vary params we've already added
+        project_seen: set[str] = set()
+
+        models: list[mcp.Model] = []
+
+        # Pass 1: collect models, build per-file name remapping, create
+        # parameters (without expressions — those need the full remap).
+        # name_remap[file_idx] maps local_name -> project_name
+        name_remaps: list[dict[str, str]] = []
+        # Deferred expression params: (project_name, file_idx, expr)
+        expr_deferred: list[tuple[str, int, str]] = []
+
+        combined_pars = lmfit.Parameters()
+
+        for file_idx, f in enumerate(self.files):
+            model = f.select_model(model_name)
+            if model is None:
+                raise ValueError(f'File "{f.path}" does not have model "{model_name}"')
+            models.append(model)
+
+            vary_levels = model.get_vary_levels()
+            name_remap: dict[str, str] = {}
+
+            for local_name, lmf_par in model.lmfit_pars.items():
+                level = vary_levels.get(local_name, "static")
+
+                if level == "project":
+                    proj_name = local_name
+                    name_remap[local_name] = proj_name
+                    if local_name not in project_seen:
+                        combined_pars.add(
+                            lmfit.Parameter(
+                                proj_name,
+                                value=lmf_par.value,
+                                vary=lmf_par.vary,
+                                min=lmf_par.min,
+                                max=lmf_par.max,
+                            )
+                        )
+                        project_seen.add(local_name)
+                    else:
+                        existing = combined_pars[proj_name]
+                        if not np.isclose(existing.value, lmf_par.value):
+                            warnings.warn(
+                                f'Project-vary param "{local_name}" has '
+                                f"different initial values across files: "
+                                f"using {existing.value} (file 0), "
+                                f"ignoring {lmf_par.value} "
+                                f"(file {file_idx}).",
+                                stacklevel=2,
+                            )
+                        if not np.isclose(existing.min, lmf_par.min):
+                            raise ValueError(
+                                f'Project-vary param "{local_name}" has '
+                                f"different min bounds across files: "
+                                f"{existing.min} (file 0) vs "
+                                f"{lmf_par.min} (file {file_idx}). "
+                                f"Shared parameters must use identical bounds "
+                                f"across all files."
+                            )
+                        if not np.isclose(existing.max, lmf_par.max):
+                            raise ValueError(
+                                f'Project-vary param "{local_name}" has '
+                                f"different max bounds across files: "
+                                f"{existing.max} (file 0) vs "
+                                f"{lmf_par.max} (file {file_idx}). "
+                                f"Shared parameters must use identical bounds "
+                                f"across all files."
+                            )
+                    mapping.append((proj_name, file_idx, local_name))
+
+                else:
+                    proj_name = f"file{file_idx:02d}_{local_name}"
+                    name_remap[local_name] = proj_name
+                    vary = lmf_par.vary if level == "file" else False
+
+                    if lmf_par.expr:
+                        # Defer — need full remap to rewrite references
+                        combined_pars.add(
+                            lmfit.Parameter(
+                                proj_name,
+                                value=lmf_par.value,
+                                vary=False,
+                            )
+                        )
+                        expr_deferred.append((proj_name, file_idx, lmf_par.expr))
+                    else:
+                        combined_pars.add(
+                            lmfit.Parameter(
+                                proj_name,
+                                value=lmf_par.value,
+                                vary=vary,
+                                min=lmf_par.min,
+                                max=lmf_par.max,
+                            )
+                        )
+                    mapping.append((proj_name, file_idx, local_name))
+
+            name_remaps.append(name_remap)
+
+        # Pass 2: resolve deferred expressions using per-file name remaps.
+        for proj_name, file_idx, expr in expr_deferred:
+            remap = name_remaps[file_idx]
+            # Replace longest names first to avoid partial substitution
+            rewritten = expr
+            for local_name in sorted(remap, key=len, reverse=True):
+                rewritten = re.sub(
+                    rf"\b{re.escape(local_name)}\b",
+                    remap[local_name],
+                    rewritten,
+                )
+            combined_pars[proj_name].set(expr=rewritten)
+
+        par_names = list(combined_pars.keys())
+
+        project_fit_info: dict = {
+            "mapping": mapping,
+            "files": self.files,
+            "models": models,
+            "par_names": par_names,
+        }
+
+        return combined_pars, project_fit_info
+
+    #
+    def fit_2d(
+        self,
+        *,
+        model_name: str,
+        stages: int = 2,
+        **fit_wrapper_kwargs,
+    ) -> None:
+        """
+        Fit all files simultaneously with shared/independent parameters.
+
+        Builds a combined parameter set from all files, runs the optimizer
+        once, and distributes final results back to each file's model.
+        Parameter sharing is controlled by the ``vary`` field in each
+        model's YAML (``"project"``/``"file"``/``"static"``).
+
+        Parameters
+        ----------
+        model_name : str
+            Model name (must exist on every File in the project).
+        stages : {1, 2}, default=2
+            Number of optimization stages (see ``fitlib.fit_wrapper``).
+        **fit_wrapper_kwargs
+            Additional keyword arguments passed to ``fitlib.fit_wrapper``.
+        """
+
+        t_start = time.time()
+
+        if not self.files:
+            raise ValueError("Project has no files to fit.")
+
+        # Validate: each file must have baseline fitted and 2D model ready
+        for f in self.files:
+            if f.model_base is None:
+                raise ValueError(
+                    f'File "{f.name}": baseline not fitted. '
+                    f"Fit individual baselines with file.fit_baseline() "
+                    f"or all at once with project.fit_baselines()."
+                )
+            model = f.select_model(model_name)
+            if model is None:
+                raise ValueError(f'File "{f.path}" does not have model "{model_name}"')
+            if f.energy is None or f.time is None or f.data is None:
+                raise ValueError(f'File "{f.path}": data or axes missing.')
+
+            # Set fixed params from baseline (same as File.fit_2d does)
+            base_df = ulmfit.par_to_df(f.model_base.lmfit_pars, col_type="min")
+            model.update_value(
+                new_par_values=list(base_df["value"]),
+                par_select=list(base_df["name"]),
+            )
+
+        # Build combined parameters and project fit context
+        combined_pars, project_fit_info = self._build_fit_params(
+            model_name=model_name,
+        )
+
+        # Build concatenated data array (sliced per file)
+        data_slices: list[np.ndarray] = []
+        for f in self.files:
+            assert f.data is not None  # type guard
+            d = f.data
+            if f.e_lim and f.t_lim:
+                d = d[f.t_lim[0] : f.t_lim[1], f.e_lim[0] : f.e_lim[1]]
+            elif f.e_lim:
+                d = d[:, f.e_lim[0] : f.e_lim[1]]
+            elif f.t_lim:
+                d = d[f.t_lim[0] : f.t_lim[1], :]
+            data_slices.append(d.flatten())
+        concat_data = np.concatenate(data_slices)
+
+        # const: (x, data, package, fit_fun_str, unpack, e_lim, t_lim)
+        # e_lim and t_lim are empty — slicing is handled inside
+        # fit_project_mcp
+        const: tuple[Any, ...] = (
+            np.array([]),  # x — unused by fit_project_mcp
+            concat_data,
+            spectra,
+            "fit_project_mcp",
+            0,
+            [],  # no additional e_lim slicing
+            [],  # no additional t_lim slicing
+        )
+        args = (project_fit_info, 2)
+
+        par_names = project_fit_info["par_names"]
+
+        if self.show_output >= 1:
+            n_project = sum(
+                1
+                for p in combined_pars.values()
+                if p.vary and not p.name.startswith("file")
+            )
+            n_file = sum(
+                1
+                for p in combined_pars.values()
+                if p.vary and p.name.startswith("file")
+            )
+            n_static = sum(1 for p in combined_pars.values() if not p.vary)
+            print(
+                f"Project fit: {len(self.files)} files, "
+                f"{n_project} project-vary, {n_file} file-vary, "
+                f"{n_static} static params"
+            )
+
+        result = fitlib.fit_wrapper(
+            const=const,
+            args=args,
+            par_names=par_names,
+            par=combined_pars,
+            stages=stages,
+            show_output=1 if self.show_output >= 1 else 0,
+            save_output=0,
+            **fit_wrapper_kwargs,
+        )
+
+        # Distribute final parameters back to file models and hook into
+        # the standard File 2D-fit lifecycle so that save_2d_fit() and
+        # get_fit_results("2d") work on project-fitted files.
+        mapping = project_fit_info["mapping"]
+        models = project_fit_info["models"]
+        if result[1]:
+            final_pars = result[1].params
+            for proj_name, file_idx, local_name in mapping:
+                if proj_name in final_pars:
+                    models[file_idx].lmfit_pars[local_name].value = final_pars[
+                        proj_name
+                    ].value
+
+        for _file_idx, (f, model) in enumerate(zip(self.files, models, strict=True)):
+            f.model_2d = model
+            assert model is not None  # type guard
+            # Synthetic result satisfying result[1].params used by
+            # get_fit_results("2d"). Project fits do not produce per-file
+            # stderr/CI — those fields are absent by design.
+            model.result = [None, types.SimpleNamespace(params=model.lmfit_pars)]
+
+        self._project_fit_result = result
+
+        # Save per-file 2D fit results (silently)
+        saved = self.show_output
+        self.show_output = 0
+        try:
+            for f in self.files:
+                if f.model_2d is not None:
+                    path_2d = f.create_model_path(model_name)
+                    f.save_2d_fit(save_path=path_2d)
+        finally:
+            self.show_output = saved
+
+        if self.show_output >= 1:
+            fitlib.time_display(
+                t_start=t_start,
+                print_str="Time elapsed for project-level 2D fit: ",
+            )
+            # Show saved 2D fit plots in a grid
+            import matplotlib.image as mpimg
+
+            images = []
+            for f in self.files:
+                img_path = f.create_model_path(model_name) / "2D_data_fit_res.png"
+                if img_path.exists():
+                    images.append(mpimg.imread(str(img_path)))
+            if images:
+                uplt.plot_grid(images, columns=min(3, len(images)))
+
 
 #
 #
@@ -350,7 +984,12 @@ class File:
         Parent Project instance for configuration. If None, creates default
         test project internally.
     path : str or Path, default='test'
-        Identifier for this file (used in result directory structure and plots)
+        File path for result directory structure and data I/O.
+    name : str, optional
+        Human-readable identifier used for ``project["name"]`` lookup and
+        plot titles. Defaults to the stem of ``path`` (e.g. ``"data_1"``
+        for ``path="data_1.h5"``). Useful when multiple files share a
+        path (e.g. HDF5 groups) or when the path is not descriptive.
     data : ndarray, optional
         Spectroscopy data to fit:
 
@@ -434,6 +1073,7 @@ class File:
         self,
         parent_project: Project | None = None,
         path: PathLike = "test",
+        name: str | None = None,
         data: np.ndarray | None = None,
         energy: np.ndarray | None = None,
         time: np.ndarray | None = None,
@@ -441,8 +1081,17 @@ class File:
     ) -> None:
         # pass parent project or (default) create a functioning test project environment
         self.p = parent_project if parent_project is not None else Project(path=None)
-        self.p.files.append(self)  # register with parent project
         self.path = path  # path to load/save [?] data from
+        self.name = name if name is not None else pathlib.Path(path).stem
+        # Check for duplicate names before registering
+        existing = [f.name for f in self.p.files]
+        if self.name in existing:
+            raise ValueError(
+                f'Duplicate file name "{self.name}". '
+                f"Pass an explicit name= to disambiguate "
+                f'(e.g. name="{self.name}_2").'
+            )
+        self.p.files.append(self)  # register with parent project
         self.path_da = self.p.path_run / path  # path to save fit results to
         self._plot_config: PlotConfig | None = None  # create plot config from project
         self.data = data  # (time-[optional] and) energy-dependent data to fit
@@ -509,7 +1158,7 @@ class File:
         shape = self.data.shape if self.data is not None else None
         n_models = len(self.models)
         return (
-            f"File(path='{self.path}', data={shape}, {n_models} models, dim={self.dim})"
+            f"File(name='{self.name}', data={shape}, {n_models} models, dim={self.dim})"
         )
 
     #
@@ -522,7 +1171,10 @@ class File:
         shows time- and energy-resolved map.
         """
 
-        print(f"File # x [path: {self.path}]")
+        if self.p.show_output < 1:
+            return
+
+        print(f"File: {self.name} [path: {self.path}]")
         if self.data is None:
             warnings.warn("No data loaded; nothing to describe.", stacklevel=2)
             return
@@ -804,6 +1456,9 @@ class File:
             - 0: Show parameter table only
             - 1: Show parameters and plot data/initial guess/residual
         """
+
+        if self.p.show_output < 1:
+            return
 
         mod = self.model_active if model_info is None else self.select_model(model_info)
         if mod is None:
@@ -1224,7 +1879,7 @@ class File:
             save_path=path_base_results / "base_fit.png",
         )
 
-        if stages >= 1:
+        if stages >= 1 and self.p.show_output >= 1:
             fitlib.time_display(
                 t_start=t_base, print_str="Time elapsed for baseline fit: "
             )

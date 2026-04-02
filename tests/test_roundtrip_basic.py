@@ -31,19 +31,19 @@ def _make_truth_file(project):
     energy = np.linspace(83, 87, 30)
     time = np.linspace(-2, 10, 24)
 
-    file = File(parent_project=project)
+    file = File(parent_project=project, name="truth")
     file.energy = energy
     file.time = time
     file.dim = 2
 
     file.load_model(
-        model_yaml="test_models_energy.yaml",
-        model_info=["single_glp"],
+        model_yaml="models/file_energy.yaml",
+        model_info="single_glp",
     )
     file.add_time_dependence(
         target_model="single_glp",
         target_parameter="GLP_01_A",
-        dynamics_yaml="test_models_time.yaml",
+        dynamics_yaml="models/file_time.yaml",
         dynamics_model=["MonoExpPos"],
     )
     return file
@@ -55,19 +55,20 @@ def _make_fit_file(project, data, energy, time):
 
     file = File(
         parent_project=project,
+        name="fit",
         data=data,
         energy=energy.copy(),
         time=time.copy(),
     )
 
     file.load_model(
-        model_yaml="test_models_energy.yaml",
-        model_info=["single_glp"],
+        model_yaml="models/file_energy.yaml",
+        model_info="single_glp",
     )
     file.add_time_dependence(
         target_model="single_glp",
         target_parameter="GLP_01_A",
-        dynamics_yaml="test_models_time.yaml",
+        dynamics_yaml="models/file_time.yaml",
         dynamics_model=["MonoExpPos"],
     )
 

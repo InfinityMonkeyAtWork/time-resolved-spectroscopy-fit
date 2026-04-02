@@ -20,6 +20,7 @@ from trspecfit.config.functions import (
     get_function_parameters,
     numbering_exceptions,
 )
+from trspecfit.utils.lmfit import VARY_LEVELS
 
 
 #
@@ -243,12 +244,20 @@ def validate_model_components(
                             min_val = -np.inf
                             max_val = np.inf
 
-                        # Check that 'vary' is boolean
-                        if not isinstance(vary, bool):
+                        # Check that 'vary' is valid — use explicit isinstance
+                        # guard rather than set membership to reject 0/1
+                        # (Python's 0 == False / 1 == True would let them
+                        # slip through a {True, False, ...} set check).
+                        if not (
+                            isinstance(vary, bool)
+                            or (isinstance(vary, str) and vary in VARY_LEVELS)
+                        ):
+                            valid_vary = (True, False, *sorted(VARY_LEVELS))
                             raise ModelValidationError(
                                 f"Parameter '{param_name}' in '{comp_name}'"
                                 f" (model '{model_name}'):\n"
-                                f"'vary' (2nd element) must be True or False.\n"
+                                f"'vary' (2nd element) must be one of"
+                                f" {valid_vary}.\n"
                                 f"Got: {vary} ({type(vary).__name__})"
                             )
 

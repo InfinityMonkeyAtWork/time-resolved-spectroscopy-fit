@@ -642,13 +642,7 @@ class Model:
     #
     def get_all_parameters(self) -> list["Par"]:
         """
-        Get all parameters from all components in this model.
-        (Used internally for expression analysis and parameter searches)
-
-        Returns
-        -------
-        list of Par
-            All Par objects from all components
+        Get all Par objects from all components in this model.
         """
 
         all_parameters = []
@@ -656,6 +650,46 @@ class Model:
             all_parameters.extend(comp.pars)
 
         return all_parameters
+
+    #
+    @staticmethod
+    def _collect_par_levels(par: "Par", levels: dict[str, str]) -> None:
+        """
+        Recursively collect vary levels for a Par and all nested sub-model parameters.
+
+        Handles arbitrary nesting depth (e.g. profile params that themselves
+        have dynamics sub-models).
+        """
+
+        for lmf_par in par.lmfit_par.values():
+            levels[lmf_par.name] = par.vary_level
+        if par.t_vary and par.t_model is not None:
+            for sub_par in par.t_model.get_all_parameters():
+                Model._collect_par_levels(sub_par, levels)
+        if par.p_vary and par.p_model is not None:
+            for sub_par in par.p_model.get_all_parameters():
+                Model._collect_par_levels(sub_par, levels)
+
+    #
+    def get_vary_levels(self) -> dict[str, str]:
+        """
+        Get vary level for every lmfit parameter name in this model.
+
+        Walks the Par tree including Dynamics and Profile sub-model
+        parameters at any nesting depth, returning a mapping from lmfit
+        parameter name to vary level (``"project"``, ``"file"``, or
+        ``"static"``).
+
+        Returns
+        -------
+        dict of str to str
+            ``{lmfit_param_name: vary_level}`` for all parameters.
+        """
+
+        levels: dict[str, str] = {}
+        for par in self.get_all_parameters():
+            Model._collect_par_levels(par, levels)
+        return levels
 
     #
     @staticmethod
@@ -1317,6 +1351,9 @@ class Component:
         for p_name, p_info in self.par_dict.items():
             temp = Par(name=prefix + self.prefix + p_name)
             temp.info = p_info  # see Par class for details
+            # Extract vary level from info before lmfit creation
+            if len(p_info) >= 2 and not isinstance(p_info[0], str):
+                temp.vary_level = ulmfit.vary_to_level(p_info[1])
             # Set parent model reference
             temp.parent_model = self.parent_model
             # If this is an expression, skip setting it for now
@@ -1806,6 +1843,7 @@ class Par:
     def __init__(self, name: str, info: list[Any] | None = None) -> None:
         self.name = name
         self.info: list[Any] = [] if info is None else list(info)
+        self.vary_level: str = "static"  # "project", "file", or "static"
         self.lmfit_par: lmfit.Parameters = lmfit.Parameters()
         self.t_vary: bool = False
         self.t_model: Dynamics | None = None  # set by add_dynamics()

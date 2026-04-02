@@ -37,8 +37,8 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
+            model_yaml="models/file_energy.yaml",
+            model_info="simple_energy",
         )
         assert file.model_active is not None  # type guard
         assert file.model_active.name == "simple_energy"
@@ -51,12 +51,12 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
+            model_yaml="models/file_energy.yaml",
+            model_info="simple_energy",
         )
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["single_glp"],
+            model_yaml="models/file_energy.yaml",
+            model_info="single_glp",
         )
         assert len(file.models) == 2
         assert file.model_active is not None  # type guard
@@ -68,8 +68,8 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         result = file.load_model(
-            model_yaml="test_models_time.yaml",
-            model_info=["MonoExpPos"],
+            model_yaml="models/file_time.yaml",
+            model_info="MonoExpPos",
             par_name="GLP_01_A",
             model_type="dynamics",
         )
@@ -83,8 +83,8 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         result = file.load_model(
-            model_yaml="test_models_profile.yaml",
-            model_info=["profile_pLinear"],
+            model_yaml="models/file_profile.yaml",
+            model_info="profile_pLinear",
             par_name="GLP_01_A",
             model_type="profile",
         )
@@ -97,7 +97,7 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
+            model_yaml="models/file_energy.yaml",
             model_info="simple_energy",
         )
         assert file.model_active is not None  # type guard
@@ -110,7 +110,7 @@ class TestModelManagement:
         file = self._make_file_with_axes()
         with pytest.raises(ValueError, match="single model"):
             file.load_model(
-                model_yaml="test_models_energy.yaml",
+                model_yaml="models/file_energy.yaml",
                 model_info=["simple_energy", "single_glp"],
             )
 
@@ -120,13 +120,13 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
+            model_yaml="models/file_energy.yaml",
+            model_info="simple_energy",
         )
         with pytest.raises(ValueError, match="already exists"):
             file.load_model(
-                model_yaml="test_models_energy.yaml",
-                model_info=["simple_energy"],
+                model_yaml="models/file_energy.yaml",
+                model_info="simple_energy",
             )
 
     #
@@ -136,8 +136,8 @@ class TestModelManagement:
         file = self._make_file_with_axes()
         with pytest.raises(ValueError, match="not found"):
             file.load_model(
-                model_yaml="test_models_energy.yaml",
-                model_info=["this_model_does_not_exist"],
+                model_yaml="models/file_energy.yaml",
+                model_info="this_model_does_not_exist",
             )
 
     #
@@ -147,8 +147,8 @@ class TestModelManagement:
         file = self._make_file_with_axes()
         with pytest.raises(ValueError, match="not recognized"):
             file.load_model(
-                model_yaml="test_models_energy.yaml",
-                model_info=["simple_energy"],
+                model_yaml="models/file_energy.yaml",
+                model_info="simple_energy",
                 model_type="bogus",  # type: ignore[arg-type]
             )
 
@@ -158,8 +158,8 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
+            model_yaml="models/file_energy.yaml",
+            model_info="simple_energy",
         )
         model = file.model_active
         assert model is not None  # type guard
@@ -173,12 +173,12 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
+            model_yaml="models/file_energy.yaml",
+            model_info="simple_energy",
         )
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["single_glp"],
+            model_yaml="models/file_energy.yaml",
+            model_info="single_glp",
         )
         model = file.select_model("simple_energy")
         assert model is not None  # type guard
@@ -190,12 +190,12 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
+            model_yaml="models/file_energy.yaml",
+            model_info="simple_energy",
         )
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["single_glp"],
+            model_yaml="models/file_energy.yaml",
+            model_info="single_glp",
         )
         model = file.select_model(0)
         assert model is not None  # type guard
@@ -210,8 +210,8 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
+            model_yaml="models/file_energy.yaml",
+            model_info="simple_energy",
         )
         assert file.select_model("nonexistent") is None
         assert file.select_model(99) is None
@@ -222,12 +222,12 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
+            model_yaml="models/file_energy.yaml",
+            model_info="simple_energy",
         )
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["single_glp"],
+            model_yaml="models/file_energy.yaml",
+            model_info="single_glp",
         )
         mod = file.select_model("single_glp")
         assert mod is not None
@@ -239,8 +239,8 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
+            model_yaml="models/file_energy.yaml",
+            model_info="simple_energy",
         )
         model = file.select_model(["simple_energy"])
         assert model is not None  # type guard
@@ -252,12 +252,12 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
+            model_yaml="models/file_energy.yaml",
+            model_info="simple_energy",
         )
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["single_glp"],
+            model_yaml="models/file_energy.yaml",
+            model_info="single_glp",
         )
         file.delete_model("simple_energy")
         assert len(file.models) == 1
@@ -269,12 +269,12 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
+            model_yaml="models/file_energy.yaml",
+            model_info="simple_energy",
         )
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["single_glp"],
+            model_yaml="models/file_energy.yaml",
+            model_info="single_glp",
         )
         file.delete_model(0)
         assert len(file.models) == 1
@@ -286,12 +286,12 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
+            model_yaml="models/file_energy.yaml",
+            model_info="simple_energy",
         )
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["single_glp"],
+            model_yaml="models/file_energy.yaml",
+            model_info="single_glp",
         )
         # active is single_glp (last loaded)
         file.delete_model()
@@ -313,8 +313,8 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
+            model_yaml="models/file_energy.yaml",
+            model_info="simple_energy",
         )
         with pytest.warns(UserWarning, match="not found"):
             file.delete_model("nonexistent")
@@ -329,12 +329,12 @@ class TestModelManagement:
 
         file = self._make_file_with_axes()
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
+            model_yaml="models/file_energy.yaml",
+            model_info="simple_energy",
         )
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["single_glp"],
+            model_yaml="models/file_energy.yaml",
+            model_info="single_glp",
         )
         assert len(file.models) == 2
         file.reset_models()
@@ -657,14 +657,14 @@ class TestFitLimitsSlicing:
         else:
             file.data = np.random.default_rng(42).normal(size=len(energy))
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["single_glp"],
+            model_yaml="models/file_energy.yaml",
+            model_info="single_glp",
         )
         if time is not None:
             file.add_time_dependence(
                 target_model="single_glp",
                 target_parameter="GLP_01_A",
-                dynamics_yaml="test_models_time.yaml",
+                dynamics_yaml="models/file_time.yaml",
                 dynamics_model=["MonoExpPos"],
             )
         file.set_fit_limits(
@@ -907,8 +907,8 @@ class TestFitPreconditions:
         )
         file.dim = 2
         file.load_model(
-            model_yaml="test_models_energy.yaml",
-            model_info=["simple_energy"],
+            model_yaml="models/file_energy.yaml",
+            model_info="simple_energy",
         )
         return file
 
@@ -1035,6 +1035,110 @@ class TestFitPreconditions:
         file.data = None
         with pytest.raises(ValueError, match="missing"):
             file.save_2d_fit("/tmp/dummy")
+
+
+#
+#
+class TestFileNameAndProjectAccess:
+    """File.name and Project[key] lookup."""
+
+    #
+    def _make_project(self):
+        """Create a silent project with three files."""
+
+        project = Project(path="tests", name="access")
+        project.show_output = 0
+
+        energy = np.arange(10)
+        time_ax = np.arange(5)
+        data = np.zeros((5, 10))
+
+        File(
+            parent_project=project,
+            path="folder/sample_a.h5",
+            data=data,
+            energy=energy,
+            time=time_ax,
+        )
+        File(
+            parent_project=project,
+            path="sample_b",
+            data=data,
+            energy=energy,
+            time=time_ax,
+        )
+        File(
+            parent_project=project,
+            path="raw/deep/experiment.csv",
+            name="custom",
+            data=data,
+            energy=energy,
+            time=time_ax,
+        )
+        return project
+
+    #
+    def test_name_defaults_to_stem(self):
+        project = self._make_project()
+        assert project.files[0].name == "sample_a"
+
+    #
+    def test_name_no_extension(self):
+        project = self._make_project()
+        assert project.files[1].name == "sample_b"
+
+    #
+    def test_custom_name_overrides_stem(self):
+        project = self._make_project()
+        assert project.files[2].name == "custom"
+
+    #
+    def test_getitem_int(self):
+        project = self._make_project()
+        assert project[0] is project.files[0]
+        assert project[2] is project.files[2]
+
+    #
+    def test_getitem_str(self):
+        project = self._make_project()
+        assert project["sample_a"] is project.files[0]
+        assert project["sample_b"] is project.files[1]
+        assert project["custom"] is project.files[2]
+
+    #
+    def test_getitem_custom_name_resolves_path(self):
+        project = self._make_project()
+        f = project["custom"]
+        assert f.path == "raw/deep/experiment.csv"
+
+    #
+    def test_getitem_missing_raises_key_error(self):
+        project = self._make_project()
+        with pytest.raises(KeyError, match="nonexistent"):
+            project["nonexistent"]
+
+    #
+    def test_getitem_int_out_of_range_raises(self):
+        project = self._make_project()
+        with pytest.raises(IndexError):
+            project[99]
+
+    #
+    def test_duplicate_name_raises(self):
+        project = Project(path="tests", name="dup")
+        project.show_output = 0
+        File(parent_project=project, path="scan1/data.csv")
+        with pytest.raises(ValueError, match="Duplicate file name"):
+            File(parent_project=project, path="scan2/data.csv")
+
+    #
+    def test_duplicate_name_resolved_with_explicit_name(self):
+        project = Project(path="tests", name="dup2")
+        project.show_output = 0
+        File(parent_project=project, path="scan1/data.csv")
+        File(parent_project=project, path="scan2/data.csv", name="data_2")
+        assert project["data"].path == "scan1/data.csv"
+        assert project["data_2"].path == "scan2/data.csv"
 
 
 if __name__ == "__main__":

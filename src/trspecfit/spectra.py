@@ -25,7 +25,10 @@ The fitting workflow is:
 4. Residual = data - model is computed and returned to optimizer
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 
@@ -142,3 +145,83 @@ def fit_model_mcp(
             raise RuntimeError("Model evaluation did not produce value_2d")
         return model.value_2d
     raise ValueError(f"Unsupported dim={dim}; expected 1 or 2")
+
+
+#
+def fit_project_mcp(
+    x: Sequence[float] | np.ndarray,
+    par: Sequence[float] | np.ndarray,
+    plot_sum: bool,
+    project_fit_info: dict[str, Any],
+    dim: int,
+) -> np.ndarray:
+    """
+    Generate concatenated spectra from multiple files for project-level fitting.
+
+    Distributes combined optimizer parameters to individual file models,
+    evaluates each model, slices to each file's fit region, and returns
+    one concatenated array for residual computation.
+
+    Parameters
+    ----------
+    x : array-like
+        Unused (kept for fit-function signature compatibility).
+    par : list or array-like
+        Combined parameter values proposed by the optimizer, ordered to
+        match ``project_fit_info["par_names"]``.
+    plot_sum : bool
+        Unused (kept for signature compatibility). Always returns sum.
+    project_fit_info : dict
+        Fitting context built by ``Project._build_fit_params()``:
+
+        - ``"mapping"``: list of ``(project_name, file_idx, local_name)``
+        - ``"files"``: list of File objects (limits read from ``f.e_lim``/``f.t_lim``)
+        - ``"models"``: list of Model objects (one per file)
+        - ``"par_names"``: list of combined parameter names
+
+    dim : int
+        Must be 2 (project-level fitting is 2D only).
+
+    Returns
+    -------
+    ndarray
+        Concatenated (flattened) fit arrays from all files.
+    """
+
+    par_values = list(par) if not isinstance(par, np.ndarray) else par
+
+    mapping = project_fit_info["mapping"]
+    files = project_fit_info["files"]
+    models = project_fit_info["models"]
+    par_names = project_fit_info["par_names"]
+
+    # Build name→value lookup from the combined parameter vector
+    par_lookup: dict[str, float] = {}
+    for i, name in enumerate(par_names):
+        par_lookup[name] = float(par_values[i])
+
+    # Distribute values to each file's model
+    for project_name, file_idx, local_name in mapping:
+        model = models[file_idx]
+        if local_name in model.lmfit_pars:
+            model.lmfit_pars[local_name].value = par_lookup[project_name]
+
+    # Evaluate each file and collect sliced results
+    slices: list[np.ndarray] = []
+    for i, (model, f) in enumerate(zip(models, files, strict=True)):
+        model.create_value_2d()
+        if model.value_2d is None:
+            raise RuntimeError(
+                f"Model evaluation for file {i} did not produce value_2d"
+            )
+        fit_2d = model.value_2d
+        # Apply per-file slicing (read limits from file directly)
+        if f.e_lim and f.t_lim:
+            fit_2d = fit_2d[f.t_lim[0] : f.t_lim[1], f.e_lim[0] : f.e_lim[1]]
+        elif f.e_lim:
+            fit_2d = fit_2d[:, f.e_lim[0] : f.e_lim[1]]
+        elif f.t_lim:
+            fit_2d = fit_2d[f.t_lim[0] : f.t_lim[1], :]
+        slices.append(fit_2d.flatten())
+
+    return np.concatenate(slices)

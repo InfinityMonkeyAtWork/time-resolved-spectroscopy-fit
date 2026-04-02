@@ -174,6 +174,132 @@ def plot_grid(
 
 
 #
+def plot_2d_grid(
+    datasets: Sequence[ArrayLike],
+    *,
+    x: ArrayLike | None = None,
+    y: ArrayLike | None = None,
+    titles: Sequence[str] | None = None,
+    config: "PlotConfig | None" = None,
+    vlines: Sequence[Sequence[float]] | None = None,
+    hlines: Sequence[Sequence[float]] | None = None,
+    save_img: int = 0,
+    save_path: PathLike = "",
+    dpi_save: int = 300,
+) -> None:
+    """
+    Plot multiple 2D datasets in a grid layout.
+
+    Parameters
+    ----------
+    datasets : list of 2D arrays
+        Data arrays to plot (each shape [n_time, n_energy]).
+    x : array-like, optional
+        Shared energy axis for all panels.
+    y : array-like, optional
+        Shared time axis for all panels.
+    titles : list of str, optional
+        Title for each panel. If None, panels are untitled.
+    config : PlotConfig, optional
+        Plot configuration (colormap, axis directions, labels).
+    vlines : list of list of float, optional
+        Per-panel vertical reference lines. Each element is a list of
+        x-coordinates for that panel (or empty list for none).
+    hlines : list of list of float, optional
+        Per-panel horizontal reference lines.
+    save_img : {-1, 0, 1}, default=0
+        -1 save only, 0 display only, 1 save and display.
+    save_path : str or Path, default=""
+        File path for saving.
+    dpi_save : int, default=300
+        DPI for saved image.
+    """
+
+    from trspecfit.config.plot import PlotConfig as _PlotConfig
+
+    if config is None:
+        config = _PlotConfig()
+
+    n = len(datasets)
+    if n == 0:
+        return
+
+    # Auto-select columns: 2 for <=4, 3 for <=9, 4 for <=16, 5 above
+    if n <= 4:
+        cols = 2
+    elif n <= 9:
+        cols = 3
+    elif n <= 16:
+        cols = 4
+    else:
+        cols = 5
+
+    rows = int(np.ceil(n / cols))
+
+    z_colormap = config.z_colormap or "viridis"
+    x_arr = None if x is None else np.asarray(x)
+    y_arr = None if y is None else np.asarray(y)
+
+    fig, axs = plt.subplots(
+        rows,
+        cols,
+        figsize=(4.0 * cols, 3.0 * rows),
+        squeeze=False,
+        dpi=config.dpi_plot or 100,
+    )
+
+    for idx, (data_raw, ax) in enumerate(zip(datasets, axs.flatten(), strict=False)):
+        data_arr = np.asarray(data_raw)
+        xp = x_arr if x_arr is not None else np.arange(data_arr.shape[1])
+        yp = y_arr if y_arr is not None else np.arange(data_arr.shape[0])
+
+        im = ax.pcolormesh(xp, yp, data_arr, cmap=z_colormap, shading="nearest")
+        fig.colorbar(im, ax=ax, pad=0.02)
+
+        if titles is not None and idx < len(titles):
+            ax.set_title(titles[idx], fontsize=10)
+
+        # Axis labels only on edges
+        if idx % cols == 0:
+            ax.set_ylabel(config.y_label or "")
+        if idx >= (rows - 1) * cols:
+            ax.set_xlabel(config.x_label or "")
+
+        _apply_axis_settings(
+            ax,
+            config.x_type,
+            config.x_dir,
+            config.y_type,
+            config.y_dir,
+        )
+
+        # Reference lines
+        if vlines is not None and idx < len(vlines) and vlines[idx]:
+            ax.vlines(
+                x=np.asarray(vlines[idx]),
+                ymin=np.min(yp),
+                ymax=np.max(yp),
+                color="#000000",
+                linestyle=":",
+            )
+        if hlines is not None and idx < len(hlines) and hlines[idx]:
+            ax.hlines(
+                y=np.asarray(hlines[idx]),
+                xmin=np.min(xp),
+                xmax=np.max(xp),
+                color="#000000",
+                linestyle=":",
+            )
+
+    # Hide unused subplots
+    for ax in axs.flatten()[n:]:
+        ax.set_visible(False)
+
+    plt.tight_layout()
+    _finalize_plot(save_img, save_path, dpi_save)
+
+
+#
 # Main plotting functions
 #
 

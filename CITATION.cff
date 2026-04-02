@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use trspecfit in your research, please cite it using the metadata below."
+title: "trspecfit"
+type: software
+authors:
+  - family-names: "Mahl"
+    given-names: "Johannes"
+  - family-names: "Crumlin"
+    given-names: "Ethan"
+repository-code: "https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit"
+url: "https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit"
+preferred-citation:
+  type: software
+  title: "time-resolved spectroscopy fit (trspecfit) v0.01"
+  authors:
+    - family-names: "Mahl"
+      given-names: "Johannes"
+    - family-names: "Crumlin"
+      given-names: "Ethan"
+  version: "0.01"
+  doi: "10.11578/dc.20251009.2"
+  url: "https://doi.org/10.11578/dc.20251009.2"

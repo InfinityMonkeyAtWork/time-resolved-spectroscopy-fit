@@ -1,0 +1,10 @@
+# ground truth time model for data generation
+
+MonoExpPosIRF:
+    gaussCONV:
+        SD: [3, True, 0, 10]
+    expFun:
+        A: [5, True, 0, 15]
+        tau: [50, True, 1, 100]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]

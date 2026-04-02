@@ -3,7 +3,7 @@
 ## Fitting
 
 - [ ] **Project-level fits**: allow parameters to vary at Project, File, or Static scope (multi-file fitting).
-- [ ] **Fit results save/load**: HDF5 output for fit results, `File.load_fit()` to restore, `File.compare_models()` for model comparison.
+- [ ] **Fit results save/load**: HDF5 output for fit results, `File.load_fit()` to restore, `File.compare_models()` for model comparison. Keep project/global-fit outputs separate from true file-level fits so users do not assume identical per-file fields/statistics.
 - [ ] **Mismatched initial guesses**: round-trip tests — one each for basic, profile, profile+dynamics.
 
 Note: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling — make configurable via `mc_settings` if users need it.

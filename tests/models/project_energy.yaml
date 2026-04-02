@@ -1,0 +1,35 @@
+# Models for project-level fitting tests.
+
+# Baseline model — energy-only, standard True/False vary.
+# Fitted first to pin down energy shape parameters.
+project_glp_base:
+    GLP:
+      A: [20, True, 5, 25]
+      x0: [85.0, True, 82, 88]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+
+# 2D model — uses project/file/static vary levels.
+# - x0 dynamics tau is shared across files (project)
+# - A is independent per file (file)
+# - shape params are fixed (static) because baseline pins them
+project_glp:
+    GLP:
+      A: [20, "file", 5, 25]
+      x0: [85.0, "file", 82, 88]
+      F: [1.0, "static", 0.75, 2.5]
+      m: [0.3, "static", 0, 1]
+
+# Two GLP peaks — second amplitude constrained by expression.
+# Tests that expressions are rewritten with file prefixes.
+project_glp_expr:
+    GLP:
+      A: [20, "file", 5, 25]
+      x0: [85.0, "file", 82, 88]
+      F: [1.0, "static", 0.75, 2.5]
+      m: [0.3, "static", 0, 1]
+    GLP:
+      A: ["GLP_01_A * 0.5"]
+      x0: [86.5, "file", 84, 89]
+      F: [1.0, "static", 0.75, 2.5]
+      m: [0.3, "static", 0, 1]
