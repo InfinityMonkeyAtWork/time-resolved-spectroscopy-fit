@@ -2,6 +2,8 @@
 
 [![Documentation Status](https://readthedocs.org/projects/time-resolved-spectroscopy-fit/badge/?version=latest)](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/?badge=latest)
 [![PyPI version](https://img.shields.io/pypi/v/trspecfit.svg)](https://pypi.org/project/trspecfit/)
+[![CI](https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/actions/workflows/ci.yaml/badge.svg)](https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/actions/workflows/ci.yaml)
+[![Python versions](https://img.shields.io/pypi/pyversions/trspecfit.svg)](https://pypi.org/project/trspecfit/)
 
 `trspecfit` is a Python package for modeling and fitting 1D energy-resolved and 2D time-and-energy-resolved spectroscopy data. It extends lmfit with composable spectral components, parameter-level time dynamics, convolution kernels, and simulation tools so you can build, fit, and validate physically meaningful models in one workflow.
 
@@ -72,6 +74,18 @@ Full docs are hosted on [Read the Docs](https://time-resolved-spectroscopy-fit.r
 [Quick Start](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/quickstart.html) |
 [Examples](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/examples/index.html) |
 [API Reference](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/api/index.html)
+
+## Citation
+
+If `trspecfit` contributes to published research, please cite the DOE CODE / OSTI
+software record:
+
+- Johannes Mahl; Ethan Crumlin. *time-resolved spectroscopy fit (trspecfit) v0.01*.
+  Lawrence Berkeley National Laboratory, 2025.
+  DOI: [10.11578/dc.20251009.2](https://doi.org/10.11578/dc.20251009.2)
+
+GitHub will also surface this citation automatically from
+[`CITATION.cff`](CITATION.cff).
 
 ## Support and Community
 
