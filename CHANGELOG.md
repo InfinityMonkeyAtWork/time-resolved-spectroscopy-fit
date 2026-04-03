@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the `/changelog` skill in
 [`.claude/skills/changelog/`](.claude/skills/changelog/SKILL.md).
 
+## [0.7.4] - 2026-04-02
+
+### Added
+
+- **Individual spectrum fitting**: `File.fit_spectrum()` fits a 1D energy model to a single spectrum extracted at a specific time point or time range, without running a full Slice-by-Slice or 2D fit.
+- **Data corrections pipeline**: `File.subtract_dark()` and `File.calibrate_data()` apply dark subtraction and sensitivity calibration to raw data. `File.reset_dark()` and `File.reset_calibration()` revert to uncorrected data. Corrections stack and automatically recompute the baseline if one is defined.
+- `File.describe()` auto-waterfall display: small 2D datasets (≤ 12 spectra) now render as waterfall plots instead of 2D maps. Override via the new `waterfall` parameter (`None` for auto, `0` for 2D map, or a `float` for a fixed offset).
+- Per-trace opacity in `plot_1d`: traces outside the active time fit window are dimmed (`alpha=0.35`). Configurable via `alphas` parameter and `PlotConfig`.
+
+### Changed
+
+- Shared time validation helper `File._resolve_time_selection()` now backs `define_baseline()`, `set_fit_limits()`, and `fit_spectrum()`. Out-of-range or empty time slices raise `ValueError` instead of silently producing zero-length results.
+
+### Fixed
+
+- 2D models are now rejected in 1D fit contexts with a clear error instead of producing incorrect results.
+
 ## [0.7.0] - 2026-04-02
 
 ### Added

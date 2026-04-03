@@ -31,6 +31,14 @@ Model Management
 .. automethod:: trspecfit.trspecfit.File.delete_model
 .. automethod:: trspecfit.trspecfit.File.reset_models
 
+Data Corrections
+~~~~~~~~~~~~~~~~
+
+.. automethod:: trspecfit.trspecfit.File.subtract_dark
+.. automethod:: trspecfit.trspecfit.File.calibrate_data
+.. automethod:: trspecfit.trspecfit.File.reset_dark
+.. automethod:: trspecfit.trspecfit.File.reset_calibration
+
 Fitting Workflow
 ~~~~~~~~~~~~~~~~
 
@@ -48,6 +56,7 @@ Fitting Workflow
 .. automethod:: trspecfit.trspecfit.File.add_par_profile
 .. automethod:: trspecfit.trspecfit.File.add_time_dependence
 .. automethod:: trspecfit.trspecfit.File.fit_2d
+.. automethod:: trspecfit.trspecfit.File.fit_spectrum
 
 Utility Methods
 ~~~~~~~~~~~~~~~

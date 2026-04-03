@@ -1049,6 +1049,12 @@ class File:
         Model used for Slice-by-Slice fitting
     results_sbs : list
         Slice-by-Slice fit results for all time slices
+    model_spec : Model or None
+        Model used for individual spectrum fitting
+    data_spec : ndarray or None
+        Extracted 1D spectrum for individual spectrum fitting
+    spec_t_abs, spec_t_ind : list
+        Time bounds for spectrum extraction (absolute values and indices)
     plot_config : PlotConfig
         Plot configuration (created from parent Project on first access)
 

@@ -25,6 +25,16 @@ Multi-cycle time-dependent models:
 - Parameters can have separate dynamics in different subcycles
 - Models allow for global time-dependent behavior (e.g. IRF) across all subcycles
 
+### [04_par_profiles](fitting_workflows/04_par_profiles/)
+Profile-aware fitting:
+- Attach profile functions to model parameters along an auxiliary axis
+- Combine profiles with time-dependence for full 2D models
+
+### [05_project_level_fitting](fitting_workflows/05_project_level_fitting/)
+Project-level fitting across multiple files:
+- Load shared models across files in a single project
+- Fit with shared parameters and per-file results
+
 ## Data Generation
 
 Tools for generating synthetic data and machine learning training sets. These examples are primarily for:

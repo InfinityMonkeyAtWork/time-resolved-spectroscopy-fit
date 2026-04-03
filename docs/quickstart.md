@@ -48,6 +48,7 @@ Fitting workflow examples:
 | 02_dependent_parameters | Link parameters with expressions (e.g. spin-orbit doublets) |
 | 03_multi_cycle | Multi-cycle dynamics with subcycles and frequency |
 | 04_par_profiles | Depth-dependent parameters with profile functions |
+| 05_project_level_fitting | Fit shared models across multiple files in one project |
 
 Data generation examples (for testing/ML):
 
