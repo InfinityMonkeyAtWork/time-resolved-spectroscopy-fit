@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the `/changelog` skill in
 [`.claude/skills/changelog/`](.claude/skills/changelog/SKILL.md).
 
+## [0.7.4] - 2026-04-02
+
+### Added
+
+- **Individual spectrum fitting**: `File.fit_spectrum()` fits a 1D energy model to a single spectrum extracted at a specific time point or time range, without running a full Slice-by-Slice or 2D fit.
+- **Data corrections pipeline**: `File.subtract_dark()` and `File.calibrate_data()` apply dark subtraction and sensitivity calibration to raw data. `File.reset_dark()` and `File.reset_calibration()` revert to uncorrected data. Corrections stack and automatically recompute the baseline if one is defined.
+- `File.describe()` auto-waterfall display: small 2D datasets (≤ 12 spectra) now render as waterfall plots instead of 2D maps. Override via the new `waterfall` parameter (`None` for auto, `0` for 2D map, or a `float` for a fixed offset).
+- Per-trace opacity in `plot_1d`: traces outside the active time fit window are dimmed (`alpha=0.35`). Configurable via `alphas` parameter and `PlotConfig`.
+
+### Changed
+
+- Shared time validation helper `File._resolve_time_selection()` now backs `define_baseline()`, `set_fit_limits()`, and `fit_spectrum()`. Out-of-range or empty time slices raise `ValueError` instead of silently producing zero-length results.
+
+### Fixed
+
+- 2D models are now rejected in 1D fit contexts with a clear error instead of producing incorrect results.
+
+## [0.7.0] - 2026-04-02
+
+### Added
+
+- **Project-level fitting**: fit shared models across multiple files in a single workflow. New `Project` methods: `load_models()`, `set_fit_limits()`, `define_baselines()`, `fit_baselines()`, `add_time_dependences()`, and project-level `fit_2d()` with per-file result plots and grid summaries.
+- File access by name or index: `project["file_name"]` and `project[index]`.
+- `File(name=...)` parameter for explicit file identifiers (defaults to path stem); duplicate names are rejected.
+- `CITATION.cff` with DOI for citing trspecfit in research.
+- Example workflow `05_project_level_fitting/` demonstrating multi-file project-level fitting.
+
+### Changed
+
+- `model_info` now accepts `str` for single models (e.g. `model_info="GLP"`) in addition to `list[str]`; `list[str]` is still required for multi-cycle submodels.
+- Shared "project" parameters are validated to have matching bounds across individual file-level models.
+- `Project.describe(detail=1)` now shows energy/time/z ranges per file and plots a 2D data grid with auto-column layout.
+
+### Fixed
+
+- Residual multiplier (`res_mult`) now read from `PlotConfig` / `project.yaml` instead of being hardcoded.
+
 ## [0.6.1] - 2026-03-26
 
 ### Added

@@ -29,16 +29,28 @@ Report any matches with file and line number.
 ## 3. Missing docstrings on public API
 
 Check every public (no leading `_`) function, method, and class in `src/trspecfit/`
-for a triple-quoted docstring immediately after the definition. Report any that
-are missing.
+for a triple-quoted docstring immediately after the definition. `@overload`
+definitions are excluded since they conventionally omit docstrings.
+
+```bash
+python .claude/skills/check-docs/check_missing_docstrings.py
+```
+
+Report any missing docstrings with file and line number.
 
 ## 4. Stale docstrings (signature vs Parameters mismatch)
 
 For public functions and methods in user-facing files
 (`trspecfit.py`, `mcp.py`, `functions/*.py`, `fitlib.py`, `simulator.py`),
 compare the function signature parameters against the docstring Parameters
-section. Report any mismatches (missing, extra, or renamed parameters).
-Skip `self`, `cls`, `*args`, `**kwargs`.
+section. Skip `self`, `cls`, `*args`, `**kwargs`.
+
+```bash
+python .claude/skills/check-docs/check_stale_docstrings.py
+```
+
+Report any mismatches (missing, extra, or renamed parameters) with file and
+line number.
 
 ## 5. Broken cross-references
 

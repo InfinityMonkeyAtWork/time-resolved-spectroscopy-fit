@@ -566,6 +566,7 @@ def plot_1d(
         - linewidths : List of line widths
         - markers : List of marker styles ('o', 's', '^', etc.)
         - markersizes : List of marker sizes
+        - alphas : List of opacity values (0–1) for each trace
         - legend : List of legend labels
         - waterfall : Y-offset between traces for waterfall display
         - y_norm : 0 (raw data) or 1 (normalize each trace to [0, 1])
@@ -643,6 +644,7 @@ def plot_1d(
     linewidths = kwargs.get("linewidths", config.linewidths)
     markers = kwargs.get("markers", config.markers)
     markersizes = kwargs.get("markersizes", config.markersizes)
+    alphas = kwargs.get("alphas", config.alphas)
     legend = kwargs.get("legend", config.legend)
     vlines = kwargs.get("vlines", config.vlines)
     hlines = kwargs.get("hlines", config.hlines)
@@ -662,6 +664,8 @@ def plot_1d(
         markers = n_plots * [None]
     if markersizes is None:
         markersizes = n_plots * [6]
+    if alphas is None:
+        alphas = n_plots * [1.0]
     if x is None:
         x_common = np.arange(0, data_series[0].shape[0], 1)
         x_list: list[NDArray[np.float64]] | None = None
@@ -713,6 +717,7 @@ def plot_1d(
             lw=linewidths[i],
             marker=markers[i],
             ms=markersizes[i],
+            alpha=alphas[i],
             label=label,
         )
 

@@ -17,8 +17,6 @@ import pytest
 
 from trspecfit import File, Project, Simulator
 
-pytestmark = pytest.mark.slow
-
 
 #
 def _make_project():
@@ -157,7 +155,7 @@ def _make_fit_two_profiles(project, data, energy, time, aux):
 
 #
 def _make_fit_profile_dynamics(project, data, energy, time, aux):
-    """Fresh file with two profiles + dynamics on pExpDecay A."""
+    """Fresh file with two profiles, ready for baseline fit."""
 
     file = File(
         parent_project=project,
@@ -183,14 +181,20 @@ def _make_fit_profile_dynamics(project, data, energy, time, aux):
         profile_yaml="models/file_profile.yaml",
         profile_model=["roundtrip_pExpDecay_A"],
     )
+    file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
+    return file
+
+
+#
+def _add_fit_profile_dynamics(file):
+    """Add dynamics after baseline fitting the profile-only model."""
+
     file.add_time_dependence(
         target_model="single_gauss",
         target_parameter="Gauss_01_A_pExpDecay_01_A",
         dynamics_yaml="models/file_time.yaml",
         dynamics_model=["MonoExpPosStrong"],
     )
-    file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
-    return file
 
 
 #
@@ -199,6 +203,7 @@ class TestRoundTripTwoProfiles:
     """Two profiles on same component, no dynamics — baseline fit recovery."""
 
     #
+    @pytest.mark.slow
     def test_clean_recovery(self):
         """Simulate clean 2D data with two profiles, fit baseline, recover."""
 
@@ -238,6 +243,7 @@ class TestRoundTripProfileDynamics:
     """Two profiles + dynamics on pExpDecay A — full 2D fit recovery."""
 
     #
+    @pytest.mark.slow
     def test_clean_recovery(self):
         """Simulate clean 2D data with profile + dynamics, fit, recover."""
 
@@ -262,6 +268,7 @@ class TestRoundTripProfileDynamics:
             stages=2,
             try_ci=0,
         )
+        _add_fit_profile_dynamics(fit_file)
         fit_file.fit_2d(
             model_name="single_gauss",
             stages=2,
@@ -282,6 +289,7 @@ class TestRoundTripTwoProfilesNoisy:
     """Two profiles, no dynamics — noisy baseline fit recovery within 5%."""
 
     #
+    @pytest.mark.slow
     def test_noisy_recovery(self):
         """Simulate noisy 2D data with two profiles, fit baseline, recover."""
 
@@ -324,6 +332,7 @@ class TestRoundTripProfileDynamicsNoisy:
     """Two profiles + dynamics on pExpDecay A — noisy 2D fit recovery."""
 
     #
+    @pytest.mark.slow
     def test_noisy_recovery(self):
         """Simulate noisy 2D data with profile + dynamics, fit, recover."""
 
@@ -348,6 +357,7 @@ class TestRoundTripProfileDynamicsNoisy:
             stages=2,
             try_ci=0,
         )
+        _add_fit_profile_dynamics(fit_file)
         fit_file.fit_2d(
             model_name="single_gauss",
             stages=1,

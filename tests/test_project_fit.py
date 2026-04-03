@@ -14,8 +14,6 @@ import pytest
 
 from trspecfit import File, Project, Simulator
 
-pytestmark = pytest.mark.slow
-
 
 #
 def _make_project():
@@ -114,6 +112,7 @@ class TestProjectFitClean:
     """Project-level fit on noiseless data with shared tau."""
 
     #
+    @pytest.mark.slow
     def test_shared_tau_recovery(self):
         """Two files with same tau, different A — project fit recovers both."""
 
@@ -184,6 +183,7 @@ class TestProjectFitClean:
         )
 
     #
+    @pytest.mark.slow
     def test_biexp_expr_t0_roundtrip(self):
         """Bi-exponential with t0 expression — constraint holds through fit."""
 
@@ -608,6 +608,7 @@ class TestProjectFitLifecycle:
     API (get_fit_results, save_2d_fit) works on project-fitted files."""
 
     #
+    @pytest.mark.slow
     def test_model_2d_set_after_project_fit(self):
         """file.model_2d is set on every file after Project.fit_2d()."""
 
@@ -631,6 +632,7 @@ class TestProjectFitLifecycle:
             assert f.model_2d is not None
 
     #
+    @pytest.mark.slow
     def test_get_fit_results_2d_works_after_project_fit(self):
         """get_fit_results("2d") returns a DataFrame on project-fitted files."""
 
@@ -656,6 +658,7 @@ class TestProjectFitLifecycle:
             assert "GLP_01_x0_expFun_01_tau" in df["name"].values
 
     #
+    @pytest.mark.slow
     def test_save_2d_fit_works_after_project_fit(self, tmp_path):
         """save_2d_fit() runs without error on project-fitted files."""
 

@@ -12,8 +12,6 @@ import pytest
 
 from trspecfit import File, Project, Simulator
 
-pytestmark = pytest.mark.slow
-
 
 #
 def _make_project():
@@ -51,7 +49,7 @@ def _make_truth_file(project):
 
 #
 def _make_fit_file(project, data, energy, time):
-    """Create a fresh file loaded with simulated data, ready to fit."""
+    """Create a fresh file loaded with simulated data, ready for baseline fit."""
 
     file = File(
         parent_project=project,
@@ -65,15 +63,20 @@ def _make_fit_file(project, data, energy, time):
         model_yaml="models/file_energy.yaml",
         model_info="single_glp",
     )
+    file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
+    return file
+
+
+#
+def _add_fit_dynamics(file):
+    """Add the 2D dynamics after baseline fitting the energy-only model."""
+
     file.add_time_dependence(
         target_model="single_glp",
         target_parameter="GLP_01_A",
         dynamics_yaml="models/file_time.yaml",
         dynamics_model=["MonoExpPos"],
     )
-
-    file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
-    return file
 
 
 #
@@ -93,6 +96,7 @@ class TestRoundTripClean:
     """Fit noiseless data — parameters should be recovered exactly."""
 
     #
+    @pytest.mark.slow
     def test_clean_recovery(self):
         """Simulate clean 2D data, fit, assert parameter recovery."""
 
@@ -116,6 +120,7 @@ class TestRoundTripClean:
             stages=2,
             try_ci=0,
         )
+        _add_fit_dynamics(fit_file)
         fit_file.fit_2d(
             model_name="single_glp",
             stages=2,
@@ -136,6 +141,7 @@ class TestRoundTripNoisy:
     """Fit noisy data — parameters should be recovered within tolerance."""
 
     #
+    @pytest.mark.slow
     def test_noisy_recovery(self):
         """Simulate noisy 2D data, fit, assert recovery within 5%."""
 
@@ -159,6 +165,7 @@ class TestRoundTripNoisy:
             stages=2,
             try_ci=0,
         )
+        _add_fit_dynamics(fit_file)
         fit_file.fit_2d(
             model_name="single_glp",
             stages=1,
