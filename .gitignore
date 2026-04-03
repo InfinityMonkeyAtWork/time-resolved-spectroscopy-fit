@@ -221,3 +221,4 @@ examples/**/simulated_data/
 
 # AI tools
 .codex/
+.codex
