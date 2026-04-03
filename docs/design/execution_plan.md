@@ -1,0 +1,1083 @@
+# Execution Plan: Lowered Evaluator for 2D Model Fitting
+
+## Motivation
+
+A 2D fit (400 energy x 440 time, 4 free params, 556 optimizer iterations)
+takes ~10 seconds. Profiling shows:
+
+| Category | Self-time | % of fit | Cause |
+|---|---|---|---|
+| Math (GLP + LinBack) | 3.2 s | 32% | The actual numeric work |
+| Parameter overhead | 2.8 s | 28% | `par_extract`, `Par.value`, `valuesdict` -- called 2M times |
+| Python dispatch | 1.6 s | 16% | `Component.value`, `combine`, `create_value_1d`, OOP calls |
+| Other | 2.6 s | 24% | lmfit internals, array ops, etc. |
+
+**Root cause:** The code acts as an *interpreter* inside the optimizer loop.
+`create_value_2d` (mcp.py:866) loops over time steps; at each step
+`Component.value` (mcp.py:1518) loops over parameters; each `Par.value`
+(mcp.py:1979) dispatches through 5 branches and calls `par_extract` which
+calls `valuesdict()`. All of this repeats 440 x 556 = 245k times.
+
+The irony: for time-dependent parameters, the full time trace *already
+exists* in `Dynamics.value_1d`. But `Par.value(t_ind)` consumes it one
+scalar at a time via `base + self.t_model.value_1d[t_ind]`.
+
+**Goal:** Stop interpreting the model on every residual call. Lower the
+model once into a flat, array-oriented execution plan, then evaluate it as
+a pure function.
+
+
+## Architecture overview
+
+```
+User API (unchanged)                   Future model-builder UI
+    |                                          |
+    v                                          v
+Model / Component / Par         <-- OOP tree (parsing, validation, user interaction)
+    |                                          |
+    |  build_graph(model)                      |  (UI will target GraphIR directly)
+    v                                          v
+GraphIR                         <-- NEW: semantic IR (DAG), axis-agnostic
+    |                                   works for 1D and 2D models
+    |  can_lower_2d(graph)       <-- gate: can the 2D backend compile this graph?
+    |  schedule_2d(graph)        <-- NEW: compile DAG to flat 2D execution schedule
+    v
+ScheduledPlan2D                 <-- NEW: packed arrays, (n_params, n_time) traces
+    |
+    |  evaluate_2d(plan, theta)  <-- NEW: pure function, array-oriented
+    v
+spectrum (n_time, n_energy)
+```
+
+Three-layer design:
+
+1. **OOP tree** -- the user-facing `Model`/`Component`/`Par` objects.
+   Handles parsing, validation, user interaction. Unchanged.
+2. **GraphIR** -- a directed acyclic graph of typed nodes with explicit
+   data-dependency edges. This is the *semantic* representation of the
+   model. Both the OOP tree and a future drag-and-drop model-builder UI
+   can target it. **The graph is axis-agnostic** -- it works for 1D
+   energy models, 1D time models, and 2D time+energy models. A user
+   builds a 1D energy model first (valid graph, no time axis), then
+   adds dynamics (graph gains time-dependent nodes and a time axis),
+   making it compilable by the 2D backend.
+3. **ScheduledPlan2D** -- a flat, packed-array execution schedule compiled
+   from the graph by the 2D backend. No Python objects, no strings, no
+   dicts in the hot path. This is what the evaluator actually runs.
+   Backend-specific: a future `ScheduledPlan1D` / `can_lower_1d` /
+   `evaluate_1d` can target the same GraphIR with a simpler storage
+   model (no `(n_params, n_time)` trace matrix needed for 1D).
+
+Key principle: **the OOP tree is for humans; the GraphIR is for semantics;
+the ScheduledPlan2D is for the optimizer.**
+
+
+---
+## Spec
+
+
+### 1. GraphIR -- the semantic intermediate representation
+
+The GraphIR is a DAG (directed acyclic graph) of typed nodes connected by
+explicit dependency edges. It captures the full semantics of the model
+without prescribing an evaluation strategy.
+
+#### 1.1 Node types
+
+```python
+class NodeKind(IntEnum):
+    """Node types in the model graph."""
+
+    # --- Parameter nodes (leaves) ---
+    STATIC_PARAM = 0        # fixed value, never changes during fit
+    OPT_PARAM = 1           # optimizer-visible parameter (lmfit varies it)
+
+    # --- Computed parameter nodes ---
+    DYNAMICS_TRACE = 2      # time-dependent trace: evaluates a dynamics
+                            # function over the full time axis, producing
+                            # an (n_time,) array
+    PARAM_PLUS_TRACE = 3    # base_param + dynamics_trace -> (n_time,) resolved value
+    EXPRESSION = 4          # arithmetic expression referencing other params
+
+    # --- Component evaluation nodes ---
+    COMPONENT_EVAL = 5      # evaluates a component function over its domain axis:
+                            #   energy functions -> (n_energy,) or (n_time, n_energy)
+                            #   time functions -> (n_time,)
+                            #   profile functions -> (n_aux,)
+                            # the domain is determined by the component's package
+                            # (fcts_energy, fcts_time, fcts_profile), not by the
+                            # graph's DomainKind
+
+    # --- Reduction / combination nodes ---
+    SUM = 6                 # element-wise sum of multiple inputs
+    SPECTRUM_FED_OP = 7     # component that consumes accumulated spectrum
+                            # as input (Shirley only in v1)
+
+    # --- Convolution and profile nodes ---
+    # These are part of the IR spec and build_graph emits them when the
+    # model uses these features. They cannot be compiled by the v1 2D
+    # backend (can_lower_2d returns False), but they are fully representable
+    # in the graph -- a future backend or the model-builder UI can work
+    # with them.
+    CONVOLUTION = 100       # convolves accumulated signal with a kernel
+                            # component (e.g. gaussCONV). Edges: ADDEND from
+                            # the accumulated signal, PARAM_INPUT from kernel
+                            # parameters. Output replaces the accumulated signal.
+    PROFILE_SAMPLE = 101    # evaluates a component at one aux_axis point,
+                            # with the profiled parameter set to
+                            # base + profile.value_1d[aux_ind].
+                            # One PROFILE_SAMPLE node per aux_axis point.
+    PROFILE_AVERAGE = 102   # uniform average over PROFILE_SAMPLE outputs.
+                            # Edges: ADDEND from each PROFILE_SAMPLE node.
+    SUBCYCLE_MASK = 103     # element-wise multiply by time_n_sub mask array.
+                            # Applied to a DYNAMICS_TRACE to zero out inactive
+                            # subcycle regions.
+    SUBCYCLE_REMAP = 104    # remaps a DYNAMICS_TRACE to use time_norm instead
+                            # of the raw time axis (resets to 0 each subcycle).
+                            # Precedes the dynamics function evaluation.
+```
+
+#### 1.2 Edge semantics
+
+Edges are typed and carry dependency information:
+
+```python
+class EdgeKind(IntEnum):
+    """Edge types in the model graph."""
+
+    PARAM_INPUT = 0      # parameter flows into a component or expression
+    TRACE_INPUT = 1      # dynamics trace flows into PARAM_PLUS_TRACE
+    BASE_INPUT = 2       # base param flows into PARAM_PLUS_TRACE
+    ADDEND = 3           # component output flows into SUM
+    SPECTRUM_INPUT = 4   # accumulated spectrum flows into SPECTRUM_FED_OP
+    EXPR_REF = 5         # parameter reference within an expression
+```
+
+#### 1.3 Graph structure
+
+```python
+@dataclass
+class GraphNode:
+    """One node in the model graph."""
+
+    id: int                         # unique node ID
+    kind: NodeKind
+    name: str                       # human-readable name (e.g. "GLP_01_A", "GLP_01")
+    source_order: int               # stable ordering key for deterministic scheduling.
+                                    # When built from YAML: component definition order.
+                                    # When built from UI: insertion order in the canvas.
+                                    # schedule_2d uses this as tie-breaker when
+                                    # topological sort has multiple valid orderings.
+
+    # Payload (interpretation depends on kind):
+    value: float | None             # for STATIC_PARAM, OPT_PARAM: initial value
+    op_kind: OpKind | None          # for COMPONENT_EVAL, SPECTRUM_FED_OP: function type
+    dynamics_func: str | None       # for DYNAMICS_TRACE: function name (e.g. "expFun")
+    expr_string: str | None         # for EXPRESSION: the expression source
+    vary: bool                      # for OPT_PARAM: whether optimizer can change it
+    bounds: tuple[float, float] | None  # for OPT_PARAM: (min, max) bounds
+
+
+@dataclass
+class GraphEdge:
+    """One edge in the model graph."""
+
+    source: int                     # source node ID
+    target: int                     # target node ID
+    kind: EdgeKind
+    position: int | None            # for PARAM_INPUT: which positional arg (0, 1, 2, ...)
+
+
+class DomainKind(IntEnum):
+    """Model domain classification.
+
+    Determined by which axes the model operates on:
+    - ENERGY_1D: model has energy axis only. This is the starting state
+      for all energy models (fit_baseline, fit_spectrum). COMPONENT_EVAL
+      nodes evaluate energy functions over (n_energy,).
+    - TIME_1D: model has time axis only. Used for standalone Dynamics
+      models (e.g. fitting a time trace directly). COMPONENT_EVAL nodes
+      evaluate time functions over (n_time,). This domain is valid in
+      the GraphIR but has no compiled backend yet.
+    - ENERGY_TIME_2D: model has both axes. Created when dynamics are
+      added to an ENERGY_1D model. COMPONENT_EVAL nodes evaluate energy
+      functions over (n_time, n_energy) via broadcasting.
+    """
+
+    ENERGY_1D = 0       # energy-resolved only (e.g. fit_baseline, fit_spectrum)
+    TIME_1D = 1         # time-resolved only (e.g. standalone dynamics fit)
+    ENERGY_TIME_2D = 2  # energy + time resolved (the 2D fit case)
+
+
+@dataclass
+class GraphIR:
+    """Directed acyclic graph representing a model.
+
+    Axis-agnostic: works for 1D and 2D models. A 1D energy model has
+    time=None; adding dynamics populates time and promotes domain to
+    ENERGY_TIME_2D. Backend-specific compilers (schedule_2d, etc.)
+    check the domain before compiling.
+    """
+
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+    domain: DomainKind              # what axes this model operates on
+    energy: np.ndarray | None       # (n_energy,) or None
+    time: np.ndarray | None         # (n_time,) or None
+    # Reverse map for quick lookup
+    node_by_name: dict[str, int]    # name -> node ID
+```
+
+#### 1.4 Example: `simple_energy` model as a graph
+
+The YAML model:
+```yaml
+simple_energy:
+    Offset:
+      y0: [2, True, 0, 5]
+    Shirley:
+      pShirley: [4.0E-4, False]
+    GLP:
+      A: [20, True, 5, 25]
+      x0: [84.5, True, 82, 88]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+    GLP:
+      A: [17, True, 5, 25]
+      x0: [88.1, True]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+```
+
+Becomes:
+```
+Nodes:
+  0: OPT_PARAM     "Offset_y0"        value=2.0
+  1: STATIC_PARAM   "Shirley_pShirley" value=4e-4
+  2: OPT_PARAM     "GLP_01_A"         value=20.0
+  3: OPT_PARAM     "GLP_01_x0"        value=84.5
+  4: OPT_PARAM     "GLP_01_F"         value=1.0
+  5: OPT_PARAM     "GLP_01_m"         value=0.3
+  6: OPT_PARAM     "GLP_02_A"         value=17.0
+  7: OPT_PARAM     "GLP_02_x0"        value=88.1
+  8: OPT_PARAM     "GLP_02_F"         value=1.0
+  9: OPT_PARAM     "GLP_02_m"         value=0.3
+ 10: COMPONENT_EVAL "GLP_01"           op_kind=GLP
+ 11: COMPONENT_EVAL "GLP_02"           op_kind=GLP
+ 12: SUM            "peak_sum"
+ 13: COMPONENT_EVAL "Offset"           op_kind=OFFSET
+ 14: SPECTRUM_FED_OP "Shirley"         op_kind=SHIRLEY
+ 15: SUM            "total"
+
+Edges:
+  2 -> 10  PARAM_INPUT(pos=0)    # A -> GLP_01
+  3 -> 10  PARAM_INPUT(pos=1)    # x0 -> GLP_01
+  4 -> 10  PARAM_INPUT(pos=2)    # F -> GLP_01
+  5 -> 10  PARAM_INPUT(pos=3)    # m -> GLP_01
+  6 -> 11  PARAM_INPUT(pos=0)    # A -> GLP_02
+  7 -> 11  PARAM_INPUT(pos=1)    # x0 -> GLP_02
+  8 -> 11  PARAM_INPUT(pos=2)    # F -> GLP_02
+  9 -> 11  PARAM_INPUT(pos=3)    # m -> GLP_02
+ 10 -> 12  ADDEND               # GLP_01 -> peak_sum
+ 11 -> 12  ADDEND               # GLP_02 -> peak_sum
+  0 -> 13  PARAM_INPUT(pos=0)    # y0 -> Offset
+ 12 -> 14  SPECTRUM_INPUT        # peak_sum -> Shirley (Shirley consumes spectrum)
+  1 -> 14  PARAM_INPUT(pos=0)    # pShirley -> Shirley
+ 12 -> 15  ADDEND               # peak_sum -> total
+ 13 -> 15  ADDEND               # Offset -> total
+ 14 -> 15  ADDEND               # Shirley -> total
+```
+
+Notice: Offset has no SPECTRUM_INPUT edge because it does not consume
+the accumulated spectrum. LinBack also does not -- it receives `spectrum`
+in the current Python signature for interface uniformity, but ignores it.
+Only Shirley has a true data dependency on the peak sum.
+
+#### 1.5 Time-dependent model as a graph
+
+When `GLP_01_A` has a dynamics model (`expFun` with params `A`, `tau`,
+`t0`, `y0`):
+
+```
+Additional nodes:
+ 20: OPT_PARAM     "GLP_01_A_expFun_01_A"     value=5.0
+ 21: OPT_PARAM     "GLP_01_A_expFun_01_tau"   value=100.0
+ 22: OPT_PARAM     "GLP_01_A_expFun_01_t0"    value=0.0
+ 23: STATIC_PARAM   "GLP_01_A_expFun_01_y0"   value=0.0
+ 24: DYNAMICS_TRACE "GLP_01_A_dynamics"         dynamics_func="expFun"
+ 25: PARAM_PLUS_TRACE "GLP_01_A_resolved"
+
+Additional edges:
+ 20 -> 24  PARAM_INPUT(pos=0)    # A -> dynamics
+ 21 -> 24  PARAM_INPUT(pos=1)    # tau -> dynamics
+ 22 -> 24  PARAM_INPUT(pos=2)    # t0 -> dynamics
+ 23 -> 24  PARAM_INPUT(pos=3)    # y0 -> dynamics
+  2 -> 25  BASE_INPUT            # GLP_01_A base value
+ 24 -> 25  TRACE_INPUT           # dynamics trace
+ 25 -> 10  PARAM_INPUT(pos=0)    # resolved A -> GLP_01 (replaces edge 2->10)
+```
+
+#### 1.6 Expression model as a graph
+
+When `GLP_02_A = "3/4*GLP_01_A"`:
+
+```
+Node 6 becomes:
+  6: EXPRESSION "GLP_02_A"  expr_string="3/4*GLP_01_A"
+
+Additional edge:
+  2 -> 6  EXPR_REF   # GLP_01_A referenced in expression
+```
+
+The expression node's output feeds into GLP_02 as before via
+`6 -> 11 PARAM_INPUT(pos=0)`.
+
+If `GLP_01_A` is time-dependent (has a PARAM_PLUS_TRACE), then node 6
+references the resolved value (node 25), and the expression output is
+also `(n_time,)`.
+
+#### 1.7 Why a graph, not a two-bucket sort
+
+The previous version of this doc sorted components into "independent"
+and "spectrum-dependent" buckets. This is wrong for two reasons:
+
+1. **It conflates dependency class with evaluation order.** Offset and
+   LinBack are currently classified as `SPECTRUM_DEP` because they have
+   `spectrum` in their Python signature, but neither actually reads it.
+   Only Shirley does. The graph makes this explicit: only Shirley has a
+   `SPECTRUM_INPUT` edge.
+
+2. **Reordering risks changing semantics.** The current interpreter
+   combines components in LIFO order (mcp.py:806). Background
+   components are defined first in YAML, peaks last, so the reverse
+   iteration evaluates peaks before backgrounds. This ordering is
+   validated: `background_last` in the test YAML is expected to fail.
+   The graph preserves the original model semantics via edges, and the
+   scheduler derives a safe topological order.
+
+
+### 2. `can_lower_2d(graph) -> bool`
+
+Note the input: `can_lower_2d` operates on the GraphIR, not the OOP model.
+This means "can the 2D NumPy backend compile this graph," not "can this
+model be represented as a graph at all." Every model can be a graph; not
+every graph can be compiled to the 2D fast evaluator yet. A 1D-only graph
+(no time axis) returns False here -- it would need a future `can_lower_1d`.
+
+**Compilable in v1:**
+- All `COMPONENT_EVAL` nodes use an `OpKind` whose broadcast semantics
+  are verified correct. v1 list: `Gauss`, `GaussAsym`, `Lorentz`, `GLS`,
+  `GLP`, `DS`, `Offset`, `LinBack`. (Not `Voigt` -- see below.)
+  Offset and LinBack are `COMPONENT_EVAL`, not `SPECTRUM_FED_OP` --
+  they do not consume the accumulated spectrum (see section 4).
+- `SPECTRUM_FED_OP` nodes: `Shirley` only (the sole function that
+  truly reads the accumulated peak sum)
+- All `EXPRESSION` nodes contain only arithmetic operations
+  (add, sub, mul, div, neg, pow, literal constants, parameter references)
+- No `CONVOLUTION`, `PROFILE_*`, or `SUBCYCLE_*` nodes
+- `graph.domain == ENERGY_TIME_2D` (has both energy and time axes)
+
+**Voigt exclusion:** `Voigt` (energy.py:259-260) normalizes with
+`np.max(voigt)`, which takes a global max. When broadcasting over
+`(n_time, n_energy)`, this would take the max over the entire 2D array
+instead of per-time-slice. Either the function needs a per-slice fix or
+it stays in the interpreter. v1 excludes it; can be added once the
+function is patched to `max(axis=-1, keepdims=True)`.
+
+**Falls back to interpreter when `can_lower_2d` returns False:**
+- 1D-only models (domain != ENERGY_TIME_2D; awaits future `can_lower_1d`)
+- Convolution components
+- Profile-varying parameters
+- Non-arithmetic expressions
+- Subcycle dynamics
+- Voigt peaks (until broadcast-safe)
+
+Future node types (`CONVOLUTION`, `PROFILE_*`, `SUBCYCLE_*`) are part of
+the GraphIR spec and can be represented in the graph. They just can't be
+compiled to the NumPy backend yet. As each one gets a compiler pass,
+`can_lower_2d` widens.
+
+
+### 3. ScheduledPlan2D -- the compiled 2D execution schedule
+
+The scheduler takes a GraphIR and produces a flat, packed-array execution
+plan. No Python objects in the hot path.
+
+#### 3.1 Storage model: uniform `(n_params, n_time)` trace matrix
+
+The previous version of this doc stored some params as scalars and some as
+`(n_time,)` arrays, which forces `dtype=object` or runtime branching.
+Instead, we use a uniform storage model:
+
+**All parameters are stored as `(n_time,)` traces in a dense matrix.**
+
+- Static params: broadcast to `(n_time,)` by repeating the scalar value.
+  This wastes ~8 bytes * n_time per static param (e.g. 3.5 KB for 440
+  time points) but eliminates all scalar-vs-array branching.
+- Optimizer params: same -- broadcast to `(n_time,)`.
+- Time-dependent params: naturally `(n_time,)` already.
+- Expression results: `(n_time,)` regardless of whether inputs are
+  time-varying (if all inputs are constant, the output is constant
+  across time, but stored as a repeated vector anyway).
+
+The scratch matrix has shape `(n_params, n_time)` and dtype `float64`.
+Component evaluation gathers rows from this matrix and reshapes them to
+`(n_time, 1)` for broadcasting against `(1, n_energy)`.
+
+Memory cost: for a model with 20 parameters and 440 time points,
+the scratch matrix is 20 * 440 * 8 = 69 KB. Negligible.
+
+#### 3.2 Data structures
+
+```python
+class OpKind(IntEnum):
+    """Component function op codes."""
+
+    GAUSS = 0
+    GAUSS_ASYM = 1
+    LORENTZ = 2
+    GLS = 3
+    GLP = 4
+    DS = 5
+    OFFSET = 10
+    LINBACK = 11
+    SHIRLEY = 12
+
+
+@dataclass(frozen=True)
+class ScheduledPlan2D:
+    """Compiled 2D execution schedule. No Python objects in the hot path."""
+
+    energy: np.ndarray              # (n_energy,)
+    time: np.ndarray                # (n_time,)
+    n_params: int                   # total parameter count (all types)
+    n_time: int                     # len(time)
+
+    # --- Parameter mapping ---
+    # Initial trace matrix: param_traces[i, :] is the base trace for param i.
+    # For static/opt params, all n_time values are identical.
+    # For time-dep params, the trace is base + dynamics_trace.
+    param_traces_init: np.ndarray   # (n_params, n_time) initial values
+
+    # Which rows are optimizer-visible (overwritten from theta each call):
+    opt_indices: np.ndarray         # (n_opt,) int -- row indices into trace matrix
+    opt_param_names: list[str]      # (n_opt,) canonical optimizer parameter names
+                                    # defines the order theta must follow
+
+    # --- Dynamics subgraphs ---
+    # Each dynamics model is a compiled subgraph: given its parameter values,
+    # produce a (n_time,) trace. The evaluator re-evaluates these when the
+    # optimizer changes dynamics params.
+    n_dynamics: int
+    # For each dynamics model:
+    #   dynamics_func_id[i]: which time function to call (int enum)
+    #   dynamics_param_rows[i]: (n_dyn_params,) row indices for this model's params
+    #   dynamics_target_row[i]: which row in trace matrix receives the result
+    #   dynamics_base_row[i]: which row holds the base (spectral) param value
+    dynamics_func_id: np.ndarray    # (n_dynamics,) int
+    dynamics_param_rows: np.ndarray # (n_dynamics, max_dyn_params) int, -1 padded
+    dynamics_n_params: np.ndarray   # (n_dynamics,) int -- actual param count per model
+    dynamics_target_row: np.ndarray # (n_dynamics,) int -- target row (resolved param)
+    dynamics_base_row: np.ndarray   # (n_dynamics,) int -- base param row
+
+    # --- Expression evaluation ---
+    # Expressions compiled to RPN programs, evaluated in topological order.
+    # Each program reads from the trace matrix and writes one row.
+    n_expressions: int
+    expr_target_rows: np.ndarray    # (n_expressions,) int -- which row to write
+    expr_programs: list["ExprProgram"]  # compiled RPN programs (see S3.3)
+    # Note: list[ExprProgram] is the ONE remaining Python list in the plan.
+    # Each ExprProgram is itself a flat int array. This list exists because
+    # programs have variable length. A CSR-style flat encoding is possible
+    # but premature for v1.
+
+    # --- Scheduled component ops ---
+    # Components in topologically-sorted execution order (derived from graph edges).
+    # NOT a naive "peaks then backgrounds" reorder -- preserves model semantics.
+    n_ops: int
+    op_schedule: np.ndarray         # (n_ops,) int -- execution order indices
+    op_kinds: np.ndarray            # (n_ops,) OpKind int codes
+    # For each op: which rows in trace matrix are its parameter inputs.
+    # Stored as CSR (compressed sparse row) for variable-length param lists:
+    op_param_indptr: np.ndarray     # (n_ops + 1,) int -- CSR row pointers
+    op_param_indices: np.ndarray    # (total_op_params,) int -- row indices
+    # Which ops need the accumulated spectrum as input:
+    op_needs_spectrum: np.ndarray   # (n_ops,) bool
+    # Accumulation targets: which ops contribute to the "peak sum" that
+    # spectrum-fed ops consume. Derived from graph SUM/SPECTRUM_INPUT edges.
+    op_is_pre_spectrum: np.ndarray  # (n_ops,) bool -- contributes to peak_sum
+```
+
+#### 3.3 Expression programs
+
+```python
+class ExprNodeKind(IntEnum):
+    """RPN instruction types."""
+
+    CONST = 0       # push literal float
+    PARAM_REF = 1   # push trace matrix row (by index)
+    ADD = 2         # pop 2, push sum
+    SUB = 3         # pop 2, push difference
+    MUL = 4         # pop 2, push product
+    DIV = 5         # pop 2, push quotient
+    NEG = 6         # pop 1, push negation
+    POW = 7         # pop 2, push power
+
+
+@dataclass(frozen=True)
+class ExprProgram:
+    """Compiled expression: flat int array encoding an RPN program."""
+
+    # Encoding: pairs of (node_kind, operand).
+    # CONST: operand is float bits (np.float64.view(np.int64))
+    # PARAM_REF: operand is row index into trace matrix
+    # Operators: operand is 0 (unused)
+    instructions: np.ndarray        # (2 * n_instructions,) int64
+```
+
+All values flowing through the RPN evaluator are `(n_time,)` arrays
+(rows from the trace matrix). Constants are broadcast to `(n_time,)`.
+This means expression evaluation is uniform -- no scalar/array branching.
+
+**What's out of scope (v1):** Function calls (`np.exp`, `np.log`),
+conditionals, string operations. These would extend `ExprNodeKind`.
+If encountered during graph construction, those nodes stay in the graph
+but `can_lower_2d()` returns False.
+
+
+### 4. `build_graph(model) -> GraphIR`
+
+Walks the OOP tree once and emits the graph.
+
+#### Algorithm
+
+```
+build_graph(model):
+    1. Create parameter nodes
+       For each component in model.components:
+         For each Par in component.pars:
+           - If expression: create EXPRESSION node
+           - If par.t_vary: create OPT_PARAM (base), DYNAMICS_TRACE,
+             PARAM_PLUS_TRACE nodes, plus OPT/STATIC nodes for dynamics params
+           - If par.vary == False: create STATIC_PARAM node
+           - Else: create OPT_PARAM node
+
+    2. Create expression edges
+       For each EXPRESSION node:
+         - Parse expr_string to extract referenced parameter names
+         - Add EXPR_REF edge from each referenced param node to this node
+         - If any referenced param has a PARAM_PLUS_TRACE, reference that
+           instead (resolved time-dependent value)
+
+    3. Create component nodes
+       For each component in model.components:
+         - Create COMPONENT_EVAL or SPECTRUM_FED_OP node based on:
+           * Shirley: SPECTRUM_FED_OP (it actually reads spectrum)
+           * Offset, LinBack: COMPONENT_EVAL (they don't read spectrum
+             despite Python signature; LinBack uses x/params only,
+             Offset is pure constant)
+           * Others: COMPONENT_EVAL
+         - Add PARAM_INPUT edges from resolved param nodes to component,
+           with position matching function signature order
+
+    4. Create convolution, profile, and subcycle nodes (when present)
+       For each component with comp_type == "conv":
+         - Create CONVOLUTION node
+         - Add ADDEND edge from accumulated signal (the SUM being built)
+         - Add PARAM_INPUT edges from kernel parameters
+       For each parameter with p_vary == True:
+         - Create PROFILE_SAMPLE node for each aux_axis point
+         - Add PARAM_INPUT edges (base + profile offset at that index)
+         - Create PROFILE_AVERAGE node with ADDEND edges from all samples
+         - Wire PROFILE_AVERAGE output into the component's PARAM_INPUT
+       For each dynamics model with subcycle != 0:
+         - Create SUBCYCLE_REMAP node before the DYNAMICS_TRACE
+         - Create SUBCYCLE_MASK node after the DYNAMICS_TRACE
+         - Wire time_norm and time_n_sub arrays as static data
+
+       These nodes are fully represented in the graph. can_lower_2d()
+       will return False if any are present, but the graph is still
+       valid and can be interpreted or compiled by a future backend.
+
+    5. Create combination nodes
+       - Analyze the model's combine order (LIFO from mcp.py:806)
+       - Create SUM node for peak accumulation
+       - For SPECTRUM_FED_OP nodes (Shirley): add SPECTRUM_INPUT edge
+         from the peak SUM node
+       - Create final SUM node that adds everything together
+       - Edges preserve the original combine semantics
+
+    6. Assign source_order to all nodes
+       - Monotonically increasing, following the order nodes were created
+         during the walk. For YAML-built models this reflects component
+         definition order. For UI-built graphs, the UI sets source_order
+         at node creation time.
+
+    7. Return GraphIR
+```
+
+#### Offset and LinBack reclassification
+
+The current interpreter treats all background functions uniformly
+(`comp_type == "back"` -> pass `spectrum=value`). But examining the
+actual functions:
+
+- `Offset(x, y0, spectrum)`: returns `np.full_like(spectrum, y0)`.
+  Uses `spectrum` only for shape. With uniform `(n_time, n_energy)`
+  arrays, this is just a broadcast scalar -- no spectrum dependency.
+- `LinBack(x, m, b, xStart, xStop, spectrum)`: returns a piecewise
+  function of `x`, `m`, `b`, `xStart`, `xStop`. The `spectrum` argument
+  is never read. Pure function of its own params + energy axis.
+- `Shirley(x, pShirley, spectrum)`: returns
+  `pShirley * cumsum(spectrum[::-1])[::-1]`. Truly reads `spectrum`.
+
+In the graph, only Shirley gets a `SPECTRUM_INPUT` edge. Offset and
+LinBack become regular `COMPONENT_EVAL` nodes (type `INDEPENDENT` in
+the old terminology). This is semantically correct and allows them to
+be evaluated in the first pass alongside peaks.
+
+
+### 5. `schedule_2d(graph) -> ScheduledPlan2D`
+
+Compiles the graph into a flat execution schedule. The v1 backend is a
+**specialized lowering target**, not a generic DAG executor. The GraphIR
+is general-purpose (and a future UI will build arbitrary graphs), but the
+current scheduler and evaluator collapse the graph to a fixed-shape
+pipeline: parameter traces -> component ops -> peak_sum -> optional
+spectrum-fed ops -> final sum. This is intentional -- it keeps the
+evaluator simple and fast. As the compiler supports more node types,
+the pipeline shape may grow, but it should always be a concrete schedule,
+never a runtime graph walker.
+
+#### Algorithm
+
+```
+schedule_2d(graph):
+    1. Topological sort of all nodes
+       Tie-breaker: when two nodes have no dependency ordering between
+       them, sort by node.source_order (lower first). This makes the
+       schedule deterministic regardless of whether the graph came from
+       YAML parsing or a UI drag-and-drop canvas.
+
+    2. Assign trace matrix rows
+       - One row per parameter (STATIC_PARAM, OPT_PARAM, resolved
+         PARAM_PLUS_TRACE, EXPRESSION output)
+       - Contiguous: opt params first (so theta maps to a slice),
+         then static, then computed
+
+    3. Compile dynamics subgraphs
+       - For each DYNAMICS_TRACE node:
+         * Record function ID (expFun -> 0, sinFun -> 1, etc.)
+         * Record param row indices (from PARAM_INPUT edges)
+         * Record target row and base row
+
+    4. Compile expressions
+       - For each EXPRESSION node (in topological order):
+         * Parse expr_string into RPN using Python ast module
+         * Reject unsupported AST nodes (function calls, etc.)
+         * Resolve param references to trace matrix row indices
+         * Encode as flat int64 array
+
+    5. Schedule component ops
+       - Topological order from graph edges determines execution order
+       - For each COMPONENT_EVAL / SPECTRUM_FED_OP node:
+         * Record OpKind
+         * Record param row indices (from PARAM_INPUT edges, CSR-encoded)
+         * Record whether it needs spectrum input (has SPECTRUM_INPUT edge)
+       - Derive op_is_pre_spectrum: which ops contribute to the
+         accumulated peak sum (inputs to the SUM node that feeds
+         SPECTRUM_FED_OP nodes)
+
+    6. Initialize trace matrix
+       - For static params: fill row with repeated scalar
+       - For opt params: fill row with repeated initial value
+       - For time-dep params: evaluate dynamics at initial values,
+         compute base + trace
+
+    7. Pack into ScheduledPlan2D, return
+```
+
+#### Critical invariants
+
+- `schedule_2d()` is called **once** before the optimizer starts. The plan
+  is immutable during optimization (except the trace matrix scratch
+  space, which is a working copy).
+- The plan does not hold references to any `Model`, `Component`, or `Par`
+  objects. It is pure data.
+- Optimizer parameter ordering is defined by `opt_param_names` stored
+  in the plan (see below). This is the canonical order -- `extract_theta`
+  must return values in this order, and result writeback must use it.
+  At construction time, `opt_param_names` is derived from
+  `model.parameter_names` / `model.lmfit_pars` (only the vary=True
+  subset), so the contract is explicit rather than implicit.
+- The execution order preserves model semantics: the scheduler derives
+  it from graph edges with stable tie-breaking on original definition
+  order, not from a coarse bucket sort.
+
+
+### 6. `evaluate_2d(plan, theta) -> ndarray`
+
+Pure function. Takes the scheduled plan and optimizer parameter vector,
+returns `(n_time, n_energy)` spectrum.
+
+#### Algorithm
+
+```
+evaluate_2d(plan, theta):
+    1. PARAMETER RESOLUTION (once per call)
+       a. Copy plan.param_traces_init -> traces  (n_params, n_time) scratch
+       b. Broadcast optimizer params into trace matrix:
+          traces[plan.opt_indices, :] = theta[:, np.newaxis]
+       c. Recompute dynamics traces:
+          For each dynamics model i:
+            - Gather params: p = traces[dynamics_param_rows[i], 0]
+              (take column 0 since dynamics params are constant over time)
+            - Call dynamics function(plan.time, *p) -> (n_time,) trace
+            - Write resolved value:
+              traces[dynamics_target_row[i], :] =
+                traces[dynamics_base_row[i], :] + trace
+       d. Evaluate expressions (in topological order):
+          For each expression program:
+            - Execute RPN against traces matrix
+            - All operands are (n_time,) rows; arithmetic broadcasts
+            - Write result row: traces[expr_target_row, :] = result
+
+    2. COMPONENT EVALUATION (in scheduled order)
+       result = zeros(n_time, n_energy)
+       peak_sum = zeros(n_time, n_energy)
+
+       For each op in plan.op_schedule:
+         - Gather params: rows from traces matrix via CSR indices
+           -> reshape each from (n_time,) to (n_time, 1) for broadcasting
+         - If NOT op_needs_spectrum[op]:
+             component = eval_op(plan.energy, params, plan.op_kinds[op])
+             result += component
+             if op_is_pre_spectrum[op]:
+                 peak_sum += component
+         - If op_needs_spectrum[op]:
+             component = eval_op_with_spectrum(
+                 plan.energy, params, peak_sum, plan.op_kinds[op])
+             result += component
+
+    3. Return result  # (n_time, n_energy)
+```
+
+#### Component evaluation dispatch
+
+Each `OpKind` maps to a broadcastable evaluation function. These are
+thin wrappers that accept `(n_time, 1)` params and `(1, n_energy)`
+energy, producing `(n_time, n_energy)` output:
+
+```python
+def eval_GLP(energy, A, x0, F, m):
+    """energy: (1, n_e), A/x0/F/m: (n_t, 1) -> (n_t, n_e)"""
+    return A * np.exp(-((x - x0) / F)**2 * 4 * np.log(2) * (1 - m)) \
+             / (1 + 4 * m * ((x - x0) / F)**2)
+
+def eval_Shirley(energy, pShirley, spectrum):
+    """spectrum: (n_t, n_e) -> (n_t, n_e)"""
+    return pShirley * np.cumsum(spectrum[:, ::-1], axis=1)[:, ::-1]
+```
+
+Shirley's cumsum is along axis=1 (energy), which is correct for 2D.
+
+#### Dynamics function dispatch
+
+Dynamics functions are called once per residual call on the full time
+axis. The evaluator maps dynamics_func_id to the existing functions
+from `functions/time.py`:
+
+```python
+DYNAMICS_DISPATCH = {
+    0: fcts_time.expFun,      # (t, A, tau, t0, y0) -> (n_time,)
+    1: fcts_time.sinFun,      # (t, A, f, phi, t0, y0) -> (n_time,)
+    2: fcts_time.linFun,      # (t, m, t0, y0) -> (n_time,)
+    ...
+}
+```
+
+These are the same functions, called once with full arrays. No per-step
+loop.
+
+
+### 7. Integration with lmfit
+
+#### Current call chain (2D fits)
+```
+lmfit.minimize(residual_fun, params, ...)
+  -> residual_fun(params, x, data, ..., args=(model, 2))
+    -> par_extract(params) -> list of values
+    -> fit_model_mcp(x, par_values, True, model, 2)
+      -> model.update_value(par_values)     # write theta into lmfit.Parameters
+      -> model.create_value_2d()            # THE HOT PATH (interpreter loop)
+        -> for each time step:
+            create_value_1d(t_ind=ti)
+              -> for each component:
+                  Component.value(t_ind)
+                    -> for each par: Par.value(t_ind)  <-- 2M calls
+      -> return model.value_2d
+    -> residual = data - fit
+    -> return residual.flatten()
+```
+
+#### New call chain
+```
+# Before fitting:
+graph = build_graph(model)
+plan = schedule_2d(graph)
+
+# During fitting:
+lmfit.minimize(residual_fun_lowered, params, ..., args=(plan,))
+  -> residual_fun_lowered(params, x, data, ..., args=(plan,))
+    -> theta = extract_theta(params)          # flat array from lmfit
+    -> spectrum_2d = evaluate_2d(plan, theta)  # THE HOT PATH (vectorized)
+    -> residual = data - spectrum_2d
+    -> return residual.flatten()
+```
+
+The model object is still needed for:
+- Building the graph (`build_graph(model)`)
+- Writing results back after fitting (`model.update_value(final_params)`)
+- Plotting, describe, save -- all post-fit operations
+
+`File.fit_2d` checks `can_lower_2d(graph)`: if True, compiles with
+`schedule_2d` and uses the fast path; if False, falls back to the
+interpreter.
+
+
+### 8. Scope boundaries -- what compiles in v1 vs later
+
+| Feature | v1 compiler | Graph representable | Notes |
+|---|---|---|---|
+| Additive peaks (Gauss, GLP, GLS, DS, etc.) | Yes (excl. Voigt) | Yes | Core use case |
+| Offset, LinBack | Yes | Yes | Reclassified as COMPONENT_EVAL (no spectrum dep) |
+| Shirley | Yes | Yes | SPECTRUM_FED_OP with cumsum along axis=1 |
+| Arithmetic expressions | Yes | Yes | Compiled to RPN |
+| Time-dependent params (Dynamics) | Yes | Yes | Dynamics subgraph compiled |
+| Voigt | No (broadcast issue) | Yes | Needs per-slice max fix |
+| Convolution components | No | Yes (CONVOLUTION node) | Requires sequential accumulation |
+| Profile-varying params | No | Yes (PROFILE_* nodes) | Requires per-aux-point eval loop |
+| Subcycle dynamics | No | Yes (SUBCYCLE_* nodes) | Needs time_norm/time_n_sub indexing |
+| Non-arithmetic expressions | No | Partial | Would extend ExprNodeKind |
+| Project-level fits | No | Deferred | Multi-graph coordination |
+
+`can_lower_2d` is the gatekeeper for the 2D backend. The graph is broader
+than any single compiler -- the UI can build graphs that no backend can
+compile yet. Adding `can_lower_1d` / `schedule_1d` / `evaluate_1d` later
+is a natural extension targeting the same GraphIR.
+
+
+### 9. Validation strategy
+
+The compiled evaluator must produce results that agree with the
+interpreter to within reasonable floating-point tolerance. Because the
+compiled path sums components in a different order (graph-scheduled vs
+the interpreter's LIFO combine loop), and broadcasts 2D operations
+instead of accumulating per-time-step, floating-point summation order
+may differ. This means bitwise identity is not guaranteed -- `allclose`
+with a practical tolerance is the contract.
+
+```python
+def validate_plan(model, plan):
+    """Compare interpreter vs compiled evaluator output."""
+
+    # Evaluate via interpreter
+    model.create_value_2d()
+    interp_result = model.value_2d.copy()
+
+    # Evaluate via plan
+    theta = extract_theta(model.lmfit_pars)
+    plan_result = evaluate_2d(plan, theta)
+
+    # Compare -- rtol=1e-10 accounts for summation order differences.
+    # For typical spectroscopy data (values 0-100), this means agreement
+    # to ~10 significant digits.
+    assert np.allclose(interp_result, plan_result, atol=1e-10, rtol=1e-10)
+```
+
+This validation runs:
+- In the test suite, for every test model that `can_lower_2d()` accepts
+- On first call during fitting (compare interpreter and compiled output
+  at initial parameters before handing off to optimizer)
+- Optionally on every Nth residual call during fitting (controlled by
+  debug flag, off by default)
+
+
+### 10. Future: backends and Jacobians
+
+Once `evaluate_2d(plan, theta) -> spectrum` exists as a pure function:
+
+**Numba:** `@njit` on the component eval dispatch loop. Most of the
+plan (int index arrays, CSR param maps, dense trace matrix) is
+Numba-compatible. The expression programs (`list[ExprProgram]`) would
+need flattening to a CSR-style encoding first -- this is noted in the
+plan as a v1 simplification that can be tightened later.
+
+**JAX:** Replace `np` with `jnp` in the evaluator. The plan's array
+structure maps directly to JAX arrays. Key wins:
+- `jax.jit` compiles the full evaluator (including parameter resolution)
+- `jax.jacfwd` / `jax.jacrev` gives analytic Jacobians for free
+- GPU acceleration for large grids
+
+**Analytic Jacobians:** With a differentiable evaluator, lmfit's
+Levenberg-Marquardt can use exact Jacobians instead of finite differences.
+This replaces `2 * n_free_params + 1` evaluator calls per iteration with
+1 evaluator call + 1 Jacobian call. For 4 free params, that's 9 -> 2
+calls, ~4.5x fewer evaluations per iteration.
+
+**Variable projection (VARPRO):** Linear parameters (amplitudes `A`,
+offset `y0`, slope `m`) can be solved in closed form given the nonlinear
+parameters. Reduces optimizer dimensionality. The graph makes identifying
+linear params straightforward: any param that appears as a linear factor
+in its component's function.
+
+
+---
+## Implementation steps
+
+
+### Phase 1: GraphIR (no behavior change, no evaluator)
+
+**Step 1.1: Data structures**
+- Create `src/trspecfit/graph_ir.py`
+- Define `NodeKind`, `EdgeKind`, `OpKind` enums
+- Define `GraphNode`, `GraphEdge`, `GraphIR` dataclasses
+- Define `ExprNodeKind`, `ExprProgram` dataclasses
+- Define `DomainKind` enum
+- Define `ScheduledPlan2D` dataclass
+- No logic yet -- just the types
+
+**Step 1.2: `build_graph(model) -> GraphIR`**
+- Walk model components and parameters
+- Detect domain from model axes:
+  * energy only -> ENERGY_1D
+  * time only -> TIME_1D
+  * both -> ENERGY_TIME_2D
+- Create parameter nodes (static / opt / expression / time-dep)
+- Create dynamics subgraph nodes (DYNAMICS_TRACE, PARAM_PLUS_TRACE)
+- Create component nodes (COMPONENT_EVAL / SPECTRUM_FED_OP)
+- Reclassify Offset and LinBack as COMPONENT_EVAL (no SPECTRUM_INPUT)
+- Emit CONVOLUTION, PROFILE_*, SUBCYCLE_* nodes when model uses those
+  features (graph is complete even if can_lower_2d returns False)
+- Create SUM and reduction nodes
+- Assign source_order to all nodes (monotonically increasing from walk)
+- Wire edges preserving model combine semantics
+- Unit tests: build graph for every test YAML model, verify structure
+- Unit tests: 1D-only models produce valid graphs with domain=ENERGY_1D
+  and time=None
+- Unit tests: models with convolution/profile/subcycle produce graphs
+  with the correct future node types (even though can_lower_2d is False)
+
+**Step 1.3: `can_lower_2d(graph) -> bool`**
+- Check `graph.domain == ENERGY_TIME_2D`
+- Check all nodes for supported types
+- Check expression nodes for arithmetic-only AST
+- Check no Voigt, convolution, profile, or subcycle nodes
+- Unit tests with various model configurations
+- Unit tests: 1D-only graphs return False (awaits future `can_lower_1d`)
+
+**Step 1.4: Graph visualization (optional but useful)**
+- `graph.to_dot()` for Graphviz rendering
+- Helps validate complex models during development
+
+
+### Phase 2: Scheduler and expression compiler
+
+**Step 2.1: Expression compiler**
+- Parse expression strings into RPN `ExprProgram`
+- Use Python `ast` module: walk AST, reject unsupported nodes
+- Resolve parameter references to trace matrix row indices
+- Topological sort of expression dependencies
+- Unit tests: parse -> evaluate -> compare with asteval
+
+**Step 2.2: `schedule_2d(graph) -> ScheduledPlan2D`**
+- Topological sort of graph nodes
+- Assign trace matrix rows (opt first, then static, then computed)
+- Compile dynamics subgraphs to flat param/target row arrays
+- Compile expressions to RPN programs
+- Schedule component ops in topological order
+- CSR-encode component param maps
+- Initialize trace matrix from model's current parameter values
+- Derive op_is_pre_spectrum from graph edges
+
+**Step 2.3: Structural validation**
+- Verify: for every test model, the scheduled plan encodes the same
+  parameter structure as the original model
+- No evaluator yet -- just verify row assignments, op order, and
+  param mappings are correct
+
+
+### Phase 3: Evaluator
+
+**Step 3.1: Broadcastable component functions**
+- Write eval_Gauss, eval_GLP, eval_GLS, eval_DS, etc.
+- Each accepts `(1, n_energy)` energy and `(n_time, 1)` params
+- eval_Shirley: uses `np.cumsum(..., axis=1)` for 2D
+- eval_Offset: broadcasts scalar to `(n_time, n_energy)`
+- eval_LinBack: piecewise linear, works on `(n_time, n_energy)` grid
+- Unit test each against original function (1D match, then 2D broadcast)
+
+**Step 3.2: `evaluate_2d(plan, theta) -> ndarray`**
+- Implement algorithm from section 6
+- Trace matrix copy + opt param broadcast
+- Dynamics trace recomputation
+- RPN expression evaluation
+- Component dispatch loop with CSR param gather
+- Spectrum-fed ops (Shirley) get peak_sum
+
+**Step 3.3: Full numerical validation**
+- For every test model that `can_lower_2d()` accepts:
+  compare interpreter vs `evaluate_2d` output at multiple theta values
+- Test with: all static params, some time-dependent, expressions
+  referencing time-dep params, Shirley + peaks, LinBack + peaks
+- Verify parameter update: change theta, re-evaluate, compare
+
+
+### Phase 4: Integration
+
+**Step 4.1: Wire into fit pipeline**
+- Add lowered branch in `fit_model_mcp` or new function
+- `File.fit_2d` checks `can_lower_2d()`: if True, builds graph, compiles
+  with `schedule_2d`, uses fast path; if False, falls back to interpreter
+- Residual function extracts theta and calls `evaluate_2d`
+
+**Step 4.2: Result writeback**
+- After fitting, write final theta back to `model.lmfit_pars`
+- All existing post-fit code (plotting, saving, CI) works unchanged
+
+**Step 4.3: Benchmarking**
+- Time the profiling example (400 x 440, 4 free params) with both paths
+- Measure: total fit time, per-iteration time, parameter overhead
+- Target: >= 3x speedup on the example case (eliminating 28% param
+  overhead + 16% dispatch overhead = 44%, plus vectorized math gains)
+
+
+### Phase 5: Optimization (post-validation)
+
+**Step 5.1: Dynamics trace caching**
+- If dynamics params in theta haven't changed since last call, skip
+  trace recomputation. Compare theta slice.
+
+**Step 5.2: Static component caching**
+- Components with no optimizer-visible or time-dependent params produce
+  the same output every call. Compute once, cache in plan.
+
+**Step 5.3: Add Voigt support**
+- Patch Voigt to normalize per-slice: `max(axis=-1, keepdims=True)`
+- Add to `can_lower_2d()` v1 list
+- Validate against interpreter
+
+**Step 5.4: Decide on Numba vs JAX**
+- Benchmark Phase 4 results to determine if math is now the bottleneck
+- If yes: evaluate Numba (`@njit`) vs JAX (`jit` + `jacrev`)
+- Decision criteria: dependency weight, GPU needs, Jacobian value
+
+**Step 5.5: Analytic Jacobians (if JAX)**
+- Wrap evaluator for `jax.jacrev`
+- Pass Jacobian to lmfit via `Dfun` parameter
+- Measure iteration count reduction
+
+**Step 5.6: Variable projection (VARPRO)**
+- Identify linear parameters from graph structure
+- Implement VARPRO separation
+- Reduce optimizer dimensionality
