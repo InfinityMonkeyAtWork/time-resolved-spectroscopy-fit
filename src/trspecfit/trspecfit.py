@@ -1182,13 +1182,31 @@ class File:
         )
 
     #
-    def describe(self) -> None:
+    def describe(self, *, waterfall: float | None = None) -> None:
         """
         Display information about this file's data.
 
-        Plots the data with current fit limits indicated by vertical and
-        horizontal lines. For 1D data, shows energy spectrum. For 2D data,
-        shows time- and energy-resolved map.
+        Plots the data with current fit limits indicated by reference lines (or reduced
+        opacity in waterfall mode). For 1D data, shows energy spectrum. For 2D data,
+        shows time- and energy-resolved map or a waterfall plot for small datasets.
+
+        Parameters
+        ----------
+        waterfall : float or None, optional
+            Controls 2D data visualization mode.
+
+            * ``None`` (default) — auto-select: waterfall plot if
+              ``len(self.time) <= 12``, 2D map otherwise. The waterfall
+              offset is set to the maximum peak-to-peak range across
+              spectra.
+            * ``0`` — force 2D map regardless of dataset size.
+            * nonzero float — force waterfall plot with this y-offset
+              between traces.
+
+        Notes
+        -----
+        In waterfall mode, traces outside the active time fit window
+        (``t_lim_abs``) are drawn at reduced opacity (alpha = 0.35).
         """
 
         if self.p.show_output < 1:
@@ -1218,14 +1236,44 @@ class File:
             )
 
         elif self.dim == 2:
-            uplt.plot_2d(
-                data=self.data,
-                x=self.energy,
-                y=self.time,
-                config=config,
-                vlines=self.e_lim_abs,
-                hlines=self.t_lim_abs,
+            assert self.time is not None  # type guard — ensured above
+            _WATERFALL_MAX_SPECTRA = 12
+            use_waterfall = (
+                waterfall is None and len(self.time) <= _WATERFALL_MAX_SPECTRA
             )
+            use_waterfall = use_waterfall or (waterfall is not None and waterfall != 0)
+
+            if use_waterfall:
+                if waterfall is None or waterfall == 0:
+                    ptp = np.nanmax(self.data, axis=1) - np.nanmin(self.data, axis=1)
+                    waterfall = float(np.nanmax(ptp))
+                legend = [f"{t:.4g}" for t in self.time]
+                if len(self.t_lim_abs) == 2:
+                    t_lo, t_hi = self.t_lim_abs
+                    alphas = [1.0 if t_lo <= t <= t_hi else 0.35 for t in self.time]
+                else:
+                    alphas = None
+                uplt.plot_1d(
+                    data=self.data,
+                    x=self.energy,
+                    config=config,
+                    waterfall=waterfall,
+                    legend=legend,
+                    vlines=self.e_lim_abs,
+                    alphas=alphas,
+                    y_label=config.z_label,
+                    y_dir="def",
+                    y_type=config.z_type,
+                )
+            else:
+                uplt.plot_2d(
+                    data=self.data,
+                    x=self.energy,
+                    y=self.time,
+                    config=config,
+                    vlines=self.e_lim_abs,
+                    hlines=self.t_lim_abs,
+                )
 
     #
     def model_list_to_name(self, model_list: Sequence[str]) -> str:

@@ -4,6 +4,8 @@ Exercises load_model, select_model, delete_model, reset_models,
 set_fit_limits, and define_baseline.
 """
 
+import unittest.mock
+
 import numpy as np
 import pytest
 
@@ -1137,6 +1139,204 @@ class TestFileNameAndProjectAccess:
         File(parent_project=project, path="scan2/data.csv", name="data_2")
         assert project["data"].path == "scan1/data.csv"
         assert project["data_2"].path == "scan2/data.csv"
+
+
+#
+#
+class TestDescribeWaterfall:
+    """Test File.describe() waterfall auto-selection and override."""
+
+    #
+    def _make_file(self, *, n_time):
+        """Create a 2D File with *n_time* spectra."""
+
+        project = Project(path="tests")
+        file = File(parent_project=project)
+        file.energy = np.linspace(80, 90, 50)
+        file.time = np.linspace(0, 10, n_time)
+        rng = np.random.default_rng(42)
+        file.data = rng.normal(size=(n_time, len(file.energy)))
+        file.dim = 2
+        return file
+
+    #
+    def test_auto_waterfall_for_small_dataset(self):
+        """describe() with <= 12 spectra should call plot_1d by default."""
+
+        file = self._make_file(n_time=8)
+        with (
+            unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d,
+            unittest.mock.patch("trspecfit.utils.plot.plot_2d") as mock_2d,
+        ):
+            file.describe()
+        mock_1d.assert_called_once()
+        mock_2d.assert_not_called()
+
+    #
+    def test_auto_2d_map_for_large_dataset(self):
+        """describe() with > 12 spectra should call plot_2d by default."""
+
+        file = self._make_file(n_time=50)
+        with (
+            unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d,
+            unittest.mock.patch("trspecfit.utils.plot.plot_2d") as mock_2d,
+        ):
+            file.describe()
+        mock_2d.assert_called_once()
+        mock_1d.assert_not_called()
+
+    #
+    def test_auto_waterfall_at_cutoff_boundary(self):
+        """describe() with exactly 12 spectra should use waterfall."""
+
+        file = self._make_file(n_time=12)
+        with (
+            unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d,
+            unittest.mock.patch("trspecfit.utils.plot.plot_2d") as mock_2d,
+        ):
+            file.describe()
+        mock_1d.assert_called_once()
+        mock_2d.assert_not_called()
+
+    #
+    def test_above_cutoff_uses_2d(self):
+        """describe() with 13 spectra should use 2D map."""
+
+        file = self._make_file(n_time=13)
+        with (
+            unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d,
+            unittest.mock.patch("trspecfit.utils.plot.plot_2d") as mock_2d,
+        ):
+            file.describe()
+        mock_2d.assert_called_once()
+        mock_1d.assert_not_called()
+
+    #
+    def test_force_2d_map_with_waterfall_zero(self):
+        """waterfall=0 should force 2D map even for small datasets."""
+
+        file = self._make_file(n_time=5)
+        with (
+            unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d,
+            unittest.mock.patch("trspecfit.utils.plot.plot_2d") as mock_2d,
+        ):
+            file.describe(waterfall=0)
+        mock_2d.assert_called_once()
+        mock_1d.assert_not_called()
+
+    #
+    def test_force_waterfall_with_explicit_value(self):
+        """Nonzero waterfall should force waterfall even for large datasets."""
+
+        file = self._make_file(n_time=50)
+        with unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d:
+            file.describe(waterfall=2.5)
+        mock_1d.assert_called_once()
+        _, kwargs = mock_1d.call_args
+        assert kwargs["waterfall"] == 2.5
+
+    #
+    def test_auto_waterfall_offset_is_max_ptp(self):
+        """Auto waterfall offset should equal max peak-to-peak of spectra."""
+
+        file = self._make_file(n_time=5)
+        expected_offset = float(np.max(np.ptp(file.data, axis=1)))
+        with unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d:
+            file.describe()
+        _, kwargs = mock_1d.call_args
+        assert kwargs["waterfall"] == pytest.approx(expected_offset)
+
+    #
+    def test_auto_waterfall_offset_with_nans(self):
+        """Auto waterfall offset should ignore NaNs in data."""
+
+        file = self._make_file(n_time=5)
+        file.data[0, 10] = np.nan
+        file.data[2, 20:25] = np.nan
+        ptp = np.nanmax(file.data, axis=1) - np.nanmin(file.data, axis=1)
+        expected_offset = float(np.nanmax(ptp))
+        with unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d:
+            file.describe()
+        _, kwargs = mock_1d.call_args
+        assert np.isfinite(kwargs["waterfall"])
+        assert kwargs["waterfall"] == pytest.approx(expected_offset)
+
+    #
+    def test_waterfall_legend_labels(self):
+        """Waterfall plot should pass time values as legend labels."""
+
+        file = self._make_file(n_time=5)
+        with unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d:
+            file.describe()
+        _, kwargs = mock_1d.call_args
+        expected_legend = [f"{t:.4g}" for t in file.time]
+        assert kwargs["legend"] == expected_legend
+
+    #
+    def test_waterfall_uses_intensity_axis_labels(self):
+        """Waterfall plot should use z_label/z_type for y axis, not time settings."""
+
+        file = self._make_file(n_time=5)
+        file.p.z_label = "Absorbance"
+        file.p.z_type = "log"
+        file.p.y_dir = "rev"
+        file.p.y_type = "lin"
+        # Reset cached config so it picks up the new project settings
+        file._plot_config = None
+        with unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d:
+            file.describe()
+        _, kwargs = mock_1d.call_args
+        assert kwargs["y_label"] == "Absorbance"
+        assert kwargs["y_type"] == "log"
+        assert kwargs["y_dir"] == "def"
+
+    #
+    def test_waterfall_dims_traces_outside_time_limits(self):
+        """Traces outside t_lim_abs should have alpha=0.35."""
+
+        file = self._make_file(n_time=8)
+        # time axis: np.linspace(0,10,8) -> [0, 1.43, 2.86, 4.29, 5.71, 7.14, 8.57, 10]
+        file.set_fit_limits(None, time_limits=[3, 7], show_plot=False)
+        with unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d:
+            file.describe()
+        _, kwargs = mock_1d.call_args
+        alphas = kwargs["alphas"]
+        assert len(alphas) == 8
+        for i, t in enumerate(file.time):
+            if 3 <= t <= 7:
+                assert alphas[i] == 1.0, f"trace {i} (t={t:.2f}) should be full alpha"
+            else:
+                assert alphas[i] == 0.35, f"trace {i} (t={t:.2f}) should be dimmed"
+
+    #
+    def test_waterfall_no_time_limits_no_alphas(self):
+        """Without time limits, alphas should not be passed."""
+
+        file = self._make_file(n_time=5)
+        with unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d:
+            file.describe()
+        _, kwargs = mock_1d.call_args
+        assert kwargs.get("alphas") is None
+
+    #
+    def test_describe_1d_unaffected(self):
+        """waterfall parameter should not affect 1D data display."""
+
+        project = Project(path="tests")
+        file = File(parent_project=project)
+        file.energy = np.linspace(80, 90, 50)
+        file.data = np.random.default_rng(42).normal(size=50)
+        file.dim = 1
+        with (
+            unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d,
+            unittest.mock.patch("trspecfit.utils.plot.plot_2d") as mock_2d,
+        ):
+            file.describe(waterfall=5.0)
+        mock_1d.assert_called_once()
+        mock_2d.assert_not_called()
+        # Should NOT pass waterfall for 1D data
+        _, kwargs = mock_1d.call_args
+        assert "waterfall" not in kwargs
 
 
 if __name__ == "__main__":

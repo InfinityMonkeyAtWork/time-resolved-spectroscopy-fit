@@ -68,6 +68,8 @@ class PlotConfig:
         List of marker styles
     markersizes : list[float] | None
         List of marker sizes
+    alphas : list[float] | None
+        List of opacity values (0–1) for each trace
     legend : list[str] | None
         List of legend labels
     waterfall : float
@@ -147,6 +149,7 @@ class PlotConfig:
     linewidths: list[float] | None = None
     markers: list[str] | None = None
     markersizes: list[float] | None = None
+    alphas: list[float] | None = None
 
     # Plot annotations
     legend: list[str] | None = None
