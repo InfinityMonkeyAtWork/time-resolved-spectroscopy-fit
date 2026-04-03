@@ -1929,6 +1929,11 @@ class File:
         t_base = time.time()  # start timing for baseline fit
 
         self.model_base = self._resolve_model(model_name)
+        if self.model_base.dim == 2:
+            raise ValueError(
+                f'Model "{model_name}" has time dependence (dim=2) and cannot '
+                "be used for a 1D baseline fit. Use a model without dynamics."
+            )
         if self.energy is None or self.data_base is None:
             raise ValueError(
                 "Baseline data/energy axis missing; cannot fit baseline.\n"
@@ -2215,6 +2220,12 @@ class File:
         t_sbs = time.time()  # start timing for SbS fit
 
         self.model_sbs = self._resolve_model(model_name)
+        if self.model_sbs.dim == 2:
+            raise ValueError(
+                f'Model "{model_name}" has time dependence (dim=2) and cannot '
+                "be used for Slice-by-Slice fitting. "
+                "Use a model without dynamics, or use fit_2d() instead."
+            )
         if self.model_base is None:
             raise ValueError(
                 "Baseline model is not fitted yet; run fit_baseline() first."
