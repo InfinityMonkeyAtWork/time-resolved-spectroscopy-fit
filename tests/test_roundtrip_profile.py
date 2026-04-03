@@ -17,8 +17,6 @@ import pytest
 
 from trspecfit import File, Project, Simulator
 
-pytestmark = pytest.mark.slow
-
 
 #
 def _make_project():
@@ -199,6 +197,7 @@ class TestRoundTripTwoProfiles:
     """Two profiles on same component, no dynamics — baseline fit recovery."""
 
     #
+    @pytest.mark.slow
     def test_clean_recovery(self):
         """Simulate clean 2D data with two profiles, fit baseline, recover."""
 
@@ -238,6 +237,7 @@ class TestRoundTripProfileDynamics:
     """Two profiles + dynamics on pExpDecay A — full 2D fit recovery."""
 
     #
+    @pytest.mark.slow
     def test_clean_recovery(self):
         """Simulate clean 2D data with profile + dynamics, fit, recover."""
 
@@ -282,6 +282,7 @@ class TestRoundTripTwoProfilesNoisy:
     """Two profiles, no dynamics — noisy baseline fit recovery within 5%."""
 
     #
+    @pytest.mark.slow
     def test_noisy_recovery(self):
         """Simulate noisy 2D data with two profiles, fit baseline, recover."""
 
@@ -324,6 +325,7 @@ class TestRoundTripProfileDynamicsNoisy:
     """Two profiles + dynamics on pExpDecay A — noisy 2D fit recovery."""
 
     #
+    @pytest.mark.slow
     def test_noisy_recovery(self):
         """Simulate noisy 2D data with profile + dynamics, fit, recover."""
 

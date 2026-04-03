@@ -9,8 +9,6 @@ import pytest
 
 from trspecfit import File, Project, Simulator
 
-pytestmark = pytest.mark.slow
-
 
 #
 def _make_project():
@@ -219,6 +217,7 @@ class TestFitSpectrumTimePoint:
     """Fit individual spectrum at a single time point."""
 
     #
+    @pytest.mark.slow
     def test_time_point_abs_recovery(self):
         """Fit at a time_point (abs) recovers the 1D spectrum parameters."""
 
@@ -243,6 +242,7 @@ class TestFitSpectrumTimePoint:
         assert fit_file.spec_t_abs[0] == fit_file.spec_t_abs[1]
 
     #
+    @pytest.mark.slow
     def test_time_point_ind(self):
         """Fit at a time_point using index addressing."""
 
@@ -270,6 +270,7 @@ class TestFitSpectrumTimeRange:
     """Fit individual spectrum averaged over a time range."""
 
     #
+    @pytest.mark.slow
     def test_time_range_abs(self):
         """Fit averaged spectrum over a time range (abs)."""
 
@@ -294,6 +295,7 @@ class TestFitSpectrumTimeRange:
         assert fit_file.spec_t_abs[1] >= 6.0 - grid_step
 
     #
+    @pytest.mark.slow
     def test_time_range_ind(self):
         """Fit averaged spectrum over a time range using indices."""
 
@@ -315,6 +317,7 @@ class TestFitSpectrumTimeRange:
         assert fit_file.spec_t_ind == [5, 11]
 
     #
+    @pytest.mark.slow
     def test_data_spec_matches_manual_average(self):
         """Extracted spectrum matches manual np.mean over the same range."""
 

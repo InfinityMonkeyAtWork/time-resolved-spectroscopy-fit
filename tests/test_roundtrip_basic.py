@@ -12,8 +12,6 @@ import pytest
 
 from trspecfit import File, Project, Simulator
 
-pytestmark = pytest.mark.slow
-
 
 #
 def _make_project():
@@ -93,6 +91,7 @@ class TestRoundTripClean:
     """Fit noiseless data — parameters should be recovered exactly."""
 
     #
+    @pytest.mark.slow
     def test_clean_recovery(self):
         """Simulate clean 2D data, fit, assert parameter recovery."""
 
@@ -136,6 +135,7 @@ class TestRoundTripNoisy:
     """Fit noisy data — parameters should be recovered within tolerance."""
 
     #
+    @pytest.mark.slow
     def test_noisy_recovery(self):
         """Simulate noisy 2D data, fit, assert recovery within 5%."""
 
