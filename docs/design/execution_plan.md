@@ -171,11 +171,28 @@ class GraphNode:
 
     # Payload (interpretation depends on kind):
     value: float | None             # for STATIC_PARAM, OPT_PARAM: initial value
-    op_kind: OpKind | None          # for COMPONENT_EVAL, SPECTRUM_FED_OP: function type
-    dynamics_func: str | None       # for DYNAMICS_TRACE: function name (e.g. "expFun")
+    function_name: str | None       # for COMPONENT_EVAL, SPECTRUM_FED_OP, DYNAMICS_TRACE,
+                                    # CONVOLUTION: the function registry name
+                                    # (e.g. "GLP", "Shirley", "expFun", "gaussCONV").
+                                    # This is the graph-level function identity -- it
+                                    # works across all domains (energy, time, profile).
+                                    # Backend-specific compilers map this to their own
+                                    # op enums (e.g. schedule_2d maps "GLP" -> OpKind.GLP).
+    package: str | None             # which function module: "energy", "time", "profile".
+                                    # Together with function_name, uniquely identifies
+                                    # the callable. Needed because function names could
+                                    # theoretically collide across packages.
     expr_string: str | None         # for EXPRESSION: the expression source
     vary: bool                      # for OPT_PARAM: whether optimizer can change it
     bounds: tuple[float, float] | None  # for OPT_PARAM: (min, max) bounds
+    arrays: dict[str, np.ndarray]   # node-local array data. Examples:
+                                    #   SUBCYCLE_MASK: {"time_n_sub": array}
+                                    #   SUBCYCLE_REMAP: {"time_norm": array}
+                                    #   PROFILE_SAMPLE: {"aux_axis": array}
+                                    #   CONVOLUTION: {"kernel_time": array}
+                                    # Empty dict for nodes that need no array payload.
+                                    # This is graph-level data, not backend-specific --
+                                    # the scheduler copies what it needs into the plan.
 
 
 @dataclass
@@ -262,11 +279,11 @@ Nodes:
   7: OPT_PARAM     "GLP_02_x0"        value=88.1
   8: OPT_PARAM     "GLP_02_F"         value=1.0
   9: OPT_PARAM     "GLP_02_m"         value=0.3
- 10: COMPONENT_EVAL "GLP_01"           op_kind=GLP
- 11: COMPONENT_EVAL "GLP_02"           op_kind=GLP
+ 10: COMPONENT_EVAL "GLP_01"           function_name="GLP"     package="energy"
+ 11: COMPONENT_EVAL "GLP_02"           function_name="GLP"     package="energy"
  12: SUM            "peak_sum"
- 13: COMPONENT_EVAL "Offset"           op_kind=OFFSET
- 14: SPECTRUM_FED_OP "Shirley"         op_kind=SHIRLEY
+ 13: COMPONENT_EVAL "Offset"           function_name="Offset"  package="energy"
+ 14: SPECTRUM_FED_OP "Shirley"         function_name="Shirley" package="energy"
  15: SUM            "total"
 
 Edges:
@@ -304,7 +321,7 @@ Additional nodes:
  21: OPT_PARAM     "GLP_01_A_expFun_01_tau"   value=100.0
  22: OPT_PARAM     "GLP_01_A_expFun_01_t0"    value=0.0
  23: STATIC_PARAM   "GLP_01_A_expFun_01_y0"   value=0.0
- 24: DYNAMICS_TRACE "GLP_01_A_dynamics"         dynamics_func="expFun"
+ 24: DYNAMICS_TRACE "GLP_01_A_dynamics"         function_name="expFun"  package="time"
  25: PARAM_PLUS_TRACE "GLP_01_A_resolved"
 
 Additional edges:
@@ -365,9 +382,10 @@ every graph can be compiled to the 2D fast evaluator yet. A 1D-only graph
 (no time axis) returns False here -- it would need a future `can_lower_1d`.
 
 **Compilable in v1:**
-- All `COMPONENT_EVAL` nodes use an `OpKind` whose broadcast semantics
-  are verified correct. v1 list: `Gauss`, `GaussAsym`, `Lorentz`, `GLS`,
-  `GLP`, `DS`, `Offset`, `LinBack`. (Not `Voigt` -- see below.)
+- All `COMPONENT_EVAL` nodes have a `function_name` that `schedule_2d`
+  can map to a supported `OpKind` with verified broadcast semantics.
+  v1 list: `Gauss`, `GaussAsym`, `Lorentz`, `GLS`, `GLP`, `DS`,
+  `Offset`, `LinBack`. (Not `Voigt` -- see below.)
   Offset and LinBack are `COMPONENT_EVAL`, not `SPECTRUM_FED_OP` --
   they do not consume the accumulated spectrum (see section 4).
 - `SPECTRUM_FED_OP` nodes: `Shirley` only (the sole function that
@@ -431,7 +449,13 @@ the scratch matrix is 20 * 440 * 8 = 69 KB. Negligible.
 
 ```python
 class OpKind(IntEnum):
-    """Component function op codes."""
+    """2D backend component function op codes.
+
+    This is the *backend-specific* lowered enum, not the graph-level
+    function identity. schedule_2d maps GraphNode.function_name to
+    OpKind during compilation (e.g. "GLP" -> GLP, "Shirley" -> SHIRLEY).
+    A future 1D backend would have its own enum with time-domain ops.
+    """
 
     GAUSS = 0
     GAUSS_ASYM = 1
@@ -470,7 +494,8 @@ class ScheduledPlan2D:
     # optimizer changes dynamics params.
     n_dynamics: int
     # For each dynamics model:
-    #   dynamics_func_id[i]: which time function to call (int enum)
+    #   dynamics_func_id[i]: which time function to call (int enum,
+    #     mapped from GraphNode.function_name by schedule_2d)
     #   dynamics_param_rows[i]: (n_dyn_params,) row indices for this model's params
     #   dynamics_target_row[i]: which row in trace matrix receives the result
     #   dynamics_base_row[i]: which row holds the base (spectral) param value
@@ -593,7 +618,9 @@ build_graph(model):
        For each dynamics model with subcycle != 0:
          - Create SUBCYCLE_REMAP node before the DYNAMICS_TRACE
          - Create SUBCYCLE_MASK node after the DYNAMICS_TRACE
-         - Wire time_norm and time_n_sub arrays as static data
+         - Store time_norm and time_n_sub in node.arrays
+           (e.g. SUBCYCLE_REMAP.arrays["time_norm"],
+            SUBCYCLE_MASK.arrays["time_n_sub"])
 
        These nodes are fully represented in the graph. can_lower_2d()
        will return False if any are present, but the graph is still
@@ -1036,7 +1063,7 @@ in its component's function.
 ### Phase 4: Integration
 
 **Step 4.1: Wire into fit pipeline**
-- Add lowered branch in `fit_model_mcp` or new function
+- Add lowered branch in `fit_model_mcp` or new function (`fit_model_gir`)
 - `File.fit_2d` checks `can_lower_2d()`: if True, builds graph, compiles
   with `schedule_2d`, uses fast path; if False, falls back to interpreter
 - Residual function extracts theta and calls `evaluate_2d`
