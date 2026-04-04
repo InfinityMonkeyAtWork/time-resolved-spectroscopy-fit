@@ -57,6 +57,11 @@
 
 - Keep `README.md` minimal — overview and quick-start only.
 - Detailed docs belong in the Sphinx/Read the Docs API reference (`docs/`).
+- Treat `docs/design/model_design_rules.md` as the source of truth for currently
+  supported model combinations, expression semantics, and explicitly excluded
+  cases. When reviewing code or proposing features, distinguish clearly between
+  real support gaps and cases the design rules intentionally do not require us
+  to support.
 - NumPy-style docstrings everywhere. User-facing API (`trspecfit.py`, `functions/`) gets
   extensive docstrings (Parameters, Returns, Notes with physical context). Internal modules
   (`mcp.py`, `config/`, `fitlib.py`) keep method docstrings minimal — focus detail on

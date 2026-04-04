@@ -10,6 +10,7 @@ A Python library for fitting multi-component spectral models to time-resolved sp
    installation
    quickstart
    examples/index
+   design/model_design_rules
    api/index
 
 Overview
@@ -29,6 +30,14 @@ Key Capabilities
 * Fit models with lmfit and wrappers for confidence intervals and optional MCMC sampling
 * Simulate individual 1D/2D spectra to validate models
 * Generate ML training data via parameter space exploration
+
+Design Guidance
+---------------
+
+For the current supported model-composition rules and expression semantics,
+see :doc:`design/model_design_rules`. This is the reference guide for which
+model combinations are intended to work today, which are explicitly excluded,
+and which edge cases are tolerated for now but may change in the future.
 
 Indices and tables
 ==================
