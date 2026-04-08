@@ -200,6 +200,24 @@ class Project:
         self.dpi_plt = 100
         self.dpi_save = 300
         self.res_mult = 5
+        self.title = ""
+        self.x_lim = None
+        self.y_lim = None
+        self.data_slice = None
+        self.z_lim = None
+        self.colors = None
+        self.linestyles = None
+        self.linewidths = None
+        self.markers = None
+        self.markersizes = None
+        self.alphas = None
+        self.legend = None
+        self.waterfall = 0
+        self.vlines = None
+        self.hlines = None
+        self.ticksize = None
+        self.y_norm = 0
+        self.y_scale = None
         # File I/O settings
         self.ext = ".dat"
         self.fmt = "%.6e"
@@ -379,8 +397,16 @@ class Project:
 
             # Update attributes from config
             for key, value in config.items():
-                if hasattr(self, key):
-                    setattr(self, key, value)
+                normalized_key = key.replace("-", "_")
+                _key_map = {
+                    "x_label": "e_label",
+                    "y_label": "t_label",
+                    "dpi_plot": "dpi_plt",
+                }
+                project_key = _key_map.get(normalized_key) or normalized_key
+
+                if hasattr(self, project_key):
+                    setattr(self, project_key, value)
                 else:
                     if self.show_output >= 1:
                         print(f"Warning: Unknown config key '{key}' ignored")

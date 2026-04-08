@@ -538,6 +538,8 @@ class TestPlotConfigFromYAML:
         "z_label: 'Counts'\n"
         "x_dir: 'rev'\n"
         "z_colormap: 'RdBu'\n"
+        "x_lim: [63.0, -2.6]\n"
+        "y_lim: [-0.5, 5.0]\n"
     )
 
     EXPECTED = {
@@ -546,6 +548,8 @@ class TestPlotConfigFromYAML:
         "z_label": "Counts",
         "x_dir": "rev",
         "z_colormap": "RdBu",
+        "x_lim": (63.0, -2.6),
+        "y_lim": (-0.5, 5.0),
     }
 
     #
@@ -574,6 +578,26 @@ class TestPlotConfigFromYAML:
             assert project.z_label == "Counts"
             assert project.x_dir == "rev"
             assert project.z_colormap == "RdBu"
+            assert project.x_lim == [63.0, -2.6]
+            assert project.y_lim == [-0.5, 5.0]
+
+    #
+    def test_project_accepts_hyphenated_limit_keys(self, capsys):
+        """Hyphenated PlotConfig keys in project.yaml should map cleanly."""
+
+        yaml_content = "x-lim: [63.0, -2.6]\ny-lim: [-0.5, 5.0]\n"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "project.yaml").write_text(yaml_content)
+            project = Project(path=tmpdir, name="test")
+
+            captured = capsys.readouterr()
+            assert "Unknown config key 'x-lim'" not in captured.out
+            assert "Unknown config key 'y-lim'" not in captured.out
+            assert project.x_lim == [63.0, -2.6]
+            assert project.y_lim == [-0.5, 5.0]
+            assert PlotConfig.from_project(project).x_lim == (63.0, -2.6)
+            assert PlotConfig.from_project(project).y_lim == (-0.5, 5.0)
 
     #
     def test_file_plot_config_inherits_yaml(self):
@@ -704,6 +728,20 @@ class TestPlotConfigPropagation:
         plt.close("all")
 
     #
+    def test_component_plot_keeps_reversed_limit_and_direction(self):
+        """Component.plot() should not double-flip when x_lim is already reversed."""
+
+        file = self._make_file_with_model(x_dir="rev")
+        file.plot_config = file.plot_config.copy(x_lim=(63.0, -2.6))
+        assert file.model_active is not None  # type guard
+        component = file.model_active.components[0]
+
+        component.plot()
+        ax = plt.gca()
+        assert ax.xaxis_inverted(), "x-axis should remain inverted with reversed x_lim"
+        plt.close("all")
+
+    #
     def test_component_plot_default_dir(self):
         """Component.plot() should not invert x-axis when config.x_dir='def'."""
 
@@ -779,6 +817,195 @@ class TestEdgeCases:
         config = PlotConfig()
 
         plot_1d([y], x=x, config=config, save_img=-2)
+        plt.close("all")
+
+
+#
+#
+class TestHighLevelPlotOverrides:
+    """Per-call config= and plot_kwargs overrides on high-level plot methods."""
+
+    #
+    def _make_file_with_model(self):
+        """Return a File with a loaded energy model, default x_dir='def'."""
+
+        project = Project(path="tests")
+        project.e_label = "Binding Energy (eV)"
+        project.x_dir = "def"
+
+        file = File(parent_project=project)
+        file.energy = np.linspace(80, 90, 201)
+        file.time = np.linspace(-10, 100, 111)
+        file.data = np.random.default_rng(0).normal(
+            size=(len(file.time), len(file.energy))
+        )
+        file.dim = 2
+        file.load_model(
+            model_yaml="models/file_energy.yaml",
+            model_info="single_glp",
+        )
+        return file
+
+    #
+    def test_model_plot_1d_config_override(self):
+        """Model.plot_1d(config=...) uses the supplied config, not the inherited one."""
+
+        file = self._make_file_with_model()
+        model = file.model_active
+        assert model is not None  # type guard
+
+        override = PlotConfig(x_dir="rev", x_label="Override (eV)")
+        model.plot_1d(config=override, save_img=0)
+        ax = plt.gca()
+        assert ax.get_xlabel() == "Override (eV)"
+        assert ax.xaxis_inverted()
+        plt.close("all")
+
+    #
+    def test_model_plot_1d_plot_kwargs_override(self):
+        """Model.plot_1d(**plot_kwargs) overrides individual fields."""
+
+        file = self._make_file_with_model()
+        model = file.model_active
+        assert model is not None  # type guard
+
+        model.plot_1d(x_dir="rev", save_img=0)
+        ax = plt.gca()
+        assert ax.xaxis_inverted()
+        plt.close("all")
+
+    #
+    def test_model_plot_2d_config_override(self):
+        """Model.plot_2d(config=...) uses the supplied config."""
+
+        file = self._make_file_with_model()
+        model = file.model_active
+        assert model is not None  # type guard
+
+        override = PlotConfig(x_dir="rev")
+        model.plot_2d(config=override, save_img=0)
+        ax = plt.gcf().axes[0]
+        assert ax.xaxis_inverted()
+        plt.close("all")
+
+    #
+    def test_model_plot_2d_plot_kwargs_override(self):
+        """Model.plot_2d(**plot_kwargs) overrides individual fields."""
+
+        file = self._make_file_with_model()
+        model = file.model_active
+        assert model is not None  # type guard
+
+        model.plot_2d(x_dir="rev", save_img=0)
+        ax = plt.gcf().axes[0]
+        assert ax.xaxis_inverted()
+        plt.close("all")
+
+    #
+    def test_component_plot_config_override(self):
+        """Component.plot(config=...) uses the supplied config."""
+
+        file = self._make_file_with_model()
+        model = file.model_active
+        assert model is not None  # type guard
+        component = model.components[0]
+
+        override = PlotConfig(x_dir="rev", x_label="Custom (eV)")
+        component.plot(config=override, save_img=0)
+        ax = plt.gca()
+        assert ax.get_xlabel() == "Custom (eV)"
+        assert ax.xaxis_inverted()
+        plt.close("all")
+
+    #
+    def test_component_plot_plot_kwargs_override(self):
+        """Component.plot(plot_kwargs=...) overrides individual fields."""
+
+        file = self._make_file_with_model()
+        model = file.model_active
+        assert model is not None  # type guard
+        component = model.components[0]
+
+        component.plot(plot_kwargs={"x_dir": "rev"}, save_img=0)
+        ax = plt.gca()
+        assert ax.xaxis_inverted()
+        plt.close("all")
+
+    #
+    def test_simulator_plot_comparison_config_override_dim1(self):
+        """Simulator.plot_comparison(dim=1, config=...) uses the supplied config."""
+
+        from trspecfit import Simulator
+
+        file = self._make_file_with_model()
+        model = file.model_active
+        assert model is not None  # type guard
+        sim = Simulator(model, noise_level=0.05)
+        sim.simulate_1d()
+
+        override = PlotConfig(x_dir="rev")
+        sim.plot_comparison(dim=1, config=override, save_img=0)
+        ax = plt.gca()
+        assert ax.xaxis_inverted()
+        plt.close("all")
+
+    #
+    def test_simulator_plot_comparison_plot_kwargs_override_dim1(self):
+        """Simulator.plot_comparison(dim=1, **plot_kwargs) overrides PlotConfig."""
+
+        from trspecfit import Simulator
+
+        file = self._make_file_with_model()
+        model = file.model_active
+        assert model is not None  # type guard
+        sim = Simulator(model, noise_level=0.05)
+        sim.simulate_1d()
+
+        sim.plot_comparison(dim=1, x_dir="rev", save_img=0)
+        ax = plt.gca()
+        assert ax.xaxis_inverted()
+        plt.close("all")
+
+    #
+    def test_simulator_plot_comparison_config_override_dim2(self):
+        """Simulator.plot_comparison(dim=2, config=...) applies config to all panels."""
+
+        from trspecfit import Simulator
+
+        file = self._make_file_with_model()
+        model = file.model_active
+        assert model is not None  # type guard
+        sim = Simulator(model, noise_level=0.05)
+        sim.simulate_2d()
+
+        override = PlotConfig(x_dir="rev", x_label="Override (eV)")
+        sim.plot_comparison(dim=2, config=override, save_img=0)
+        fig = plt.gcf()
+        main_axes = [ax for ax in fig.axes if ax.get_xlabel() != ""]
+        assert any(ax.get_xlabel() == "Override (eV)" for ax in main_axes)
+        assert all(
+            ax.xaxis_inverted()
+            for ax in main_axes
+            if ax.get_xlabel() == "Override (eV)"
+        )
+        plt.close("all")
+
+    #
+    def test_simulator_plot_comparison_plot_kwargs_override_dim2(self):
+        """Simulator.plot_comparison(dim=2, **plot_kwargs) overrides config fields."""
+
+        from trspecfit import Simulator
+
+        file = self._make_file_with_model()
+        model = file.model_active
+        assert model is not None  # type guard
+        sim = Simulator(model, noise_level=0.05)
+        sim.simulate_2d()
+
+        sim.plot_comparison(dim=2, x_dir="rev", save_img=0)
+        fig = plt.gcf()
+        main_axes = [ax for ax in fig.axes if ax.get_xlabel() != ""]
+        assert all(ax.xaxis_inverted() for ax in main_axes)
         plt.close("all")
 
 

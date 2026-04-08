@@ -794,13 +794,17 @@ def _apply_axis_settings(
         ax.set_xscale("log")
     if x_lim is not None:
         ax.set_xlim(x_lim[0], x_lim[1])
-    if x_dir == "rev":
+    if x_dir == "rev" and not ax.xaxis_inverted():
+        ax.invert_xaxis()
+    elif x_dir != "rev" and ax.xaxis_inverted():
         ax.invert_xaxis()
     if y_type == "log":
         ax.set_yscale("log")
     if y_lim is not None:
         ax.set_ylim(y_lim[0], y_lim[1])
-    if y_dir == "rev":
+    if y_dir == "rev" and not ax.yaxis_inverted():
+        ax.invert_yaxis()
+    elif y_dir != "rev" and ax.yaxis_inverted():
         ax.invert_yaxis()
 
 

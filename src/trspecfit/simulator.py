@@ -63,6 +63,7 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 
+from trspecfit.config.plot import PlotConfig
 from trspecfit.mcp import Model
 from trspecfit.utils import plot as uplt
 from trspecfit.utils.hdf5 import require_group
@@ -1193,6 +1194,8 @@ class Simulator:
         snr_scale: str = "linear",
         *,
         save_img: int = 0,
+        config: PlotConfig | None = None,
+        **plot_kwargs,
     ) -> None:
         """
         Plot comparison of clean vs noisy data.
@@ -1215,6 +1218,12 @@ class Simulator:
             - 'dB': Show in decibels (e.g., "SNR: 14.0 dB")
         save_img : int, default=0
             0: display, 1: save+display, -1: save only, -2: close (no display/save)
+        config : PlotConfig, optional
+            Override the model's inherited plot configuration for this call.
+            If None, uses the model's own plot_config.
+        **plot_kwargs : dict
+            Per-call overrides for any PlotConfig field (e.g. ``z_colormap``,
+            ``ticksize``). Applied on top of *config*.
 
         Examples
         --------
@@ -1304,19 +1313,23 @@ class Simulator:
                 raise RuntimeError("Simulation data not available for plotting")
 
             # Get config from model
-            config = self.model.plot_config
+            resolved_config = config or self.model.plot_config
 
             # Plot with noisy data as scatter
+            _call_kwargs: dict = {
+                "title": plt_title,
+                "legend": ["Clean", "Noisy", "Noise"],
+                "linestyles": ["-", "", "-"],  # Empty string = no line for noisy data
+                "markers": [None, "o", None],  # Scatter points for noisy data
+                "markersizes": [6, 3, 6],  # Smaller markers for noisy data
+                "save_img": save_img,
+            }
+            _call_kwargs.update(plot_kwargs)
             uplt.plot_1d(
                 data=[self.data_clean, self.data_noisy, self.noise],
                 x=self.model.energy,
-                config=config,
-                title=plt_title,
-                legend=["Clean", "Noisy", "Noise"],
-                linestyles=["-", "", "-"],  # Empty string = no line for noisy data
-                markers=[None, "o", None],  # Scatter points for noisy data
-                markersizes=[6, 3, 6],  # Smaller markers for noisy data
-                save_img=save_img,
+                config=resolved_config,
+                **_call_kwargs,
             )
 
         elif dim == 2:
@@ -1326,7 +1339,9 @@ class Simulator:
                 raise RuntimeError("Simulation data not available for plotting")
 
             # Get config from model
-            config = self.model.plot_config
+            resolved_config = config or self.model.plot_config
+            if plot_kwargs:
+                resolved_config = resolved_config.copy(**plot_kwargs)
 
             # Create 3-panel plot
             _fig, axes = plt.subplots(1, 3, figsize=(15, 4))
@@ -1342,21 +1357,21 @@ class Simulator:
                     self.model.time,
                     data,
                     shading="nearest",
-                    cmap=config.z_colormap,
+                    cmap=resolved_config.z_colormap,
                 )
                 ax.set_title(title)
-                ax.set_xlabel(config.x_label)
-                ax.set_ylabel(config.y_label)
-                if config.ticksize is not None:
-                    ax.tick_params(labelsize=config.ticksize)
+                ax.set_xlabel(resolved_config.x_label)
+                ax.set_ylabel(resolved_config.y_label)
+                if resolved_config.ticksize is not None:
+                    ax.tick_params(labelsize=resolved_config.ticksize)
                 uplt._apply_axis_settings(
                     ax,
-                    x_type=config.x_type,
-                    x_dir=config.x_dir,
-                    y_type=config.y_type,
-                    y_dir=config.y_dir,
-                    x_lim=config.x_lim,
-                    y_lim=config.y_lim,
+                    x_type=resolved_config.x_type,
+                    x_dir=resolved_config.x_dir,
+                    y_type=resolved_config.y_type,
+                    y_dir=resolved_config.y_dir,
+                    x_lim=resolved_config.x_lim,
+                    y_lim=resolved_config.y_lim,
                 )
                 plt.colorbar(im, ax=ax)
 
@@ -1364,7 +1379,7 @@ class Simulator:
             uplt._finalize_plot(
                 save_img=save_img,
                 save_path="",
-                dpi_save=config.dpi_save,
+                dpi_save=resolved_config.dpi_save,
             )
 
     #
