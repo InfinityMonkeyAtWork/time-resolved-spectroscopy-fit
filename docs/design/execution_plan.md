@@ -60,13 +60,19 @@ Three-layer design:
    energy models, 1D time models, and 2D time+energy models. A user
    builds a 1D energy model first (valid graph, no time axis), then
    adds dynamics (graph gains time-dependent nodes and a time axis),
-   making it compilable by the 2D backend.
+   making it compilable by the 2D backend. Standalone ``TIME_1D`` graphs
+   are still valuable even without a lowered backend because they allow
+   a future model-builder UI to author, validate, and save reusable
+   dynamics-only YAML models.
 3. **ScheduledPlan2D** -- a flat, packed-array execution schedule compiled
    from the graph by the 2D backend. No Python objects, no strings, no
    dicts in the hot path. This is what the evaluator actually runs.
    Backend-specific: a future `ScheduledPlan1D` / `can_lower_1d` /
    `evaluate_1d` can target the same GraphIR with a simpler storage
-   model (no `(n_params, n_time)` trace matrix needed for 1D).
+   model (no `(n_params, n_time)` trace matrix needed for 1D) for
+   `ENERGY_1D` models (`fit_baseline`, `fit_spectrum`). `TIME_1D`
+   standalone dynamics graphs remain graph-valid but are out of lowered
+   backend scope for now.
 
 Key principle: **the OOP tree is for humans; the GraphIR is for semantics;
 the ScheduledPlan2D is for the optimizer.**
@@ -123,12 +129,14 @@ class NodeKind(IntEnum):
                             # component (e.g. gaussCONV). Edges: ADDEND from
                             # the accumulated signal, PARAM_INPUT from kernel
                             # parameters. Output replaces the accumulated signal.
-    PROFILE_SAMPLE = 101    # evaluates a component at one aux_axis point,
-                            # with the profiled parameter set to
-                            # base + profile.value_1d[aux_ind].
-                            # One PROFILE_SAMPLE node per aux_axis point.
-    PROFILE_AVERAGE = 102   # uniform average over PROFILE_SAMPLE outputs.
-                            # Edges: ADDEND from each PROFILE_SAMPLE node.
+    PROFILE_SAMPLE = 101    # resolves one profiled parameter at one
+                            # aux_axis point:
+                            #   base + profile.value_1d[aux_ind]
+                            # One PROFILE_SAMPLE node per profiled parameter
+                            # per aux_axis point.
+    PROFILE_AVERAGE = 102   # uniform average over per-sample COMPONENT_EVAL
+                            # outputs for one component. Edges: ADDEND from
+                            # each per-sample COMPONENT_EVAL node.
     SUBCYCLE_MASK = 103     # element-wise multiply by time_n_sub mask array.
                             # Applied to a DYNAMICS_TRACE to zero out inactive
                             # subcycle regions.
@@ -213,9 +221,10 @@ class DomainKind(IntEnum):
       for all energy models (fit_baseline, fit_spectrum). COMPONENT_EVAL
       nodes evaluate energy functions over (n_energy,).
     - TIME_1D: model has time axis only. Used for standalone Dynamics
-      models (e.g. fitting a time trace directly). COMPONENT_EVAL nodes
-      evaluate time functions over (n_time,). This domain is valid in
-      the GraphIR but has no compiled backend yet.
+      models. COMPONENT_EVAL nodes evaluate time functions over
+      (n_time,). This domain is valid in the GraphIR for semantic
+      completeness, graph tooling, and future model-builder/UI workflows,
+      but has no compiled backend in the current scope.
     - ENERGY_TIME_2D: model has both axes. Created when dynamics are
       added to an ENERGY_1D model. COMPONENT_EVAL nodes evaluate energy
       functions over (n_time, n_energy) via broadcasting.
@@ -353,6 +362,16 @@ If `GLP_01_A` is time-dependent (has a PARAM_PLUS_TRACE), then node 6
 references the resolved value (node 25), and the expression output is
 also `(n_time,)`.
 
+If `GLP_01_A` is profiled, the interpreter semantics are different:
+the expression must be re-evaluated at each aux-axis point before the
+component is evaluated and averaged. In the graph, this is represented
+by per-sample `EXPRESSION` nodes (for example
+`GLP_02_A_profile_expr_0`, `GLP_02_A_profile_expr_1`, ...) whose
+`EXPR_REF` edges point to the matching per-sample `PROFILE_SAMPLE`
+nodes for `GLP_01_A`. Those per-sample expression nodes feed per-sample
+`COMPONENT_EVAL` nodes, and the component-level `PROFILE_AVERAGE`
+averages the resulting traces.
+
 #### 1.7 Why a graph, not a two-bucket sort
 
 The previous version of this doc sorted components into "independent"
@@ -379,7 +398,9 @@ Note the input: `can_lower_2d` operates on the GraphIR, not the OOP model.
 This means "can the 2D NumPy backend compile this graph," not "can this
 model be represented as a graph at all." Every model can be a graph; not
 every graph can be compiled to the 2D fast evaluator yet. A 1D-only graph
-(no time axis) returns False here -- it would need a future `can_lower_1d`.
+(``ENERGY_1D`` or ``TIME_1D``) returns False here. A future
+`can_lower_1d` would target ``ENERGY_1D`` models; ``TIME_1D`` standalone
+dynamics graphs remain graph-valid but backend-out-of-scope for now.
 
 **Compilable in v1:**
 - All `COMPONENT_EVAL` nodes have a `function_name` that `schedule_2d`
@@ -403,7 +424,8 @@ it stays in the interpreter. v1 excludes it; can be added once the
 function is patched to `max(axis=-1, keepdims=True)`.
 
 **Falls back to interpreter when `can_lower_2d` returns False:**
-- 1D-only models (domain != ENERGY_TIME_2D; awaits future `can_lower_1d`)
+- 1D-only models (domain != ENERGY_TIME_2D; future `can_lower_1d` would
+  target `ENERGY_1D`, not `TIME_1D`, in the current roadmap)
 - Convolution components
 - Profile-varying parameters
 - Non-arithmetic expressions
@@ -610,11 +632,24 @@ build_graph(model):
          - Create CONVOLUTION node
          - Add ADDEND edge from accumulated signal (the SUM being built)
          - Add PARAM_INPUT edges from kernel parameters
-       For each parameter with p_vary == True:
-         - Create PROFILE_SAMPLE node for each aux_axis point
-         - Add PARAM_INPUT edges (base + profile offset at that index)
-         - Create PROFILE_AVERAGE node with ADDEND edges from all samples
-         - Wire PROFILE_AVERAGE output into the component's PARAM_INPUT
+       For each component with a profiled parameter (`p_vary`) or an
+       expression parameter that references a profiled parameter
+       (`expr_refs_profile_dep`):
+         - For each direct `p_vary` parameter:
+           create PROFILE_SAMPLE nodes for each aux_axis point
+         - Add PARAM_INPUT edges into each PROFILE_SAMPLE
+           (base + profile-model params for that aux point)
+         - For each `expr_refs_profile_dep` parameter:
+           create per-sample EXPRESSION nodes, with EXPR_REF edges to
+           the matching per-sample PROFILE_SAMPLE nodes of the
+           referenced profiled parameter
+         - Create a per-sample COMPONENT_EVAL node for each aux_axis
+           point, using PROFILE_SAMPLE / per-sample EXPRESSION inputs
+           where needed
+         - Create one component-level PROFILE_AVERAGE node with ADDEND
+           edges from the per-sample COMPONENT_EVAL nodes
+         - Replace the original component in the combination graph with
+           this PROFILE_AVERAGE node
        For each dynamics model with subcycle != 0:
          - Create SUBCYCLE_REMAP node before the DYNAMICS_TRACE
          - Create SUBCYCLE_MASK node after the DYNAMICS_TRACE
@@ -891,7 +926,9 @@ interpreter.
 `can_lower_2d` is the gatekeeper for the 2D backend. The graph is broader
 than any single compiler -- the UI can build graphs that no backend can
 compile yet. Adding `can_lower_1d` / `schedule_1d` / `evaluate_1d` later
-is a natural extension targeting the same GraphIR.
+is a natural extension targeting `ENERGY_1D` models on the same GraphIR,
+but is not required for the near-term UI use case of building and saving
+standalone dynamics models.
 
 
 ### 9. Validation strategy
@@ -992,6 +1029,10 @@ in its component's function.
 - Unit tests: build graph for every test YAML model, verify structure
 - Unit tests: 1D-only models produce valid graphs with domain=ENERGY_1D
   and time=None
+- Unit tests: standalone dynamics models produce valid graphs with
+  domain=TIME_1D, including expression refs and future-node types where
+  applicable; these graphs are not lowerable in v1 but must still be
+  semantically complete for future model-builder/UI workflows
 - Unit tests: models with convolution/profile/subcycle produce graphs
   with the correct future node types (even though can_lower_2d is False)
 
@@ -1001,7 +1042,9 @@ in its component's function.
 - Check expression nodes for arithmetic-only AST
 - Check no Voigt, convolution, profile, or subcycle nodes
 - Unit tests with various model configurations
-- Unit tests: 1D-only graphs return False (awaits future `can_lower_1d`)
+- Unit tests: 1D-only graphs return False (by design in this milestone;
+  `ENERGY_1D` may gain a future `can_lower_1d`, while `TIME_1D` remains
+  graph-valid but backend-out-of-scope for now)
 
 **Step 1.4: Graph visualization (optional but useful)**
 - `graph.to_dot()` for Graphviz rendering
