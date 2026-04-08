@@ -398,7 +398,7 @@ class Project:
             # Update attributes from config
             for key, value in config.items():
                 normalized_key = key.replace("-", "_")
-                project_key = {
+                project_key: str = {
                     "x_label": "e_label",
                     "y_label": "t_label",
                     "dpi_plot": "dpi_plt",
