@@ -398,11 +398,12 @@ class Project:
             # Update attributes from config
             for key, value in config.items():
                 normalized_key = key.replace("-", "_")
-                project_key: str = {
+                _key_map = {
                     "x_label": "e_label",
                     "y_label": "t_label",
                     "dpi_plot": "dpi_plt",
-                }.get(normalized_key, normalized_key)
+                }
+                project_key = _key_map.get(normalized_key) or normalized_key
 
                 if hasattr(self, project_key):
                     setattr(self, project_key, value)

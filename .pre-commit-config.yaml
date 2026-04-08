@@ -15,12 +15,12 @@ repos:
     types: [python]
     stages: [pre-commit]
 
-  # - id: pyright-trspecfit
-  #   name: pyright (trspecfit)
-  #   entry: .venv/bin/pyright
-  #   language: system
-  #   pass_filenames: false
-  #   stages: [pre-commit]
+  - id: pyright-trspecfit
+    name: pyright (trspecfit)
+    entry: .venv/bin/pyright
+    language: system
+    pass_filenames: false
+    stages: [pre-commit]
 
   - id: mypy-trspecfit
     name: mypy (trspecfit)
