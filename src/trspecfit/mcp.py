@@ -879,6 +879,8 @@ class Model:
         y_lim: tuple[float, float] | None = None,
         save_img: int = 0,
         save_path: str = "",
+        config: PlotConfig | None = None,
+        **plot_kwargs,
     ) -> None:
         """
         Plot 1D model spectrum (energy or time).
@@ -907,10 +909,16 @@ class Model:
             - -1: Save only (no display)
         save_path : str, default=''
             Path for saving figure (if save_img != 0)
+        config : PlotConfig, optional
+            Override the model's inherited plot configuration for this call.
+            If None, uses the model's own plot_config.
+        **plot_kwargs : dict
+            Per-call overrides for any PlotConfig field (e.g. ``colors``,
+            ``ticksize``, ``legend``). Applied on top of *config*.
         """
 
         # Get model config for plotting
-        config = self.plot_config
+        config = config or self.plot_config
 
         # Model calling this method is a ...
         # ... time-resolved model (mcp.Dynamics)
@@ -939,24 +947,19 @@ class Model:
         plot_data = (
             [cast("np.ndarray", self.value_1d)] if plot_sum else self.component_spectra
         )
-        uplt.plot_1d(
-            data=plot_data,
-            x=x,
-            config=config,
-            title=f'Model "{self.name}" {info}',
-            x_label=x_label,
-            y_label=config.z_label,
-            x_dir=x_dir,
-            x_lim=x_lim,
-            y_lim=y_lim,
-            legend=[
-                "sum",
-            ]
-            if plot_sum
-            else [c.name for c in self.components],
-            save_img=save_img,
-            save_path=save_path,
-        )
+        _call_kwargs: dict = {
+            "title": f'Model "{self.name}" {info}',
+            "x_label": x_label,
+            "y_label": config.z_label,
+            "x_dir": x_dir,
+            "x_lim": x_lim,
+            "y_lim": y_lim,
+            "legend": ["sum"] if plot_sum else [c.name for c in self.components],
+            "save_img": save_img,
+            "save_path": save_path,
+        }
+        _call_kwargs.update(plot_kwargs)
+        uplt.plot_1d(data=plot_data, x=x, config=config, **_call_kwargs)
 
     #
     def plot_2d(
@@ -966,6 +969,8 @@ class Model:
         x_lim: tuple[float, float] | None = None,
         y_lim: tuple[float, float] | None = None,
         z_lim: tuple[float, float] | None = None,
+        config: PlotConfig | None = None,
+        **plot_kwargs,
     ) -> None:
         """
         Plot 2D time-and-energy spectrum as heatmap.
@@ -989,6 +994,12 @@ class Model:
             Time axis display range (min, max)
         z_lim : tuple of float, optional
             Color scale limits (min, max)
+        config : PlotConfig, optional
+            Override the model's inherited plot configuration for this call.
+            If None, uses the model's own plot_config.
+        **plot_kwargs : dict
+            Per-call overrides for any PlotConfig field (e.g. ``z_colormap``,
+            ``ticksize``). Applied on top of *config*.
         """
 
         if self.value_2d is None:
@@ -996,17 +1007,21 @@ class Model:
         if self.value_2d is None or self.energy is None or self.time is None:
             raise ValueError("Model value_2d, energy, and time required for plot_2d")
         # Plot using the utility plot_2d
+        _call_kwargs: dict = {
+            "title": f'model "{self.name}"',
+            "x_lim": x_lim,
+            "y_lim": y_lim,
+            "z_lim": z_lim,
+            "save_img": save_img,
+            "save_path": save_path,
+        }
+        _call_kwargs.update(plot_kwargs)
         uplt.plot_2d(
             data=self.value_2d,
             x=self.energy,
             y=self.time,
-            config=self.plot_config,
-            title=f'model "{self.name}"',
-            x_lim=x_lim,
-            y_lim=y_lim,
-            z_lim=z_lim,
-            save_img=save_img,
-            save_path=save_path,
+            config=config or self.plot_config,
+            **_call_kwargs,
         )
 
 
@@ -1641,6 +1656,8 @@ class Component:
         plot_every: int = 1,
         plot_max: int | None = None,
         save_img: int = 0,
+        config: PlotConfig | None = None,
+        plot_kwargs: dict | None = None,
         **kwargs,
     ) -> None:
         """
@@ -1666,6 +1683,12 @@ class Component:
             First plot_max traces are shown (spaced according to plot_every).
         save_img : int, default=0
             0: display, 1: save+display, -1: save only, -2: close (no display/save)
+        config : PlotConfig, optional
+            Override the inherited plot configuration for this call.
+            If None, falls back to the parent model's plot_config.
+        plot_kwargs : dict, optional
+            Per-call overrides for any PlotConfig field (e.g. ``colors``,
+            ``ticksize``). Applied on top of *config*.
         **kwargs : dict
             Additional arguments passed to component function.
             Background components require ``spectrum`` to be provided.
@@ -1684,8 +1707,7 @@ class Component:
             )
 
         # get x axis, label, and plot config
-        config = None
-        if self.parent_model is not None:
+        if config is None and self.parent_model is not None:
             config = self.parent_model.plot_config
 
         if self.package == fcts_energy:
@@ -1743,17 +1765,16 @@ class Component:
             x_dir = config.x_dir
 
         #
-        uplt.plot_1d(
-            data=plot_data,
-            config=config,
-            title=f"function: {self.fct_str} from {self.package_name}",
-            x=x_axis,
-            x_label=x_name,
-            x_dir=x_dir,
-            y_label="Amplitude",
-            legend=legend,
-            save_img=save_img,
-        )
+        _call_kwargs: dict = {
+            "title": f"function: {self.fct_str} from {self.package_name}",
+            "x_label": x_name,
+            "x_dir": x_dir,
+            "y_label": "Amplitude",
+            "legend": legend,
+            "save_img": save_img,
+        }
+        _call_kwargs.update(plot_kwargs or {})
+        uplt.plot_1d(data=plot_data, config=config, x=x_axis, **_call_kwargs)
 
 
 #
