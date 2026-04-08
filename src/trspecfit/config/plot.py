@@ -3,7 +3,7 @@ Configuration of trspecfit plotting functions
 """
 
 import copy as cp
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 # Plot configuration hierarchy:
 #
@@ -180,21 +180,24 @@ class PlotConfig:
             Configuration object with settings from project
         """
 
-        config_dict = {
-            "x_label": project.e_label,
-            "y_label": project.t_label,
-            "z_label": project.z_label,
-            "x_dir": project.x_dir,
-            "x_type": project.x_type,
-            "y_dir": project.y_dir,
-            "y_type": project.y_type,
-            "dpi_plot": project.dpi_plt,
-            "dpi_save": project.dpi_save,
-            "z_colormap": project.z_colormap,
-            "z_colorbar": project.z_colorbar,
-            "z_type": project.z_type,
-            "res_mult": project.res_mult,
+        project_aliases = {
+            "x_label": "e_label",
+            "y_label": "t_label",
+            "dpi_plot": "dpi_plt",
         }
+        limit_fields = {"x_lim", "y_lim", "z_lim"}
+
+        config_dict = {}
+        for field in fields(cls):
+            source_attr = project_aliases.get(field.name, field.name)
+            if not hasattr(project, source_attr):
+                continue
+
+            value = cp.deepcopy(getattr(project, source_attr))
+            if field.name in limit_fields and value is not None:
+                value = tuple(value)
+
+            config_dict[field.name] = value
 
         # Apply any overrides
         config_dict.update(overrides)
