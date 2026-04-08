@@ -1,3 +1,7 @@
+# General behavior
+
+Do not make any changes until you have 95% confidence in what you need to build. Ask me follow-up questions until you reach that confidence.
+
 # Code style
 
 - Add an empty line after each docstring.
@@ -63,6 +67,6 @@
   real support gaps and cases the design rules intentionally do not require us
   to support.
 - NumPy-style docstrings everywhere. User-facing API (`trspecfit.py`, `functions/`) gets
-  extensive docstrings (Parameters, Returns, Notes with physical context). Internal modules
-  (`mcp.py`, `config/`, `fitlib.py`) keep method docstrings minimal — focus detail on
-  module and class level.
+  extensive docstrings (Parameters, Returns, Notes with physical context). 
+  Internal modules (`mcp.py`, `config/`, `fitlib.py`) keep method docstrings minimal —
+  focus detail on module and class level.
