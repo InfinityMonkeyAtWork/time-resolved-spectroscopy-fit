@@ -57,7 +57,7 @@ import inspect
 import re
 import types
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import lmfit
 import numpy as np
@@ -273,6 +273,87 @@ class Model:
                 elif self.dim == 2:
                     self.create_value_2d()
                     self.plot_2d()
+
+    #
+    def visualize(
+        self,
+        *,
+        rendering: Literal["graphviz", "string"] = "graphviz",
+        collapse_profiles: bool = True,
+    ) -> str | None:
+        """Display the model's dependency graph.
+
+        Builds a ``GraphIR`` from this model and renders it as a DAG.
+
+        Parameters
+        ----------
+        rendering : {'graphviz', 'string'}, default='graphviz'
+            How to render the graph:
+
+            - ``'graphviz'``: Render inline SVG via the ``graphviz`` Python
+              package (install with ``pip install "trspecfit[lab]"`` or
+              ``pip install graphviz``; also requires the ``dot`` system
+              binary). Falls back to ``'string'`` with a warning if the
+              package is not installed.
+            - ``'string'``: Print the raw DOT source and return it.
+
+        collapse_profiles : bool, default=True
+            When True, per-sample profile nodes are collapsed into single
+            representative nodes showing the sample count, keeping profile
+            models readable.
+
+        Returns
+        -------
+        str or None
+            The DOT source string when ``rendering='string'``, otherwise
+            ``None`` (the graph is displayed inline).
+        """
+
+        from trspecfit.graph_ir import build_graph
+
+        graph = build_graph(self)
+        dot_source = graph.to_dot(collapse_profiles=collapse_profiles)
+
+        if rendering == "graphviz":
+            try:
+                import graphviz as gv
+            except ImportError:
+                import warnings
+
+                warnings.warn(
+                    "graphviz Python package not installed; falling back"
+                    " to DOT string output.\n"
+                    'Install with: pip install "trspecfit[lab]"'
+                    " or pip install graphviz",
+                    stacklevel=2,
+                )
+                print(dot_source)
+                return dot_source
+
+            try:
+                source = gv.Source(dot_source)
+                display(source)
+            except gv.ExecutableNotFound:
+                import warnings
+
+                warnings.warn(
+                    "Graphviz 'dot' executable not found on PATH;"
+                    " falling back to DOT string output.\n"
+                    "The Python graphviz package is installed, but the"
+                    " Graphviz system binary is missing.\n"
+                    "Install it with your package manager, e.g.:\n"
+                    "  Linux:   sudo apt-get install graphviz\n"
+                    "  macOS:   brew install graphviz\n"
+                    "  Windows: choco install graphviz",
+                    stacklevel=2,
+                )
+                print(dot_source)
+                return dot_source
+            return None
+
+        # rendering == "string"
+        print(dot_source)
+        return dot_source
 
     #
     def add_components(self, comps_list: list["Component"]) -> None:

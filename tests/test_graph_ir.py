@@ -1,6 +1,7 @@
 """Tests for graph_ir: build_graph and can_lower_2d."""
 
 import numpy as np
+import pytest
 
 from trspecfit import File, Project
 from trspecfit.graph_ir import (
@@ -798,6 +799,86 @@ class TestProfileNodes:
         x0_source = graph.nodes[x0_edge.source]
         assert x0_source.kind in (NodeKind.STATIC_PARAM, NodeKind.OPT_PARAM)
 
+    #
+    def test_original_component_removed_after_profile(self):
+        """Original COMPONENT_EVAL is removed when profile replaces it.
+
+        When _emit_profile_nodes creates per-sample evals and a
+        PROFILE_AVERAGE, the original component node becomes orphaned.
+        It should be removed from the graph to avoid confusing downstream
+        passes (scheduler, topological sort, future lowering).
+        """
+
+        _file, model = _make_profile_model(
+            ["single_gauss"], "Gauss_01_A", ["profile_pExpDecay"]
+        )
+        graph = build_graph(model)
+
+        # The original "Gauss_01" node should not exist
+        original = _node_by_name(graph, "Gauss_01")
+        assert original is None, (
+            "Original COMPONENT_EVAL 'Gauss_01' should be removed after"
+            " profile replacement"
+        )
+
+    #
+    def test_no_edges_reference_removed_nodes(self):
+        """All edge endpoints reference nodes that exist in the graph."""
+
+        _file, model = _make_profile_model(
+            ["single_gauss"], "Gauss_01_A", ["profile_pExpDecay"]
+        )
+        graph = build_graph(model)
+
+        node_ids = {n.id for n in graph.nodes}
+        for edge in graph.edges:
+            assert edge.source in node_ids, (
+                f"Edge source {edge.source} not in graph nodes"
+            )
+            assert edge.target in node_ids, (
+                f"Edge target {edge.target} not in graph nodes"
+            )
+
+    #
+    def test_all_component_evals_reachable_from_output(self):
+        """Every COMPONENT_EVAL feeds into the output (no disconnected nodes).
+
+        Walk backwards from SUM/PROFILE_AVERAGE nodes; every
+        COMPONENT_EVAL should be reachable.
+        """
+
+        _file, model = _make_profile_model(
+            ["single_gauss"], "Gauss_01_A", ["profile_pExpDecay"]
+        )
+        graph = build_graph(model)
+
+        # Build reverse adjacency: target -> set of sources
+        children: dict[int, set[int]] = {}
+        for edge in graph.edges:
+            children.setdefault(edge.target, set()).add(edge.source)
+
+        # Find all SUM and PROFILE_AVERAGE nodes (output-facing)
+        output_kinds = {NodeKind.SUM, NodeKind.PROFILE_AVERAGE}
+        roots = [n.id for n in graph.nodes if n.kind in output_kinds]
+
+        # BFS backwards from roots
+        reachable: set[int] = set()
+        queue = list(roots)
+        while queue:
+            nid = queue.pop()
+            if nid in reachable:
+                continue
+            reachable.add(nid)
+            queue.extend(children.get(nid, []))
+
+        # Every COMPONENT_EVAL must be reachable
+        comp_evals = _nodes_by_kind(graph, NodeKind.COMPONENT_EVAL)
+        for ce in comp_evals:
+            assert ce.id in reachable, (
+                f"COMPONENT_EVAL '{ce.name}' (id={ce.id}) is not reachable"
+                " from any output node"
+            )
+
 
 # Subcycle node tests
 #
@@ -1343,3 +1424,186 @@ class TestDynamicsConvolution:
         A_edge = [e for e in param_edges if e.position == 0][0]
         source = graph.nodes[A_edge.source]
         assert source.kind == NodeKind.CONVOLUTION
+
+
+#
+#
+class TestToDot:
+    """Tests for GraphIR.to_dot() Graphviz rendering."""
+
+    #
+    def test_simple_energy_dot(self):
+        """to_dot returns valid DOT with all nodes and edges."""
+
+        _file, model = _make_energy_model(["simple_energy"])
+        graph = build_graph(model)
+        dot = graph.to_dot()
+
+        assert dot.startswith("digraph ModelGraph {")
+        assert dot.endswith("}")
+        # Every node appears
+        for node in graph.nodes:
+            assert f"n{node.id}" in dot
+            assert node.name in dot
+        # Every edge appears
+        for edge in graph.edges:
+            assert f"n{edge.source} -> n{edge.target}" in dot
+
+    #
+    def test_2d_model_dot(self):
+        """to_dot works for a 2D model with dynamics nodes."""
+
+        _file, model = _make_2d_model(
+            ["simple_energy"],
+            [("GLP_01_A", "models/file_time.yaml", ["MonoExpPos"])],
+        )
+        graph = build_graph(model)
+        dot = graph.to_dot()
+
+        assert "DYNAMICS_TRACE" in dot
+        assert "PARAM_PLUS_TRACE" in dot
+
+    #
+    def test_expression_dot(self):
+        """to_dot renders expression nodes with expr string."""
+
+        _file, model = _make_energy_model(["energy_expression"])
+        graph = build_graph(model)
+        dot = graph.to_dot()
+
+        assert "EXPRESSION" in dot
+        assert "3/4*GLP_01_A" in dot
+        assert "EXPR_REF" in dot
+
+
+#
+#
+class TestModelVisualize:
+    """Tests for Model.visualize() convenience method."""
+
+    #
+    def test_string_rendering(self):
+        """rendering='string' returns DOT source."""
+
+        _file, model = _make_energy_model(["simple_energy"])
+        dot = model.visualize(rendering="string")
+
+        assert dot is not None
+        assert dot.startswith("digraph ModelGraph {")
+
+    #
+    def test_graphviz_fallback(self, monkeypatch):
+        """Falls back to string output when graphviz is not installed."""
+
+        import builtins
+
+        real_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "graphviz":
+                raise ImportError("mocked")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", mock_import)
+
+        _file, model = _make_energy_model(["simple_energy"])
+        with pytest.warns(UserWarning, match="graphviz Python package not installed"):
+            dot = model.visualize(rendering="graphviz")
+
+        # Falls back to string output
+        assert dot is not None
+        assert dot.startswith("digraph ModelGraph {")
+
+    #
+    def test_2d_model_visualize(self):
+        """visualize works on 2D models with dynamics."""
+
+        _file, model = _make_2d_model(
+            ["simple_energy"],
+            [("GLP_01_A", "models/file_time.yaml", ["MonoExpPos"])],
+        )
+        dot = model.visualize(rendering="string")
+
+        assert dot is not None
+        assert "DYNAMICS_TRACE" in dot
+
+
+#
+#
+class TestProfileCollapsing:
+    """Tests for profile node collapsing in to_dot."""
+
+    #
+    def test_collapsed_by_default(self):
+        """Profile samples are collapsed into single nodes by default."""
+
+        _file, model = _make_profile_model(
+            ["single_gauss"], "Gauss_01_A", ["profile_pExpDecay"]
+        )
+        graph = build_graph(model)
+        dot = graph.to_dot()
+
+        # Should show count, not individual sample nodes
+        assert "\u00d75" in dot  # ×5 (aux_axis has 5 points)
+        assert "PROFILE_SAMPLE" in dot
+        # Individual sample names should NOT appear
+        assert "profile_sample_1" not in dot
+        assert "sample_1" not in dot
+
+    #
+    def test_collapse_disabled(self):
+        """collapse_profiles=False shows all per-sample nodes."""
+
+        _file, model = _make_profile_model(
+            ["single_gauss"], "Gauss_01_A", ["profile_pExpDecay"]
+        )
+        graph = build_graph(model)
+        dot = graph.to_dot(collapse_profiles=False)
+
+        # Individual sample names should appear
+        assert "profile_sample_0" in dot
+        assert "profile_sample_1" in dot
+        assert "sample_0" in dot
+        assert "sample_1" in dot
+
+    #
+    def test_collapsed_fewer_nodes(self):
+        """Collapsing reduces node count significantly."""
+
+        _file, model = _make_profile_model(
+            ["single_gauss"], "Gauss_01_A", ["profile_pExpDecay"]
+        )
+        graph = build_graph(model)
+        dot_collapsed = graph.to_dot(collapse_profiles=True)
+        dot_full = graph.to_dot(collapse_profiles=False)
+
+        # Collapsed should have far fewer node declarations
+        collapsed_nodes = dot_collapsed.count("[shape=")
+        full_nodes = dot_full.count("[shape=")
+        assert collapsed_nodes < full_nodes
+
+    #
+    def test_non_profile_model_unaffected(self):
+        """Collapsing has no effect on models without profiles."""
+
+        _file, model = _make_energy_model(["simple_energy"])
+        graph = build_graph(model)
+        dot_collapsed = graph.to_dot(collapse_profiles=True)
+        dot_uncollapsed = graph.to_dot(collapse_profiles=False)
+
+        assert dot_collapsed == dot_uncollapsed
+
+    #
+    def test_visualize_passes_collapse(self):
+        """Model.visualize passes collapse_profiles through."""
+
+        _file, model = _make_profile_model(
+            ["single_gauss"], "Gauss_01_A", ["profile_pExpDecay"]
+        )
+        dot_collapsed = model.visualize(rendering="string", collapse_profiles=True)
+        dot_full = model.visualize(rendering="string", collapse_profiles=False)
+
+        assert dot_collapsed is not None
+        assert dot_full is not None
+        assert "\u00d75" in dot_collapsed
+        assert "profile_sample_1" in dot_full

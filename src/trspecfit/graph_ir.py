@@ -173,6 +173,149 @@ class GraphIR:
     time: np.ndarray | None = None
     node_by_name: dict[str, int] = field(default_factory=dict)
 
+    #
+    def to_dot(self, *, collapse_profiles: bool = True) -> str:
+        """Return a Graphviz DOT string for this graph.
+
+        Node shapes and colours encode ``NodeKind``; edge labels encode
+        ``EdgeKind``.  The output can be rendered with ``dot -Tpng`` or
+        any Graphviz viewer.
+
+        Parameters
+        ----------
+        collapse_profiles : bool, default=True
+            When True, per-sample profile nodes (``PROFILE_SAMPLE``,
+            per-sample ``COMPONENT_EVAL``, per-sample ``EXPRESSION``)
+            are collapsed into single representative nodes showing the
+            sample count.  This keeps profile models readable.
+        """
+
+        _NODE_STYLE: dict[NodeKind, dict[str, str]] = {
+            NodeKind.STATIC_PARAM: dict(
+                shape="ellipse", style="filled", fillcolor="#d3d3d3"
+            ),
+            NodeKind.OPT_PARAM: dict(
+                shape="ellipse", style="filled", fillcolor="#87ceeb"
+            ),
+            NodeKind.DYNAMICS_TRACE: dict(
+                shape="box", style="filled", fillcolor="#ffa07a"
+            ),
+            NodeKind.PARAM_PLUS_TRACE: dict(
+                shape="box", style="filled", fillcolor="#ffcc80"
+            ),
+            NodeKind.EXPRESSION: dict(
+                shape="hexagon", style="filled", fillcolor="#dda0dd"
+            ),
+            NodeKind.COMPONENT_EVAL: dict(
+                shape="box", style="filled,bold", fillcolor="#90ee90"
+            ),
+            NodeKind.SUM: dict(shape="diamond", style="filled", fillcolor="#fffacd"),
+            NodeKind.SPECTRUM_FED_OP: dict(
+                shape="box", style="filled,bold", fillcolor="#f08080"
+            ),
+            NodeKind.CONVOLUTION: dict(
+                shape="octagon", style="filled", fillcolor="#e0e0ff"
+            ),
+            NodeKind.PROFILE_SAMPLE: dict(
+                shape="parallelogram", style="filled", fillcolor="#c8e6c9"
+            ),
+            NodeKind.PROFILE_AVERAGE: dict(
+                shape="parallelogram", style="filled", fillcolor="#a5d6a7"
+            ),
+            NodeKind.SUBCYCLE_MASK: dict(
+                shape="trapezium", style="filled", fillcolor="#ffe0b2"
+            ),
+            NodeKind.SUBCYCLE_REMAP: dict(
+                shape="trapezium", style="filled", fillcolor="#ffcc80"
+            ),
+        }
+
+        _EDGE_STYLE: dict[EdgeKind, dict[str, str]] = {
+            EdgeKind.PARAM_INPUT: dict(color="#333333"),
+            EdgeKind.TRACE_INPUT: dict(color="#ff6600", style="dashed"),
+            EdgeKind.BASE_INPUT: dict(color="#0066cc", style="dashed"),
+            EdgeKind.ADDEND: dict(color="#009933", style="bold"),
+            EdgeKind.SPECTRUM_INPUT: dict(color="#cc0000", style="bold"),
+            EdgeKind.EXPR_REF: dict(color="#9933cc", style="dotted"),
+        }
+
+        # --- Profile collapsing ---
+        # Maps each per-sample node id to the representative node id for
+        # its group.  Nodes not in this dict are emitted as-is.
+        collapsed: dict[int, int] = {}  # sample_nid -> representative_nid
+        # Groups: representative_nid -> (base_name, kind, count, first_node)
+        _profile_groups: dict[int, tuple[str, NodeKind, int, GraphNode]] = {}
+
+        if collapse_profiles:
+            _sample_re = re.compile(
+                r"^(.+?)_(profile_sample|profile_expr|sample)_(\d+)$"
+            )
+            # Group nodes by (base_name, kind)
+            groups: dict[tuple[str, NodeKind], list[GraphNode]] = {}
+            for node in self.nodes:
+                m = _sample_re.match(node.name)
+                if m is not None:
+                    base = m.group(1)
+                    groups.setdefault((base, node.kind), []).append(node)
+
+            for (base, kind), members in groups.items():
+                if len(members) < 2:
+                    continue
+                rep = members[0]
+                for member in members:
+                    collapsed[member.id] = rep.id
+                _profile_groups[rep.id] = (base, kind, len(members), rep)
+
+        hidden_nodes = {nid for nid in collapsed if collapsed[nid] != nid}
+
+        lines: list[str] = [
+            "digraph ModelGraph {",
+            "  rankdir=BT;",
+            '  node [fontname="Helvetica", fontsize=10];',
+            '  edge [fontname="Helvetica", fontsize=8];',
+        ]
+
+        for node in self.nodes:
+            if node.id in hidden_nodes:
+                continue
+            attrs = dict(_NODE_STYLE.get(node.kind, {}))
+
+            if node.id in _profile_groups:
+                base, kind, count, _ = _profile_groups[node.id]
+                label_parts = [f"{base} (\u00d7{count})", kind.name]
+            else:
+                label_parts = [node.name, node.kind.name]
+                if node.function_name:
+                    label_parts.append(f"fn={node.function_name}")
+                if node.value is not None:
+                    label_parts.append(f"val={node.value:g}")
+                if node.expr_string:
+                    label_parts.append(f"expr={node.expr_string}")
+
+            attrs["label"] = "\\n".join(label_parts)
+            attr_str = ", ".join(f'{k}="{v}"' for k, v in attrs.items())
+            lines.append(f"  n{node.id} [{attr_str}];")
+
+        seen_edges: set[tuple[int, int, EdgeKind, int | None]] = set()
+        for edge in self.edges:
+            src = collapsed.get(edge.source, edge.source)
+            tgt = collapsed.get(edge.target, edge.target)
+            key = (src, tgt, edge.kind, edge.position)
+            if key in seen_edges:
+                continue
+            seen_edges.add(key)
+
+            attrs = dict(_EDGE_STYLE.get(edge.kind, {}))
+            label = edge.kind.name
+            if edge.position is not None:
+                label += f"[{edge.position}]"
+            attrs["label"] = label
+            attr_str = ", ".join(f'{k}="{v}"' for k, v in attrs.items())
+            lines.append(f"  n{src} -> n{tgt} [{attr_str}];")
+
+        lines.append("}")
+        return "\n".join(lines)
+
 
 #
 #
@@ -344,6 +487,7 @@ class _GraphBuilder:
         self.node_by_name: dict[str, int] = {}
         self._next_id: int = 0
         self._source_order: int = 0
+        self._removed: set[int] = set()
 
     #
     def add_node(self, kind: NodeKind, name: str, **kwargs) -> int:
@@ -365,6 +509,37 @@ class _GraphBuilder:
         self.edges.append(
             GraphEdge(source=source, target=target, kind=kind, position=position)
         )
+
+    #
+    def mark_removed(self, nid: int) -> None:
+        """Mark a node for removal during finalization."""
+
+        self._removed.add(nid)
+
+    #
+    def finalize(self) -> tuple[list[GraphNode], list[GraphEdge], dict[str, int]]:
+        """Remove marked nodes/edges and re-index so node id == list position."""
+
+        if not self._removed:
+            return self.nodes, self.edges, dict(self.node_by_name)
+
+        kept_nodes = [n for n in self.nodes if n.id not in self._removed]
+        kept_edges = [
+            e
+            for e in self.edges
+            if e.source not in self._removed and e.target not in self._removed
+        ]
+
+        # Re-index: old id -> new dense id
+        id_map = {old.id: new_id for new_id, old in enumerate(kept_nodes)}
+        for node in kept_nodes:
+            node.id = id_map[node.id]
+        for edge in kept_edges:
+            edge.source = id_map[edge.source]
+            edge.target = id_map[edge.target]
+
+        node_by_name = {n.name: n.id for n in kept_nodes}
+        return kept_nodes, kept_edges, node_by_name
 
 
 #
@@ -467,6 +642,7 @@ def build_graph(model: Model) -> GraphIR:
     for i, (comp, nid, is_shirley) in enumerate(comp_nodes):
         new_nid = _emit_profile_nodes(b, comp, nid, resolved_param, profile_samples)
         if new_nid != nid:
+            b.mark_removed(nid)
             comp_nodes[i] = (comp, new_nid, is_shirley)
     for comp in model.components:
         if comp.comp_type == "none":
@@ -500,13 +676,14 @@ def build_graph(model: Model) -> GraphIR:
     # ------------------------------------------------------------------ #
     _emit_combination_nodes(b, comp_nodes)
 
+    nodes, edges, node_by_name = b.finalize()
     return GraphIR(
-        nodes=b.nodes,
-        edges=b.edges,
+        nodes=nodes,
+        edges=edges,
         domain=domain,
         energy=model.energy,
         time=model.time,
-        node_by_name=dict(b.node_by_name),
+        node_by_name=node_by_name,
     )
 
 

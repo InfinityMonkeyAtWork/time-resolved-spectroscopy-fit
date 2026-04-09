@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trspecfit"
-version = "0.7.6"
+version = "0.7.7"
 authors = [
     {name = "Johannes Mahl", email = "johannes.a.mahl@gmail.com"},
 ]
@@ -62,9 +62,15 @@ dev = [
   "twine",
 ]
 
+# Optional notebook/visualization support
+# Also requires the Graphviz "dot" executable on your PATH.
+# Linux example: sudo apt-get install graphviz
+# macOS example: brew install graphviz
+# Windows example: install Graphviz and add its bin directory to PATH
 lab = [
   "ipykernel>=6",
   "jupyterlab>=4",
+  "graphviz",
 ]
 
 [project.urls]
@@ -108,8 +114,8 @@ ignore = ["C901"]
 [tool.deptry]
 known_first_party = ["trspecfit"]
 ignore_notebooks = true
-pep621_dev_dependency_groups = ["dev", "lab"]
+pep621_dev_dependency_groups = ["dev"]
 # confidence interval estimation needs to work with standard install
 # keep these as runtime deps even though used indirectly via lmfit
 [tool.deptry.per_rule_ignores]
-DEP002 = ["numdifftools", "emcee", "tqdm"]
+DEP002 = ["numdifftools", "emcee", "tqdm", "ipykernel", "jupyterlab"]
