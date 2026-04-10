@@ -18,9 +18,10 @@ Three-layer design:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -105,6 +106,46 @@ class OpKind(IntEnum):
     OFFSET = 10
     LINBACK = 11
     SHIRLEY = 12
+
+
+#
+#
+class DynFuncKind(IntEnum):
+    """Dynamics function op codes for the 2D backend.
+
+    Backend-specific lowered enum.  ``schedule_2d`` maps
+    ``GraphNode.function_name`` (for ``DYNAMICS_TRACE`` nodes) to
+    ``DynFuncKind`` during compilation.
+    """
+
+    EXPFUN = 0
+    SINFUN = 1
+    LINFUN = 2
+    SINDIVX = 3
+    ERFFUN = 4
+    SQRTFUN = 5
+
+
+_FUNCTION_NAME_TO_DYN_FUNC: dict[str, DynFuncKind] = {
+    "expFun": DynFuncKind.EXPFUN,
+    "sinFun": DynFuncKind.SINFUN,
+    "linFun": DynFuncKind.LINFUN,
+    "sinDivX": DynFuncKind.SINDIVX,
+    "erfFun": DynFuncKind.ERFFUN,
+    "sqrtFun": DynFuncKind.SQRTFUN,
+}
+
+_FUNCTION_NAME_TO_OP: dict[str, OpKind] = {
+    "Gauss": OpKind.GAUSS,
+    "GaussAsym": OpKind.GAUSS_ASYM,
+    "Lorentz": OpKind.LORENTZ,
+    "GLS": OpKind.GLS,
+    "GLP": OpKind.GLP,
+    "DS": OpKind.DS,
+    "Offset": OpKind.OFFSET,
+    "LinBack": OpKind.LINBACK,
+    "Shirley": OpKind.SHIRLEY,
+}
 
 
 #
@@ -754,10 +795,14 @@ def _emit_dynamics_subgraph(
         comp_nids: list[int] = []
         for dyn_par in dyn_comp.pars:
             if _is_expression_par(dyn_par):
+                # Store the canonical (lmfit-prefixed) expression, not
+                # the raw YAML text, so expr_string matches the EXPR_REF
+                # edges wired below.
+                canonical_expr = _par_expression_string(dyn_par) or dyn_par.info[0]
                 dnid = b.add_node(
                     NodeKind.EXPRESSION,
                     dyn_par.name,
-                    expr_string=dyn_par.info[0],
+                    expr_string=canonical_expr,
                     value=_par_initial_value(dyn_par),
                 )
                 dyn_expr_pars.append((dyn_par, dnid))
@@ -1278,6 +1323,11 @@ def can_lower_2d(graph: GraphIR) -> bool:
             if node.function_name not in _LOWERABLE_2D_FUNCTIONS:
                 return False
 
+        # Check dynamics functions are supported
+        if node.kind == NodeKind.DYNAMICS_TRACE:
+            if node.function_name not in _FUNCTION_NAME_TO_DYN_FUNC:
+                return False
+
         # Check expressions are arithmetic-only (defer full AST check
         # to the expression compiler; here just reject obvious non-starters)
         if node.kind == NodeKind.EXPRESSION and node.expr_string is not None:
@@ -1324,3 +1374,618 @@ def _is_arithmetic_expression(expr_string: str) -> bool:
             continue
         return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# Symbolic expression compiler (Phase 2.1)
+# ---------------------------------------------------------------------------
+
+
+#
+#
+@dataclass(frozen=True)
+class SymbolicRPN:
+    """Symbolic RPN program with parameter references by name.
+
+    This is the *frontend* output of the expression compiler.
+    ``schedule_2d`` binds names to trace-matrix row indices and
+    produces the final ``ExprProgram``.
+
+    Each instruction is a ``(ExprNodeKind, operand)`` pair:
+
+    - ``CONST``: operand is the float value itself
+    - ``PARAM_REF``: operand is the parameter name (str)
+    - Operators: operand is ``None``
+    """
+
+    instructions: list[tuple[ExprNodeKind, float | str | None]]
+    referenced_names: list[str]  # unique param names in order of first appearance
+
+
+#
+def compile_expr_symbolic(expr_string: str) -> SymbolicRPN:
+    """Parse an arithmetic expression string into symbolic RPN.
+
+    Uses the Python ``ast`` module to walk the expression tree and
+    emit a postfix instruction sequence.  Parameter references are
+    kept as name strings; the scheduler resolves them to row indices.
+
+    Parameters
+    ----------
+    expr_string : str
+        Arithmetic expression (e.g. ``"3/4*GLP_01_A"``).
+
+    Returns
+    -------
+    SymbolicRPN
+        The symbolic RPN program.
+
+    Raises
+    ------
+    ValueError
+        If the expression contains unsupported AST nodes.
+    """
+
+    import ast
+
+    tree = ast.parse(expr_string, mode="eval")
+
+    instructions: list[tuple[ExprNodeKind, float | str | None]] = []
+    names_seen: dict[str, None] = {}  # ordered set via dict
+
+    _OP_MAP: dict[type, ExprNodeKind] = {
+        ast.Add: ExprNodeKind.ADD,
+        ast.Sub: ExprNodeKind.SUB,
+        ast.Mult: ExprNodeKind.MUL,
+        ast.Div: ExprNodeKind.DIV,
+        ast.Pow: ExprNodeKind.POW,
+    }
+
+    #
+    def _walk(node: ast.AST) -> None:
+        if isinstance(node, ast.Expression):
+            _walk(node.body)
+
+        elif isinstance(node, ast.Constant):
+            if not isinstance(node.value, (int, float)):
+                raise ValueError(
+                    f"Unsupported constant {node.value!r}"
+                    f" in expression: {expr_string!r}"
+                )
+            instructions.append((ExprNodeKind.CONST, float(node.value)))
+
+        elif isinstance(node, ast.Name):
+            instructions.append((ExprNodeKind.PARAM_REF, node.id))
+            names_seen.setdefault(node.id, None)
+
+        elif isinstance(node, ast.BinOp):
+            _walk(node.left)
+            _walk(node.right)
+            op_kind = _OP_MAP.get(type(node.op))
+            if op_kind is None:
+                raise ValueError(
+                    f"Unsupported binary op {type(node.op).__name__!r}"
+                    f" in expression: {expr_string!r}"
+                )
+            instructions.append((op_kind, None))
+
+        elif isinstance(node, ast.UnaryOp):
+            if isinstance(node.op, ast.USub):
+                _walk(node.operand)
+                instructions.append((ExprNodeKind.NEG, None))
+            elif isinstance(node.op, ast.UAdd):
+                _walk(node.operand)
+                # UAdd is a no-op
+            else:
+                raise ValueError(
+                    f"Unsupported unary op {type(node.op).__name__!r}"
+                    f" in expression: {expr_string!r}"
+                )
+
+        else:
+            raise ValueError(
+                f"Unsupported AST node {type(node).__name__!r}"
+                f" in expression: {expr_string!r}"
+            )
+
+    _walk(tree)
+    return SymbolicRPN(
+        instructions=instructions,
+        referenced_names=list(names_seen),
+    )
+
+
+#
+def _bind_expr_to_rows(
+    symbolic: SymbolicRPN,
+    name_to_row: dict[str, int],
+) -> ExprProgram:
+    """Convert a symbolic RPN program to a row-bound ExprProgram.
+
+    Parameters
+    ----------
+    symbolic : SymbolicRPN
+        The symbolic RPN from ``compile_expr_symbolic``.
+    name_to_row : dict[str, int]
+        Maps parameter names to trace-matrix row indices.
+
+    Returns
+    -------
+    ExprProgram
+        Row-bound RPN program ready for the evaluator.
+    """
+
+    flat: list[int] = []
+    for kind, operand in symbolic.instructions:
+        flat.append(int(kind))
+        if kind == ExprNodeKind.CONST:
+            assert isinstance(operand, (int, float))
+            flat.append(int(np.float64(operand).view(np.int64)))
+        elif kind == ExprNodeKind.PARAM_REF:
+            assert isinstance(operand, str)
+            flat.append(name_to_row[operand])
+        else:
+            flat.append(0)
+    return ExprProgram(instructions=np.array(flat, dtype=np.int64))
+
+
+# ---------------------------------------------------------------------------
+# schedule_2d (Phase 2.2)
+# ---------------------------------------------------------------------------
+
+
+#
+def _topological_sort(graph: GraphIR) -> list[int]:
+    """Topological sort of graph node IDs.
+
+    Tie-breaker: when two nodes have no dependency ordering between
+    them, sort by ``node.source_order`` (lower first).  This makes the
+    schedule deterministic.
+
+    Does NOT assume ``node.id == list index``.
+    """
+
+    import heapq
+
+    id_to_node: dict[int, GraphNode] = {n.id: n for n in graph.nodes}
+    in_degree: dict[int, int] = {n.id: 0 for n in graph.nodes}
+    children: dict[int, list[int]] = {n.id: [] for n in graph.nodes}
+    for edge in graph.edges:
+        children[edge.source].append(edge.target)
+        in_degree[edge.target] += 1
+
+    # Priority queue: (source_order, node_id) — lower source_order first
+    heap: list[tuple[int, int]] = []
+    for node in graph.nodes:
+        if in_degree[node.id] == 0:
+            heapq.heappush(heap, (node.source_order, node.id))
+
+    result: list[int] = []
+    while heap:
+        _order, nid = heapq.heappop(heap)
+        result.append(nid)
+        for child in children[nid]:
+            in_degree[child] -= 1
+            if in_degree[child] == 0:
+                heapq.heappush(
+                    heap,
+                    (id_to_node[child].source_order, child),
+                )
+
+    n = len(graph.nodes)
+    if len(result) != n:
+        raise ValueError(f"Graph has a cycle: sorted {len(result)} of {n} nodes")
+    return result
+
+
+#
+def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
+    """Compile a GraphIR into a flat 2D execution schedule.
+
+    Parameters
+    ----------
+    graph : GraphIR
+        Must pass ``can_lower_2d(graph)``.
+
+    Returns
+    -------
+    ScheduledPlan2D
+        Packed-array execution schedule for ``evaluate_2d``.
+
+    Raises
+    ------
+    ValueError
+        If the graph cannot be lowered (domain, unsupported nodes, etc.).
+    """
+
+    if not can_lower_2d(graph):
+        raise ValueError("Graph cannot be lowered to 2D backend")
+
+    assert graph.energy is not None
+    assert graph.time is not None
+    n_time = len(graph.time)
+
+    # ------------------------------------------------------------------ #
+    # 1. Topological sort                                                  #
+    # ------------------------------------------------------------------ #
+    topo_order = _topological_sort(graph)
+
+    # Build id -> node lookup.  Do NOT assume node.id == list index;
+    # external graph producers may use arbitrary ids.
+    id_to_node: dict[int, GraphNode] = {n.id: n for n in graph.nodes}
+
+    # ------------------------------------------------------------------ #
+    # 2. Assign trace-matrix rows                                          #
+    # ------------------------------------------------------------------ #
+    # Nodes that occupy a row in the trace matrix: all parameter-like
+    # nodes (STATIC_PARAM, OPT_PARAM, PARAM_PLUS_TRACE, EXPRESSION).
+    _ROW_KINDS = frozenset(
+        {
+            NodeKind.STATIC_PARAM,
+            NodeKind.OPT_PARAM,
+            NodeKind.PARAM_PLUS_TRACE,
+            NodeKind.EXPRESSION,
+        }
+    )
+
+    # Collect nodes that need rows, bucketed for ordering:
+    #   opt params first, then static, then computed (PPT + EXPR)
+    opt_nodes: list[GraphNode] = []
+    static_nodes: list[GraphNode] = []
+    computed_nodes: list[GraphNode] = []
+
+    for nid in topo_order:
+        node = id_to_node[nid]
+        if node.kind not in _ROW_KINDS:
+            continue
+        if node.kind == NodeKind.OPT_PARAM and node.vary:
+            opt_nodes.append(node)
+        elif node.kind in (NodeKind.STATIC_PARAM, NodeKind.OPT_PARAM):
+            # OPT_PARAM with vary=False is treated like static
+            static_nodes.append(node)
+        else:
+            computed_nodes.append(node)
+
+    all_row_nodes = opt_nodes + static_nodes + computed_nodes
+    n_params = len(all_row_nodes)
+    name_to_row: dict[str, int] = {}
+    for row, node in enumerate(all_row_nodes):
+        name_to_row[node.name] = row
+
+    # opt_indices and opt_param_names
+    n_opt = len(opt_nodes)
+    opt_indices = np.arange(n_opt, dtype=np.intp)
+    opt_param_names = [n.name for n in opt_nodes]
+
+    # ------------------------------------------------------------------ #
+    # 3. Compile dynamics subgraphs                                        #
+    # ------------------------------------------------------------------ #
+    dyn_trace_nodes = [
+        id_to_node[nid]
+        for nid in topo_order
+        if id_to_node[nid].kind == NodeKind.DYNAMICS_TRACE
+    ]
+    n_dynamics = len(dyn_trace_nodes)
+
+    # Pre-compute max_dyn_params for rectangular array
+    dyn_param_counts: list[int] = []
+    dyn_param_row_lists: list[list[int]] = []
+    dyn_func_ids: list[int] = []
+    dyn_target_rows: list[int] = []
+    dyn_base_rows: list[int] = []
+
+    for dyn_node in dyn_trace_nodes:
+        # Function ID
+        assert dyn_node.function_name is not None
+        func_kind = _FUNCTION_NAME_TO_DYN_FUNC.get(dyn_node.function_name)
+        if func_kind is None:
+            raise ValueError(f"Unknown dynamics function: {dyn_node.function_name!r}")
+        dyn_func_ids.append(int(func_kind))
+
+        # Param rows (from PARAM_INPUT edges, ordered by position)
+        param_edges = sorted(
+            (
+                e
+                for e in graph.edges
+                if e.target == dyn_node.id and e.kind == EdgeKind.PARAM_INPUT
+            ),
+            key=lambda e: e.position or 0,
+        )
+        param_rows = [name_to_row[id_to_node[e.source].name] for e in param_edges]
+        dyn_param_row_lists.append(param_rows)
+        dyn_param_counts.append(len(param_rows))
+
+        # Target row: the PARAM_PLUS_TRACE node that this trace feeds into
+        ppt_edges = [
+            e
+            for e in graph.edges
+            if e.source == dyn_node.id and e.kind == EdgeKind.TRACE_INPUT
+        ]
+        assert len(ppt_edges) == 1, (
+            f"DYNAMICS_TRACE '{dyn_node.name}' must feed exactly one"
+            f" PARAM_PLUS_TRACE, found {len(ppt_edges)}"
+        )
+        ppt_node = id_to_node[ppt_edges[0].target]
+        dyn_target_rows.append(name_to_row[ppt_node.name])
+
+        # Base row: the BASE_INPUT to the PARAM_PLUS_TRACE
+        base_edges = [
+            e
+            for e in graph.edges
+            if e.target == ppt_node.id and e.kind == EdgeKind.BASE_INPUT
+        ]
+        assert len(base_edges) == 1
+        base_node = id_to_node[base_edges[0].source]
+        dyn_base_rows.append(name_to_row[base_node.name])
+
+    # Pack into arrays
+    max_dyn_params = max(dyn_param_counts) if dyn_param_counts else 0
+    dynamics_param_rows = np.full((n_dynamics, max_dyn_params), -1, dtype=np.intp)
+    for i, rows in enumerate(dyn_param_row_lists):
+        dynamics_param_rows[i, : len(rows)] = rows
+
+    dynamics_func_id = np.array(dyn_func_ids, dtype=np.intp)
+    dynamics_n_params = np.array(dyn_param_counts, dtype=np.intp)
+    dynamics_target_row = np.array(dyn_target_rows, dtype=np.intp)
+    dynamics_base_row = np.array(dyn_base_rows, dtype=np.intp)
+
+    # ------------------------------------------------------------------ #
+    # 4. Compile expressions (topological order)                           #
+    # ------------------------------------------------------------------ #
+    expr_nodes_topo = [
+        id_to_node[nid]
+        for nid in topo_order
+        if id_to_node[nid].kind == NodeKind.EXPRESSION
+    ]
+    n_expressions = len(expr_nodes_topo)
+
+    # Build per-expression name→row maps from EXPR_REF edges.
+    # The graph's EXPR_REF edges are the single source of truth for
+    # which node each name in the expression resolves to.  We walk
+    # those edges to build a per-node override map, then compile the
+    # symbolic RPN (for operator structure) and bind names to rows
+    # using the edge-derived map.
+    #
+    # Index: expr_node.id -> {identifier_in_expr_string -> row}
+    expr_ref_maps: dict[int, dict[str, int]] = {}
+    for expr_node in expr_nodes_topo:
+        ref_map: dict[str, int] = {}
+        for edge in graph.edges:
+            if edge.target != expr_node.id or edge.kind != EdgeKind.EXPR_REF:
+                continue
+            src_node = id_to_node[edge.source]
+            src_row = name_to_row[src_node.name]
+            # The expr_string references names that appear as identifiers.
+            # The EXPR_REF source node's name is the canonical form (may
+            # include "_resolved" suffix or prefixed dynamics names).
+            # Walk the expression's identifier tokens to find which one
+            # this edge satisfies.
+            assert expr_node.expr_string is not None
+            for token in _extract_expression_references(expr_node.expr_string):
+                if token == src_node.name:
+                    ref_map[token] = src_row
+                    break
+            else:
+                # The identifier in the expression doesn't match the
+                # source node name literally.  This shouldn't happen if
+                # build_graph stored the canonical expr_string, but
+                # fall back: try matching any identifier that names a
+                # parameter whose resolved row IS this source row.
+                for token in _extract_expression_references(expr_node.expr_string):
+                    if token in name_to_row and name_to_row[token] == src_row:
+                        ref_map[token] = src_row
+                        break
+                    # Also try: source is a resolved node, token is the
+                    # base param name
+                    if token not in ref_map and src_node.name.endswith("_resolved"):
+                        base_name = src_node.name.removesuffix("_resolved")
+                        if token == base_name:
+                            ref_map[token] = src_row
+                            break
+        expr_ref_maps[expr_node.id] = ref_map
+
+    # Compile and bind expressions
+    expr_programs: list[ExprProgram] = []
+    expr_target_rows_list: list[int] = []
+    for expr_node in expr_nodes_topo:
+        assert expr_node.expr_string is not None
+        symbolic = compile_expr_symbolic(expr_node.expr_string)
+
+        # Build the binding map: start with the base name_to_row, then
+        # overlay the edge-derived overrides for this expression.
+        binding = dict(name_to_row)
+        binding.update(expr_ref_maps.get(expr_node.id, {}))
+
+        program = _bind_expr_to_rows(symbolic, binding)
+        expr_programs.append(program)
+        expr_target_rows_list.append(name_to_row[expr_node.name])
+
+    expr_target_rows = np.array(expr_target_rows_list, dtype=np.intp)
+
+    # ------------------------------------------------------------------ #
+    # 5. Schedule component ops                                            #
+    # ------------------------------------------------------------------ #
+    # Identify peak_sum contributors: nodes with ADDEND edges into the
+    # "peak_sum" SUM node (if it exists).
+    peak_sum_sources: set[int] = set()
+    peak_sum_nid = graph.node_by_name.get("peak_sum")
+    if peak_sum_nid is not None:
+        for e in graph.edges:
+            if e.target == peak_sum_nid and e.kind == EdgeKind.ADDEND:
+                peak_sum_sources.add(e.source)
+
+    comp_op_kinds = {NodeKind.COMPONENT_EVAL, NodeKind.SPECTRUM_FED_OP}
+    comp_nodes_topo = [
+        id_to_node[nid] for nid in topo_order if id_to_node[nid].kind in comp_op_kinds
+    ]
+    n_ops = len(comp_nodes_topo)
+
+    op_schedule = np.arange(n_ops, dtype=np.intp)
+    op_kinds_list: list[int] = []
+    op_param_indptr_list: list[int] = [0]
+    op_param_indices_list: list[int] = []
+    op_needs_spectrum_list: list[bool] = []
+    op_is_pre_spectrum_list: list[bool] = []
+
+    for comp_node in comp_nodes_topo:
+        # OpKind
+        assert comp_node.function_name is not None
+        op = _FUNCTION_NAME_TO_OP.get(comp_node.function_name)
+        if op is None:
+            raise ValueError(f"Unknown component function: {comp_node.function_name!r}")
+        op_kinds_list.append(int(op))
+
+        # Param rows (from PARAM_INPUT edges, ordered by position)
+        param_edges = sorted(
+            (
+                e
+                for e in graph.edges
+                if e.target == comp_node.id and e.kind == EdgeKind.PARAM_INPUT
+            ),
+            key=lambda e: e.position or 0,
+        )
+        for pe in param_edges:
+            src_node = id_to_node[pe.source]
+            op_param_indices_list.append(name_to_row[src_node.name])
+        op_param_indptr_list.append(len(op_param_indices_list))
+
+        # Needs spectrum?
+        has_spec_input = any(
+            e.target == comp_node.id and e.kind == EdgeKind.SPECTRUM_INPUT
+            for e in graph.edges
+        )
+        op_needs_spectrum_list.append(has_spec_input)
+
+        # Contributes to peak_sum?
+        op_is_pre_spectrum_list.append(comp_node.id in peak_sum_sources)
+
+    op_kinds = np.array(op_kinds_list, dtype=np.intp)
+    op_param_indptr = np.array(op_param_indptr_list, dtype=np.intp)
+    op_param_indices = np.array(op_param_indices_list, dtype=np.intp)
+    op_needs_spectrum = np.array(op_needs_spectrum_list, dtype=np.bool_)
+    op_is_pre_spectrum = np.array(op_is_pre_spectrum_list, dtype=np.bool_)
+
+    # ------------------------------------------------------------------ #
+    # 6. Initialize trace matrix                                           #
+    # ------------------------------------------------------------------ #
+    param_traces_init = np.zeros((n_params, n_time), dtype=np.float64)
+
+    # Static and opt params: broadcast initial value
+    for node in opt_nodes + static_nodes:
+        row = name_to_row[node.name]
+        param_traces_init[row, :] = node.value if node.value is not None else 0.0
+
+    # PARAM_PLUS_TRACE: base + dynamics trace at initial values.
+    # We need to evaluate dynamics functions at initial parameter values
+    # to populate these rows.
+    from trspecfit.functions import time as fcts_time
+
+    _DYN_DISPATCH: dict[int, Callable[..., Any]] = {
+        int(DynFuncKind.EXPFUN): fcts_time.expFun,
+        int(DynFuncKind.SINFUN): fcts_time.sinFun,
+        int(DynFuncKind.LINFUN): fcts_time.linFun,
+        int(DynFuncKind.SINDIVX): fcts_time.sinDivX,
+        int(DynFuncKind.ERFFUN): fcts_time.erfFun,
+        int(DynFuncKind.SQRTFUN): fcts_time.sqrtFun,
+    }
+
+    for i in range(n_dynamics):
+        n_dp = int(dynamics_n_params[i])
+        p_vals = [
+            float(param_traces_init[dynamics_param_rows[i, j], 0]) for j in range(n_dp)
+        ]
+        func = _DYN_DISPATCH[int(dynamics_func_id[i])]
+        trace = func(graph.time, *p_vals)
+        base_val = param_traces_init[dynamics_base_row[i], 0]
+        param_traces_init[dynamics_target_row[i], :] = base_val + trace
+
+    # Expressions: evaluate in topological order using the trace matrix.
+    # Simple scalar-broadcast evaluation (take column 0 for constants).
+    for idx in range(n_expressions):
+        target_row = int(expr_target_rows[idx])
+        program = expr_programs[idx]
+        result = _eval_expr_program_init(program, param_traces_init, n_time)
+        param_traces_init[target_row, :] = result
+
+    # ------------------------------------------------------------------ #
+    # 7. Pack into ScheduledPlan2D                                         #
+    # ------------------------------------------------------------------ #
+    return ScheduledPlan2D(
+        energy=graph.energy,
+        time=graph.time,
+        n_params=n_params,
+        n_time=n_time,
+        param_traces_init=param_traces_init,
+        opt_indices=opt_indices,
+        opt_param_names=opt_param_names,
+        n_dynamics=n_dynamics,
+        dynamics_func_id=dynamics_func_id,
+        dynamics_param_rows=dynamics_param_rows,
+        dynamics_n_params=dynamics_n_params,
+        dynamics_target_row=dynamics_target_row,
+        dynamics_base_row=dynamics_base_row,
+        n_expressions=n_expressions,
+        expr_target_rows=expr_target_rows,
+        expr_programs=expr_programs,
+        n_ops=n_ops,
+        op_schedule=op_schedule,
+        op_kinds=op_kinds,
+        op_param_indptr=op_param_indptr,
+        op_param_indices=op_param_indices,
+        op_needs_spectrum=op_needs_spectrum,
+        op_is_pre_spectrum=op_is_pre_spectrum,
+    )
+
+
+#
+def _eval_expr_program_init(
+    program: ExprProgram,
+    traces: np.ndarray,
+    n_time: int,
+) -> np.ndarray:
+    """Evaluate an RPN ExprProgram against the trace matrix.
+
+    Used during plan initialization to populate expression rows.
+    Returns an ``(n_time,)`` array.
+    """
+
+    stack: list[np.ndarray] = []
+    instr = program.instructions
+    n_instr = len(instr) // 2
+
+    for i in range(n_instr):
+        kind = ExprNodeKind(instr[2 * i])
+        operand = instr[2 * i + 1]
+
+        if kind == ExprNodeKind.CONST:
+            val = np.int64(operand).view(np.float64)
+            stack.append(np.full(n_time, val, dtype=np.float64))
+
+        elif kind == ExprNodeKind.PARAM_REF:
+            stack.append(traces[int(operand), :].copy())
+
+        elif kind == ExprNodeKind.ADD:
+            b, a = stack.pop(), stack.pop()
+            stack.append(a + b)
+
+        elif kind == ExprNodeKind.SUB:
+            b, a = stack.pop(), stack.pop()
+            stack.append(a - b)
+
+        elif kind == ExprNodeKind.MUL:
+            b, a = stack.pop(), stack.pop()
+            stack.append(a * b)
+
+        elif kind == ExprNodeKind.DIV:
+            b, a = stack.pop(), stack.pop()
+            stack.append(a / b)
+
+        elif kind == ExprNodeKind.NEG:
+            stack.append(-stack.pop())
+
+        elif kind == ExprNodeKind.POW:
+            b, a = stack.pop(), stack.pop()
+            stack.append(a**b)
+
+    assert len(stack) == 1
+    return stack[0]

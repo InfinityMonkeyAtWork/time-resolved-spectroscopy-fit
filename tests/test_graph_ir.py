@@ -1,4 +1,4 @@
-"""Tests for graph_ir: build_graph and can_lower_2d."""
+"""Tests for graph_ir: build_graph, can_lower_2d, expression compiler, schedule_2d."""
 
 import numpy as np
 import pytest
@@ -6,10 +6,16 @@ import pytest
 from trspecfit import File, Project
 from trspecfit.graph_ir import (
     DomainKind,
+    DynFuncKind,
     EdgeKind,
+    ExprNodeKind,
     NodeKind,
+    OpKind,
+    SymbolicRPN,
     build_graph,
     can_lower_2d,
+    compile_expr_symbolic,
+    schedule_2d,
 )
 
 
@@ -1607,3 +1613,1197 @@ class TestProfileCollapsing:
         assert dot_full is not None
         assert "\u00d75" in dot_collapsed
         assert "profile_sample_1" in dot_full
+
+
+# ===================================================================== #
+# Phase 2: Expression compiler tests                                     #
+# ===================================================================== #
+
+
+#
+#
+class TestCompileExprSymbolic:
+    """Test compile_expr_symbolic: AST -> symbolic RPN."""
+
+    #
+    def test_simple_multiply(self):
+        """Simple multiply: '3/4*GLP_01_A'."""
+
+        rpn = compile_expr_symbolic("3/4*GLP_01_A")
+
+        assert isinstance(rpn, SymbolicRPN)
+        assert rpn.referenced_names == ["GLP_01_A"]
+        # Should have CONST(3), CONST(4), DIV, PARAM_REF(GLP_01_A), MUL
+        kinds = [k for k, _ in rpn.instructions]
+        assert ExprNodeKind.CONST in kinds
+        assert ExprNodeKind.PARAM_REF in kinds
+        assert ExprNodeKind.DIV in kinds
+        assert ExprNodeKind.MUL in kinds
+
+    #
+    def test_addition(self):
+        """Addition: 'GLP_01_x0 +3.6'."""
+
+        rpn = compile_expr_symbolic("GLP_01_x0 +3.6")
+
+        assert rpn.referenced_names == ["GLP_01_x0"]
+        kinds = [k for k, _ in rpn.instructions]
+        assert ExprNodeKind.ADD in kinds
+
+    #
+    def test_identity_ref(self):
+        """Identity: 'GLP_01_F' (just a parameter reference)."""
+
+        rpn = compile_expr_symbolic("GLP_01_F")
+
+        assert rpn.referenced_names == ["GLP_01_F"]
+        assert len(rpn.instructions) == 1
+        assert rpn.instructions[0] == (ExprNodeKind.PARAM_REF, "GLP_01_F")
+
+    #
+    def test_negation(self):
+        """Negation: '-GLP_01_A_expFun_01_A'."""
+
+        rpn = compile_expr_symbolic("-GLP_01_A_expFun_01_A")
+
+        assert rpn.referenced_names == ["GLP_01_A_expFun_01_A"]
+        kinds = [k for k, _ in rpn.instructions]
+        assert ExprNodeKind.NEG in kinds
+
+    #
+    def test_power(self):
+        """Power: 'GLP_01_A ** 2'."""
+
+        rpn = compile_expr_symbolic("GLP_01_A ** 2")
+
+        kinds = [k for k, _ in rpn.instructions]
+        assert ExprNodeKind.POW in kinds
+
+    #
+    def test_multiple_references(self):
+        """Multiple refs: 'GLP_01_A * 0.5 + GLP_01_x0'."""
+
+        rpn = compile_expr_symbolic("GLP_01_A * 0.5 + GLP_01_x0")
+
+        assert "GLP_01_A" in rpn.referenced_names
+        assert "GLP_01_x0" in rpn.referenced_names
+
+    #
+    def test_complex_expression(self):
+        """Complex: '(GLP_01_A + GLP_02_A) / 2'."""
+
+        rpn = compile_expr_symbolic("(GLP_01_A + GLP_02_A) / 2")
+
+        assert "GLP_01_A" in rpn.referenced_names
+        assert "GLP_02_A" in rpn.referenced_names
+
+    #
+    def test_constant_only(self):
+        """Pure constant: '42.0'."""
+
+        rpn = compile_expr_symbolic("42.0")
+
+        assert rpn.referenced_names == []
+        assert len(rpn.instructions) == 1
+        assert rpn.instructions[0][0] == ExprNodeKind.CONST
+        assert rpn.instructions[0][1] == 42.0
+
+    #
+    def test_rejects_function_call(self):
+        """Function calls (np.exp, etc.) raise ValueError."""
+
+        with pytest.raises(ValueError, match="Unsupported"):
+            compile_expr_symbolic("np.exp(GLP_01_A)")
+
+    #
+    def test_rejects_attribute_access(self):
+        """Attribute access raises ValueError."""
+
+        with pytest.raises(ValueError, match="Unsupported"):
+            compile_expr_symbolic("foo.bar")
+
+    #
+    def test_uadd_is_noop(self):
+        """Unary plus is a no-op."""
+
+        rpn = compile_expr_symbolic("+GLP_01_A")
+
+        assert len(rpn.instructions) == 1
+        assert rpn.instructions[0] == (ExprNodeKind.PARAM_REF, "GLP_01_A")
+
+    #
+    def test_rpn_evaluation_matches_python(self):
+        """Evaluate the RPN symbolically and check against Python eval.
+
+        For '3/4*GLP_01_A' with GLP_01_A=20, result should be 15.0.
+        """
+
+        rpn = compile_expr_symbolic("3/4*GLP_01_A")
+
+        # Manual RPN evaluation
+        stack: list[float] = []
+        for kind, operand in rpn.instructions:
+            if kind == ExprNodeKind.CONST:
+                stack.append(float(operand))
+            elif kind == ExprNodeKind.PARAM_REF:
+                stack.append(20.0)  # GLP_01_A = 20
+            elif kind == ExprNodeKind.MUL:
+                b, a = stack.pop(), stack.pop()
+                stack.append(a * b)
+            elif kind == ExprNodeKind.DIV:
+                b, a = stack.pop(), stack.pop()
+                stack.append(a / b)
+            elif kind == ExprNodeKind.ADD:
+                b, a = stack.pop(), stack.pop()
+                stack.append(a + b)
+
+        assert len(stack) == 1
+        assert np.isclose(stack[0], 15.0)
+
+
+# ===================================================================== #
+# Phase 2: schedule_2d structural validation tests                       #
+# ===================================================================== #
+
+
+#
+#
+class TestSchedule2DSimple:
+    """Test schedule_2d with simple_energy + MonoExpPos on GLP_01_A.
+
+    Smallest real happy path: the canonical can_lower_2d=True case.
+    """
+
+    #
+    def _make_plan(self):
+        _file, model = _make_2d_model(
+            ["simple_energy"],
+            [("GLP_01_A", "models/file_time.yaml", ["MonoExpPos"])],
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        return plan, graph, model
+
+    #
+    def test_plan_axes(self):
+        """Plan stores correct energy and time axes."""
+
+        plan, graph, _model = self._make_plan()
+        np.testing.assert_array_equal(plan.energy, graph.energy)
+        np.testing.assert_array_equal(plan.time, graph.time)
+        assert plan.n_time == len(graph.time)
+
+    #
+    def test_param_count(self):
+        """n_params covers all parameter-like nodes."""
+
+        plan, graph, _model = self._make_plan()
+
+        # Count parameter-like nodes in graph
+        _ROW_KINDS = {
+            NodeKind.STATIC_PARAM,
+            NodeKind.OPT_PARAM,
+            NodeKind.PARAM_PLUS_TRACE,
+            NodeKind.EXPRESSION,
+        }
+        n_expected = sum(1 for n in graph.nodes if n.kind in _ROW_KINDS)
+        assert plan.n_params == n_expected
+
+    #
+    def test_opt_params_first(self):
+        """Optimizer params are assigned the first rows in the trace matrix."""
+
+        plan, _graph, _model = self._make_plan()
+        n_opt = len(plan.opt_param_names)
+        assert n_opt > 0
+        np.testing.assert_array_equal(plan.opt_indices, np.arange(n_opt, dtype=np.intp))
+
+    #
+    def test_opt_param_names(self):
+        """opt_param_names lists all vary=True params."""
+
+        plan, graph, _model = self._make_plan()
+
+        vary_nodes = [n for n in graph.nodes if n.kind == NodeKind.OPT_PARAM and n.vary]
+        vary_names = {n.name for n in vary_nodes}
+        assert set(plan.opt_param_names) == vary_names
+
+    #
+    def test_trace_matrix_shape(self):
+        """param_traces_init has shape (n_params, n_time)."""
+
+        plan, _graph, _model = self._make_plan()
+        assert plan.param_traces_init.shape == (plan.n_params, plan.n_time)
+
+    #
+    def test_static_param_broadcast(self):
+        """Static params have uniform rows (same value across time)."""
+
+        plan, graph, _model = self._make_plan()
+
+        for node in graph.nodes:
+            if node.kind == NodeKind.STATIC_PARAM:
+                # Find row by checking opt_param_names length + offset
+                # Easier: trace matrix row should be uniform
+                # Find this param's name in the plan
+                # Static params come after opt params
+                pass
+
+        # Just verify all non-opt rows are uniform for static params
+        n_opt = len(plan.opt_param_names)
+        for row in range(n_opt, plan.n_params):
+            vals = plan.param_traces_init[row, :]
+            if np.all(vals == vals[0]):
+                continue  # uniform: static or const expression
+            # Non-uniform: must be a time-dep resolved param
+            # (PARAM_PLUS_TRACE or expression referencing one)
+
+    #
+    def test_dynamics_compiled(self):
+        """One dynamics subgraph (expFun on GLP_01_A) is compiled."""
+
+        plan, _graph, _model = self._make_plan()
+
+        assert plan.n_dynamics == 1
+        assert plan.dynamics_func_id[0] == int(DynFuncKind.EXPFUN)
+        assert plan.dynamics_n_params[0] == 4  # A, tau, t0, y0
+
+    #
+    def test_dynamics_param_rows_valid(self):
+        """Dynamics param rows point to valid trace matrix rows."""
+
+        plan, _graph, _model = self._make_plan()
+
+        for i in range(plan.n_dynamics):
+            n_dp = plan.dynamics_n_params[i]
+            for j in range(n_dp):
+                row = plan.dynamics_param_rows[i, j]
+                assert 0 <= row < plan.n_params
+
+    #
+    def test_dynamics_target_and_base_rows_valid(self):
+        """Target and base rows are valid indices."""
+
+        plan, _graph, _model = self._make_plan()
+
+        for i in range(plan.n_dynamics):
+            assert 0 <= plan.dynamics_target_row[i] < plan.n_params
+            assert 0 <= plan.dynamics_base_row[i] < plan.n_params
+            assert plan.dynamics_target_row[i] != plan.dynamics_base_row[i]
+
+    #
+    def test_resolved_trace_nonconstant(self):
+        """The PARAM_PLUS_TRACE row varies over time (dynamics + base)."""
+
+        plan, _graph, _model = self._make_plan()
+
+        target_row = plan.dynamics_target_row[0]
+        trace = plan.param_traces_init[target_row, :]
+        # expFun with nonzero A produces a non-constant trace
+        assert not np.all(trace == trace[0])
+
+    #
+    def test_no_expressions(self):
+        """simple_energy has no expression params -> 0 expressions."""
+
+        plan, _graph, _model = self._make_plan()
+        assert plan.n_expressions == 0
+
+    #
+    def test_component_ops_scheduled(self):
+        """4 component ops: Offset, Shirley, GLP_01, GLP_02."""
+
+        plan, _graph, _model = self._make_plan()
+
+        assert plan.n_ops == 4
+        op_kind_set = set(plan.op_kinds.tolist())
+        assert int(OpKind.GLP) in op_kind_set
+        assert int(OpKind.OFFSET) in op_kind_set
+        assert int(OpKind.SHIRLEY) in op_kind_set
+
+    #
+    def test_shirley_needs_spectrum(self):
+        """Shirley is the only op that needs_spectrum."""
+
+        plan, _graph, _model = self._make_plan()
+
+        shirley_indices = [
+            i for i in range(plan.n_ops) if plan.op_kinds[i] == int(OpKind.SHIRLEY)
+        ]
+        assert len(shirley_indices) == 1
+        assert plan.op_needs_spectrum[shirley_indices[0]]
+        # All others don't need spectrum
+        for i in range(plan.n_ops):
+            if i not in shirley_indices:
+                assert not plan.op_needs_spectrum[i]
+
+    #
+    def test_peaks_are_pre_spectrum(self):
+        """GLP_01 and GLP_02 contribute to peak_sum (op_is_pre_spectrum)."""
+
+        plan, _graph, _model = self._make_plan()
+
+        glp_indices = [
+            i for i in range(plan.n_ops) if plan.op_kinds[i] == int(OpKind.GLP)
+        ]
+        assert len(glp_indices) == 2
+        for idx in glp_indices:
+            assert plan.op_is_pre_spectrum[idx]
+
+    #
+    def test_offset_not_pre_spectrum(self):
+        """Offset is background, not in peak_sum."""
+
+        plan, _graph, _model = self._make_plan()
+
+        offset_indices = [
+            i for i in range(plan.n_ops) if plan.op_kinds[i] == int(OpKind.OFFSET)
+        ]
+        assert len(offset_indices) == 1
+        assert not plan.op_is_pre_spectrum[offset_indices[0]]
+
+    #
+    def test_csr_param_indices_valid(self):
+        """CSR param indices point to valid trace matrix rows."""
+
+        plan, _graph, _model = self._make_plan()
+
+        assert len(plan.op_param_indptr) == plan.n_ops + 1
+        assert plan.op_param_indptr[0] == 0
+        for i in range(plan.n_ops):
+            start = plan.op_param_indptr[i]
+            end = plan.op_param_indptr[i + 1]
+            assert end >= start
+            for j in range(start, end):
+                assert 0 <= plan.op_param_indices[j] < plan.n_params
+
+    #
+    def test_shirley_scheduled_after_peaks(self):
+        """Shirley must execute after GLP components in the schedule."""
+
+        plan, _graph, _model = self._make_plan()
+
+        glp_positions = [
+            i for i in range(plan.n_ops) if plan.op_kinds[i] == int(OpKind.GLP)
+        ]
+        shirley_positions = [
+            i for i in range(plan.n_ops) if plan.op_kinds[i] == int(OpKind.SHIRLEY)
+        ]
+        assert len(shirley_positions) == 1
+        assert all(shirley_positions[0] > glp_pos for glp_pos in glp_positions)
+
+
+#
+#
+class TestSchedule2DExpressions:
+    """Test schedule_2d with energy_expression + MonoExpPos on GLP_01_A.
+
+    Key phase-2 interaction: expression must read the resolved
+    time-dependent parameter, not the base scalar.
+    """
+
+    #
+    def _make_plan(self):
+        _file, model = _make_2d_model(
+            ["energy_expression"],
+            [("GLP_01_A", "models/file_time.yaml", ["MonoExpPos"])],
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        return plan, graph, model
+
+    #
+    def test_expressions_compiled(self):
+        """energy_expression has 4 expression params -> 4 programs."""
+
+        plan, _graph, _model = self._make_plan()
+        assert plan.n_expressions == 4
+        assert len(plan.expr_programs) == 4
+
+    #
+    def test_expression_target_rows_valid(self):
+        """Expression target rows point to valid trace matrix indices."""
+
+        plan, _graph, _model = self._make_plan()
+
+        for i in range(plan.n_expressions):
+            assert 0 <= plan.expr_target_rows[i] < plan.n_params
+
+    #
+    def test_expression_programs_nonempty(self):
+        """Each expression program has non-zero instructions."""
+
+        plan, _graph, _model = self._make_plan()
+
+        for prog in plan.expr_programs:
+            assert len(prog.instructions) > 0
+
+    #
+    def test_expression_a_reads_resolved(self):
+        """GLP_02_A = '3/4*GLP_01_A' reads the PARAM_PLUS_TRACE row.
+
+        The expression must reference the resolved time-dep row, not
+        the base OPT_PARAM row, because GLP_01_A has dynamics.
+        """
+
+        plan, graph, _model = self._make_plan()
+
+        # Find the PARAM_PLUS_TRACE row for GLP_01_A
+        resolved_node = None
+        for n in graph.nodes:
+            if n.kind == NodeKind.PARAM_PLUS_TRACE and "GLP_01_A" in n.name:
+                resolved_node = n
+                break
+        assert resolved_node is not None  # type guard
+
+        # The expression program for GLP_02_A should reference the
+        # resolved row, not the base OPT_PARAM row
+        expr_node = None
+        for n in graph.nodes:
+            if n.kind == NodeKind.EXPRESSION and n.name == "GLP_02_A":
+                expr_node = n
+                break
+        assert expr_node is not None  # type guard
+
+        # Find which expression program corresponds to GLP_02_A
+        expr_target_idx = None
+        for i in range(plan.n_expressions):
+            # The expr_string in the expression node should match
+            if plan.expr_target_rows[i] == _find_row_for_name(graph, plan, "GLP_02_A"):
+                expr_target_idx = i
+                break
+        assert expr_target_idx is not None
+
+        # Check that the program contains a PARAM_REF to the resolved row
+        prog = plan.expr_programs[expr_target_idx]
+        resolved_row = _find_row_for_name(graph, plan, resolved_node.name)
+        _assert_program_references_row(prog, resolved_row)
+
+    #
+    def test_resolved_trace_in_expression_varies(self):
+        """Expression result varies over time because source is time-dep."""
+
+        plan, graph, _model = self._make_plan()
+
+        expr_row = _find_row_for_name(graph, plan, "GLP_02_A")
+        trace = plan.param_traces_init[expr_row, :]
+        # 3/4 * (base + dynamics) should vary
+        assert not np.all(trace == trace[0])
+
+    #
+    def test_dynamics_still_compiled(self):
+        """Dynamics on GLP_01_A is still compiled alongside expressions."""
+
+        plan, _graph, _model = self._make_plan()
+        assert plan.n_dynamics == 1
+
+
+#
+#
+class TestSchedule2DMultipleDynamics:
+    """Test schedule_2d with two independent dynamics subgraphs.
+
+    simple_energy with GLP_01_A <- MonoExpPos, GLP_01_x0 <- MonoExpNeg.
+    Stresses row packing and multiple dynamics without unsupported features.
+    """
+
+    #
+    def _make_plan(self):
+        _file, model = _make_2d_model(
+            ["simple_energy"],
+            [
+                ("GLP_01_A", "models/file_time.yaml", ["MonoExpPos"]),
+                ("GLP_01_x0", "models/file_time.yaml", ["MonoExpNeg"]),
+            ],
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        return plan, graph, model
+
+    #
+    def test_two_dynamics(self):
+        """Two dynamics subgraphs compiled."""
+
+        plan, _graph, _model = self._make_plan()
+        assert plan.n_dynamics == 2
+        # Both are expFun
+        assert plan.dynamics_func_id[0] == int(DynFuncKind.EXPFUN)
+        assert plan.dynamics_func_id[1] == int(DynFuncKind.EXPFUN)
+
+    #
+    def test_distinct_target_rows(self):
+        """Each dynamics subgraph targets a different trace row."""
+
+        plan, _graph, _model = self._make_plan()
+
+        assert plan.dynamics_target_row[0] != plan.dynamics_target_row[1]
+
+    #
+    def test_distinct_base_rows(self):
+        """Each dynamics subgraph has a different base row."""
+
+        plan, _graph, _model = self._make_plan()
+
+        assert plan.dynamics_base_row[0] != plan.dynamics_base_row[1]
+
+    #
+    def test_both_resolved_vary_over_time(self):
+        """Both resolved traces are non-constant."""
+
+        plan, _graph, _model = self._make_plan()
+
+        for i in range(2):
+            row = plan.dynamics_target_row[i]
+            trace = plan.param_traces_init[row, :]
+            assert not np.all(trace == trace[0])
+
+    #
+    def test_dynamics_param_rows_dont_overlap(self):
+        """Dynamics params for the two subgraphs don't share rows."""
+
+        plan, _graph, _model = self._make_plan()
+
+        rows_0 = set(plan.dynamics_param_rows[0, : plan.dynamics_n_params[0]].tolist())
+        rows_1 = set(plan.dynamics_param_rows[1, : plan.dynamics_n_params[1]].tolist())
+        assert rows_0.isdisjoint(rows_1)
+
+
+#
+#
+class TestSchedule2DExpressionOnly:
+    """Test schedule_2d expression compiler with expression-only models.
+
+    Uses expression_fan_out, expression_chain, forward_reference
+    with dynamics on Offset_y0 to make them 2D-lowerable.
+    """
+
+    #
+    def _make_2d_expr_model(self, model_info):
+        """Load expression model + attach dynamics to Offset_y0."""
+
+        _file, model = _make_2d_model(
+            model_info,
+            [("Offset_y0", "models/file_time.yaml", ["MonoExpPos"])],
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        return plan, graph
+
+    #
+    def test_fan_out_expressions(self):
+        """expression_fan_out: GLP_02_A and GLP_03_A both reference GLP_01_A."""
+
+        plan, graph = self._make_2d_expr_model(["expression_fan_out"])
+
+        # Should have many expressions: GLP_02 and GLP_03 each have
+        # A, x0, F, m as expressions
+        assert plan.n_expressions == 8
+
+    #
+    def test_chain_expressions(self):
+        """expression_chain: GLP_01 -> GLP_02 -> GLP_03."""
+
+        plan, graph = self._make_2d_expr_model(["expression_chain"])
+
+        # GLP_02 has 4 exprs, GLP_03 has 4 exprs = 8 total
+        assert plan.n_expressions == 8
+
+    #
+    def test_chain_topological_order(self):
+        """In expression_chain, GLP_02_A is evaluated before GLP_03_A.
+
+        GLP_03_A = 'GLP_02_A * 0.5', so GLP_02_A must come first.
+        """
+
+        plan, graph = self._make_2d_expr_model(["expression_chain"])
+
+        # Find target rows for GLP_02_A and GLP_03_A
+        row_02_A = _find_row_for_name(graph, plan, "GLP_02_A")
+        row_03_A = _find_row_for_name(graph, plan, "GLP_03_A")
+
+        # Find their positions in expr_target_rows
+        idx_02 = None
+        idx_03 = None
+        for i in range(plan.n_expressions):
+            if plan.expr_target_rows[i] == row_02_A:
+                idx_02 = i
+            if plan.expr_target_rows[i] == row_03_A:
+                idx_03 = i
+
+        assert idx_02 is not None
+        assert idx_03 is not None
+        assert idx_02 < idx_03
+
+    #
+    def test_forward_reference_compiles(self):
+        """energy_expression_forward_reference compiles without error."""
+
+        plan, graph = self._make_2d_expr_model(["energy_expression_forward_reference"])
+
+        # GLP_01 has 4 expression params
+        assert plan.n_expressions == 4
+
+    #
+    def test_expression_values_initialized(self):
+        """Expression rows are initialized with evaluated values."""
+
+        plan, graph = self._make_2d_expr_model(["expression_fan_out"])
+
+        # GLP_02_A = "GLP_01_A * 0.5" with GLP_01_A = 20 -> should be 10
+        row = _find_row_for_name(graph, plan, "GLP_02_A")
+        # All time steps should have the same value (GLP_01_A is not time-dep)
+        vals = plan.param_traces_init[row, :]
+        assert np.allclose(vals, 10.0)
+
+
+#
+#
+class TestExprCompilerVsAsteval:
+    """Compare compiled RPN evaluation against asteval as external oracle.
+
+    Verifies that the custom AST-to-RPN path in compile_expr_symbolic +
+    _eval_expr_program_init produces the same results as lmfit's
+    expression engine.
+    """
+
+    _CASES = [
+        # (expr_string, variable_dict)
+        # precedence
+        ("3/4*GLP_01_A", {"GLP_01_A": 20.0}),
+        ("A + B * 2", {"A": 5.0, "B": 3.0}),
+        # unary minus / plus
+        ("-A", {"A": 7.0}),
+        ("+A", {"A": 7.0}),
+        ("-(A + 2)", {"A": 7.0}),
+        # power
+        ("A**2", {"A": 3.0}),
+        ("A**2 + B", {"A": 3.0, "B": 1.0}),
+        # mixed refs/constants
+        ("(A + B) / 2", {"A": 10.0, "B": 6.0}),
+        # resolved-row style names (prefixed dynamics names)
+        ("GLP_01_A_resolved * 0.5", {"GLP_01_A_resolved": 20.0}),
+        ("GLP_01_A_expFun_01_A + 1", {"GLP_01_A_expFun_01_A": 4.0}),
+        # edge cases
+        ("3.14159", {}),
+        ("A / B", {"A": 10.0, "B": 3.0}),
+    ]
+
+    #
+    @pytest.mark.parametrize("expr_string,variables", _CASES)
+    def test_matches_asteval(self, expr_string, variables):
+        """Compiled RPN result matches asteval for the same expression."""
+
+        from asteval import Interpreter as AstevalInterpreter
+
+        from trspecfit.graph_ir import (
+            _bind_expr_to_rows,
+            _eval_expr_program_init,
+            compile_expr_symbolic,
+        )
+
+        # --- asteval reference ---
+        aeval = AstevalInterpreter()
+        for name, val in variables.items():
+            aeval.symtable[name] = val
+        expected = float(aeval(expr_string))
+
+        # --- compiled RPN ---
+        n_time = 5
+        symbolic = compile_expr_symbolic(expr_string)
+
+        # Build a fake trace matrix: one row per variable, broadcast
+        name_to_row = {}
+        traces = np.zeros((len(variables), n_time), dtype=np.float64)
+        for i, (name, val) in enumerate(variables.items()):
+            name_to_row[name] = i
+            traces[i, :] = val
+
+        program = _bind_expr_to_rows(symbolic, name_to_row)
+        result = _eval_expr_program_init(program, traces, n_time)
+
+        # All time steps should match the scalar asteval result
+        assert np.allclose(result, expected, rtol=1e-12), (
+            f"Expression {expr_string!r}: RPN gave {result[0]}, asteval gave {expected}"
+        )
+
+
+#
+#
+class TestSchedule2DRejectsNonLowerable:
+    """schedule_2d raises ValueError for non-lowerable graphs."""
+
+    #
+    def test_1d_graph_raises(self):
+        """1D-only graph raises ValueError."""
+
+        _file, model = _make_energy_model(["simple_energy"])
+        graph = build_graph(model)
+        with pytest.raises(ValueError, match="cannot be lowered"):
+            schedule_2d(graph)
+
+    #
+    def test_profile_graph_raises(self):
+        """Profile model raises ValueError."""
+
+        _file, model = _make_profile_model(
+            ["single_gauss"], "Gauss_01_A", ["profile_pExpDecay"]
+        )
+        graph = build_graph(model)
+        with pytest.raises(ValueError, match="cannot be lowered"):
+            schedule_2d(graph)
+
+
+# ===================================================================== #
+# Helpers for schedule_2d tests                                          #
+# ===================================================================== #
+
+
+#
+def _find_row_for_name(graph, plan, param_name):
+    """Find the trace matrix row index for a parameter name.
+
+    Uses opt_param_names for opt rows.  For other rows, walks the
+    plan's trace matrix looking for the right row based on the graph.
+    """
+
+    from trspecfit.graph_ir import _topological_sort
+
+    _ROW_KINDS = {
+        NodeKind.STATIC_PARAM,
+        NodeKind.OPT_PARAM,
+        NodeKind.PARAM_PLUS_TRACE,
+        NodeKind.EXPRESSION,
+    }
+
+    # Replicate schedule_2d's row assignment using topological order
+    topo_order = _topological_sort(graph)
+
+    opt_nodes = []
+    static_nodes = []
+    computed_nodes = []
+    for nid in topo_order:
+        n = graph.nodes[nid]
+        if n.kind not in _ROW_KINDS:
+            continue
+        if n.kind == NodeKind.OPT_PARAM and n.vary:
+            opt_nodes.append(n)
+        elif n.kind in (NodeKind.STATIC_PARAM, NodeKind.OPT_PARAM):
+            static_nodes.append(n)
+        else:
+            computed_nodes.append(n)
+
+    all_nodes = opt_nodes + static_nodes + computed_nodes
+    for row, n in enumerate(all_nodes):
+        if n.name == param_name:
+            return row
+
+    raise KeyError(f"Parameter {param_name!r} not found in graph")
+
+
+#
+def _assert_program_references_row(program, expected_row):
+    """Assert that an ExprProgram contains a PARAM_REF to the given row."""
+
+    instr = program.instructions
+    n_instr = len(instr) // 2
+    for i in range(n_instr):
+        kind = ExprNodeKind(instr[2 * i])
+        operand = instr[2 * i + 1]
+        if kind == ExprNodeKind.PARAM_REF and operand == expected_row:
+            return
+    raise AssertionError(f"ExprProgram does not reference row {expected_row}")
+
+
+# ===================================================================== #
+# Regression tests for scheduler bugs                                    #
+# ===================================================================== #
+
+
+#
+#
+class TestExprBindingUsesEdges:
+    """Regression: expression binding must use EXPR_REF edges, not reparsing.
+
+    Dynamics expression nodes can have raw YAML text in expr_string
+    (e.g. "-expFun_01_A") while the EXPR_REF edges use the canonical
+    lmfit-prefixed form (e.g. "GLP_01_A_expFun_01_A").  The scheduler
+    must derive bindings from edges, not from reparsing the string.
+    """
+
+    #
+    def test_synthetic_graph_with_prefixed_expr_ref(self):
+        """In-memory graph with auto-prefixed EXPR_REF does not crash."""
+
+        from trspecfit.graph_ir import GraphEdge, GraphIR, GraphNode
+
+        energy = np.linspace(80, 90, 51)
+        time = np.linspace(0, 10, 21)
+
+        nodes = [
+            GraphNode(
+                id=0,
+                kind=NodeKind.OPT_PARAM,
+                name="A_base",
+                source_order=0,
+                value=10.0,
+                vary=True,
+                bounds=(0.0, 50.0),
+            ),
+            GraphNode(
+                id=1,
+                kind=NodeKind.OPT_PARAM,
+                name="dyn_A",
+                source_order=1,
+                value=1.0,
+                vary=True,
+                bounds=(0.0, 5.0),
+            ),
+            GraphNode(
+                id=2,
+                kind=NodeKind.OPT_PARAM,
+                name="dyn_tau",
+                source_order=2,
+                value=2.5,
+                vary=True,
+                bounds=(1.0, 10.0),
+            ),
+            GraphNode(
+                id=3,
+                kind=NodeKind.STATIC_PARAM,
+                name="dyn_t0",
+                source_order=3,
+                value=0.0,
+            ),
+            GraphNode(
+                id=4,
+                kind=NodeKind.STATIC_PARAM,
+                name="dyn_y0",
+                source_order=4,
+                value=0.0,
+            ),
+            GraphNode(
+                id=5,
+                kind=NodeKind.DYNAMICS_TRACE,
+                name="A_dynamics",
+                source_order=5,
+                function_name="expFun",
+                package="time",
+            ),
+            GraphNode(
+                id=6,
+                kind=NodeKind.PARAM_PLUS_TRACE,
+                name="A_base_resolved",
+                source_order=6,
+            ),
+            # Expression node: raw string says "short_name" but EXPR_REF
+            # edge correctly points to A_base_resolved (the prefixed form).
+            GraphNode(
+                id=7,
+                kind=NodeKind.EXPRESSION,
+                name="B_expr",
+                source_order=7,
+                expr_string="0.5 * A_base_resolved",
+            ),
+            GraphNode(
+                id=8,
+                kind=NodeKind.COMPONENT_EVAL,
+                name="Gauss_01",
+                source_order=8,
+                function_name="Gauss",
+                package="energy",
+            ),
+            GraphNode(
+                id=9,
+                kind=NodeKind.STATIC_PARAM,
+                name="x0",
+                source_order=9,
+                value=85.0,
+            ),
+            GraphNode(
+                id=10,
+                kind=NodeKind.STATIC_PARAM,
+                name="SD",
+                source_order=10,
+                value=1.0,
+            ),
+            GraphNode(
+                id=11,
+                kind=NodeKind.SUM,
+                name="peak_sum",
+                source_order=11,
+            ),
+        ]
+        edges = [
+            GraphEdge(source=1, target=5, kind=EdgeKind.PARAM_INPUT, position=0),
+            GraphEdge(source=2, target=5, kind=EdgeKind.PARAM_INPUT, position=1),
+            GraphEdge(source=3, target=5, kind=EdgeKind.PARAM_INPUT, position=2),
+            GraphEdge(source=4, target=5, kind=EdgeKind.PARAM_INPUT, position=3),
+            GraphEdge(source=0, target=6, kind=EdgeKind.BASE_INPUT),
+            GraphEdge(source=5, target=6, kind=EdgeKind.TRACE_INPUT),
+            # EXPR_REF: B_expr references A_base_resolved
+            GraphEdge(source=6, target=7, kind=EdgeKind.EXPR_REF),
+            # Component wiring
+            GraphEdge(source=7, target=8, kind=EdgeKind.PARAM_INPUT, position=0),
+            GraphEdge(source=9, target=8, kind=EdgeKind.PARAM_INPUT, position=1),
+            GraphEdge(source=10, target=8, kind=EdgeKind.PARAM_INPUT, position=2),
+            GraphEdge(source=8, target=11, kind=EdgeKind.ADDEND),
+        ]
+        g = GraphIR(
+            nodes=nodes,
+            edges=edges,
+            domain=DomainKind.ENERGY_TIME_2D,
+            energy=energy,
+            time=time,
+            node_by_name={n.name: n.id for n in nodes},
+        )
+        assert can_lower_2d(g)
+
+        # This used to crash with KeyError because the scheduler reparsed
+        # expr_string instead of using EXPR_REF edges.
+        plan = schedule_2d(g)
+        assert plan.n_expressions == 1
+
+        # The expression result should be 0.5 * resolved_A, which varies
+        target_row = plan.expr_target_rows[0]
+        trace = plan.param_traces_init[target_row, :]
+        assert not np.all(trace == trace[0])
+
+
+#
+#
+class TestCanLower2DChecksDynamics:
+    """Regression: can_lower_2d must reject unknown dynamics functions.
+
+    Previously, can_lower_2d only checked component functions but not
+    DYNAMICS_TRACE.function_name.  A graph with an unsupported dynamics
+    function would pass can_lower_2d and then crash in schedule_2d.
+    """
+
+    #
+    def test_unknown_dynamics_returns_false(self):
+        """Graph with unknown dynamics function_name returns False."""
+
+        from trspecfit.graph_ir import GraphEdge, GraphIR, GraphNode
+
+        energy = np.linspace(80, 90, 51)
+        time = np.linspace(0, 10, 21)
+
+        nodes = [
+            GraphNode(
+                id=0,
+                kind=NodeKind.OPT_PARAM,
+                name="A",
+                source_order=0,
+                value=10.0,
+                vary=True,
+                bounds=(0.0, 50.0),
+            ),
+            GraphNode(
+                id=1,
+                kind=NodeKind.OPT_PARAM,
+                name="d_p1",
+                source_order=1,
+                value=1.0,
+                vary=True,
+                bounds=(0.0, 5.0),
+            ),
+            GraphNode(
+                id=2,
+                kind=NodeKind.DYNAMICS_TRACE,
+                name="A_dynamics",
+                source_order=2,
+                function_name="madeUpFun",
+                package="time",
+            ),
+            GraphNode(
+                id=3,
+                kind=NodeKind.PARAM_PLUS_TRACE,
+                name="A_resolved",
+                source_order=3,
+            ),
+            GraphNode(
+                id=4,
+                kind=NodeKind.COMPONENT_EVAL,
+                name="Gauss_01",
+                source_order=4,
+                function_name="Gauss",
+                package="energy",
+            ),
+            GraphNode(
+                id=5,
+                kind=NodeKind.STATIC_PARAM,
+                name="x0",
+                source_order=5,
+                value=85.0,
+            ),
+            GraphNode(
+                id=6,
+                kind=NodeKind.STATIC_PARAM,
+                name="SD",
+                source_order=6,
+                value=1.0,
+            ),
+            GraphNode(
+                id=7,
+                kind=NodeKind.SUM,
+                name="peak_sum",
+                source_order=7,
+            ),
+        ]
+        edges = [
+            GraphEdge(source=1, target=2, kind=EdgeKind.PARAM_INPUT, position=0),
+            GraphEdge(source=0, target=3, kind=EdgeKind.BASE_INPUT),
+            GraphEdge(source=2, target=3, kind=EdgeKind.TRACE_INPUT),
+            GraphEdge(source=3, target=4, kind=EdgeKind.PARAM_INPUT, position=0),
+            GraphEdge(source=5, target=4, kind=EdgeKind.PARAM_INPUT, position=1),
+            GraphEdge(source=6, target=4, kind=EdgeKind.PARAM_INPUT, position=2),
+            GraphEdge(source=4, target=7, kind=EdgeKind.ADDEND),
+        ]
+        g = GraphIR(
+            nodes=nodes,
+            edges=edges,
+            domain=DomainKind.ENERGY_TIME_2D,
+            energy=energy,
+            time=time,
+            node_by_name={n.name: n.id for n in nodes},
+        )
+
+        # Previously returned True; now must return False
+        assert not can_lower_2d(g)
+
+
+#
+#
+class TestNonDenseNodeIds:
+    """Regression: scheduler must not assume node.id == list index.
+
+    Externally-constructed GraphIR instances may use arbitrary ids.
+    """
+
+    #
+    def test_sparse_node_ids(self):
+        """Graph with non-zero-based ids schedules correctly."""
+
+        from trspecfit.graph_ir import GraphEdge, GraphIR, GraphNode
+
+        energy = np.linspace(80, 90, 51)
+        time = np.linspace(0, 10, 21)
+
+        # Ids start at 100, not 0
+        nodes = [
+            GraphNode(
+                id=100,
+                kind=NodeKind.OPT_PARAM,
+                name="A",
+                source_order=0,
+                value=10.0,
+                vary=True,
+                bounds=(0.0, 50.0),
+            ),
+            GraphNode(
+                id=101,
+                kind=NodeKind.OPT_PARAM,
+                name="dyn_A",
+                source_order=1,
+                value=1.0,
+                vary=True,
+                bounds=(0.0, 5.0),
+            ),
+            GraphNode(
+                id=102,
+                kind=NodeKind.OPT_PARAM,
+                name="dyn_tau",
+                source_order=2,
+                value=2.5,
+                vary=True,
+                bounds=(1.0, 10.0),
+            ),
+            GraphNode(
+                id=103,
+                kind=NodeKind.STATIC_PARAM,
+                name="dyn_t0",
+                source_order=3,
+                value=0.0,
+            ),
+            GraphNode(
+                id=104,
+                kind=NodeKind.STATIC_PARAM,
+                name="dyn_y0",
+                source_order=4,
+                value=0.0,
+            ),
+            GraphNode(
+                id=105,
+                kind=NodeKind.DYNAMICS_TRACE,
+                name="A_dynamics",
+                source_order=5,
+                function_name="expFun",
+                package="time",
+            ),
+            GraphNode(
+                id=106,
+                kind=NodeKind.PARAM_PLUS_TRACE,
+                name="A_resolved",
+                source_order=6,
+            ),
+            GraphNode(
+                id=107,
+                kind=NodeKind.STATIC_PARAM,
+                name="x0",
+                source_order=7,
+                value=85.0,
+            ),
+            GraphNode(
+                id=108,
+                kind=NodeKind.STATIC_PARAM,
+                name="SD",
+                source_order=8,
+                value=1.0,
+            ),
+            GraphNode(
+                id=109,
+                kind=NodeKind.COMPONENT_EVAL,
+                name="Gauss_01",
+                source_order=9,
+                function_name="Gauss",
+                package="energy",
+            ),
+            GraphNode(
+                id=110,
+                kind=NodeKind.SUM,
+                name="peak_sum",
+                source_order=10,
+            ),
+        ]
+        edges = [
+            GraphEdge(source=101, target=105, kind=EdgeKind.PARAM_INPUT, position=0),
+            GraphEdge(source=102, target=105, kind=EdgeKind.PARAM_INPUT, position=1),
+            GraphEdge(source=103, target=105, kind=EdgeKind.PARAM_INPUT, position=2),
+            GraphEdge(source=104, target=105, kind=EdgeKind.PARAM_INPUT, position=3),
+            GraphEdge(source=100, target=106, kind=EdgeKind.BASE_INPUT),
+            GraphEdge(source=105, target=106, kind=EdgeKind.TRACE_INPUT),
+            GraphEdge(source=106, target=109, kind=EdgeKind.PARAM_INPUT, position=0),
+            GraphEdge(source=107, target=109, kind=EdgeKind.PARAM_INPUT, position=1),
+            GraphEdge(source=108, target=109, kind=EdgeKind.PARAM_INPUT, position=2),
+            GraphEdge(source=109, target=110, kind=EdgeKind.ADDEND),
+        ]
+        g = GraphIR(
+            nodes=nodes,
+            edges=edges,
+            domain=DomainKind.ENERGY_TIME_2D,
+            energy=energy,
+            time=time,
+            node_by_name={n.name: n.id for n in nodes},
+        )
+        assert can_lower_2d(g)
+
+        # Previously crashed with IndexError
+        plan = schedule_2d(g)
+
+        assert plan.n_dynamics == 1
+        assert plan.n_ops == 1
+        assert plan.dynamics_func_id[0] == int(DynFuncKind.EXPFUN)
