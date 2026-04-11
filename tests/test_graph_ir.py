@@ -1861,24 +1861,27 @@ class TestSchedule2DSimple:
 
     #
     def test_dynamics_compiled(self):
-        """One dynamics subgraph (expFun on GLP_01_A) is compiled."""
+        """One dynamics group (expFun on GLP_01_A) is compiled."""
 
         plan, _graph, _model = self._make_plan()
 
-        assert plan.n_dynamics == 1
-        assert plan.dynamics_func_id[0] == int(DynFuncKind.EXPFUN)
-        assert plan.dynamics_n_params[0] == 4  # A, tau, t0, y0
+        assert plan.n_dyn_groups == 1
+        # Single substep in the group
+        assert plan.dyn_group_indptr[1] - plan.dyn_group_indptr[0] == 1
+        assert plan.dyn_sub_func_id[0] == int(DynFuncKind.EXPFUN)
+        assert plan.dyn_sub_n_params[0] == 4  # A, tau, t0, y0
 
     #
     def test_dynamics_param_rows_valid(self):
-        """Dynamics param rows point to valid trace matrix rows."""
+        """Dynamics substep param rows point to valid trace matrix rows."""
 
         plan, _graph, _model = self._make_plan()
 
-        for i in range(plan.n_dynamics):
-            n_dp = plan.dynamics_n_params[i]
+        n_substeps = int(plan.dyn_group_indptr[-1])
+        for s in range(n_substeps):
+            n_dp = plan.dyn_sub_n_params[s]
             for j in range(n_dp):
-                row = plan.dynamics_param_rows[i, j]
+                row = plan.dyn_sub_param_rows[s, j]
                 assert 0 <= row < plan.n_params
 
     #
@@ -1887,10 +1890,10 @@ class TestSchedule2DSimple:
 
         plan, _graph, _model = self._make_plan()
 
-        for i in range(plan.n_dynamics):
-            assert 0 <= plan.dynamics_target_row[i] < plan.n_params
-            assert 0 <= plan.dynamics_base_row[i] < plan.n_params
-            assert plan.dynamics_target_row[i] != plan.dynamics_base_row[i]
+        for i in range(plan.n_dyn_groups):
+            assert 0 <= plan.dyn_group_target_row[i] < plan.n_params
+            assert 0 <= plan.dyn_group_base_row[i] < plan.n_params
+            assert plan.dyn_group_target_row[i] != plan.dyn_group_base_row[i]
 
     #
     def test_resolved_trace_nonconstant(self):
@@ -1898,7 +1901,7 @@ class TestSchedule2DSimple:
 
         plan, _graph, _model = self._make_plan()
 
-        target_row = plan.dynamics_target_row[0]
+        target_row = plan.dyn_group_target_row[0]
         trace = plan.param_traces_init[target_row, :]
         # expFun with nonzero A produces a non-constant trace
         assert not np.all(trace == trace[0])
@@ -2097,7 +2100,7 @@ class TestSchedule2DExpressions:
         """Dynamics on GLP_01_A is still compiled alongside expressions."""
 
         plan, _graph, _model = self._make_plan()
-        assert plan.n_dynamics == 1
+        assert plan.n_dyn_groups == 1
 
 
 #
@@ -2124,30 +2127,34 @@ class TestSchedule2DMultipleDynamics:
         return plan, graph, model
 
     #
-    def test_two_dynamics(self):
-        """Two dynamics subgraphs compiled."""
+    def test_two_dynamics_groups(self):
+        """Two dynamics groups compiled (one per time-dep parameter)."""
 
         plan, _graph, _model = self._make_plan()
-        assert plan.n_dynamics == 2
-        # Both are expFun
-        assert plan.dynamics_func_id[0] == int(DynFuncKind.EXPFUN)
-        assert plan.dynamics_func_id[1] == int(DynFuncKind.EXPFUN)
+        assert plan.n_dyn_groups == 2
+        # Both groups have a single substep (mono-exponential each)
+        for g in range(2):
+            n_sub = plan.dyn_group_indptr[g + 1] - plan.dyn_group_indptr[g]
+            assert n_sub == 1
+        # Both substeps are expFun
+        assert plan.dyn_sub_func_id[0] == int(DynFuncKind.EXPFUN)
+        assert plan.dyn_sub_func_id[1] == int(DynFuncKind.EXPFUN)
 
     #
     def test_distinct_target_rows(self):
-        """Each dynamics subgraph targets a different trace row."""
+        """Each dynamics group targets a different trace row."""
 
         plan, _graph, _model = self._make_plan()
 
-        assert plan.dynamics_target_row[0] != plan.dynamics_target_row[1]
+        assert plan.dyn_group_target_row[0] != plan.dyn_group_target_row[1]
 
     #
     def test_distinct_base_rows(self):
-        """Each dynamics subgraph has a different base row."""
+        """Each dynamics group has a different base row."""
 
         plan, _graph, _model = self._make_plan()
 
-        assert plan.dynamics_base_row[0] != plan.dynamics_base_row[1]
+        assert plan.dyn_group_base_row[0] != plan.dyn_group_base_row[1]
 
     #
     def test_both_resolved_vary_over_time(self):
@@ -2156,18 +2163,20 @@ class TestSchedule2DMultipleDynamics:
         plan, _graph, _model = self._make_plan()
 
         for i in range(2):
-            row = plan.dynamics_target_row[i]
+            row = plan.dyn_group_target_row[i]
             trace = plan.param_traces_init[row, :]
             assert not np.all(trace == trace[0])
 
     #
     def test_dynamics_param_rows_dont_overlap(self):
-        """Dynamics params for the two subgraphs don't share rows."""
+        """Dynamics substep params for the two groups don't share rows."""
 
         plan, _graph, _model = self._make_plan()
 
-        rows_0 = set(plan.dynamics_param_rows[0, : plan.dynamics_n_params[0]].tolist())
-        rows_1 = set(plan.dynamics_param_rows[1, : plan.dynamics_n_params[1]].tolist())
+        s0 = int(plan.dyn_group_indptr[0])
+        s1 = int(plan.dyn_group_indptr[1])
+        rows_0 = set(plan.dyn_sub_param_rows[s0, : plan.dyn_sub_n_params[s0]].tolist())
+        rows_1 = set(plan.dyn_sub_param_rows[s1, : plan.dyn_sub_n_params[s1]].tolist())
         assert rows_0.isdisjoint(rows_1)
 
 
@@ -2804,6 +2813,6 @@ class TestNonDenseNodeIds:
         # Previously crashed with IndexError
         plan = schedule_2d(g)
 
-        assert plan.n_dynamics == 1
+        assert plan.n_dyn_groups == 1
         assert plan.n_ops == 1
-        assert plan.dynamics_func_id[0] == int(DynFuncKind.EXPFUN)
+        assert plan.dyn_sub_func_id[0] == int(DynFuncKind.EXPFUN)

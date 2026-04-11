@@ -393,18 +393,33 @@ class ScheduledPlan2D:
     opt_indices: np.ndarray  # (n_opt,) int
     opt_param_names: list[str]  # (n_opt,) canonical optimizer param names
 
-    # --- Dynamics subgraphs ---
-    n_dynamics: int
-    dynamics_func_id: np.ndarray  # (n_dynamics,) int
-    dynamics_param_rows: np.ndarray  # (n_dynamics, max_dyn_params) int, -1 padded
-    dynamics_n_params: np.ndarray  # (n_dynamics,) int
-    dynamics_target_row: np.ndarray  # (n_dynamics,) int
-    dynamics_base_row: np.ndarray  # (n_dynamics,) int
+    # --- Dynamics subgraphs (grouped by target PARAM_PLUS_TRACE) ---
+    # Each "dynamics group" corresponds to one time-dependent parameter.
+    # Multiple dynamics components (e.g. bi-exponential) targeting the
+    # same PARAM_PLUS_TRACE are grouped together.  Substeps within a
+    # group are indexed via the CSR-style dyn_group_indptr.
+    n_dyn_groups: int
+    dyn_group_target_row: np.ndarray  # (n_dyn_groups,) int
+    dyn_group_base_row: np.ndarray  # (n_dyn_groups,) int
+    dyn_group_indptr: np.ndarray  # (n_dyn_groups + 1,) int -- CSR into substep arrays
+    dyn_sub_func_id: np.ndarray  # (n_substeps,) int
+    dyn_sub_param_rows: np.ndarray  # (n_substeps, max_dyn_params) int, -1 padded
+    dyn_sub_n_params: np.ndarray  # (n_substeps,) int
 
     # --- Expression evaluation ---
     n_expressions: int
     expr_target_rows: np.ndarray  # (n_expressions,) int
     expr_programs: list[ExprProgram]
+
+    # --- Interleaved parameter resolution schedule ---
+    # Dynamics groups and expressions may depend on each other (e.g. a
+    # dynamics param that is an expression of another dynamics param).
+    # The resolution_kinds / resolution_indices arrays encode the correct
+    # topological execution order:
+    #   kind=0 -> dynamics group step, index into dyn_group_* arrays
+    #   kind=1 -> expression step, index into expr_* arrays / expr_programs
+    resolution_kinds: np.ndarray  # (n_dyn_groups + n_expressions,) int8
+    resolution_indices: np.ndarray  # (n_dyn_groups + n_expressions,) int
 
     # --- Scheduled component ops ---
     n_ops: int
@@ -1658,29 +1673,28 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     opt_param_names = [n.name for n in opt_nodes]
 
     # ------------------------------------------------------------------ #
-    # 3. Compile dynamics subgraphs                                        #
+    # 3. Compile dynamics subgraphs (grouped by PARAM_PLUS_TRACE)          #
     # ------------------------------------------------------------------ #
+    # First pass: extract per-DYNAMICS_TRACE info and find which PPT
+    # each trace feeds.
     dyn_trace_nodes = [
         id_to_node[nid]
         for nid in topo_order
         if id_to_node[nid].kind == NodeKind.DYNAMICS_TRACE
     ]
-    n_dynamics = len(dyn_trace_nodes)
 
-    # Pre-compute max_dyn_params for rectangular array
-    dyn_param_counts: list[int] = []
-    dyn_param_row_lists: list[list[int]] = []
-    dyn_func_ids: list[int] = []
-    dyn_target_rows: list[int] = []
-    dyn_base_rows: list[int] = []
+    # Per-trace (substep) info, indexed by position in dyn_trace_nodes.
+    sub_func_ids: list[int] = []
+    sub_param_row_lists: list[list[int]] = []
+    sub_ppt_row: list[int] = []  # which PPT row this trace targets
+    sub_base_row: list[int] = []
 
     for dyn_node in dyn_trace_nodes:
-        # Function ID
         assert dyn_node.function_name is not None
         func_kind = _FUNCTION_NAME_TO_DYN_FUNC.get(dyn_node.function_name)
         if func_kind is None:
             raise ValueError(f"Unknown dynamics function: {dyn_node.function_name!r}")
-        dyn_func_ids.append(int(func_kind))
+        sub_func_ids.append(int(func_kind))
 
         # Param rows (from PARAM_INPUT edges, ordered by position)
         param_edges = sorted(
@@ -1691,11 +1705,11 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
             ),
             key=lambda e: e.position or 0,
         )
-        param_rows = [name_to_row[id_to_node[e.source].name] for e in param_edges]
-        dyn_param_row_lists.append(param_rows)
-        dyn_param_counts.append(len(param_rows))
+        sub_param_row_lists.append(
+            [name_to_row[id_to_node[e.source].name] for e in param_edges]
+        )
 
-        # Target row: the PARAM_PLUS_TRACE node that this trace feeds into
+        # Target: the PARAM_PLUS_TRACE node this trace feeds
         ppt_edges = [
             e
             for e in graph.edges
@@ -1706,7 +1720,7 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
             f" PARAM_PLUS_TRACE, found {len(ppt_edges)}"
         )
         ppt_node = id_to_node[ppt_edges[0].target]
-        dyn_target_rows.append(name_to_row[ppt_node.name])
+        sub_ppt_row.append(name_to_row[ppt_node.name])
 
         # Base row: the BASE_INPUT to the PARAM_PLUS_TRACE
         base_edges = [
@@ -1715,19 +1729,51 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
             if e.target == ppt_node.id and e.kind == EdgeKind.BASE_INPUT
         ]
         assert len(base_edges) == 1
-        base_node = id_to_node[base_edges[0].source]
-        dyn_base_rows.append(name_to_row[base_node.name])
+        sub_base_row.append(name_to_row[id_to_node[base_edges[0].source].name])
 
-    # Pack into arrays
-    max_dyn_params = max(dyn_param_counts) if dyn_param_counts else 0
-    dynamics_param_rows = np.full((n_dynamics, max_dyn_params), -1, dtype=np.intp)
-    for i, rows in enumerate(dyn_param_row_lists):
-        dynamics_param_rows[i, : len(rows)] = rows
+    # Second pass: group substeps by target PPT row, preserving topo order.
+    # Each unique PPT row becomes one dynamics group.
+    seen_ppt: dict[int, int] = {}  # ppt_row -> group index
+    group_target_rows: list[int] = []
+    group_base_rows: list[int] = []
+    group_substeps: list[list[int]] = []  # group_idx -> [substep indices]
 
-    dynamics_func_id = np.array(dyn_func_ids, dtype=np.intp)
-    dynamics_n_params = np.array(dyn_param_counts, dtype=np.intp)
-    dynamics_target_row = np.array(dyn_target_rows, dtype=np.intp)
-    dynamics_base_row = np.array(dyn_base_rows, dtype=np.intp)
+    for sub_idx, ppt_row in enumerate(sub_ppt_row):
+        if ppt_row not in seen_ppt:
+            gid = len(group_target_rows)
+            seen_ppt[ppt_row] = gid
+            group_target_rows.append(ppt_row)
+            group_base_rows.append(sub_base_row[sub_idx])
+            group_substeps.append([])
+        group_substeps[seen_ppt[ppt_row]].append(sub_idx)
+
+    n_dyn_groups = len(group_target_rows)
+    n_substeps = len(dyn_trace_nodes)
+
+    # Pack substep arrays (flat, ordered by group then topo within group)
+    flat_sub_indices: list[int] = []
+    indptr: list[int] = [0]
+    for subs in group_substeps:
+        flat_sub_indices.extend(subs)
+        indptr.append(indptr[-1] + len(subs))
+
+    max_dyn_params = (
+        max(len(r) for r in sub_param_row_lists) if sub_param_row_lists else 0
+    )
+    dyn_sub_param_rows = np.full((n_substeps, max_dyn_params), -1, dtype=np.intp)
+    dyn_sub_n_params_list: list[int] = []
+    dyn_sub_func_id_list: list[int] = []
+    for flat_i, orig_i in enumerate(flat_sub_indices):
+        rows = sub_param_row_lists[orig_i]
+        dyn_sub_param_rows[flat_i, : len(rows)] = rows
+        dyn_sub_n_params_list.append(len(rows))
+        dyn_sub_func_id_list.append(sub_func_ids[orig_i])
+
+    dyn_group_target_row = np.array(group_target_rows, dtype=np.intp)
+    dyn_group_base_row = np.array(group_base_rows, dtype=np.intp)
+    dyn_group_indptr = np.array(indptr, dtype=np.intp)
+    dyn_sub_func_id = np.array(dyn_sub_func_id_list, dtype=np.intp)
+    dyn_sub_n_params = np.array(dyn_sub_n_params_list, dtype=np.intp)
 
     # ------------------------------------------------------------------ #
     # 4. Compile expressions (topological order)                           #
@@ -1801,6 +1847,39 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         expr_target_rows_list.append(name_to_row[expr_node.name])
 
     expr_target_rows = np.array(expr_target_rows_list, dtype=np.intp)
+
+    # Build resolution schedule: map DYNAMICS_TRACE node ids to their
+    # group index, and emit each group exactly once (on the *last* trace
+    # in that group, so all expression deps are resolved first).
+    _dyn_id_to_ppt = {n.id: sub_ppt_row[i] for i, n in enumerate(dyn_trace_nodes)}
+    _ppt_to_group = seen_ppt  # ppt_row -> group index
+    _expr_id_to_idx = {n.id: i for i, n in enumerate(expr_nodes_topo)}
+
+    # Find which DYNAMICS_TRACE is the last in each group (in topo order).
+    # We emit the group step at that point so all substep expressions are
+    # resolved before the group evaluates.
+    _last_dyn_in_group: dict[int, int] = {}  # group_idx -> last dyn node id
+    for nid in topo_order:
+        if nid in _dyn_id_to_ppt:
+            gid = _ppt_to_group[_dyn_id_to_ppt[nid]]
+            _last_dyn_in_group[gid] = nid
+
+    resolution_kinds_list: list[int] = []
+    resolution_indices_list: list[int] = []
+    emitted_groups: set[int] = set()
+    for nid in topo_order:
+        if nid in _dyn_id_to_ppt:
+            gid = _ppt_to_group[_dyn_id_to_ppt[nid]]
+            if _last_dyn_in_group[gid] == nid and gid not in emitted_groups:
+                resolution_kinds_list.append(0)  # dynamics group
+                resolution_indices_list.append(gid)
+                emitted_groups.add(gid)
+        elif nid in _expr_id_to_idx:
+            resolution_kinds_list.append(1)  # expression
+            resolution_indices_list.append(_expr_id_to_idx[nid])
+
+    resolution_kinds = np.array(resolution_kinds_list, dtype=np.int8)
+    resolution_indices = np.array(resolution_indices_list, dtype=np.intp)
 
     # ------------------------------------------------------------------ #
     # 5. Schedule component ops                                            #
@@ -1889,23 +1968,29 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         int(DynFuncKind.SQRTFUN): fcts_time.sqrtFun,
     }
 
-    for i in range(n_dynamics):
-        n_dp = int(dynamics_n_params[i])
-        p_vals = [
-            float(param_traces_init[dynamics_param_rows[i, j], 0]) for j in range(n_dp)
-        ]
-        func = _DYN_DISPATCH[int(dynamics_func_id[i])]
-        trace = func(graph.time, *p_vals)
-        base_val = param_traces_init[dynamics_base_row[i], 0]
-        param_traces_init[dynamics_target_row[i], :] = base_val + trace
-
-    # Expressions: evaluate in topological order using the trace matrix.
-    # Simple scalar-broadcast evaluation (take column 0 for constants).
-    for idx in range(n_expressions):
-        target_row = int(expr_target_rows[idx])
-        program = expr_programs[idx]
-        result = _eval_expr_program_init(program, param_traces_init, n_time)
-        param_traces_init[target_row, :] = result
+    # Dynamics groups and expressions are interleaved in topological order
+    # so that expression-valued dynamics params (e.g. expFun_02_t0 =
+    # "expFun_01_t0") are resolved before the group that consumes them.
+    for step in range(len(resolution_kinds)):
+        kind = int(resolution_kinds[step])
+        idx = int(resolution_indices[step])
+        if kind == 0:  # dynamics group
+            target = int(dyn_group_target_row[idx])
+            base = int(dyn_group_base_row[idx])
+            param_traces_init[target, :] = param_traces_init[base, :]
+            for s in range(int(dyn_group_indptr[idx]), int(dyn_group_indptr[idx + 1])):
+                n_dp = int(dyn_sub_n_params[s])
+                p_vals = [
+                    float(param_traces_init[dyn_sub_param_rows[s, j], 0])
+                    for j in range(n_dp)
+                ]
+                func = _DYN_DISPATCH[int(dyn_sub_func_id[s])]
+                param_traces_init[target, :] += func(graph.time, *p_vals)
+        else:  # expression
+            target_row = int(expr_target_rows[idx])
+            program = expr_programs[idx]
+            result = _eval_expr_program_init(program, param_traces_init, n_time)
+            param_traces_init[target_row, :] = result
 
     # ------------------------------------------------------------------ #
     # 7. Pack into ScheduledPlan2D                                         #
@@ -1918,15 +2003,18 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         param_traces_init=param_traces_init,
         opt_indices=opt_indices,
         opt_param_names=opt_param_names,
-        n_dynamics=n_dynamics,
-        dynamics_func_id=dynamics_func_id,
-        dynamics_param_rows=dynamics_param_rows,
-        dynamics_n_params=dynamics_n_params,
-        dynamics_target_row=dynamics_target_row,
-        dynamics_base_row=dynamics_base_row,
+        n_dyn_groups=n_dyn_groups,
+        dyn_group_target_row=dyn_group_target_row,
+        dyn_group_base_row=dyn_group_base_row,
+        dyn_group_indptr=dyn_group_indptr,
+        dyn_sub_func_id=dyn_sub_func_id,
+        dyn_sub_param_rows=dyn_sub_param_rows,
+        dyn_sub_n_params=dyn_sub_n_params,
         n_expressions=n_expressions,
         expr_target_rows=expr_target_rows,
         expr_programs=expr_programs,
+        resolution_kinds=resolution_kinds,
+        resolution_indices=resolution_indices,
         n_ops=n_ops,
         op_schedule=op_schedule,
         op_kinds=op_kinds,
@@ -1945,47 +2033,10 @@ def _eval_expr_program_init(
 ) -> np.ndarray:
     """Evaluate an RPN ExprProgram against the trace matrix.
 
-    Used during plan initialization to populate expression rows.
-    Returns an ``(n_time,)`` array.
+    Thin wrapper around :func:`trspecfit.eval_2d.eval_expr_program`
+    kept for backward compatibility in ``schedule_2d`` init.
     """
 
-    stack: list[np.ndarray] = []
-    instr = program.instructions
-    n_instr = len(instr) // 2
+    from trspecfit.eval_2d import eval_expr_program
 
-    for i in range(n_instr):
-        kind = ExprNodeKind(instr[2 * i])
-        operand = instr[2 * i + 1]
-
-        if kind == ExprNodeKind.CONST:
-            val = np.int64(operand).view(np.float64)
-            stack.append(np.full(n_time, val, dtype=np.float64))
-
-        elif kind == ExprNodeKind.PARAM_REF:
-            stack.append(traces[int(operand), :].copy())
-
-        elif kind == ExprNodeKind.ADD:
-            b, a = stack.pop(), stack.pop()
-            stack.append(a + b)
-
-        elif kind == ExprNodeKind.SUB:
-            b, a = stack.pop(), stack.pop()
-            stack.append(a - b)
-
-        elif kind == ExprNodeKind.MUL:
-            b, a = stack.pop(), stack.pop()
-            stack.append(a * b)
-
-        elif kind == ExprNodeKind.DIV:
-            b, a = stack.pop(), stack.pop()
-            stack.append(a / b)
-
-        elif kind == ExprNodeKind.NEG:
-            stack.append(-stack.pop())
-
-        elif kind == ExprNodeKind.POW:
-            b, a = stack.pop(), stack.pop()
-            stack.append(a**b)
-
-    assert len(stack) == 1
-    return stack[0]
+    return eval_expr_program(program, traces)

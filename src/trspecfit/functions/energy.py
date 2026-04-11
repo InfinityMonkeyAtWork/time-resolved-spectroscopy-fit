@@ -48,26 +48,26 @@ from scipy.special import wofz
 
 
 #
-def Offset(x: np.ndarray, y0: float, spectrum: np.ndarray) -> np.ndarray:
+def Offset(x: np.ndarray, y0: float, spectrum: np.ndarray | None = None) -> np.ndarray:
     """
     Constant offset background.
 
     Parameters
     ----------
     x : ndarray
-        Energy axis (not used, but required for consistent function signature)
+        Energy axis. Shape determines output shape via broadcasting.
     y0 : float
-        Offset value (constant intensity level)
-    spectrum : ndarray
-        Current peak sum (not used, but required for background function signature)
+        Offset value (constant intensity level).
+    spectrum : ndarray or None, optional
+        Current peak sum (unused; accepted for background calling convention).
 
     Returns
     -------
     ndarray
-        Constant array of shape len(x) with value y0
+        Constant array matching the shape of *x* with value *y0*.
     """
 
-    return np.full_like(spectrum, y0, dtype=float)
+    return np.ones_like(x, dtype=float) * y0
 
 
 #
@@ -78,27 +78,35 @@ def Shirley(x: np.ndarray, pShirley: float, spectrum: np.ndarray) -> np.ndarray:
     Parameters
     ----------
     x : ndarray
-        Energy axis (not used in calculation, but required for signature)
+        Energy axis (not used in calculation, but required for signature).
     pShirley : float
         Shirley scaling factor. Controls the strength of the background
         relative to peak area. Typical values are on the order of 1E-4.
     spectrum : ndarray
-        Current peak sum. The Shirley background is computed as cumulative integral
-        of this spectrum. **Must have increasing kinetic energy (or decreasing
-        binding energy) direction.**
+        Current peak sum. The Shirley background is computed as cumulative
+        integral of this spectrum along the last (energy) axis.
+        **Must have increasing kinetic energy (or decreasing binding
+        energy) direction.**
 
     Returns
     -------
     ndarray
-        Shirley background spectrum (same shape as spectrum)
+        Shirley background spectrum (same shape as spectrum).
+        Works for both 1D ``(n_energy,)`` and 2D ``(n_time, n_energy)``.
     """
 
-    return pShirley * np.cumsum(spectrum[::-1])[::-1]
+    flipped = np.flip(spectrum, axis=-1)
+    return pShirley * np.flip(np.cumsum(flipped, axis=-1), axis=-1)
 
 
 #
 def LinBack(
-    x: np.ndarray, m: float, b: float, xStart: float, xStop: float, spectrum: np.ndarray
+    x: np.ndarray,
+    m: float,
+    b: float,
+    xStart: float,
+    xStop: float,
+    spectrum: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Clamped linear background.
@@ -119,8 +127,8 @@ def LinBack(
         Left boundary of linear region (energy units, must be < xStop).
     xStop : float
         Right boundary of linear region (energy units, must be > xStart).
-    spectrum : ndarray
-        Current peak sum (background calling convention).
+    spectrum : ndarray or None, optional
+        Current peak sum (unused; accepted for background calling convention).
 
     Returns
     -------
@@ -130,12 +138,17 @@ def LinBack(
     Raises
     ------
     ValueError
-        If xStart >= xStop.
+        If any xStart >= xStop (scalar or array).
     """
 
-    if xStart >= xStop:
+    if np.any(np.asarray(xStart) >= np.asarray(xStop)):
+        # Report first offending pair for scalar or array inputs
+        xs = np.asarray(xStart)
+        xe = np.asarray(xStop)
+        bad = np.argmax((xs >= xe).ravel())
         raise ValueError(
-            f"LinBack requires xStart < xStop, got xStart={xStart}, xStop={xStop}"
+            f"LinBack requires xStart < xStop, got xStart={xs.ravel()[bad]}, "
+            f"xStop={xe.ravel()[bad]}"
         )
     y = m * (x - xStart) + b
     y_stop = m * (xStop - xStart) + b

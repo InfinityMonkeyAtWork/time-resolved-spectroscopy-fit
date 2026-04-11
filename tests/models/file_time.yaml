@@ -65,6 +65,20 @@ MonoExpPosExpr:
         t0: [0, False, 0, 1]
         y0: [0, False, 0, 1]
 
+# Bi-exponential: two expFun, second shares t0 with first via expression.
+# Single-cycle, no convolution -- fully lowerable.
+BiExpSharedT0:
+    expFun:
+        A: [3, True, 0, 10]
+        tau: [5, True, 1, 20]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]
+    expFun:
+        A: [-1, True, -5, 0]
+        tau: [20, True, 5, 50]
+        t0: ["expFun_01_t0"]
+        y0: [0, False, 0, 1]
+
 # convolution as last component (should fail ordering validation)
 conv_last:
     expFun:
