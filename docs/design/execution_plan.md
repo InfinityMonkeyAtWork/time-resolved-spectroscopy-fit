@@ -492,7 +492,10 @@ class OpKind(IntEnum):
 
 @dataclass(frozen=True)
 class ScheduledPlan2D:
-    """Compiled 2D execution schedule. No Python objects in the hot path."""
+    """Compiled 2D execution schedule.
+
+    No Python objects in the hot path (except ``expr_programs``).
+    """
 
     energy: np.ndarray              # (n_energy,)
     time: np.ndarray                # (n_time,)
@@ -510,33 +513,33 @@ class ScheduledPlan2D:
     opt_param_names: list[str]      # (n_opt,) canonical optimizer parameter names
                                     # defines the order theta must follow
 
-    # --- Dynamics subgraphs ---
-    # Each dynamics model is a compiled subgraph: given its parameter values,
-    # produce a (n_time,) trace. The evaluator re-evaluates these when the
-    # optimizer changes dynamics params.
-    n_dynamics: int
-    # For each dynamics model:
-    #   dynamics_func_id[i]: which time function to call (int enum,
-    #     mapped from GraphNode.function_name by schedule_2d)
-    #   dynamics_param_rows[i]: (n_dyn_params,) row indices for this model's params
-    #   dynamics_target_row[i]: which row in trace matrix receives the result
-    #   dynamics_base_row[i]: which row holds the base (spectral) param value
-    dynamics_func_id: np.ndarray    # (n_dynamics,) int
-    dynamics_param_rows: np.ndarray # (n_dynamics, max_dyn_params) int, -1 padded
-    dynamics_n_params: np.ndarray   # (n_dynamics,) int -- actual param count per model
-    dynamics_target_row: np.ndarray # (n_dynamics,) int -- target row (resolved param)
-    dynamics_base_row: np.ndarray   # (n_dynamics,) int -- base param row
+    # --- Dynamics subgraphs (grouped by target PARAM_PLUS_TRACE) ---
+    # Each dynamics group corresponds to one time-dependent parameter.
+    # Multiple dynamics components (e.g. bi-exponential terms) feeding
+    # the same PARAM_PLUS_TRACE are grouped together. Substeps within a
+    # group are indexed via the CSR-style dyn_group_indptr.
+    n_dyn_groups: int
+    dyn_group_target_row: np.ndarray  # (n_dyn_groups,) int
+    dyn_group_base_row: np.ndarray    # (n_dyn_groups,) int
+    dyn_group_indptr: np.ndarray      # (n_dyn_groups + 1,) int -- CSR into substep arrays
+    dyn_sub_func_id: np.ndarray       # (n_substeps,) int
+    dyn_sub_param_rows: np.ndarray    # (n_substeps, max_dyn_params) int, -1 padded
+    dyn_sub_n_params: np.ndarray      # (n_substeps,) int
 
     # --- Expression evaluation ---
-    # Expressions compiled to RPN programs, evaluated in topological order.
-    # Each program reads from the trace matrix and writes one row.
     n_expressions: int
     expr_target_rows: np.ndarray    # (n_expressions,) int -- which row to write
-    expr_programs: list["ExprProgram"]  # compiled RPN programs (see S3.3)
-    # Note: list[ExprProgram] is the ONE remaining Python list in the plan.
-    # Each ExprProgram is itself a flat int array. This list exists because
-    # programs have variable length. A CSR-style flat encoding is possible
-    # but premature for v1.
+    expr_programs: list["ExprProgram"]  # compiled RPN programs
+
+    # --- Interleaved parameter resolution schedule ---
+    # Dynamics groups and expressions may depend on each other
+    # (for example, a dynamics parameter expressed in terms of another
+    # dynamics parameter). These arrays encode the correct topological
+    # execution order:
+    #   kind=0 -> dynamics group step, index into dyn_group_* arrays
+    #   kind=1 -> expression step, index into expr_* arrays / expr_programs
+    resolution_kinds: np.ndarray    # (n_dyn_groups + n_expressions,) int8
+    resolution_indices: np.ndarray  # (n_dyn_groups + n_expressions,) int
 
     # --- Scheduled component ops ---
     # Components in topologically-sorted execution order (derived from graph edges).
@@ -727,20 +730,34 @@ schedule_2d(graph):
        - Contiguous: opt params first (so theta maps to a slice),
          then static, then computed
 
-    3. Compile dynamics subgraphs
+    3. Compile grouped dynamics subgraphs
        - For each DYNAMICS_TRACE node:
          * Record function ID (expFun -> 0, sinFun -> 1, etc.)
          * Record param row indices (from PARAM_INPUT edges)
-         * Record target row and base row
+         * Record the PARAM_PLUS_TRACE target row and its base row
+       - Group all DYNAMICS_TRACE nodes feeding the same
+         PARAM_PLUS_TRACE into one dynamics group
+       - Pack groups as CSR-style arrays:
+         dyn_group_target_row / dyn_group_base_row / dyn_group_indptr,
+         plus flat dyn_sub_* arrays for the grouped substeps
 
     4. Compile expressions
        - For each EXPRESSION node (in topological order):
          * Parse expr_string into RPN using Python ast module
          * Reject unsupported AST nodes (function calls, etc.)
          * Resolve param references to trace matrix row indices
+           (using EXPR_REF edges as the source of truth)
          * Encode as flat int64 array
 
-    5. Schedule component ops
+    5. Build interleaved parameter-resolution schedule
+       - Walk topo order and emit:
+         * expression steps when EXPRESSION nodes appear
+         * one dynamics-group step at the last DYNAMICS_TRACE node in
+           each group, so all prerequisite expressions are already
+           resolved before that group is evaluated
+       - Store as resolution_kinds / resolution_indices
+
+    6. Schedule component ops
        - Topological order from graph edges determines execution order
        - For each COMPONENT_EVAL / SPECTRUM_FED_OP node:
          * Record OpKind
@@ -750,13 +767,15 @@ schedule_2d(graph):
          accumulated peak sum (inputs to the SUM node that feeds
          SPECTRUM_FED_OP nodes)
 
-    6. Initialize trace matrix
+    7. Initialize trace matrix
        - For static params: fill row with repeated scalar
        - For opt params: fill row with repeated initial value
-       - For time-dep params: evaluate dynamics at initial values,
-         compute base + trace
+       - Replay the same interleaved resolution schedule used by the
+         runtime evaluator:
+         * dynamics group -> base + sum(substep traces)
+         * expression -> evaluate RPN program against current trace matrix
 
-    7. Pack into ScheduledPlan2D, return
+    8. Pack into ScheduledPlan2D, return
 ```
 
 #### Critical invariants
@@ -790,19 +809,19 @@ evaluate_2d(plan, theta):
        a. Copy plan.param_traces_init -> traces  (n_params, n_time) scratch
        b. Broadcast optimizer params into trace matrix:
           traces[plan.opt_indices, :] = theta[:, np.newaxis]
-       c. Recompute dynamics traces:
-          For each dynamics model i:
-            - Gather params: p = traces[dynamics_param_rows[i], 0]
-              (take column 0 since dynamics params are constant over time)
-            - Call dynamics function(plan.time, *p) -> (n_time,) trace
-            - Write resolved value:
-              traces[dynamics_target_row[i], :] =
-                traces[dynamics_base_row[i], :] + trace
-       d. Evaluate expressions (in topological order):
-          For each expression program:
-            - Execute RPN against traces matrix
-            - All operands are (n_time,) rows; arithmetic broadcasts
-            - Write result row: traces[expr_target_row, :] = result
+       c. Execute the interleaved resolution schedule:
+          For each step in (resolution_kinds, resolution_indices):
+            - If kind == dynamics group:
+              * target = dyn_group_target_row[idx]
+              * start from traces[target, :] = traces[base_row, :]
+              * for each grouped substep:
+                - Gather params from traces[dyn_sub_param_rows[s], 0]
+                - Call dynamics function(plan.time, *p) -> (n_time,) trace
+                - Accumulate into the target row
+            - If kind == expression:
+              * Execute RPN against traces matrix
+              * All operands are (n_time,) rows; arithmetic broadcasts
+              * Write result row: traces[expr_target_rows[idx], :] = result
 
     2. COMPONENT EVALUATION (in scheduled order)
        result = zeros(n_time, n_energy)
@@ -826,27 +845,29 @@ evaluate_2d(plan, theta):
 
 #### Component evaluation dispatch
 
-Each `OpKind` maps to a broadcastable evaluation function. These are
-thin wrappers that accept `(n_time, 1)` params and `(1, n_energy)`
-energy, producing `(n_time, n_energy)` output:
+Each `OpKind` maps directly to the shared kernels in
+`src/trspecfit/functions/energy.py`, which are the single source of
+truth for component math. Peak functions broadcast naturally with
+`(n_time, 1)` params and `(1, n_energy)` energy; `Offset`, `LinBack`,
+and `Shirley` are written to support both 1D and broadcasted 2D inputs:
 
 ```python
-def eval_GLP(energy, A, x0, F, m):
-    """energy: (1, n_e), A/x0/F/m: (n_t, 1) -> (n_t, n_e)"""
-    return A * np.exp(-((x - x0) / F)**2 * 4 * np.log(2) * (1 - m)) \
-             / (1 + 4 * m * ((x - x0) / F)**2)
-
-def eval_Shirley(energy, pShirley, spectrum):
-    """spectrum: (n_t, n_e) -> (n_t, n_e)"""
-    return pShirley * np.cumsum(spectrum[:, ::-1], axis=1)[:, ::-1]
+_OP_DISPATCH = {
+    OpKind.GAUSS: (fcts_energy.Gauss, 3, False),
+    OpKind.GLP: (fcts_energy.GLP, 4, False),
+    OpKind.OFFSET: (fcts_energy.Offset, 1, False),
+    OpKind.LINBACK: (fcts_energy.LinBack, 4, False),
+    OpKind.SHIRLEY: (fcts_energy.Shirley, 1, True),
+}
 ```
 
-Shirley's cumsum is along axis=1 (energy), which is correct for 2D.
+Shirley should use axis-agnostic last-axis operations (`axis=-1`) so the
+same implementation works for both 1D and batched inputs.
 
 #### Dynamics function dispatch
 
 Dynamics functions are called once per residual call on the full time
-axis. The evaluator maps dynamics_func_id to the existing functions
+axis. The evaluator maps `dyn_sub_func_id` to the existing functions
 from `functions/time.py`:
 
 ```python
@@ -882,29 +903,41 @@ lmfit.minimize(residual_fun, params, ...)
     -> return residual.flatten()
 ```
 
-#### New call chain
+#### New call chain (implemented)
 ```
-# Before fitting:
+# Default project setting:
+project.spec_fun_str = "fit_model_gir"
+
+# Before a lowerable 2D fit:
 graph = build_graph(model)
 plan = schedule_2d(graph)
+theta_indices = precompute_indices(model.parameter_names, plan.opt_param_names)
 
 # During fitting:
-lmfit.minimize(residual_fun_lowered, params, ..., args=(plan,))
-  -> residual_fun_lowered(params, x, data, ..., args=(plan,))
-    -> theta = extract_theta(params)          # flat array from lmfit
-    -> spectrum_2d = evaluate_2d(plan, theta)  # THE HOT PATH (vectorized)
+lmfit.minimize(residual_fun, params, ..., args=(plan, theta_indices))
+  -> residual_fun(params, x, data, ..., fit_fun_str="fit_model_gir")
+    -> par_extract(params) -> full par_values list
+    -> fit_model_gir(x, par_values, True, plan, theta_indices)
+      -> theta = par_values[theta_indices]
+      -> spectrum_2d = evaluate_2d(plan, theta)  # THE HOT PATH (vectorized)
     -> residual = data - spectrum_2d
     -> return residual.flatten()
 ```
 
-The model object is still needed for:
-- Building the graph (`build_graph(model)`)
-- Writing results back after fitting (`model.update_value(final_params)`)
-- Plotting, describe, save -- all post-fit operations
-
-`File.fit_2d` checks `can_lower_2d(graph)`: if True, compiles with
-`schedule_2d` and uses the fast path; if False, falls back to the
-interpreter.
+Implemented Phase 4 behavior:
+- `fit_model_gir` is a dispatcher, not a 2D-only leaf. It uses the
+  compiled backend only for lowerable 2D fits and delegates to
+  `fit_model_mcp` for 1D fits or non-lowerable 2D fits.
+- `fit_model_mcp` remains the explicit interpreter mode.
+- `fit_model_compare` is the validation mode. For lowerable 2D fits it
+  runs GIR and interpreter, compares with `assert_allclose`, and returns
+  the GIR result. Otherwise it delegates to the interpreter.
+- `File.fit_2d` only builds a graph / plan when `spec_fun_str` is
+  `fit_model_gir` or `fit_model_compare`.
+- After fitting, `File.fit_2d` copies `result[1].params` back into
+  `model.lmfit_pars` before plotting / saving, because `fit_wrapper`
+  optimizes a deepcopy and the GIR path does not mutate model state on
+  every residual call.
 
 
 ### 8. Scope boundaries -- what compiles in v1 vs later
@@ -913,7 +946,7 @@ interpreter.
 |---|---|---|---|
 | Additive peaks (Gauss, GLP, GLS, DS, etc.) | Yes (excl. Voigt) | Yes | Core use case |
 | Offset, LinBack | Yes | Yes | Reclassified as COMPONENT_EVAL (no spectrum dep) |
-| Shirley | Yes | Yes | SPECTRUM_FED_OP with cumsum along axis=1 |
+| Shirley | Yes | Yes | SPECTRUM_FED_OP using last-axis cumulative sum |
 | Arithmetic expressions | Yes | Yes | Compiled to RPN |
 | Time-dependent params (Dynamics) | Yes | Yes | Dynamics subgraph compiled |
 | Voigt | No (broadcast issue) | Yes | Needs per-slice max fix |
@@ -961,10 +994,10 @@ def validate_plan(model, plan):
 
 This validation runs:
 - In the test suite, for every test model that `can_lower_2d()` accepts
-- On first call during fitting (compare interpreter and compiled output
-  at initial parameters before handing off to optimizer)
-- Optionally on every Nth residual call during fitting (controlled by
-  debug flag, off by default)
+- In explicit compare mode during fitting via
+  `spec_fun_str="fit_model_compare"`
+- On fallback cases, compare mode delegates to the interpreter so
+  behavior matches the non-GIR path
 
 
 ### 10. Future: backends and Jacobians
@@ -1063,11 +1096,13 @@ in its component's function.
 **Step 2.2: `schedule_2d(graph) -> ScheduledPlan2D`**
 - Topological sort of graph nodes
 - Assign trace matrix rows (opt first, then static, then computed)
-- Compile dynamics subgraphs to flat param/target row arrays
+- Compile grouped dynamics subgraphs to flat `dyn_group_*` / `dyn_sub_*` arrays
 - Compile expressions to RPN programs
+- Build an interleaved `resolution_kinds` / `resolution_indices` schedule
 - Schedule component ops in topological order
 - CSR-encode component param maps
-- Initialize trace matrix from model's current parameter values
+- Initialize the trace matrix by replaying the same interleaved
+  dynamics/expression schedule at the model's current parameter values
 - Derive op_is_pre_spectrum from graph edges
 
 **Step 2.3: Structural validation**
@@ -1079,47 +1114,74 @@ in its component's function.
 
 ### Phase 3: Evaluator
 
-**Step 3.1: Broadcastable component functions**
-- Write eval_Gauss, eval_GLP, eval_GLS, eval_DS, etc.
-- Each accepts `(1, n_energy)` energy and `(n_time, 1)` params
-- eval_Shirley: uses `np.cumsum(..., axis=1)` for 2D
-- eval_Offset: broadcasts scalar to `(n_time, n_energy)`
-- eval_LinBack: piecewise linear, works on `(n_time, n_energy)` grid
-- Unit test each against original function (1D match, then 2D broadcast)
+**Step 3.1: Consolidate shared energy kernels**
+- Use `src/trspecfit/functions/energy.py` as the single source of truth
+  for component math
+- Make `Shirley`, `Offset`, and `LinBack` work for both 1D and
+  broadcasted 2D inputs
+- Keep peak functions shared; they already broadcast naturally
+- Add direct tests for 1D equivalence plus broadcast/shape correctness
 
 **Step 3.2: `evaluate_2d(plan, theta) -> ndarray`**
 - Implement algorithm from section 6
 - Trace matrix copy + opt param broadcast
-- Dynamics trace recomputation
-- RPN expression evaluation
+- Interleaved dynamics-group and expression resolution
 - Component dispatch loop with CSR param gather
+- Dispatch components directly to shared `functions.energy` kernels
 - Spectrum-fed ops (Shirley) get peak_sum
 
 **Step 3.3: Full numerical validation**
 - For every test model that `can_lower_2d()` accepts:
   compare interpreter vs `evaluate_2d` output at multiple theta values
 - Test with: all static params, some time-dependent, expressions
-  referencing time-dep params, Shirley + peaks, LinBack + peaks
+  referencing time-dep params, dynamics-internal expressions,
+  Shirley + peaks, LinBack + peaks
 - Verify parameter update: change theta, re-evaluate, compare
 
 
-### Phase 4: Integration
+### Phase 4: Integration (implemented)
 
-**Step 4.1: Wire into fit pipeline**
-- Add lowered branch in `fit_model_mcp` or new function (`fit_model_gir`)
-- `File.fit_2d` checks `can_lower_2d()`: if True, builds graph, compiles
-  with `schedule_2d`, uses fast path; if False, falls back to interpreter
-- Residual function extracts theta and calls `evaluate_2d`
+**Step 4.1: Dispatch and defaults**
+- Added `fit_model_gir(...)` in `spectra.py` as the public fast-path
+  dispatcher
+- Changed the default `Project.spec_fun_str` from `fit_model_mcp` to
+  `fit_model_gir`
+- `fit_model_gir` uses the compiled backend only for lowerable 2D fits;
+  otherwise it delegates to `fit_model_mcp`
+- `File.fit_2d` builds the graph / plan once per fit and precomputes
+  `theta_indices` for mapping the full optimizer parameter vector to the
+  compact `theta` expected by `evaluate_2d`
+- `fit_model_mcp` remains available as explicit interpreter mode
 
-**Step 4.2: Result writeback**
-- After fitting, write final theta back to `model.lmfit_pars`
-- All existing post-fit code (plotting, saving, CI) works unchanged
+**Step 4.2: Validation mode**
+- Added `fit_model_compare(...)` in `spectra.py`
+- For lowerable 2D fits it runs GIR and interpreter, compares with
+  `np.testing.assert_allclose`, and returns the GIR result
+- For 1D fits and non-lowerable 2D fits it delegates to
+  `fit_model_mcp`
+- The validation contract is numerical agreement (`allclose`), not
+  bitwise identity
 
-**Step 4.3: Benchmarking**
-- Time the profiling example (400 x 440, 4 free params) with both paths
-- Measure: total fit time, per-iteration time, parameter overhead
-- Target: >= 3x speedup on the example case (eliminating 28% param
-  overhead + 16% dispatch overhead = 44%, plus vectorized math gains)
+**Step 4.3: Result writeback**
+- After `fit_wrapper` returns, `File.fit_2d` copies
+  `result[1].params` back into `model.lmfit_pars`
+- This is required because `fit_wrapper` optimizes a deepcopy and the
+  GIR hot path does not mutate model state on each residual call
+- Existing post-fit code (`save_2d_fit`, plotting, exports) then works
+  unchanged
+
+**Step 4.4: Test coverage**
+- Added direct residual parity tests for GIR vs interpreter, including
+  sliced residuals
+- Added end-to-end `File.fit_2d` coverage for compare mode and
+  parameter writeback
+- Existing round-trip tests continue to exercise the default GIR path on
+  lowerable models
+
+**Step 4.5: Benchmarking**
+- Benchmarking was not implemented in Phase 4
+- Performance measurement remains a follow-up item before deeper
+  optimization work
 
 
 ### Phase 5: Optimization (post-validation)
