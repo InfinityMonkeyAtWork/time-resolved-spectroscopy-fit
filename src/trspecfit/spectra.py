@@ -32,6 +32,8 @@ from typing import Any
 
 import numpy as np
 
+from trspecfit.eval_2d import evaluate_2d
+from trspecfit.graph_ir import ScheduledPlan2D
 from trspecfit.mcp import Model
 
 
@@ -145,6 +147,82 @@ def fit_model_mcp(
             raise RuntimeError("Model evaluation did not produce value_2d")
         return model.value_2d
     raise ValueError(f"Unsupported dim={dim}; expected 1 or 2")
+
+
+#
+def fit_model_gir(
+    x: Sequence[float] | np.ndarray,
+    par: Sequence[float] | np.ndarray,
+    plot_sum: bool,
+    *args: Any,
+) -> np.ndarray | list[np.ndarray]:
+    """Generate spectrum using the compiled GIR backend when available.
+
+    When the first element of *args* is a :class:`ScheduledPlan2D` the
+    compiled 2-D evaluator is used.  Otherwise the call is forwarded to
+    :func:`fit_model_mcp` (1-D fits, or 2-D models that could not be
+    lowered).
+
+    Parameters
+    ----------
+    x : array-like
+        Independent variable axis (energy or time).
+    par : array-like
+        Full parameter vector (all params, fixed + varying).
+    plot_sum : bool
+        Component return mode (forwarded to ``fit_model_mcp`` on fallback).
+    *args
+        Either ``(plan, theta_indices)`` for the compiled path, or
+        ``(model, dim)`` for the interpreter fallback.
+    """
+
+    if isinstance(args[0], ScheduledPlan2D):
+        plan: ScheduledPlan2D = args[0]
+        theta_indices: np.ndarray = args[1]
+        par_arr = np.asarray(par, dtype=np.float64)
+        theta = par_arr[theta_indices]
+        return evaluate_2d(plan, theta)
+    # 1D or non-lowerable 2D fallback
+    return fit_model_mcp(x, par, plot_sum, *args)
+
+
+#
+def fit_model_compare(
+    x: Sequence[float] | np.ndarray,
+    par: Sequence[float] | np.ndarray,
+    plot_sum: bool,
+    *args: Any,
+) -> np.ndarray | list[np.ndarray]:
+    """Run both GIR and interpreter paths, compare results.
+
+    When the first element of *args* is a :class:`ScheduledPlan2D` the
+    compiled path is executed and its output compared against the
+    interpreter via ``np.testing.assert_allclose``.  On fallback the
+    interpreter is called directly.
+
+    Parameters
+    ----------
+    x : array-like
+        Independent variable axis (energy or time).
+    par : array-like
+        Full parameter vector (all params, fixed + varying).
+    plot_sum : bool
+        Component return mode.
+    *args
+        ``(plan, theta_indices, model, dim)`` for the comparison path,
+        or ``(model, dim)`` for interpreter-only fallback.
+    """
+
+    if isinstance(args[0], ScheduledPlan2D):
+        plan: ScheduledPlan2D = args[0]
+        theta_indices: np.ndarray = args[1]
+        model: Model = args[2]
+        dim: int = args[3]
+        fast = fit_model_gir(x, par, plot_sum, plan, theta_indices)
+        slow = fit_model_mcp(x, par, plot_sum, model, dim)
+        np.testing.assert_allclose(fast, slow, rtol=1e-10, atol=1e-10)
+        return fast
+    return fit_model_mcp(x, par, plot_sum, *args)
 
 
 #

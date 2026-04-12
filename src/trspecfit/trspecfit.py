@@ -226,7 +226,7 @@ class Project:
         self.da_slices_fmt = "%06d"
         # Advanced settings
         self.spec_lib = spectra
-        self.spec_fun_str = "fit_model_mcp"
+        self.spec_fun_str = "fit_model_gir"
         self.skip_first_n_spec = -1
         self.first_n_spec_only = -1
 
@@ -2746,18 +2746,43 @@ class File:
         self.model_2d.update_value(
             new_par_values=list(base_df["value"]), par_select=list(base_df["name"])
         )
+        # --- dispatch: GIR fast path vs interpreter ---
+        _fun_str = self.p.spec_fun_str
+
+        if _fun_str in ("fit_model_gir", "fit_model_compare"):
+            from trspecfit.graph_ir import build_graph, can_lower_2d, schedule_2d
+
+            _graph = build_graph(self.model_2d)
+            if can_lower_2d(_graph):
+                _plan = schedule_2d(_graph)
+                _name_to_idx = {
+                    n: i for i, n in enumerate(self.model_2d.parameter_names)
+                }
+                _theta_indices = np.array(
+                    [_name_to_idx[n] for n in _plan.opt_param_names],
+                    dtype=np.intp,
+                )
+                if _fun_str == "fit_model_gir":
+                    _args: tuple[Any, ...] = (_plan, _theta_indices)
+                else:  # fit_model_compare
+                    _args = (_plan, _theta_indices, self.model_2d, 2)
+            else:
+                # Not lowerable — fit_model_gir delegates to fit_model_mcp
+                _args = (self.model_2d, 2)
+        else:
+            _args = (self.model_2d, 2)
+
         # const [x, data, package, function string, unpack, energy limits, time limits]
         self.model_2d.const = (
             self.energy,
             self.data,
             self.p.spec_lib,
-            self.p.spec_fun_str,
+            _fun_str,
             0,
             self.e_lim,
             self.t_lim,
         )
-        # args [for fit function called in residual function]
-        self.model_2d.args = (self.model_2d, 2)  # model, dimension
+        self.model_2d.args = _args
 
         # fit (with confidence intervals)
         self.model_2d.result = fitlib.fit_wrapper(
@@ -2771,6 +2796,15 @@ class File:
             save_path=path_2d_results / model_name,
             **fit_wrapper_kwargs,
         )
+        # Write optimized values back to model.lmfit_pars.  fit_wrapper
+        # optimizes a deepcopy, so model.lmfit_pars may be stale — especially
+        # on the GIR path where fit_model_gir never calls model.update_value.
+        if stages >= 1 and self.model_2d.result[1] != []:
+            final_params = self.model_2d.result[1].params
+            for name in self.model_2d.parameter_names:
+                if name in final_params:
+                    self.model_2d.lmfit_pars[name].value = final_params[name].value
+
         if stages >= 1:
             self.save_2d_fit(save_path=path_2d_results)
             fitlib.time_display(
