@@ -13,7 +13,7 @@ import pytest
 
 from trspecfit import File, Project
 from trspecfit.eval_2d import evaluate_2d
-from trspecfit.graph_ir import build_graph, can_lower_2d, schedule_2d
+from trspecfit.graph_ir import OpKind, build_graph, can_lower_2d, schedule_2d
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -134,6 +134,9 @@ class TestStaticModels:
     def test_lorentz(self):
         self._run_static(["lorentz_only"])
 
+    def test_voigt(self):
+        self._run_static(["voigt_only"])
+
     def test_gls(self):
         self._run_static(["gls_only"])
 
@@ -198,6 +201,22 @@ class TestDynamicModels:
         x0_idx = plan.opt_param_names.index("Lorentz_01_x0")
         A_idx = plan.opt_param_names.index("Lorentz_01_A")
         _perturb_theta(plan, model, theta, [x0_idx, A_idx], [0.5, 3.0])
+
+    def test_voigt_time_dep_amplitude(self):
+        """Voigt with A time-dependent."""
+
+        _file, model = _make_2d_model(
+            ["voigt_only"],
+            [("Voigt_01_A", ["MonoExpPos"])],
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+
+        A_idx = plan.opt_param_names.index("Voigt_01_A")
+        W_idx = plan.opt_param_names.index("Voigt_01_W")
+        _perturb_theta(plan, model, theta, [A_idx, W_idx], [2.0, 0.2])
 
     def test_glp_time_dep_amplitude(self):
         """GLP with A time-dependent -- the standard test case."""
@@ -350,3 +369,58 @@ class TestThetaContract:
 
         result = evaluate_2d(plan, np.array([], dtype=np.float64))
         assert result.shape == (51, 101)
+
+
+# ---------------------------------------------------------------------------
+# Static component caching
+# ---------------------------------------------------------------------------
+
+
+#
+#
+class TestStaticComponentCaching:
+    """Verify constant components are precomputed in the compiled plan."""
+
+    def test_fixed_offset_is_cached(self):
+        """Offset with fixed params is cached and skipped in the hot path."""
+
+        _file, model = _make_2d_model(["cached_offset_peak"], [])
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+
+        offset_indices = [
+            i for i in range(plan.n_ops) if plan.op_kinds[i] == int(OpKind.OFFSET)
+        ]
+        assert len(offset_indices) == 1
+        assert plan.op_is_constant[offset_indices[0]]
+        assert np.any(plan.cached_result)
+        np.testing.assert_allclose(plan.cached_peak_sum, 0.0, atol=1e-12)
+
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+        A_idx = plan.opt_param_names.index("GLP_01_A")
+        _perturb_theta(plan, model, theta, [A_idx], [2.0])
+
+    def test_fixed_peak_populates_cached_peak_sum(self):
+        """A fixed peak still contributes to Shirley via cached peak_sum."""
+
+        _file, model = _make_2d_model(["cached_shirley_peak"], [])
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+
+        glp_indices = [
+            i for i in range(plan.n_ops) if plan.op_kinds[i] == int(OpKind.GLP)
+        ]
+        shirley_indices = [
+            i for i in range(plan.n_ops) if plan.op_kinds[i] == int(OpKind.SHIRLEY)
+        ]
+        assert len(glp_indices) == 1
+        assert len(shirley_indices) == 1
+        assert plan.op_is_constant[glp_indices[0]]
+        assert not plan.op_is_constant[shirley_indices[0]]
+        assert np.any(plan.cached_peak_sum)
+
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+        p_idx = plan.opt_param_names.index("Shirley_pShirley")
+        _perturb_theta(plan, model, theta, [p_idx], [1.0e-4])

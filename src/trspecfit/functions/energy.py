@@ -270,7 +270,8 @@ def Voigt(x: np.ndarray, A: float, x0: float, SD: float, W: float) -> np.ndarray
     """
 
     voigt = np.real(wofz(((x - x0) + 1j * (W / 2)) / SD / np.sqrt(2)))
-    return np.asarray(A * voigt / np.max(voigt))
+    max_voigt = np.max(voigt, axis=-1, keepdims=True)
+    return np.asarray(A * voigt / max_voigt)
 
 
 #

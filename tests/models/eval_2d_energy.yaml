@@ -19,6 +19,13 @@ lorentz_only:
       x0: [85.0, True, 82, 88]
       W: [2.0, True, 0.5, 5]
 
+voigt_only:
+    Voigt:
+      A: [10, True, 1, 30]
+      x0: [85.0, True, 82, 88]
+      SD: [1.2, True, 0.5, 3]
+      W: [2.0, True, 0.5, 5]
+
 gls_only:
     GLS:
       A: [10, True, 1, 30]
@@ -68,6 +75,24 @@ shirley_peak:
       A: [10, True, 1, 30]
       x0: [85.0, True, 82, 88]
       F: [1.5, True, 0.5, 3]
+      m: [0.3, False, 0, 1]
+
+cached_offset_peak:
+    Offset:
+      y0: [2, False]
+    GLP:
+      A: [10, True, 1, 30]
+      x0: [85.0, True, 82, 88]
+      F: [1.5, False, 0.5, 3]
+      m: [0.3, False, 0, 1]
+
+cached_shirley_peak:
+    Shirley:
+      pShirley: [4.0E-4, True, 1.0E-6, 1.0E-2]
+    GLP:
+      A: [10, False, 1, 30]
+      x0: [85.0, False, 82, 88]
+      F: [1.5, False, 0.5, 3]
       m: [0.3, False, 0, 1]
 
 # Two peaks with expression dependency + Offset

@@ -11,34 +11,14 @@ from __future__ import annotations
 
 import numpy as np
 
-from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import time as fcts_time
 from trspecfit.graph_ir import (
+    OP_DISPATCH,
     DynFuncKind,
     ExprNodeKind,
     ExprProgram,
-    OpKind,
     ScheduledPlan2D,
 )
-
-# ---------------------------------------------------------------------------
-# Component dispatch table
-# ---------------------------------------------------------------------------
-
-#: Maps OpKind -> (eval_function, n_params, needs_spectrum).
-#: All functions are the originals from ``functions.energy``.
-_OP_DISPATCH: dict[int, tuple] = {
-    OpKind.GAUSS: (fcts_energy.Gauss, 3, False),
-    OpKind.GAUSS_ASYM: (fcts_energy.GaussAsym, 4, False),
-    OpKind.LORENTZ: (fcts_energy.Lorentz, 3, False),
-    OpKind.GLS: (fcts_energy.GLS, 4, False),
-    OpKind.GLP: (fcts_energy.GLP, 4, False),
-    OpKind.DS: (fcts_energy.DS, 4, False),
-    OpKind.OFFSET: (fcts_energy.Offset, 1, False),
-    OpKind.LINBACK: (fcts_energy.LinBack, 4, False),
-    OpKind.SHIRLEY: (fcts_energy.Shirley, 1, True),
-}
-
 
 # ---------------------------------------------------------------------------
 # Dynamics dispatch table
@@ -161,9 +141,6 @@ def evaluate_2d(plan: ScheduledPlan2D, theta: np.ndarray) -> np.ndarray:
             f"plan.opt_indices length {len(plan.opt_indices)}"
         )
 
-    n_time = plan.n_time
-    n_energy = plan.energy.shape[0]
-
     # 1a. Copy trace matrix -> scratch
     traces = plan.param_traces_init.copy()
 
@@ -197,10 +174,12 @@ def evaluate_2d(plan: ScheduledPlan2D, theta: np.ndarray) -> np.ndarray:
 
     # 2. Component evaluation
     energy = plan.energy[np.newaxis, :]  # (1, n_energy)
-    result = np.zeros((n_time, n_energy), dtype=np.float64)
-    peak_sum = np.zeros((n_time, n_energy), dtype=np.float64)
+    result = plan.cached_result.copy()
+    peak_sum = plan.cached_peak_sum.copy()
 
     for op_idx in range(plan.n_ops):
+        if plan.op_is_constant[op_idx]:
+            continue
         kind = int(plan.op_kinds[op_idx])
         start = int(plan.op_param_indptr[op_idx])
         end = int(plan.op_param_indptr[op_idx + 1])
@@ -214,12 +193,11 @@ def evaluate_2d(plan: ScheduledPlan2D, theta: np.ndarray) -> np.ndarray:
         needs_spectrum = bool(plan.op_needs_spectrum[op_idx])
         is_pre = bool(plan.op_is_pre_spectrum[op_idx])
 
+        func, _needs = OP_DISPATCH[kind]
         if needs_spectrum:
             # Spectrum-fed op (Shirley): pass peak_sum as extra arg
-            func, _n_par, _needs = _OP_DISPATCH[kind]
             component = func(energy, *params, peak_sum)
         else:
-            func, _n_par, _needs = _OP_DISPATCH[kind]
             component = func(energy, *params)
 
         result += component

@@ -595,6 +595,7 @@ class TestCanLower2D:
                     "Gauss",
                     "GaussAsym",
                     "Lorentz",
+                    "Voigt",
                     "GLS",
                     "GLP",
                     "DS",

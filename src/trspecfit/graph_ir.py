@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from trspecfit.functions import energy as fcts_energy
+
 if TYPE_CHECKING:
     from trspecfit.mcp import Component, Model, Par
 
@@ -100,9 +102,10 @@ class OpKind(IntEnum):
     GAUSS = 0
     GAUSS_ASYM = 1
     LORENTZ = 2
-    GLS = 3
-    GLP = 4
-    DS = 5
+    VOIGT = 3
+    GLS = 4
+    GLP = 5
+    DS = 6
     OFFSET = 10
     LINBACK = 11
     SHIRLEY = 12
@@ -139,12 +142,29 @@ _FUNCTION_NAME_TO_OP: dict[str, OpKind] = {
     "Gauss": OpKind.GAUSS,
     "GaussAsym": OpKind.GAUSS_ASYM,
     "Lorentz": OpKind.LORENTZ,
+    "Voigt": OpKind.VOIGT,
     "GLS": OpKind.GLS,
     "GLP": OpKind.GLP,
     "DS": OpKind.DS,
     "Offset": OpKind.OFFSET,
     "LinBack": OpKind.LINBACK,
     "Shirley": OpKind.SHIRLEY,
+}
+
+#: Maps ``OpKind`` → ``(eval_function, needs_spectrum)``.
+#: Single source of truth for component dispatch -- used by both the
+#: evaluator hot path and constant-component precomputation.
+OP_DISPATCH: dict[int, tuple[Callable[..., Any], bool]] = {
+    int(OpKind.GAUSS): (fcts_energy.Gauss, False),
+    int(OpKind.GAUSS_ASYM): (fcts_energy.GaussAsym, False),
+    int(OpKind.LORENTZ): (fcts_energy.Lorentz, False),
+    int(OpKind.VOIGT): (fcts_energy.Voigt, False),
+    int(OpKind.GLS): (fcts_energy.GLS, False),
+    int(OpKind.GLP): (fcts_energy.GLP, False),
+    int(OpKind.DS): (fcts_energy.DS, False),
+    int(OpKind.OFFSET): (fcts_energy.Offset, False),
+    int(OpKind.LINBACK): (fcts_energy.LinBack, False),
+    int(OpKind.SHIRLEY): (fcts_energy.Shirley, True),
 }
 
 
@@ -429,6 +449,9 @@ class ScheduledPlan2D:
     op_param_indices: np.ndarray  # (total_op_params,) int -- row indices
     op_needs_spectrum: np.ndarray  # (n_ops,) bool
     op_is_pre_spectrum: np.ndarray  # (n_ops,) bool
+    op_is_constant: np.ndarray  # (n_ops,) bool
+    cached_result: np.ndarray  # (n_time, n_energy)
+    cached_peak_sum: np.ndarray  # (n_time, n_energy)
 
 
 _PACKAGE_SHORT_NAMES: dict[str, str] = {
@@ -1290,6 +1313,7 @@ _LOWERABLE_2D_FUNCTIONS: frozenset[str] = frozenset(
         "Gauss",
         "GaussAsym",
         "Lorentz",
+        "Voigt",
         "GLS",
         "GLP",
         "DS",
@@ -1666,6 +1690,9 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     name_to_row: dict[str, int] = {}
     for row, node in enumerate(all_row_nodes):
         name_to_row[node.name] = row
+    row_is_constant = np.zeros(n_params, dtype=np.bool_)
+    for node in static_nodes:
+        row_is_constant[name_to_row[node.name]] = True
 
     # opt_indices and opt_param_names
     n_opt = len(opt_nodes)
@@ -1844,7 +1871,11 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
 
         program = _bind_expr_to_rows(symbolic, binding)
         expr_programs.append(program)
-        expr_target_rows_list.append(name_to_row[expr_node.name])
+        target_row = name_to_row[expr_node.name]
+        expr_target_rows_list.append(target_row)
+        row_is_constant[target_row] = all(
+            row_is_constant[binding[name]] for name in symbolic.referenced_names
+        )
 
     expr_target_rows = np.array(expr_target_rows_list, dtype=np.intp)
 
@@ -1905,6 +1936,7 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     op_param_indices_list: list[int] = []
     op_needs_spectrum_list: list[bool] = []
     op_is_pre_spectrum_list: list[bool] = []
+    op_is_constant_list: list[bool] = []
 
     for comp_node in comp_nodes_topo:
         # OpKind
@@ -1934,6 +1966,13 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
             for e in graph.edges
         )
         op_needs_spectrum_list.append(has_spec_input)
+        op_is_constant_list.append(
+            (not has_spec_input)
+            and all(
+                row_is_constant[name_to_row[id_to_node[pe.source].name]]
+                for pe in param_edges
+            )
+        )
 
         # Contributes to peak_sum?
         op_is_pre_spectrum_list.append(comp_node.id in peak_sum_sources)
@@ -1943,6 +1982,7 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     op_param_indices = np.array(op_param_indices_list, dtype=np.intp)
     op_needs_spectrum = np.array(op_needs_spectrum_list, dtype=np.bool_)
     op_is_pre_spectrum = np.array(op_is_pre_spectrum_list, dtype=np.bool_)
+    op_is_constant = np.array(op_is_constant_list, dtype=np.bool_)
 
     # ------------------------------------------------------------------ #
     # 6. Initialize trace matrix                                           #
@@ -1993,6 +2033,28 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
             param_traces_init[target_row, :] = result
 
     # ------------------------------------------------------------------ #
+    # 6b. Precompute constant component contributions                      #
+    # ------------------------------------------------------------------ #
+    energy = graph.energy[np.newaxis, :]
+    cached_result = np.zeros((n_time, len(graph.energy)), dtype=np.float64)
+    cached_peak_sum = np.zeros_like(cached_result)
+    for op_idx in range(n_ops):
+        if not op_is_constant[op_idx]:
+            continue
+        start = int(op_param_indptr[op_idx])
+        end = int(op_param_indptr[op_idx + 1])
+        param_rows = op_param_indices[start:end]
+        params = [param_traces_init[int(row), :][:, np.newaxis] for row in param_rows]
+        func, needs_spectrum = OP_DISPATCH[int(op_kinds[op_idx])]
+        if needs_spectrum:
+            component = func(energy, *params, cached_peak_sum)
+        else:
+            component = func(energy, *params)
+        cached_result += component
+        if op_is_pre_spectrum[op_idx]:
+            cached_peak_sum += component
+
+    # ------------------------------------------------------------------ #
     # 7. Pack into ScheduledPlan2D                                         #
     # ------------------------------------------------------------------ #
     return ScheduledPlan2D(
@@ -2022,6 +2084,9 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         op_param_indices=op_param_indices,
         op_needs_spectrum=op_needs_spectrum,
         op_is_pre_spectrum=op_is_pre_spectrum,
+        op_is_constant=op_is_constant,
+        cached_result=cached_result,
+        cached_peak_sum=cached_peak_sum,
     )
 
 

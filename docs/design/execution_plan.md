@@ -1178,38 +1178,62 @@ in its component's function.
 - Existing round-trip tests continue to exercise the default GIR path on
   lowerable models
 
-**Step 4.5: Benchmarking**
-- Benchmarking was not implemented in Phase 4
-- Performance measurement remains a follow-up item before deeper
-  optimization work
+**Step 4.5: Benchmarking (implemented)**
+- Added a benchmark workflow for GIR vs interpreter on example fitting
+  workflows
+- The default example (`02_dependent_parameters`) currently shows about
+  a 3x per-call speedup for the lowered evaluator while maintaining
+  numerical parity with the interpreter (`max |diff| ~ 1e-13`)
+- This confirms the main Phase 4 win came from removing interpreter
+  overhead before pursuing deeper backend changes
 
 
-### Phase 5: Optimization (post-validation)
+### Phase 5: Optimization (in progress)
 
-**Step 5.1: Dynamics trace caching**
-- If dynamics params in theta haven't changed since last call, skip
-  trace recomputation. Compare theta slice.
+**Step 5.1: Static component caching (implemented for non-spectrum-fed ops)**
+- Components whose parameters depend only on constant rows and do not
+  consume `peak_sum` are precomputed once during `schedule_2d`
+- Their contributions are stored in the plan and copied into the result
+  / `peak_sum` scratch arrays before the hot-path loop runs
+- Future extension: allow spectrum-fed ops (e.g. Shirley) to be cached
+  too when all upstream `peak_sum` contributors are static
 
-**Step 5.2: Static component caching**
-- Components with no optimizer-visible or time-dependent params produce
-  the same output every call. Compute once, cache in plan.
+**Step 5.2: Add Voigt support (implemented)**
+- Patched Voigt to normalize per slice: `max(axis=-1, keepdims=True)`
+- Added Voigt to the lowerable 2D function list / op mapping
+- Added broadcast and evaluator parity tests against the interpreter
 
-**Step 5.3: Add Voigt support**
-- Patch Voigt to normalize per-slice: `max(axis=-1, keepdims=True)`
-- Add to `can_lower_2d()` v1 list
-- Validate against interpreter
+**Step 5.3: Decide on Numba vs JAX**
+- Use the lowered-evaluator benchmark as the decision gate: with the
+  current ~3x win, the next step is to profile the GIR runtime itself
+  before choosing a compiler backend
+- Numba is the lower-risk path for incremental acceleration because the
+  current evaluator already uses NumPy arrays and explicit loops
+- JAX is only attractive if we want JIT compilation of the full
+  evaluator and eventually analytic Jacobians / autodiff
+- Full JAX / `jit` compatibility would require:
+  - a pure-array evaluator signature (`plan_arrays`, `theta`) with no
+    Python-object plan state in the hot path
+  - replacing Python control flow in the evaluator with JAX-friendly
+    loop constructs (`lax.fori_loop`, `lax.scan`, etc.)
+  - encoding expression programs as flat arrays rather than Python
+    `ExprProgram` objects / lists
+  - removing Python exception paths from jitted regions (or guarding
+    them outside the JIT boundary)
+  - JAX-compatible replacements for SciPy-only special functions such as
+    `wofz`, or a separate non-JAX fallback for those kernels
+  - deciding whether `lmfit` remains the outer optimizer (host-side
+    JAX-evaluated residuals) or whether optimizer/Jacobian logic moves
+    to a more JAX-native stack
+- Decision criteria: dependency weight, maintenance cost, GPU needs,
+  and whether Jacobians materially reduce fit iterations
 
-**Step 5.4: Decide on Numba vs JAX**
-- Benchmark Phase 4 results to determine if math is now the bottleneck
-- If yes: evaluate Numba (`@njit`) vs JAX (`jit` + `jacrev`)
-- Decision criteria: dependency weight, GPU needs, Jacobian value
-
-**Step 5.5: Analytic Jacobians (if JAX)**
+**Step 5.4: Analytic Jacobians (if JAX)**
 - Wrap evaluator for `jax.jacrev`
 - Pass Jacobian to lmfit via `Dfun` parameter
 - Measure iteration count reduction
 
-**Step 5.6: Variable projection (VARPRO)**
+**Step 5.5: Variable projection (VARPRO)**
 - Identify linear parameters from graph structure
 - Implement VARPRO separation
 - Reduce optimizer dimensionality
