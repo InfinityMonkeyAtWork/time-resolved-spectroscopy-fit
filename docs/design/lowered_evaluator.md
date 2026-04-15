@@ -1178,7 +1178,9 @@ in its component's function.
 - Existing round-trip tests continue to exercise the default GIR path on
   lowerable models
 
-**Step 4.5: Benchmarking (implemented)**
+### Phase 5: Benchmarking and Optimization (in progress)
+
+**Step 5.1: Benchmarking (implemented)**
 - Added a benchmark workflow for GIR vs interpreter on example fitting
   workflows
 - The default example (`02_dependent_parameters`) currently shows about
@@ -1187,10 +1189,7 @@ in its component's function.
 - This confirms the main Phase 4 win came from removing interpreter
   overhead before pursuing deeper backend changes
 
-
-### Phase 5: Optimization (in progress)
-
-**Step 5.1: Static component caching (implemented for non-spectrum-fed ops)**
+**Step 5.2: Static component caching (implemented for non-spectrum-fed ops)**
 - Components whose parameters depend only on constant rows and do not
   consume `peak_sum` are precomputed once during `schedule_2d`
 - Their contributions are stored in the plan and copied into the result
@@ -1198,42 +1197,10 @@ in its component's function.
 - Future extension: allow spectrum-fed ops (e.g. Shirley) to be cached
   too when all upstream `peak_sum` contributors are static
 
-**Step 5.2: Add Voigt support (implemented)**
+**Step 5.3: Add Voigt support (implemented)**
 - Patched Voigt to normalize per slice: `max(axis=-1, keepdims=True)`
 - Added Voigt to the lowerable 2D function list / op mapping
 - Added broadcast and evaluator parity tests against the interpreter
 
-**Step 5.3: Decide on Numba vs JAX**
-- Use the lowered-evaluator benchmark as the decision gate: with the
-  current ~3x win, the next step is to profile the GIR runtime itself
-  before choosing a compiler backend
-- Numba is the lower-risk path for incremental acceleration because the
-  current evaluator already uses NumPy arrays and explicit loops
-- JAX is only attractive if we want JIT compilation of the full
-  evaluator and eventually analytic Jacobians / autodiff
-- Full JAX / `jit` compatibility would require:
-  - a pure-array evaluator signature (`plan_arrays`, `theta`) with no
-    Python-object plan state in the hot path
-  - replacing Python control flow in the evaluator with JAX-friendly
-    loop constructs (`lax.fori_loop`, `lax.scan`, etc.)
-  - encoding expression programs as flat arrays rather than Python
-    `ExprProgram` objects / lists
-  - removing Python exception paths from jitted regions (or guarding
-    them outside the JIT boundary)
-  - JAX-compatible replacements for SciPy-only special functions such as
-    `wofz`, or a separate non-JAX fallback for those kernels
-  - deciding whether `lmfit` remains the outer optimizer (host-side
-    JAX-evaluated residuals) or whether optimizer/Jacobian logic moves
-    to a more JAX-native stack
-- Decision criteria: dependency weight, maintenance cost, GPU needs,
-  and whether Jacobians materially reduce fit iterations
-
-**Step 5.4: Analytic Jacobians (if JAX)**
-- Wrap evaluator for `jax.jacrev`
-- Pass Jacobian to lmfit via `Dfun` parameter
-- Measure iteration count reduction
-
-**Step 5.5: Variable projection (VARPRO)**
-- Identify linear parameters from graph structure
-- Implement VARPRO separation
-- Reduce optimizer dimensionality
+Open: backend decision (Numba vs JAX) and future optimizations — see
+[numba_vs_jax.md](numba_vs_jax.md).
