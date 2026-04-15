@@ -1246,7 +1246,7 @@ def _emit_combination_nodes(
     - **convolution**: ``comp_type == "conv"`` — receives ``ADDEND``
       from ``peak_sum``, feeds ``total``
 
-    This matches the spec example (execution_plan.md lines 298-305):
+    This matches the spec example (lowered_evaluator.md lines 298-305):
     only peaks contribute to ``peak_sum``; Offset/LinBack are added
     at the ``total`` level.
     """

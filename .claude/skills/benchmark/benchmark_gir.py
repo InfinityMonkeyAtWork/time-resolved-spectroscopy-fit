@@ -248,6 +248,114 @@ def bench_per_call(file, *, n_warmup=5, n_calls=200):
 
 
 # ------------------------------------------------------------------
+# GIR-only loop (for external profilers like py-spy)
+# ------------------------------------------------------------------
+
+
+#
+def bench_gir_only(file, *, n_warmup=50, n_calls=5000):
+    """Run the GIR evaluator in a tight loop with no interpreter path.
+
+    Purpose is to give a sampling profiler a clean window in which only
+    the GIR code path executes -- no MCP calls, no correctness check,
+    no prints inside the hot loop. The per-call timing is still
+    reported at the end as a sanity anchor, but is not the primary
+    output: the flamegraph from py-spy is.
+
+    Parameters
+    ----------
+    file
+        Loaded 2D file (see ``load_example``).
+    n_warmup
+        Warmup calls before the timed window.
+    n_calls
+        Timed calls. At ~2-3 ms/call and 500 Hz sampling, 5000 calls
+        gives ~5000 samples -- enough to resolve buckets above ~1%.
+    """
+
+    model, par, plan, theta_indices, lowerable = prepare_paths(file)
+    if not lowerable:
+        raise RuntimeError("Model is not lowerable -- GIR profile has no target.")
+
+    energy = file.energy
+
+    for _ in range(n_warmup):
+        spectra.fit_model_gir(energy, par, True, plan, theta_indices)
+
+    t0 = time.perf_counter()
+    for _ in range(n_calls):
+        spectra.fit_model_gir(energy, par, True, plan, theta_indices)
+    total = time.perf_counter() - t0
+
+    print("=" * 60)
+    print("GIR-ONLY PROFILE LOOP")
+    print(f"  Grid:       {len(file.time)} time x {len(file.energy)} energy")
+    print(f"  Warmup:     {n_warmup}")
+    print(f"  Calls:      {n_calls}")
+    print(f"  Total:      {total:8.2f} s")
+    print(f"  Per-call:   {total / n_calls * 1e3:8.2f} ms")
+    print("=" * 60)
+
+
+# ------------------------------------------------------------------
+# nfev capture (decision input for Jacobian payoff)
+# ------------------------------------------------------------------
+
+
+#
+def capture_nfev(example_num):
+    """Run the standard baseline + 2D pipeline and capture residual counts.
+
+    Wraps ``fitlib.residual_fun`` with a counter. Each lmfit
+    ``minimize`` call is one optimization stage; the counter partitions
+    evaluations per stage. Totals are the ceiling on any Jacobian
+    payoff: if a fit converges in N evals, a 3x nfev cut from Dfun
+    caps Jacobian win at ~3x at fit level.
+    """
+
+    from trspecfit import fitlib
+
+    counts: list[int] = []
+    call_count = [0]
+    orig_residual = fitlib.residual_fun
+
+    #
+    def counting_residual(*args, **kwargs):
+        call_count[0] += 1
+        return orig_residual(*args, **kwargs)
+
+    fitlib.residual_fun = counting_residual
+
+    #
+    def _snapshot(label):
+        prev = counts[-1] if counts else 0
+        counts.append(call_count[0])
+        print(f"  {label:32s}{call_count[0]:6d}  (+{call_count[0] - prev})")
+
+    try:
+        file, dynamics_calls = load_example(example_num, add_dynamics=False)
+        file.define_baseline(
+            time_start=0, time_stop=10, time_type="ind", show_plot=False
+        )
+
+        print(f"  {'stage':32s}{'total':>6s}  (+delta)")
+        file.fit_baseline(model_name="2D", stages=2, try_ci=0)
+        _snapshot("after fit_baseline (stages=2)")
+
+        for call in dynamics_calls:
+            file.add_time_dependence(**call)
+
+        file.fit_2d(model_name="2D", stages=2, try_ci=0)
+        _snapshot("after fit_2d (stages=2)")
+    finally:
+        fitlib.residual_fun = orig_residual
+
+    print()
+    print(f"  Total residual evaluations: {call_count[0]}")
+    return call_count[0]
+
+
+# ------------------------------------------------------------------
 # Full-fit benchmark
 # ------------------------------------------------------------------
 
@@ -329,24 +437,78 @@ if __name__ == "__main__":
         default=200,
         help="Per-call iterations (default: 200)",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help=(
+            "Run GIR-only loop for external profilers (e.g. py-spy). "
+            "Skips the interpreter path and correctness check. Use "
+            "--calls to control loop length (default 5000 when "
+            "--profile is set)."
+        ),
+    )
+    parser.add_argument(
+        "--nfev",
+        action="store_true",
+        help=(
+            "Run standard baseline + fit_2d pipeline and report "
+            "total residual evaluations. If --example is 0, runs "
+            "all examples and reports a summary."
+        ),
+    )
     args = parser.parse_args()
 
-    folder = _find_example_folder(args.example)
-    print(f"Example: {folder.name}")
+    # --nfev with example 0 means "all examples"; skip the single-example
+    # preamble so capture_nfev can load each one itself.
+    skip_preamble = args.nfev and args.example == 0
+    if not skip_preamble:
+        folder = _find_example_folder(args.example)
+        print(f"Example: {folder.name}")
 
-    file, dynamics_calls = load_example(args.example)
-    model = file.model_active
-    assert model is not None
-    graph = build_graph(model)
-    print(f"  lowerable: {can_lower_2d(graph)}")
-    for call in dynamics_calls:
-        target_parameter = call["target_parameter"]
-        dynamics_model = call["dynamics_model"]
-        print(f"  dynamics:  {target_parameter} <- {dynamics_model}")
-    print()
-
-    bench_per_call(file, n_calls=args.calls)
-
-    if args.fit:
+        file, dynamics_calls = load_example(args.example)
+        model = file.model_active
+        assert model is not None
+        graph = build_graph(model)
+        print(f"  lowerable: {can_lower_2d(graph)}")
+        for call in dynamics_calls:
+            target_parameter = call["target_parameter"]
+            dynamics_model = call["dynamics_model"]
+            print(f"  dynamics:  {target_parameter} <- {dynamics_model}")
         print()
-        bench_fit(args.example, dynamics_calls, n_reps=args.n)
+
+    if args.profile:
+        # Profile-mode default is larger than the per-call default so
+        # py-spy has enough samples; honor --calls if the user set it.
+        profile_calls = args.calls if args.calls != 200 else 5000
+        bench_gir_only(file, n_calls=profile_calls)
+    elif args.nfev:
+        if args.example == 0:
+            totals: dict[int, int | str] = {}
+            for n in range(1, 6):
+                print()
+                print("=" * 60)
+                print(f"NFEV CAPTURE -- example {n:02d}")
+                print("=" * 60)
+                try:
+                    totals[n] = capture_nfev(n)
+                except FileNotFoundError as e:
+                    print(f"  skipped: {e}")
+                    totals[n] = "skipped"
+            print()
+            print("=" * 60)
+            print("NFEV SUMMARY")
+            for n, total in totals.items():
+                total_str = f"{total:6d}" if isinstance(total, int) else f"{total:>6s}"
+                print(f"  example {n:02d}:  {total_str} residual evals")
+            print("=" * 60)
+        else:
+            print("=" * 60)
+            print(f"NFEV CAPTURE -- example {args.example:02d}")
+            print("=" * 60)
+            capture_nfev(args.example)
+    else:
+        bench_per_call(file, n_calls=args.calls)
+
+        if args.fit:
+            print()
+            bench_fit(args.example, dynamics_calls, n_reps=args.n)

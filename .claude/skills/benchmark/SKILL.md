@@ -33,3 +33,25 @@ Run:
 
 Report the results to the user. Highlight the speedup ratio and note
 whether the model was lowerable.
+
+### Profiling (GIR path only)
+
+For flamegraphs of the GIR hot path, use `--profile` to run a
+GIR-only loop (no interpreter path, no correctness check, no prints
+inside the loop) and attach `py-spy` to the subprocess.
+
+Prerequisite (one-time):
+
+```
+.venv/bin/pip install -e ".[profiling]"
+```
+
+Invocation:
+
+```
+.venv/bin/py-spy record --rate 500 -o docs/design/benchmarks/gir_profile.svg -- \
+  .venv/bin/python .claude/skills/benchmark/benchmark_gir.py --example <N> --profile
+```
+
+py-spy needs permission to attach to the child process. On Linux this
+requires either `sudo` or `sysctl kernel.yama.ptrace_scope=0`.
