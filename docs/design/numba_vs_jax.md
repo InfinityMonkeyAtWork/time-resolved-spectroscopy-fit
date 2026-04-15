@@ -163,10 +163,50 @@ ratio of roughly **1.5–3×** from Jacobian alone. Real user models with
 more free parameters would see larger ratios; VARPRO amplifies further
 by projecting linear parameters out of the optimizer's view entirely.
 
+**Important caveat on these nfev numbers.** The bundled examples are
+*tutorial-grade*: they have few free parameters (most are fixed or
+expression-bound), tight bounds, and good initial guesses, so both
+the number of LM iterations and the per-iteration FD cost are near
+their floor. Real production fits typically have more free
+parameters (`N_free` well above 8), looser priors, and worse initial
+guesses — both factors push `nfev` higher and scale the analytic-
+Jacobian win linearly with `N_free`. The 1.5–3× "Jacobian-alone"
+range measured here should therefore be read as a *lower bound*, not
+a typical figure, for the regime where a JAX+Jacobian port would
+actually be deployed.
+
 Combined with JAX's per-call fusion win (see revised Option B
 speedups below), the realistic fit-level win for JAX-with-Jacobian
 lands in the **3–8×** band for the current examples, with room to
 grow for larger models.
+
+### Benchmark #3: plan-build vs fit wall time
+
+Measured via the `--plan-time` flag on `benchmark_gir.py`, which
+monkey-patches `trspecfit.graph_ir.build_graph` and `schedule_2d`
+with timers and then runs the standard `define_baseline →
+fit_baseline(stages=2) → add_time_dependence → fit_2d(stages=2)`
+pipeline. Plan total is the sum of `build_graph` + `schedule_2d`
+elapsed time; the ratio is against the `fit_2d` wall clock.
+
+| Example                       | build_graph | schedule_2d | Plan total | fit_2d wall | Ratio      |
+|-------------------------------|-------------|-------------|------------|-------------|------------|
+| 01 basic_fitting              | 0.21 ms     | 0.00 ms†    | 0.21 ms    | 8.05 s      | **0.003 %** |
+| 02 dependent_parameters       | 0.24 ms     | 0.93 ms     | 1.17 ms    | 5.59 s      | **0.021 %** |
+| 03 multi_cycle                | 0.28 ms     | 0.00 ms†    | 0.28 ms    | 5.46 s      | **0.005 %** |
+| 04 par_profiles               | 0.15 ms     | 0.00 ms†    | 0.15 ms    | 2.09 s      | **0.007 %** |
+
+† `schedule_2d` is only invoked for lowerable models; examples 01,
+03, and 04 are non-lowerable on their default configurations and
+fall back to the MCP interpreter for `fit_2d`, which is also why
+their per-fit wall times are longer despite comparable nfev. The
+ratios still answer the question.
+
+Plan construction is **0.003 %–0.021 %** of fit wall time, three to
+four orders of magnitude below the 10 % threshold that would have
+justified opening a separate plan-builder optimization track. The
+plan builder is not a bottleneck; evaluator-side work is where the
+remaining speedup lives.
 
 ### What the measurements change in this document
 
@@ -392,13 +432,14 @@ Resolved by benchmarks #1 and #2:
   Numba's primary leverage is accordingly smaller than originally
   projected.
 
-Still open:
+Also resolved:
 
-- **Plan-build fraction of fit time.** If `build_graph + schedule_2d`
-  eats more than ~10% of total fit time, evaluator-only optimization
-  leaves money on the floor regardless of backend, and the plan
-  builder becomes a separate track. This is the next remaining
-  measurement.
+- ~~**Plan-build fraction of fit time.**~~ Measured: 0.003–0.021 %
+  across examples 01–04 (benchmark #3 above). Plan construction is
+  not a bottleneck; no separate track needed.
+
+Still open, contingent on direction:
+
 - **Numba registry decoration scope.** How many functions across
   `functions/energy.py` and `functions/time.py` will actually survive
   `@njit` as-is? Needs a scan before committing to a Numba port.
@@ -422,11 +463,10 @@ through are complete; see "Measured benchmarks" above for results.
    around `fitlib.residual_fun`; run via
    `benchmark_gir.py --example 0 --nfev`. Range 231–684 across
    examples 01–04.
-3. **Plan-build vs fit time ratio.** Time `build_graph` +
-   `schedule_2d` around
-   [trspecfit.py:2755–2757](../../src/trspecfit/trspecfit.py#L2755-L2757),
-   compare to total fit time. Decides whether the plan builder is
-   itself a target or not. Not yet run.
+3. ~~**Plan-build vs fit time ratio.**~~ Done (2026-04-15).
+   Monkey-patched `build_graph` + `schedule_2d` with timers; run via
+   `benchmark_gir.py --example 0 --plan-time`. Range 0.003–0.021 %
+   across examples 01–04 — well below the 10 % threshold.
 4. ~~**Grid-size sweep.**~~ Deprioritized for Step 5.3. The
    default-size profile already answered the Numba-vs-JAX question;
    grid sweep re-enters scope only if a small-grid workflow becomes
@@ -446,8 +486,8 @@ Side benchmarks, worth doing in parallel if time permits:
 ## Decision criteria
 
 The original criteria were written around thresholds (`dispatch > 40%`,
-`nfev < 50`) that benchmarks #1 and #2 have now settled. Updated to
-reflect what the measurements actually say:
+`nfev < 50`, `plan-build > 10%`) that benchmarks #1–#3 have now all
+settled. Updated to reflect what the measurements actually say:
 
 **Numba is a fit when:**
 
@@ -470,20 +510,28 @@ stop there."
 - VARPRO is on the roadmap — JAX's array-of-arrays shape is closer to
   what VARPRO needs.
 
-**Neither backend yet, if:**
+**Do neither right now:**
 
-- Benchmark #3 (plan-build fraction) shows plan construction eats
-  more than ~10% of total fit time. In that case the plan builder is
-  the first target and the backend decision comes after.
+- A legitimate option. The GLP / GLS / DS fusion rewrites already
+  landed a cheap ~1.26× on GIR with zero backend change, and GIR is
+  already ~3.8× over MCP. Starting a multi-week port is only
+  justified if the fit-level targets above are actually on the
+  roadmap; otherwise we can close Step 5.3 at the current
+  performance and revisit when scope changes.
 
-**Current tilt, based on the data in "Measured benchmarks":**
+**Conclusion, based on the data in "Measured benchmarks":**
 
-The two measured datapoints tilt the tradeoff toward JAX *if* any of
-the Jacobian / VARPRO / GPU futures are on the table. If they are
-not, Numba is the right match for the smaller scope and the small
-remaining dispatch-overhead win. The remaining benchmark #3 is the
-last guardrail before committing to either — if plan-build dominates
-fit time, the whole backend discussion stalls behind that.
+Benchmarks #1–#3 have collapsed the decision-relevant variance:
+
+- Dispatch is not the bottleneck (#1, ~10%).
+- Jacobians have real headroom (#2, nfev 231–684).
+- Plan construction is not a bottleneck (#3, <0.05 %).
+
+The remaining question is no longer a benchmark question — it is a
+scope/product question: **do you want analytic Jacobians, VARPRO, or
+GPU in the future?** If yes, JAX is the right investment. If no,
+Numba is a modest incremental win and "stop here" is also valid.
+Step 5.3 as framed in the execution plan is effectively closed.
 
 ## Sequencing relative to `can_lower_1d`
 
@@ -498,10 +546,10 @@ different axis. Doing it before the backend choice risks building 1D
 infrastructure in a shape the chosen backend then wants to change.
 Cleaner sequencing:
 
-1. ~~Run benchmarks #1 and #2.~~ Done. Run remaining benchmark #3
-   (plan-build fraction).
-2. Decide Numba vs JAX from the resulting data.
-3. Port 2D to the chosen backend.
+1. ~~Run benchmarks #1, #2, and #3.~~ Done (2026-04-15).
+2. Decide Numba vs JAX (or neither) from the resulting data — see
+   Decision criteria above.
+3. Port 2D to the chosen backend, if any.
 4. Then do `can_lower_1d` on top of the winning backend, reusing the
    same plan shape and op set.
 

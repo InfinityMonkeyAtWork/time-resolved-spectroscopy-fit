@@ -356,6 +356,78 @@ def capture_nfev(example_num):
 
 
 # ------------------------------------------------------------------
+# Plan-build timing (is the plan builder itself a bottleneck?)
+# ------------------------------------------------------------------
+
+
+#
+def capture_plan_time(example_num):
+    """Measure ``build_graph`` + ``schedule_2d`` cost vs total fit_2d time.
+
+    Wraps both functions on the ``trspecfit.graph_ir`` module so that
+    ``File.fit_2d``'s local ``from trspecfit.graph_ir import ...`` picks
+    up the timed versions on its next import. Reports plan-build time
+    as an absolute number and as a fraction of total fit_2d wall time.
+    A plan / fit ratio > ~10%% means evaluator-only optimization leaves
+    material work unoptimized.
+    """
+
+    from trspecfit import graph_ir
+
+    orig_build = graph_ir.build_graph
+    orig_sched = graph_ir.schedule_2d
+    times = {"build_graph": 0.0, "schedule_2d": 0.0, "build_calls": 0}
+
+    #
+    def timed_build(*args, **kwargs):
+        t0 = time.perf_counter()
+        r = orig_build(*args, **kwargs)
+        times["build_graph"] += time.perf_counter() - t0
+        times["build_calls"] += 1
+        return r
+
+    #
+    def timed_sched(*args, **kwargs):
+        t0 = time.perf_counter()
+        r = orig_sched(*args, **kwargs)
+        times["schedule_2d"] += time.perf_counter() - t0
+        return r
+
+    graph_ir.build_graph = timed_build
+    graph_ir.schedule_2d = timed_sched
+
+    try:
+        file, dynamics_calls = load_example(example_num, add_dynamics=False)
+        file.define_baseline(
+            time_start=0, time_stop=10, time_type="ind", show_plot=False
+        )
+        file.fit_baseline(model_name="2D", stages=2, try_ci=0)
+        for call in dynamics_calls:
+            file.add_time_dependence(**call)
+
+        t0 = time.perf_counter()
+        file.fit_2d(model_name="2D", stages=2, try_ci=0)
+        fit_time = time.perf_counter() - t0
+    finally:
+        graph_ir.build_graph = orig_build
+        graph_ir.schedule_2d = orig_sched
+
+    plan_total = times["build_graph"] + times["schedule_2d"]
+    ratio = plan_total / fit_time if fit_time > 0 else 0.0
+
+    print(
+        f"  build_graph:  {times['build_graph'] * 1000:8.2f} ms "
+        f"({times['build_calls']} call(s))"
+    )
+    print(f"  schedule_2d:  {times['schedule_2d'] * 1000:8.2f} ms")
+    print(f"  plan total:   {plan_total * 1000:8.2f} ms")
+    print(f"  fit_2d wall:  {fit_time:8.2f} s")
+    print(f"  plan / fit:   {ratio * 100:8.3f} %")
+
+    return plan_total, fit_time
+
+
+# ------------------------------------------------------------------
 # Full-fit benchmark
 # ------------------------------------------------------------------
 
@@ -456,11 +528,19 @@ if __name__ == "__main__":
             "all examples and reports a summary."
         ),
     )
+    parser.add_argument(
+        "--plan-time",
+        action="store_true",
+        help=(
+            "Measure build_graph + schedule_2d cost vs total fit_2d "
+            "wall time. If --example is 0, runs all examples."
+        ),
+    )
     args = parser.parse_args()
 
-    # --nfev with example 0 means "all examples"; skip the single-example
-    # preamble so capture_nfev can load each one itself.
-    skip_preamble = args.nfev and args.example == 0
+    # --nfev / --plan-time with example 0 means "all examples"; skip the
+    # single-example preamble so the capture fn can load each one itself.
+    skip_preamble = (args.nfev or args.plan_time) and args.example == 0
     if not skip_preamble:
         folder = _find_example_folder(args.example)
         print(f"Example: {folder.name}")
@@ -506,6 +586,35 @@ if __name__ == "__main__":
             print(f"NFEV CAPTURE -- example {args.example:02d}")
             print("=" * 60)
             capture_nfev(args.example)
+    elif args.plan_time:
+        if args.example == 0:
+            ratios: dict[int, str] = {}
+            for n in range(1, 6):
+                print()
+                print("=" * 60)
+                print(f"PLAN-TIME CAPTURE -- example {n:02d}")
+                print("=" * 60)
+                try:
+                    plan_t, fit_t = capture_plan_time(n)
+                    ratios[n] = (
+                        f"{plan_t * 1000:7.2f} ms plan / "
+                        f"{fit_t:5.2f} s fit "
+                        f"= {plan_t / fit_t * 100:6.3f}%"
+                    )
+                except FileNotFoundError as e:
+                    print(f"  skipped: {e}")
+                    ratios[n] = "skipped"
+            print()
+            print("=" * 60)
+            print("PLAN-TIME SUMMARY")
+            for n, ratio_str in ratios.items():
+                print(f"  example {n:02d}:  {ratio_str}")
+            print("=" * 60)
+        else:
+            print("=" * 60)
+            print(f"PLAN-TIME CAPTURE -- example {args.example:02d}")
+            print("=" * 60)
+            capture_plan_time(args.example)
     else:
         bench_per_call(file, n_calls=args.calls)
 

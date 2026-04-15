@@ -1178,7 +1178,7 @@ in its component's function.
 - Existing round-trip tests continue to exercise the default GIR path on
   lowerable models
 
-### Phase 5: Benchmarking and Optimization (in progress)
+### Phase 5: Benchmarking and Optimization (completed for current scope)
 
 **Step 5.1: Benchmarking (implemented)**
 - Added a benchmark workflow for GIR vs interpreter on example fitting
@@ -1202,5 +1202,105 @@ in its component's function.
 - Added Voigt to the lowerable 2D function list / op mapping
 - Added broadcast and evaluator parity tests against the interpreter
 
-Open: backend decision (Numba vs JAX) and future optimizations — see
-[numba_vs_jax.md](numba_vs_jax.md).
+**Step 5.4: Backend verdict (completed)**
+- The benchmark work in [numba_vs_jax.md](numba_vs_jax.md) closes the
+  Numba-vs-JAX decision for this branch.
+- **Numba is out** as the next step: measured dispatch overhead is only
+  about 10% of per-call time, so the remaining headroom is not in Python
+  loop overhead.
+- **JAX remains a possible future direction**, but only if the roadmap
+  commits to analytic Jacobians, VARPRO, GPU-oriented execution, or
+  similar follow-on work that justifies a larger evaluator rewrite.
+- The current lowered NumPy backend is therefore mergeable on its own.
+  No backend rewrite is required before merge.
+- The full measurement set, tradeoff analysis, and decision criteria are
+  recorded in [numba_vs_jax.md](numba_vs_jax.md).
+
+
+### Phase 6: Feature completeness (proposed)
+
+The next extension should use the GraphIR and lowering work already in
+place, not replace it with a new backend. The goal of this phase is to
+expand lowering coverage over node types and model patterns that are
+already representable in the graph, so GIR becomes useful for typical
+user workflows beyond the current lowerable 2D subset.
+
+**Phase 6 non-goals**
+- Project-level fit lowering remains a separate track
+- Jacobian plumbing and optimizer changes remain a separate track
+- JAX backend work remains a separate track
+- Dynamic kernel-support resizing during fitting remains out of scope;
+  kernel support stays fixed for a built model / scheduled plan
+- Mixed-backend execution inside one fit remains out of scope
+
+**Step 6.1: Lower `ENERGY_1D` fits**
+- Add `can_lower_1d(graph)` for `DomainKind.ENERGY_1D` models
+- Add `schedule_1d(graph)` / `evaluate_1d(plan, theta)` as a thin
+  extension of the same packed-array lowering approach used by the 2D
+  backend
+- Wire the fast path into `fit_baseline()` and `fit_spectrum()`
+- Preserve current plotting / component-output behavior; the compiled
+  path only needs to accelerate residual evaluation
+- Add result writeback and compare-mode / parity tests analogous to the
+  `fit_2d` path
+
+**Step 6.2: Lower profile-varying parameters**
+- Compile `PROFILE_SAMPLE` and `PROFILE_AVERAGE` nodes instead of
+  falling back whenever a model uses profiled parameters
+- Support 1D baseline / spectrum fits with profile-varying parameters
+  and profile-dependent expressions
+- Treat auxiliary-axis length as part of the plan / schedule shape.
+  Plans are built for a fixed model with a fixed `aux_axis`; variable
+  per-call aux lengths are not supported in the hot path
+- Reuse the existing graph semantics for per-aux-point evaluation rather
+  than introducing a separate profile-specific execution path
+- This closes a major gap relative to the currently supported modeling
+  patterns in [model_design_rules.md](model_design_rules.md)
+
+**Step 6.3: Lower convolution / IRF nodes**
+- Compile `CONVOLUTION` nodes that are already emitted by GraphIR
+- Start with time-domain kernels (`package == "time"`), covering the
+  common IRF / pump-probe case
+- Preserve the existing graph boundary between pre-convolution signal
+  accumulation and post-convolution consumers; the scheduler / plan must
+  compile the current `peak_sum` / resolved-trace semantics correctly
+- Target the single-cycle path first; treat this as the heaviest step in
+  Phase 6 rather than a lightweight op-table extension
+- Keep kernel support fixed at model-build / plan-build time, matching
+  current MCP behavior. Kernel values may vary with fit parameters, but
+  support length is not resized during a fit
+- Document per-op numerical parity expectations for convolution
+  explicitly; tolerance may need to be looser than the current
+  non-convolution `~1e-13` examples depending on implementation details
+- Add parity tests against the current `mcp.Model.combine(...)`
+  behavior before widening the lowering gate
+- This is a high-value coverage step for typical pump-probe use; without
+  IRF support many realistic 2D fits still fall back to the interpreter
+
+**Step 6.4: Lower subcycle dynamics**
+- Compile `SUBCYCLE_REMAP` and `SUBCYCLE_MASK`
+- Extend the convolution / profile-capable path to subcycle-aware models
+  once the single-cycle lowering path is solid
+- This covers the remaining supported multi-cycle cases that are already
+  graph-representable today
+
+**Phase 6 constraints**
+- Keep GraphIR as the single semantic source of truth
+- Prefer flat, packed-array schedule state so the door stays open for a
+  future JAX port
+- Coverage parity comes first; the target is to widen lowering coverage
+  without regressing the previously-lowerable subset by more than about
+  5% per call on existing benchmarks
+- Each step must ship direct parity tests against MCP and compare-mode
+  integration coverage before the lowering gate widens for that feature
+- Land the work incrementally: `ENERGY_1D` first, then `PROFILE_*`,
+  then `CONVOLUTION`, then `SUBCYCLE_*`
+
+**Phase 6 success criteria**
+- Default `fit_model_gir` dispatch no longer falls back to MCP for the
+  bundled default configurations in examples 01–04
+- Newly lowerable `ENERGY_1D`, `PROFILE_*`, `CONVOLUTION`, and
+  `SUBCYCLE_*` coverage ships with parity tests and compare-mode
+  coverage
+- Existing lowerable 2D paths remain numerically stable and
+  performance-neutral within the regression budget above
