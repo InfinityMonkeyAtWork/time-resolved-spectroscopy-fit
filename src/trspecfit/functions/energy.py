@@ -302,13 +302,8 @@ def GLS(x: np.ndarray, A: float, x0: float, F: float, m: float) -> np.ndarray:
         Pseudo-Voigt profile (sum form)
     """
 
-    return np.asarray(
-        A
-        * (
-            (1 - m) * np.exp(-(((x - x0) / F) ** 2) * 4 * np.log(2))
-            + m / (1 + 4 * ((x - x0) / F) ** 2)
-        )
-    )
+    u2 = ((x - x0) / F) ** 2
+    return np.asarray(A * ((1 - m) * np.exp(-u2 * 4 * np.log(2)) + m / (1 + 4 * u2)))
 
 
 #
@@ -339,11 +334,8 @@ def GLP(x: np.ndarray, A: float, x0: float, F: float, m: float) -> np.ndarray:
         Pseudo-Voigt profile (product form)
     """
 
-    return np.asarray(
-        A
-        * np.exp(-(((x - x0) / F) ** 2) * 4 * np.log(2) * (1 - m))
-        / (1 + 4 * m * ((x - x0) / F) ** 2)
-    )
+    u2 = ((x - x0) / F) ** 2
+    return np.asarray(A * np.exp(-u2 * 4 * np.log(2) * (1 - m)) / (1 + 4 * m * u2))
 
 
 #
@@ -374,8 +366,9 @@ def DS(x: np.ndarray, A: float, x0: float, F: float, alpha: float) -> np.ndarray
         Doniach-Sunjic lineshape
     """
 
+    dx = x - x0
     return (
         A
-        * np.cos(np.pi * alpha / 2 + (1 - alpha) * np.arctan((x - x0) / F))
-        / (F**2 + (x - x0) ** 2) ** ((1 - alpha) / 2)
+        * np.cos(np.pi * alpha / 2 + (1 - alpha) * np.arctan(dx / F))
+        / (F**2 + dx**2) ** ((1 - alpha) / 2)
     )
