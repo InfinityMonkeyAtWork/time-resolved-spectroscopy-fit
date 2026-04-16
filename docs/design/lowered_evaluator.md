@@ -908,36 +908,47 @@ lmfit.minimize(residual_fun, params, ...)
 # Default project setting:
 project.spec_fun_str = "fit_model_gir"
 
-# Before a lowerable 2D fit:
+# Before a lowerable fit (1D or 2D):
 graph = build_graph(model)
-plan = schedule_2d(graph)
+plan = schedule_2d(graph)   # or schedule_1d(graph) for ENERGY_1D
 theta_indices = precompute_indices(model.parameter_names, plan.opt_param_names)
 
 # During fitting:
-lmfit.minimize(residual_fun, params, ..., args=(plan, theta_indices))
+lmfit.minimize(residual_fun, params, ..., args=(plan, theta_indices, model, dim))
   -> residual_fun(params, x, data, ..., fit_fun_str="fit_model_gir")
     -> par_extract(params) -> full par_values list
-    -> fit_model_gir(x, par_values, True, plan, theta_indices)
+    -> fit_model_gir(x, par_values, True, plan, theta_indices, model, dim)
       -> theta = par_values[theta_indices]
-      -> spectrum_2d = evaluate_2d(plan, theta)  # THE HOT PATH (vectorized)
-    -> residual = data - spectrum_2d
+      -> spectrum = evaluate_2d(plan, theta)   # or evaluate_1d for 1D
+    -> residual = data - spectrum
     -> return residual.flatten()
 ```
 
-Implemented Phase 4 behavior:
-- `fit_model_gir` is a dispatcher, not a 2D-only leaf. It uses the
-  compiled backend only for lowerable 2D fits and delegates to
-  `fit_model_mcp` for 1D fits or non-lowerable 2D fits.
+**Compiled-path args contract:** the compiled path always passes
+``(plan, theta_indices, model, dim)`` as *args*, regardless of
+whether the plan is ``ScheduledPlan1D`` or ``ScheduledPlan2D``.
+The *model* and *dim* are carried so that ``fit_model_gir`` can
+fall back to the interpreter when needed (e.g. ``plot_sum=False``
+for 1D component extraction).  The non-lowerable fallback passes
+``(model, dim)`` only.
+
+Implemented behavior:
+- `fit_model_gir` is a dispatcher. When `args[0]` is a compiled
+  plan it destructures `(plan, theta_indices, model, dim)` and
+  uses the fast evaluator.  For 1D plans with `plot_sum=False`
+  it falls back to `fit_model_mcp` for component extraction.
+  When `args[0]` is not a plan it forwards to `fit_model_mcp`.
 - `fit_model_mcp` remains the explicit interpreter mode.
-- `fit_model_compare` is the validation mode. For lowerable 2D fits it
-  runs GIR and interpreter, compares with `assert_allclose`, and returns
-  the GIR result. Otherwise it delegates to the interpreter.
-- `File.fit_2d` only builds a graph / plan when `spec_fun_str` is
-  `fit_model_gir` or `fit_model_compare`.
-- After fitting, `File.fit_2d` copies `result[1].params` back into
-  `model.lmfit_pars` before plotting / saving, because `fit_wrapper`
-  optimizes a deepcopy and the GIR path does not mutate model state on
-  every residual call.
+- `fit_model_compare` is the validation mode. For lowerable fits
+  (1D or 2D) it runs GIR and interpreter, compares with
+  `assert_allclose`, and returns the GIR result.
+- `File.fit_2d`, `File.fit_baseline`, and `File.fit_spectrum`
+  build a graph / plan when `spec_fun_str` is `fit_model_gir` or
+  `fit_model_compare`.
+- After fitting, all three methods write `result[1].params` back
+  into `model.lmfit_pars` via `par_extract` + `update_value`,
+  because `fit_wrapper` optimizes a deepcopy and the GIR path
+  does not mutate model state on every residual call.
 
 
 ### 8. Scope boundaries -- what compiles in v1 vs later
@@ -956,12 +967,11 @@ Implemented Phase 4 behavior:
 | Non-arithmetic expressions | No | Partial | Would extend ExprNodeKind |
 | Project-level fits | No | Deferred | Multi-graph coordination |
 
-`can_lower_2d` is the gatekeeper for the 2D backend. The graph is broader
-than any single compiler -- the UI can build graphs that no backend can
-compile yet. Adding `can_lower_1d` / `schedule_1d` / `evaluate_1d` later
-is a natural extension targeting `ENERGY_1D` models on the same GraphIR,
-but is not required for the near-term UI use case of building and saving
-standalone dynamics models.
+`can_lower_2d` and `can_lower_1d` are the gatekeepers for the 2D and 1D
+backends respectively. The graph is broader than any single compiler --
+the UI can build graphs that no backend can compile yet.
+`can_lower_1d` / `schedule_1d` / `evaluate_1d` target `ENERGY_1D`
+models on the same GraphIR (implemented in Phase 6.1).
 
 
 ### 9. Validation strategy
@@ -1233,16 +1243,27 @@ user workflows beyond the current lowerable 2D subset.
   kernel support stays fixed for a built model / scheduled plan
 - Mixed-backend execution inside one fit remains out of scope
 
-**Step 6.1: Lower `ENERGY_1D` fits**
-- Add `can_lower_1d(graph)` for `DomainKind.ENERGY_1D` models
-- Add `schedule_1d(graph)` / `evaluate_1d(plan, theta)` as a thin
-  extension of the same packed-array lowering approach used by the 2D
-  backend
-- Wire the fast path into `fit_baseline()` and `fit_spectrum()`
-- Preserve current plotting / component-output behavior; the compiled
-  path only needs to accelerate residual evaluation
-- Add result writeback and compare-mode / parity tests analogous to the
-  `fit_2d` path
+**Step 6.1: Lower `ENERGY_1D` fits (implemented)**
+- Added `can_lower_1d(graph)` for `DomainKind.ENERGY_1D` models
+  (rejects DYNAMICS_TRACE, PARAM_PLUS_TRACE, and all v1-non-lowerable
+  node kinds; same function allowlist as 2D)
+- Added `ScheduledPlan1D` frozen dataclass with scalar ``(n_params,)``
+  parameter vector (no trace matrix), expression programs, and CSR
+  component op schedule with static-component caching
+- Added `schedule_1d(graph)` that compiles ENERGY_1D graphs to
+  `ScheduledPlan1D` and `evaluate_1d(plan, theta)` in `eval_1d.py`
+  as a scalar-parameter evaluator (no time-axis broadcasting)
+- Wired the fast path into `fit_baseline()` and `fit_spectrum()` via
+  the same `fit_model_gir` / `fit_model_compare` dispatch used by
+  `fit_2d`; `ScheduledPlan1D` args carry `(plan, theta_indices,
+  model, 1)` so `plot_sum=False` falls back to MCP for component
+  extraction
+- Added result writeback after `fit_wrapper` in both `fit_baseline`
+  and `fit_spectrum` (mirrors the `fit_2d` writeback)
+- Added parity tests: `test_evaluate_1d.py` covers every OpKind at
+  initial and perturbed theta, static caching, expression propagation,
+  and `can_lower_1d` gate; `test_gir_integration.py` adds 1D residual
+  parity, e_lim slicing, compare mode, and dispatch tests
 
 **Step 6.2: Lower profile-varying parameters**
 - Compile `PROFILE_SAMPLE` and `PROFILE_AVERAGE` nodes instead of

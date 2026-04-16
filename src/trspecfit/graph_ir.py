@@ -454,6 +454,42 @@ class ScheduledPlan2D:
     cached_peak_sum: np.ndarray  # (n_time, n_energy)
 
 
+#
+#
+@dataclass(frozen=True)
+class ScheduledPlan1D:
+    """Compiled 1D execution schedule for ENERGY_1D models.
+
+    Simpler than ``ScheduledPlan2D``: no time axis, no dynamics, no
+    trace matrix.  Parameters are stored as a flat ``(n_params,)``
+    scalar vector.
+    """
+
+    energy: np.ndarray  # (n_energy,)
+    n_params: int
+
+    # --- Parameter mapping ---
+    param_values_init: np.ndarray  # (n_params,) initial scalar values
+    opt_indices: np.ndarray  # (n_opt,) int -- indices into param_values
+    opt_param_names: list[str]  # (n_opt,) canonical optimizer param names
+
+    # --- Expression evaluation (topological order, no dynamics) ---
+    n_expressions: int
+    expr_target_indices: np.ndarray  # (n_expressions,) int
+    expr_programs: list[ExprProgram]
+
+    # --- Scheduled component ops ---
+    n_ops: int
+    op_kinds: np.ndarray  # (n_ops,) OpKind int codes
+    op_param_indptr: np.ndarray  # (n_ops + 1,) int -- CSR row pointers
+    op_param_indices: np.ndarray  # (total_op_params,) int -- param indices
+    op_needs_spectrum: np.ndarray  # (n_ops,) bool
+    op_is_pre_spectrum: np.ndarray  # (n_ops,) bool
+    op_is_constant: np.ndarray  # (n_ops,) bool
+    cached_result: np.ndarray  # (n_energy,)
+    cached_peak_sum: np.ndarray  # (n_energy,)
+
+
 _PACKAGE_SHORT_NAMES: dict[str, str] = {
     "fcts_energy": "energy",
     "fcts_time": "time",
@@ -1376,6 +1412,52 @@ def can_lower_2d(graph: GraphIR) -> bool:
     return True
 
 
+# Node kinds that are never valid in 1D energy models.  1D models have
+# no time axis, so DYNAMICS_TRACE / PARAM_PLUS_TRACE should not appear.
+_NON_LOWERABLE_1D_NODE_KINDS: frozenset[NodeKind] = (
+    _NON_LOWERABLE_NODE_KINDS
+    | frozenset(
+        {
+            NodeKind.DYNAMICS_TRACE,
+            NodeKind.PARAM_PLUS_TRACE,
+        }
+    )
+)
+
+
+#
+def can_lower_1d(graph: GraphIR) -> bool:
+    """Check whether the 1D NumPy backend can compile this graph.
+
+    Parameters
+    ----------
+    graph : GraphIR
+        The model graph to check.
+
+    Returns
+    -------
+    bool
+        True if ``schedule_1d`` can compile this graph.
+    """
+
+    if graph.domain != DomainKind.ENERGY_1D:
+        return False
+
+    for node in graph.nodes:
+        if node.kind in _NON_LOWERABLE_1D_NODE_KINDS:
+            return False
+
+        if node.kind in (NodeKind.COMPONENT_EVAL, NodeKind.SPECTRUM_FED_OP):
+            if node.function_name not in _LOWERABLE_2D_FUNCTIONS:
+                return False
+
+        if node.kind == NodeKind.EXPRESSION and node.expr_string is not None:
+            if not _is_arithmetic_expression(node.expr_string):
+                return False
+
+    return True
+
+
 #
 def _is_arithmetic_expression(expr_string: str) -> bool:
     """Return True if the expression uses only arithmetic ops and param refs.
@@ -2105,3 +2187,306 @@ def _eval_expr_program_init(
     from trspecfit.eval_2d import eval_expr_program
 
     return eval_expr_program(program, traces)
+
+
+# ---------------------------------------------------------------------------
+# schedule_1d (Phase 6.1)
+# ---------------------------------------------------------------------------
+
+
+#
+def _eval_expr_scalar(program: ExprProgram, values: np.ndarray) -> float:
+    """Evaluate an RPN ExprProgram against a scalar parameter vector.
+
+    Parameters
+    ----------
+    program
+        Compiled RPN instruction array.
+    values
+        ``(n_params,)`` scalar parameter vector.
+
+    Returns
+    -------
+    float
+        Scalar result.
+    """
+
+    stack: list[float] = []
+    instr = program.instructions
+    n_instr = len(instr) // 2
+
+    for i in range(n_instr):
+        kind = ExprNodeKind(instr[2 * i])
+        operand = instr[2 * i + 1]
+
+        if kind == ExprNodeKind.CONST:
+            stack.append(float(np.int64(operand).view(np.float64)))
+        elif kind == ExprNodeKind.PARAM_REF:
+            stack.append(float(values[int(operand)]))
+        elif kind == ExprNodeKind.ADD:
+            b, a = stack.pop(), stack.pop()
+            stack.append(a + b)
+        elif kind == ExprNodeKind.SUB:
+            b, a = stack.pop(), stack.pop()
+            stack.append(a - b)
+        elif kind == ExprNodeKind.MUL:
+            b, a = stack.pop(), stack.pop()
+            stack.append(a * b)
+        elif kind == ExprNodeKind.DIV:
+            b, a = stack.pop(), stack.pop()
+            stack.append(a / b)
+        elif kind == ExprNodeKind.NEG:
+            stack.append(-stack.pop())
+        elif kind == ExprNodeKind.POW:
+            b, a = stack.pop(), stack.pop()
+            stack.append(a**b)
+
+    assert len(stack) == 1
+    return stack[0]
+
+
+#
+def schedule_1d(graph: GraphIR) -> ScheduledPlan1D:
+    """Compile a GraphIR into a flat 1D execution schedule.
+
+    Parameters
+    ----------
+    graph : GraphIR
+        Must pass ``can_lower_1d(graph)``.
+
+    Returns
+    -------
+    ScheduledPlan1D
+        Packed-array execution schedule for ``evaluate_1d``.
+
+    Raises
+    ------
+    ValueError
+        If the graph cannot be lowered (domain, unsupported nodes, etc.).
+    """
+
+    if not can_lower_1d(graph):
+        raise ValueError("Graph cannot be lowered to 1D backend")
+
+    assert graph.energy is not None
+
+    # ------------------------------------------------------------------ #
+    # 1. Topological sort                                                  #
+    # ------------------------------------------------------------------ #
+    topo_order = _topological_sort(graph)
+    id_to_node: dict[int, GraphNode] = {n.id: n for n in graph.nodes}
+
+    # ------------------------------------------------------------------ #
+    # 2. Assign parameter indices                                          #
+    # ------------------------------------------------------------------ #
+    _ROW_KINDS = frozenset(
+        {
+            NodeKind.STATIC_PARAM,
+            NodeKind.OPT_PARAM,
+            NodeKind.EXPRESSION,
+        }
+    )
+
+    opt_nodes: list[GraphNode] = []
+    static_nodes: list[GraphNode] = []
+    computed_nodes: list[GraphNode] = []
+
+    for nid in topo_order:
+        node = id_to_node[nid]
+        if node.kind not in _ROW_KINDS:
+            continue
+        if node.kind == NodeKind.OPT_PARAM and node.vary:
+            opt_nodes.append(node)
+        elif node.kind in (NodeKind.STATIC_PARAM, NodeKind.OPT_PARAM):
+            static_nodes.append(node)
+        else:
+            computed_nodes.append(node)
+
+    all_param_nodes = opt_nodes + static_nodes + computed_nodes
+    n_params = len(all_param_nodes)
+    name_to_idx: dict[str, int] = {}
+    for idx, node in enumerate(all_param_nodes):
+        name_to_idx[node.name] = idx
+    idx_is_constant = np.zeros(n_params, dtype=np.bool_)
+    for node in static_nodes:
+        idx_is_constant[name_to_idx[node.name]] = True
+
+    n_opt = len(opt_nodes)
+    opt_indices = np.arange(n_opt, dtype=np.intp)
+    opt_param_names = [n.name for n in opt_nodes]
+
+    # ------------------------------------------------------------------ #
+    # 3. Compile expressions (topological order)                           #
+    # ------------------------------------------------------------------ #
+    expr_nodes_topo = [
+        id_to_node[nid]
+        for nid in topo_order
+        if id_to_node[nid].kind == NodeKind.EXPRESSION
+    ]
+    n_expressions = len(expr_nodes_topo)
+
+    # Build per-expression name→idx maps from EXPR_REF edges.
+    expr_ref_maps: dict[int, dict[str, int]] = {}
+    for expr_node in expr_nodes_topo:
+        ref_map: dict[str, int] = {}
+        for edge in graph.edges:
+            if edge.target != expr_node.id or edge.kind != EdgeKind.EXPR_REF:
+                continue
+            src_node = id_to_node[edge.source]
+            src_idx = name_to_idx[src_node.name]
+            assert expr_node.expr_string is not None
+            for token in _extract_expression_references(expr_node.expr_string):
+                if token == src_node.name:
+                    ref_map[token] = src_idx
+                    break
+            else:
+                for token in _extract_expression_references(expr_node.expr_string):
+                    if token in name_to_idx and name_to_idx[token] == src_idx:
+                        ref_map[token] = src_idx
+                        break
+        expr_ref_maps[expr_node.id] = ref_map
+
+    expr_programs: list[ExprProgram] = []
+    expr_target_indices_list: list[int] = []
+    for expr_node in expr_nodes_topo:
+        assert expr_node.expr_string is not None
+        symbolic = compile_expr_symbolic(expr_node.expr_string)
+
+        binding = dict(name_to_idx)
+        binding.update(expr_ref_maps.get(expr_node.id, {}))
+
+        program = _bind_expr_to_rows(symbolic, binding)
+        expr_programs.append(program)
+        target_idx = name_to_idx[expr_node.name]
+        expr_target_indices_list.append(target_idx)
+        idx_is_constant[target_idx] = all(
+            idx_is_constant[binding[name]] for name in symbolic.referenced_names
+        )
+
+    expr_target_indices = np.array(expr_target_indices_list, dtype=np.intp)
+
+    # ------------------------------------------------------------------ #
+    # 4. Schedule component ops                                            #
+    # ------------------------------------------------------------------ #
+    peak_sum_sources: set[int] = set()
+    peak_sum_nid = graph.node_by_name.get("peak_sum")
+    if peak_sum_nid is not None:
+        for e in graph.edges:
+            if e.target == peak_sum_nid and e.kind == EdgeKind.ADDEND:
+                peak_sum_sources.add(e.source)
+
+    comp_op_kinds = {NodeKind.COMPONENT_EVAL, NodeKind.SPECTRUM_FED_OP}
+    comp_nodes_topo = [
+        id_to_node[nid] for nid in topo_order if id_to_node[nid].kind in comp_op_kinds
+    ]
+    n_ops = len(comp_nodes_topo)
+
+    op_kinds_list: list[int] = []
+    op_param_indptr_list: list[int] = [0]
+    op_param_indices_list: list[int] = []
+    op_needs_spectrum_list: list[bool] = []
+    op_is_pre_spectrum_list: list[bool] = []
+    op_is_constant_list: list[bool] = []
+
+    for comp_node in comp_nodes_topo:
+        assert comp_node.function_name is not None
+        op = _FUNCTION_NAME_TO_OP.get(comp_node.function_name)
+        if op is None:
+            raise ValueError(f"Unknown component function: {comp_node.function_name!r}")
+        op_kinds_list.append(int(op))
+
+        param_edges = sorted(
+            (
+                e
+                for e in graph.edges
+                if e.target == comp_node.id and e.kind == EdgeKind.PARAM_INPUT
+            ),
+            key=lambda e: e.position or 0,
+        )
+        for pe in param_edges:
+            src_node = id_to_node[pe.source]
+            op_param_indices_list.append(name_to_idx[src_node.name])
+        op_param_indptr_list.append(len(op_param_indices_list))
+
+        has_spec_input = any(
+            e.target == comp_node.id and e.kind == EdgeKind.SPECTRUM_INPUT
+            for e in graph.edges
+        )
+        op_needs_spectrum_list.append(has_spec_input)
+        op_is_constant_list.append(
+            (not has_spec_input)
+            and all(
+                idx_is_constant[name_to_idx[id_to_node[pe.source].name]]
+                for pe in param_edges
+            )
+        )
+        op_is_pre_spectrum_list.append(comp_node.id in peak_sum_sources)
+
+    op_kinds = np.array(op_kinds_list, dtype=np.intp)
+    op_param_indptr = np.array(op_param_indptr_list, dtype=np.intp)
+    op_param_indices = np.array(op_param_indices_list, dtype=np.intp)
+    op_needs_spectrum = np.array(op_needs_spectrum_list, dtype=np.bool_)
+    op_is_pre_spectrum = np.array(op_is_pre_spectrum_list, dtype=np.bool_)
+    op_is_constant = np.array(op_is_constant_list, dtype=np.bool_)
+
+    # ------------------------------------------------------------------ #
+    # 5. Initialize parameter values                                       #
+    # ------------------------------------------------------------------ #
+    param_values_init = np.zeros(n_params, dtype=np.float64)
+
+    for node in opt_nodes + static_nodes:
+        param_values_init[name_to_idx[node.name]] = (
+            node.value if node.value is not None else 0.0
+        )
+
+    # Resolve expressions in topological order
+    for i in range(n_expressions):
+        target_idx = int(expr_target_indices[i])
+        param_values_init[target_idx] = _eval_expr_scalar(
+            expr_programs[i], param_values_init
+        )
+
+    # ------------------------------------------------------------------ #
+    # 6. Precompute constant component contributions                       #
+    # ------------------------------------------------------------------ #
+    energy = graph.energy
+    cached_result = np.zeros(len(energy), dtype=np.float64)
+    cached_peak_sum = np.zeros_like(cached_result)
+    for op_idx in range(n_ops):
+        if not op_is_constant[op_idx]:
+            continue
+        start = int(op_param_indptr[op_idx])
+        end = int(op_param_indptr[op_idx + 1])
+        param_rows = op_param_indices[start:end]
+        params = [float(param_values_init[int(row)]) for row in param_rows]
+        func, needs_spectrum = OP_DISPATCH[int(op_kinds[op_idx])]
+        if needs_spectrum:
+            component = func(energy, *params, cached_peak_sum)
+        else:
+            component = func(energy, *params)
+        cached_result += component
+        if op_is_pre_spectrum[op_idx]:
+            cached_peak_sum += component
+
+    # ------------------------------------------------------------------ #
+    # 7. Pack into ScheduledPlan1D                                         #
+    # ------------------------------------------------------------------ #
+    return ScheduledPlan1D(
+        energy=energy,
+        n_params=n_params,
+        param_values_init=param_values_init,
+        opt_indices=opt_indices,
+        opt_param_names=opt_param_names,
+        n_expressions=n_expressions,
+        expr_target_indices=expr_target_indices,
+        expr_programs=expr_programs,
+        n_ops=n_ops,
+        op_kinds=op_kinds,
+        op_param_indptr=op_param_indptr,
+        op_param_indices=op_param_indices,
+        op_needs_spectrum=op_needs_spectrum,
+        op_is_pre_spectrum=op_is_pre_spectrum,
+        op_is_constant=op_is_constant,
+        cached_result=cached_result,
+        cached_peak_sum=cached_peak_sum,
+    )

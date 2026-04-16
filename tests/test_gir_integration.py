@@ -13,7 +13,13 @@ import numpy as np
 import pytest
 
 from trspecfit import File, Project, Simulator, fitlib, spectra
-from trspecfit.graph_ir import build_graph, can_lower_2d, schedule_2d
+from trspecfit.graph_ir import (
+    build_graph,
+    can_lower_1d,
+    can_lower_2d,
+    schedule_1d,
+    schedule_2d,
+)
 
 _ENERGY_YAML = "models/eval_2d_energy.yaml"
 _TIME_YAML = "models/file_time.yaml"
@@ -96,7 +102,9 @@ class TestGIRDispatch:
             [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
         )
         par = _extract_par_list(model)
-        result = spectra.fit_model_gir(file.energy, par, True, plan, theta_indices)
+        result = spectra.fit_model_gir(
+            file.energy, par, True, plan, theta_indices, model, 2
+        )
         assert result.shape == (len(file.time), len(file.energy))
 
     #
@@ -144,18 +152,67 @@ class TestGIRDispatch:
         assert result.shape == (len(file.time), len(file.energy))
 
     #
-    def test_1d_fit_delegates_to_mcp(self):
-        """1D fit with default spec_fun_str='fit_model_gir' delegates to mcp."""
+    def test_1d_fit_uses_gir_when_lowerable(self):
+        """1D lowerable model dispatches through fit_model_gir fast path."""
 
         project = _make_project()
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 101)
+        file = File(parent_project=project, energy=np.linspace(80, 90, 101))
+        file.load_model(model_yaml=_ENERGY_YAML, model_info=["glp_only"])
+        model = file.model_active
+        assert model is not None
+
+        graph = build_graph(model)
+        assert can_lower_1d(graph)
+
+        plan = schedule_1d(graph)
+        name_to_idx = {n: i for i, n in enumerate(model.parameter_names)}
+        theta_indices = np.array(
+            [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
+        )
+
+        par = _extract_par_list(model)
+        result = spectra.fit_model_gir(
+            file.energy, par, True, plan, theta_indices, model, 1
+        )
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (len(file.energy),)
+
+    #
+    def test_1d_plot_sum_false_falls_back(self):
+        """1D with plot_sum=False falls back to MCP for component extraction."""
+
+        project = _make_project()
+        file = File(parent_project=project, energy=np.linspace(80, 90, 101))
+        file.load_model(model_yaml=_ENERGY_YAML, model_info=["offset_only"])
+        model = file.model_active
+        assert model is not None
+
+        graph = build_graph(model)
+        plan = schedule_1d(graph)
+        name_to_idx = {n: i for i, n in enumerate(model.parameter_names)}
+        theta_indices = np.array(
+            [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
+        )
+
+        par = _extract_par_list(model)
+        result = spectra.fit_model_gir(
+            file.energy, par, False, plan, theta_indices, model, 1
+        )
+        # plot_sum=False returns list of component spectra
+        assert isinstance(result, list)
+
+    #
+    def test_1d_mcp_fallback_when_non_lowerable(self):
+        """1D non-lowerable model falls back to interpreter."""
+
+        project = _make_project()
+        file = File(parent_project=project, energy=np.linspace(80, 90, 101))
         file.load_model(model_yaml=_ENERGY_YAML, model_info=["glp_only"])
         model = file.model_active
         assert model is not None
 
         par = _extract_par_list(model)
-        # fit_model_gir receives (model, dim=1) and delegates to mcp
+        # Pass (model, dim=1) — no plan → delegates to MCP
         result = spectra.fit_model_gir(file.energy, par, True, model, 1)
         assert isinstance(result, np.ndarray)
         assert result.shape == (len(file.energy),)
@@ -200,7 +257,7 @@ class TestGIRvsInterpreter:
             data=data,
             package=spectra,
             fit_fun_str="fit_model_gir",
-            args=(plan, theta_indices),
+            args=(plan, theta_indices, model, 2),
         )
 
         # Residual via MCP
@@ -275,7 +332,7 @@ class TestGIRvsInterpreter:
             fit_fun_str="fit_model_gir",
             e_lim=e_lim,
             t_lim=t_lim,
-            args=(plan, theta_indices),
+            args=(plan, theta_indices, model, 2),
         )
 
         res_mcp = fitlib.residual_fun(
@@ -422,3 +479,271 @@ class TestFileFit2D:
         )
         # If GIR and interpreter disagree, fit_model_compare raises
         fit_file.fit_2d(model_name="single_glp", stages=1, try_ci=0)
+
+
+# ---------------------------------------------------------------------------
+# 1D GIR vs interpreter residual parity
+# ---------------------------------------------------------------------------
+
+
+#
+#
+class TestGIR1DvsInterpreter:
+    """Compare 1D GIR and interpreter outputs through the pipeline."""
+
+    #
+    def test_residual_same_gir_vs_mcp_1d(self):
+        """1D residual from residual_fun matches between GIR and MCP paths."""
+
+        project = _make_project()
+        file = File(parent_project=project, energy=np.linspace(80, 90, 101))
+        file.load_model(model_yaml=_ENERGY_YAML, model_info=["glp_only"])
+        model = file.model_active
+        assert model is not None
+
+        # Generate synthetic data
+        model.create_value_1d()
+        assert model.value_1d is not None
+        data = model.value_1d + 0.01
+
+        # Compile GIR 1D path
+        graph = build_graph(model)
+        assert can_lower_1d(graph)
+        plan = schedule_1d(graph)
+        name_to_idx = {n: i for i, n in enumerate(model.parameter_names)}
+        theta_indices = np.array(
+            [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
+        )
+
+        par = model.lmfit_pars
+
+        # Residual via GIR
+        res_gir = fitlib.residual_fun(
+            par=par,
+            x=file.energy,
+            data=data,
+            package=spectra,
+            fit_fun_str="fit_model_gir",
+            args=(plan, theta_indices, model, 1),
+        )
+
+        # Residual via MCP
+        res_mcp = fitlib.residual_fun(
+            par=par,
+            x=file.energy,
+            data=data,
+            package=spectra,
+            fit_fun_str="fit_model_mcp",
+            args=(model, 1),
+        )
+
+        np.testing.assert_allclose(res_gir, res_mcp, rtol=1e-10, atol=1e-10)
+
+    #
+    def test_residual_with_e_lim_1d(self):
+        """1D GIR residual with e_lim matches MCP residual."""
+
+        project = _make_project()
+        file = File(parent_project=project, energy=np.linspace(80, 90, 101))
+        file.load_model(model_yaml=_ENERGY_YAML, model_info=["offset_only"])
+        model = file.model_active
+        assert model is not None
+
+        model.create_value_1d()
+        data = model.value_1d + 0.01
+
+        graph = build_graph(model)
+        plan = schedule_1d(graph)
+        name_to_idx = {n: i for i, n in enumerate(model.parameter_names)}
+        theta_indices = np.array(
+            [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
+        )
+
+        par = model.lmfit_pars
+        e_lim = [10, 80]
+
+        res_gir = fitlib.residual_fun(
+            par=par,
+            x=file.energy,
+            data=data,
+            package=spectra,
+            fit_fun_str="fit_model_gir",
+            e_lim=e_lim,
+            args=(plan, theta_indices, model, 1),
+        )
+
+        res_mcp = fitlib.residual_fun(
+            par=par,
+            x=file.energy,
+            data=data,
+            package=spectra,
+            fit_fun_str="fit_model_mcp",
+            e_lim=e_lim,
+            args=(model, 1),
+        )
+
+        np.testing.assert_allclose(res_gir, res_mcp, rtol=1e-10, atol=1e-10)
+
+    #
+    def test_compare_mode_1d(self):
+        """1D fit_model_compare runs both paths without error."""
+
+        project = _make_project(spec_fun_str="fit_model_compare")
+        file = File(parent_project=project, energy=np.linspace(80, 90, 101))
+        file.load_model(model_yaml=_ENERGY_YAML, model_info=["glp_expression"])
+        model = file.model_active
+        assert model is not None
+
+        graph = build_graph(model)
+        assert can_lower_1d(graph)
+        plan = schedule_1d(graph)
+        name_to_idx = {n: i for i, n in enumerate(model.parameter_names)}
+        theta_indices = np.array(
+            [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
+        )
+        par = _extract_par_list(model)
+
+        result = spectra.fit_model_compare(
+            file.energy, par, True, plan, theta_indices, model, 1
+        )
+        assert result.shape == (len(file.energy),)
+
+
+# ---------------------------------------------------------------------------
+# End-to-end through File.fit_baseline / File.fit_spectrum (1D)
+# ---------------------------------------------------------------------------
+
+
+#
+def _make_1d_truth_file(project):
+    """Single GLP peak truth model for 1D baseline fitting."""
+
+    energy = np.linspace(83, 87, 50)
+    time = np.linspace(-2, 10, 12)
+    file = File(parent_project=project, name="truth_1d", energy=energy, time=time)
+    file.dim = 2
+    file.load_model(model_yaml=_FILE_ENERGY_YAML, model_info="single_glp")
+    return file
+
+
+#
+def _make_1d_fit_file(project, data_2d, energy, time):
+    """Fresh file with 2D data, baseline defined, ready for fit_baseline."""
+
+    file = File(
+        parent_project=project,
+        name="fit_1d",
+        data=data_2d,
+        energy=energy.copy(),
+        time=time.copy(),
+    )
+    file.load_model(model_yaml=_FILE_ENERGY_YAML, model_info="single_glp")
+    file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
+    return file
+
+
+#
+#
+class TestFileFitBaseline:
+    """End-to-end tests through File.fit_baseline dispatch + writeback."""
+
+    #
+    @pytest.mark.slow
+    def test_gir_baseline_writes_back(self):
+        """After GIR baseline fit, model_base.lmfit_pars reflects results."""
+
+        project = Project(path="tests", name="gir_base")
+        project.show_output = 0
+
+        truth = _make_1d_truth_file(project)
+        truth_pars = {
+            name: truth.model_active.lmfit_pars[name].value
+            for name in truth.model_active.parameter_names
+            if truth.model_active.lmfit_pars[name].expr is None
+        }
+
+        # Tile 1D truth spectrum into 2D data (constant across time)
+        truth.model_active.create_value_1d()
+        assert truth.model_active.value_1d is not None
+        spectrum_1d = truth.model_active.value_1d.copy()
+        data_2d = np.tile(spectrum_1d, (len(truth.time), 1))
+
+        fit_file = _make_1d_fit_file(project, data_2d, truth.energy, truth.time)
+        fit_file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+
+        # Verify writeback
+        assert fit_file.model_base is not None
+        result_params = fit_file.model_base.result[1].params
+        for name in fit_file.model_base.parameter_names:
+            model_val = fit_file.model_base.lmfit_pars[name].value
+            result_val = result_params[name].value
+            assert np.isclose(model_val, result_val, rtol=1e-12), (
+                f"{name}: model={model_val}, result={result_val}"
+            )
+
+        # Verify parameter recovery
+        for name, true_val in truth_pars.items():
+            fit_val = result_params[name].value
+            assert np.isclose(true_val, fit_val, rtol=1e-10, atol=1e-12), (
+                f"{name}: true={true_val:.6f}, fit={fit_val:.6f}"
+            )
+
+    #
+    @pytest.mark.slow
+    def test_compare_mode_through_baseline(self):
+        """fit_model_compare through File.fit_baseline validates both paths."""
+
+        project = Project(path="tests", name="gir_base_cmp")
+        project.show_output = 0
+        project.spec_fun_str = "fit_model_compare"
+
+        truth = _make_1d_truth_file(project)
+        truth.model_active.create_value_1d()
+        spectrum_1d = truth.model_active.value_1d.copy()
+        data_2d = np.tile(spectrum_1d, (len(truth.time), 1))
+
+        fit_file = _make_1d_fit_file(project, data_2d, truth.energy, truth.time)
+        # If GIR and interpreter disagree, fit_model_compare raises
+        fit_file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+
+
+#
+#
+class TestFileFitSpectrum:
+    """End-to-end tests through File.fit_spectrum dispatch + writeback."""
+
+    #
+    @pytest.mark.slow
+    def test_compare_mode_through_fit_spectrum(self):
+        """fit_model_compare through File.fit_spectrum validates both paths."""
+
+        project = Project(path="tests", name="gir_spec_cmp")
+        project.show_output = 0
+        project.spec_fun_str = "fit_model_compare"
+
+        # Build 2D data: tile a 1D spectrum across time so every slice
+        # is identical and recovery is deterministic.
+        energy = np.linspace(83, 87, 50)
+        time = np.linspace(-2, 10, 12)
+        truth_file = File(parent_project=project, name="truth_spec", energy=energy)
+        truth_file.load_model(model_yaml=_FILE_ENERGY_YAML, model_info="single_glp")
+        truth_file.model_active.create_value_1d()
+        spectrum_1d = truth_file.model_active.value_1d.copy()
+        data_2d = np.tile(spectrum_1d, (len(time), 1))
+
+        fit_file = File(
+            parent_project=project,
+            name="fit_spec",
+            data=data_2d,
+            energy=energy.copy(),
+            time=time.copy(),
+        )
+        fit_file.load_model(model_yaml=_FILE_ENERGY_YAML, model_info="single_glp")
+        # If GIR and interpreter disagree, fit_model_compare raises
+        fit_file.fit_spectrum(
+            model_name="single_glp",
+            time_point=5.0,
+            stages=1,
+            show_plot=False,
+            try_ci=0,
+        )
