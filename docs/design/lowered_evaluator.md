@@ -1265,18 +1265,43 @@ user workflows beyond the current lowerable 2D subset.
   and `can_lower_1d` gate; `test_gir_integration.py` adds 1D residual
   parity, e_lim slicing, compare mode, and dispatch tests
 
-**Step 6.2: Lower profile-varying parameters**
-- Compile `PROFILE_SAMPLE` and `PROFILE_AVERAGE` nodes instead of
-  falling back whenever a model uses profiled parameters
-- Support 1D baseline / spectrum fits with profile-varying parameters
-  and profile-dependent expressions
+**Step 6.2a: Lower profile-varying parameters for 1D fits (implemented)**
+- Compile `PROFILE_SAMPLE` and `PROFILE_AVERAGE` nodes for
+  `DomainKind.ENERGY_1D` models instead of falling back whenever a 1D
+  baseline / spectrum fit uses profiled parameters
+- Extend `ScheduledPlan1D` / `evaluate_1d(plan, theta)` to carry a
+  fixed `aux_axis` shape, compile profile-sample groups and per-sample
+  profile-dependent expressions, and evaluate profiled components by
+  reusing the existing energy-function broadcasting rules over
+  ``(n_aux, n_energy)``
+- Support 1D baseline / spectrum fits with profile-varying parameters,
+  multiple profiles on one component, and profile-dependent expressions
 - Treat auxiliary-axis length as part of the plan / schedule shape.
   Plans are built for a fixed model with a fixed `aux_axis`; variable
   per-call aux lengths are not supported in the hot path
 - Reuse the existing graph semantics for per-aux-point evaluation rather
   than introducing a separate profile-specific execution path
-- This closes a major gap relative to the currently supported modeling
-  patterns in [model_design_rules.md](model_design_rules.md)
+- Added parity coverage against MCP plus compare-mode / dispatch tests
+  for the newly lowerable 1D profile cases
+
+**Step 6.2b: Lower profile-varying parameters in `fit_2d()` (follow-up)**
+- Extend profile lowering from the current 1D path into
+  `ScheduledPlan2D` / `evaluate_2d(plan, theta)` so the default
+  compiled 2D path no longer falls back when a model contains
+  `PROFILE_SAMPLE` / `PROFILE_AVERAGE`
+- Support full 2D fits with profile-varying parameters and
+  profile-dependent expressions, matching the graph semantics already
+  emitted by `build_graph(...)`
+- Preserve currently supported model patterns where a profile's internal
+  parameters are themselves time-dependent via standard single-cycle
+  dynamics; this is the hardest part of the remaining profile work
+- Keep `aux_axis` length fixed in the compiled plan shape, as in the 1D
+  profile path
+- Ship direct parity tests against MCP, compare-mode coverage, and
+  end-to-end `fit_2d()` integration coverage before widening the 2D
+  lowering gate
+- This remaining step is what closes the profile-related fallback gap
+  for example 04 and completes Phase 6 profile coverage
 
 **Step 6.3: Lower convolution / IRF nodes**
 - Compile `CONVOLUTION` nodes that are already emitted by GraphIR
@@ -1322,6 +1347,6 @@ user workflows beyond the current lowerable 2D subset.
   bundled default configurations in examples 01–04
 - Newly lowerable `ENERGY_1D`, `PROFILE_*`, `CONVOLUTION`, and
   `SUBCYCLE_*` coverage ships with parity tests and compare-mode
-  coverage
+  coverage. Example 04 depends on completing Step 6.2b, not just 6.2a
 - Existing lowerable 2D paths remain numerically stable and
   performance-neutral within the regression budget above

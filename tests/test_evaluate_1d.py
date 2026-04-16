@@ -19,6 +19,8 @@ from trspecfit.graph_ir import build_graph, can_lower_1d, schedule_1d
 # ---------------------------------------------------------------------------
 
 _ENERGY_YAML = "models/eval_2d_energy.yaml"
+_FILE_ENERGY_YAML = "models/file_energy.yaml"
+_PROFILE_YAML = "models/file_profile.yaml"
 
 
 #
@@ -28,6 +30,39 @@ def _make_energy_model(model_info):
     project = Project(path="tests")
     file = File(parent_project=project, energy=np.linspace(80, 90, 101))
     file.load_model(model_yaml=_ENERGY_YAML, model_info=model_info)
+    model = file.model_active
+    assert model is not None
+    return file, model
+
+
+#
+def _make_profile_energy_model(
+    model_info,
+    profiles,
+    *,
+    energy=None,
+    aux_axis=None,
+    model_yaml=None,
+):
+    """Load a 1D energy model and attach one or more parameter profiles."""
+
+    if energy is None:
+        energy = np.linspace(83, 87, 121)
+    if aux_axis is None:
+        aux_axis = np.linspace(0, 4, 5)
+    if model_yaml is None:
+        model_yaml = _FILE_ENERGY_YAML
+
+    project = Project(path="tests")
+    file = File(parent_project=project, energy=energy, aux_axis=aux_axis)
+    file.load_model(model_yaml=model_yaml, model_info=model_info)
+    for target_parameter, profile_model in profiles:
+        file.add_par_profile(
+            target_model=model_info[0],
+            target_parameter=target_parameter,
+            profile_yaml=_PROFILE_YAML,
+            profile_model=profile_model,
+        )
     model = file.model_active
     assert model is not None
     return file, model
@@ -227,6 +262,88 @@ class TestExpressionModels:
 
 
 # ---------------------------------------------------------------------------
+# Profile models
+# ---------------------------------------------------------------------------
+
+
+#
+#
+class TestProfileModels:
+    """Models with aux-axis-varying parameters."""
+
+    #
+    def test_profiled_amplitude(self):
+        """Single profiled parameter matches interpreter at baseline + perturbation."""
+
+        _file, model = _make_profile_energy_model(
+            ["single_gauss"],
+            [("Gauss_01_A", ["profile_pExpDecay"])],
+        )
+        graph = build_graph(model)
+        assert can_lower_1d(graph)
+        plan = schedule_1d(graph)
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+
+        A_idx = list(plan.opt_param_names).index("Gauss_01_A_pExpDecay_01_A")
+        tau_idx = list(plan.opt_param_names).index("Gauss_01_A_pExpDecay_01_tau")
+        _perturb_theta(plan, model, theta, [A_idx, tau_idx], [1.5, -0.15])
+
+    #
+    def test_two_profiles_same_component(self):
+        """Multiple profiled params on one component compile and stay in parity."""
+
+        _file, model = _make_profile_energy_model(
+            ["single_gauss"],
+            [
+                ("Gauss_01_x0", ["roundtrip_pLinear_x0"]),
+                ("Gauss_01_A", ["roundtrip_pExpDecay_A"]),
+            ],
+        )
+        graph = build_graph(model)
+        assert can_lower_1d(graph)
+        plan = schedule_1d(graph)
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+
+        amp_idx = list(plan.opt_param_names).index("Gauss_01_A_pExpDecay_01_A")
+        slope_idx = list(plan.opt_param_names).index("Gauss_01_x0_pLinear_01_m")
+        _perturb_theta(plan, model, theta, [amp_idx, slope_idx], [0.75, -0.05])
+
+    #
+    def test_profile_dependent_expression(self):
+        """Expressions that reference profiled params stay in parity."""
+
+        _file, model = _make_profile_energy_model(
+            ["two_glp_expr_amplitude"],
+            [("GLP_01_A", ["profile_pLinear"])],
+        )
+        graph = build_graph(model)
+        assert can_lower_1d(graph)
+        plan = schedule_1d(graph)
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+
+        amp_idx = list(plan.opt_param_names).index("GLP_01_A")
+        slope_idx = list(plan.opt_param_names).index("GLP_01_A_pLinear_01_m")
+        _perturb_theta(plan, model, theta, [amp_idx, slope_idx], [1.0, 0.08])
+
+    #
+    def test_profiled_shirley(self):
+        """Profiled spectrum-fed ops stay in parity with the interpreter."""
+
+        _file, model = _make_profile_energy_model(
+            ["shirley_peak"],
+            [("Shirley_pShirley", ["profile_pLinear"])],
+            model_yaml=_ENERGY_YAML,
+            energy=np.linspace(80, 90, 101),
+        )
+        model.lmfit_pars["Shirley_pShirley_pLinear_01_m"].value = 1.0e-5
+
+        graph = build_graph(model)
+        assert can_lower_1d(graph)
+        plan = schedule_1d(graph)
+        _compare_evaluator_vs_interpreter(model, plan)
+
+
+# ---------------------------------------------------------------------------
 # can_lower_1d gate
 # ---------------------------------------------------------------------------
 
@@ -265,26 +382,12 @@ class TestCanLower1D:
         assert not can_lower_1d(graph)
 
     #
-    def test_profile_model_is_not_lowerable_1d(self):
-        """Profile models should not pass can_lower_1d."""
+    def test_profile_model_is_lowerable_1d(self):
+        """Profile-only 1D models should now pass can_lower_1d."""
 
-        project = Project(path="tests")
-        file = File(
-            parent_project=project,
-            energy=np.linspace(80, 90, 101),
-            aux_axis=np.array([0.0, 1.0, 2.0]),
+        _file, model = _make_profile_energy_model(
+            ["single_gauss"],
+            [("Gauss_01_A", ["profile_pExpDecay"])],
         )
-        file.load_model(
-            model_yaml="models/file_energy.yaml",
-            model_info=["single_gauss"],
-        )
-        file.add_par_profile(
-            target_model="single_gauss",
-            target_parameter="Gauss_01_A",
-            profile_yaml="models/file_profile.yaml",
-            profile_model=["profile_pExpDecay"],
-        )
-        model = file.model_active
-        assert model is not None
         graph = build_graph(model)
-        assert not can_lower_1d(graph)
+        assert can_lower_1d(graph)

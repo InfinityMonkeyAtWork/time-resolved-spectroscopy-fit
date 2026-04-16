@@ -10,10 +10,12 @@ from __future__ import annotations
 import numpy as np
 
 from trspecfit.graph_ir import (
-    OP_DISPATCH,
     ExprNodeKind,
     ExprProgram,
     ScheduledPlan1D,
+    _evaluate_profile_expr_values,
+    _evaluate_profile_sample_values,
+    _evaluate_scheduled_op_1d,
 )
 
 # ---------------------------------------------------------------------------
@@ -127,6 +129,22 @@ def evaluate_1d(plan: ScheduledPlan1D, theta: np.ndarray) -> np.ndarray:
         target = int(plan.expr_target_indices[i])
         values[target] = eval_expr_program_1d(plan.expr_programs[i], values)
 
+    profile_sample_values = _evaluate_profile_sample_values(
+        plan.aux_axis,
+        values,
+        plan.profile_sample_base_indices,
+        plan.profile_sample_component_indptr,
+        plan.profile_component_func_ids,
+        plan.profile_component_param_indptr,
+        plan.profile_component_param_indices,
+    )
+    profile_expr_values = _evaluate_profile_expr_values(
+        values,
+        profile_sample_values,
+        plan.n_params,
+        plan.profile_expr_programs,
+    )
+
     # 2. Component evaluation
     energy = plan.energy
     result = plan.cached_result.copy()
@@ -138,18 +156,22 @@ def evaluate_1d(plan: ScheduledPlan1D, theta: np.ndarray) -> np.ndarray:
         kind = int(plan.op_kinds[op_idx])
         start = int(plan.op_param_indptr[op_idx])
         end = int(plan.op_param_indptr[op_idx + 1])
-        param_rows = plan.op_param_indices[start:end]
-
-        params = [float(values[int(row)]) for row in param_rows]
-
         needs_spectrum = bool(plan.op_needs_spectrum[op_idx])
         is_pre = bool(plan.op_is_pre_spectrum[op_idx])
 
-        func, _needs = OP_DISPATCH[kind]
-        if needs_spectrum:
-            component = func(energy, *params, peak_sum)
-        else:
-            component = func(energy, *params)
+        component = _evaluate_scheduled_op_1d(
+            energy,
+            kind,
+            plan.op_param_source_kinds[start:end],
+            plan.op_param_indices[start:end],
+            values,
+            profile_sample_values,
+            profile_expr_values,
+            peak_sum,
+            needs_spectrum=needs_spectrum,
+            is_profiled=bool(plan.op_is_profiled[op_idx]),
+            n_aux=plan.n_aux,
+        )
 
         result += component
         if is_pre:
