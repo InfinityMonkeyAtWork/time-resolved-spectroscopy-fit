@@ -2,7 +2,6 @@
 
 ## Fitting
 
-- [ ] **Project-level fits**: allow parameters to vary at Project, File, or Static scope (multi-file fitting).
 - [ ] **Fit results save/load**: HDF5 output for fit results, `File.load_fit()` to restore, `File.compare_models()` for model comparison. Keep project/global-fit outputs separate from true file-level fits so users do not assume identical per-file fields/statistics.
 - [ ] **Mismatched initial guesses**: round-trip tests — one each for basic, profile, profile+dynamics.
 
@@ -16,6 +15,7 @@ Note: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling — make
 
 Don't touch until feature set is stable.
 
+- [ ] **Project-level fit backend**: `Project.fit_2d()` already supports `Project`/`File`/`Static` vary levels, but it currently evaluates through `fit_project_mcp()` and `Model.create_value_2d()` rather than the GIR scheduler/evaluator path. Decide whether to lower the multi-file residual to GIR or explicitly prefer project-managed per-file loops when we want maximum graph-IR speedups.
 - [ ] **Evaluation order correctness**: component eval order depends on coincidental list position; make it explicit. One option: build a directed acyclic graph (DAG) at model construction and topological-sort.
 - [ ] **Freeze non-varying pars**: pars without time-dependence (or profile dependence) are re-evaluated at every aux-axis point; could evaluate once and reuse.
 

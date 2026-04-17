@@ -5,6 +5,7 @@
 - Plain energy models.
 - Energy model with dynamics on a top-level energy parameter.
 - Energy model with subcycle dynamics on a top-level parameter.
+- Convolution kernels inside time-domain Dynamics models, typically for IRF broadening of time-dependent traces.
 - Energy model with a profile model on a top-level energy parameter.
 - Energy model with a profile on one parameter and dynamics on a different top-level parameter. (Any number of top-level time-dependent and/or profiled parameters on the same energy model are supported as long as any given top-level energy parameter has no more than one directly attached model.)
 - Energy model with a profile on a top-level parameter and standard dynamics on one of that profile's internal parameters. (Single-cycle only; no multi-cycle / subcycle models.)
@@ -29,6 +30,7 @@ Definitions:
 - Adding multi-cycle / subcycle dynamics to a parameter inside an attached profile model.
 - Adding dynamics to an expression parameter.
 - Adding a profile to an expression parameter.
+- Adding a convolution kernel as a top-level energy-model component. Convolution is supported only in Dynamics/time models; the main supported use case is IRF broadening.
 - Transitive expression chains that pass through time-varying or profile-varying parameters are not supported; users should reference the varying base parameter directly instead of chaining through another expression.
 
 ## Notes/ Future Changes

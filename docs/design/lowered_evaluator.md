@@ -1318,6 +1318,9 @@ user workflows beyond the current lowerable 2D subset.
 - Compile `CONVOLUTION` nodes that are already emitted by GraphIR
 - Start with time-domain kernels (`package == "time"`), covering the
   common IRF / pump-probe case
+- Keep product support scoped to time-domain / Dynamics convolution.
+  Top-level energy-model convolution is explicitly unsupported and
+  remains out of scope for this step
 - Preserve the existing graph boundary between pre-convolution signal
   accumulation and post-convolution consumers; the scheduler / plan must
   compile the current `peak_sum` / resolved-trace semantics correctly

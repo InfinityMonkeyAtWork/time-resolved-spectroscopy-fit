@@ -607,6 +607,21 @@ class TestYAMLValidationErrors:
             )
 
     #
+    def test_energy_convolution_rejected(self):
+        """Top-level energy-model convolution should fail validation early."""
+
+        project = Project(path="tests")
+        file = File(parent_project=project)
+        with pytest.raises(
+            ModelValidationError,
+            match="Top-level energy-model convolution is not supported",
+        ):
+            file.load_model(
+                model_yaml="models/file_energy.yaml",
+                model_info="energy_convolution_unsupported",
+            )
+
+    #
     def test_conv_last_raises(self):
         """Convolution as last component should fail ordering validation."""
 
