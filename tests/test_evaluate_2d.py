@@ -649,3 +649,140 @@ class TestProfileModels:
             "Gauss_01_A_pExpDecay_01_A_expFun_01_tau"
         )
         _perturb_theta(plan, model, theta, [dyn_A_idx, dyn_tau_idx], [0.5, 0.5])
+
+
+# ---------------------------------------------------------------------------
+# Resolved-trace convolution (IRF) -- Phase 6.3
+# ---------------------------------------------------------------------------
+
+
+#
+#
+class TestDynamicsConvolution:
+    """Lowered IRF dynamics: CONVOLUTION is compiled into a kind=2 step.
+
+    Covers plan encoding (conv program layout, frozen support, resolution
+    ordering) and numerical parity against ``Model.create_value_2d()``.
+    The IRF path rewrites a resolved trace row in place via
+    ``my_conv`` -- the same code MCP calls -- so tolerance matches the
+    other OpKind parity tests.
+    """
+
+    #
+    def _make_irf_plan(self):
+        file, model = _make_2d_model(
+            ["glp_only"],
+            [("GLP_01_A", ["MonoExpPosIRF"])],
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        return plan, graph, model
+
+    #
+    def test_irf_parity_at_initial_theta(self):
+        """evaluate_2d == interpreter at the initial theta for an IRF fit."""
+
+        plan, _graph, model = self._make_irf_plan()
+        _compare_evaluator_vs_interpreter(model, plan)
+
+    #
+    def test_irf_parity_under_perturbation(self):
+        """evaluate_2d == interpreter after perturbing kernel / dynamics params."""
+
+        plan, _graph, model = self._make_irf_plan()
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+        sd_idx = plan.opt_param_names.index("GLP_01_A_gaussCONV_SD")
+        tau_idx = plan.opt_param_names.index("GLP_01_A_expFun_01_tau")
+        _perturb_theta(plan, model, theta, [sd_idx, tau_idx], [0.03, 0.5])
+
+    #
+    def test_conv_program_populated(self):
+        """IRF plan emits exactly one conv step with well-formed CSR."""
+
+        plan, _graph, _model = self._make_irf_plan()
+
+        assert plan.n_conv_steps == 1
+        assert plan.conv_target_rows.shape == (1,)
+        assert plan.conv_func_ids.shape == (1,)
+        assert plan.conv_param_indptr.shape == (2,)
+        assert plan.conv_param_indptr[0] == 0
+        n_kernel_params = int(plan.conv_param_indptr[1])
+        assert n_kernel_params >= 1  # at least SD
+        assert plan.conv_param_rows.shape == (n_kernel_params,)
+        assert plan.conv_support_indptr.shape == (2,)
+        assert plan.conv_support_indptr[0] == 0
+        n_support = int(plan.conv_support_indptr[1])
+        assert plan.conv_support_values.shape == (n_support,)
+
+    #
+    def test_conv_target_row_valid(self):
+        """Conv target row is a valid trace-matrix index."""
+
+        plan, _graph, _model = self._make_irf_plan()
+        target = int(plan.conv_target_rows[0])
+        assert 0 <= target < plan.n_params
+
+    #
+    def test_conv_param_rows_valid(self):
+        """Every kernel-param row is a valid trace-matrix index."""
+
+        plan, _graph, _model = self._make_irf_plan()
+        for row in plan.conv_param_rows:
+            assert 0 <= int(row) < plan.n_params
+
+    #
+    def test_conv_support_frozen_from_kernel_time(self):
+        """Plan's conv support matches the CONVOLUTION node's kernel_time array."""
+
+        plan, graph, _model = self._make_irf_plan()
+        from trspecfit.graph_ir import NodeKind
+
+        conv_nodes = [n for n in graph.nodes if n.kind == NodeKind.CONVOLUTION]
+        assert len(conv_nodes) == 1
+        expected = conv_nodes[0].arrays["kernel_time"]
+        start = int(plan.conv_support_indptr[0])
+        end = int(plan.conv_support_indptr[1])
+        np.testing.assert_array_equal(plan.conv_support_values[start:end], expected)
+
+    #
+    def test_conv_step_runs_after_dynamics(self):
+        """kind=2 conv step appears after the kind=0 dyn_group for its target."""
+
+        plan, _graph, _model = self._make_irf_plan()
+        kinds = plan.resolution_kinds.tolist()
+        conv_positions = [i for i, k in enumerate(kinds) if k == 2]
+        assert len(conv_positions) == 1
+        conv_pos = conv_positions[0]
+        conv_idx = int(plan.resolution_indices[conv_pos])
+        target_row = int(plan.conv_target_rows[conv_idx])
+
+        dyn_before = False
+        for i in range(conv_pos):
+            if kinds[i] == 0:
+                dyn_idx = int(plan.resolution_indices[i])
+                if int(plan.dyn_group_target_row[dyn_idx]) == target_row:
+                    dyn_before = True
+                    break
+        assert dyn_before, (
+            "kind=2 conv step must follow the kind=0 dyn_group "
+            "that populates its target row"
+        )
+
+    #
+    def test_non_irf_has_empty_conv_program(self):
+        """Regression guard: non-IRF 2D models still emit an empty conv program."""
+
+        file, model = _make_2d_model(
+            ["glp_only"],
+            [("GLP_01_A", ["MonoExpPos"])],
+        )
+        graph = build_graph(model)
+        plan = schedule_2d(graph)
+
+        assert plan.n_conv_steps == 0
+        assert plan.conv_target_rows.shape == (0,)
+        assert plan.conv_func_ids.shape == (0,)
+        assert plan.conv_param_rows.shape == (0,)
+        assert plan.conv_support_values.shape == (0,)
+        assert 2 not in plan.resolution_kinds.tolist()

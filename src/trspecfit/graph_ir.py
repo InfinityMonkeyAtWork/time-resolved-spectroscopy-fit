@@ -165,6 +165,24 @@ _FUNCTION_NAME_TO_PROFILE_FUNC: dict[str, ProfileFuncKind] = {
     "pGauss": ProfileFuncKind.PGAUSS,
 }
 
+
+#
+#
+class ConvKernelKind(IntEnum):
+    """Registry IDs for convolution kernel functions.
+
+    Phase 6.3 covers resolved-trace IRF convolution on the time axis.
+    Only kernel functions listed here can be lowered; other kernels
+    (or non-time packages) fall back to MCP.
+    """
+
+    GAUSSCONV = 0
+
+
+_FUNCTION_NAME_TO_CONV_KERNEL: dict[str, ConvKernelKind] = {
+    "gaussCONV": ConvKernelKind.GAUSSCONV,
+}
+
 _FUNCTION_NAME_TO_OP: dict[str, OpKind] = {
     "Gauss": OpKind.GAUSS,
     "GaussAsym": OpKind.GAUSS_ASYM,
@@ -466,14 +484,35 @@ class ScheduledPlan2D:
     expr_programs: list[ExprProgram]
 
     # --- Interleaved parameter resolution schedule ---
-    # Dynamics groups and expressions may depend on each other (e.g. a
-    # dynamics param that is an expression of another dynamics param).
-    # The resolution_kinds / resolution_indices arrays encode the correct
+    # Dynamics groups, expressions, and convolution steps may depend on
+    # each other (e.g. a dynamics param that is an expression of another
+    # dynamics param; a conv step that wraps a resolved param).  The
+    # resolution_kinds / resolution_indices arrays encode the correct
     # topological execution order:
     #   kind=0 -> dynamics group step, index into dyn_group_* arrays
     #   kind=1 -> expression step, index into expr_* arrays / expr_programs
-    resolution_kinds: np.ndarray  # (n_dyn_groups + n_expressions,) int8
-    resolution_indices: np.ndarray  # (n_dyn_groups + n_expressions,) int
+    #   kind=2 -> convolution step, index into conv_* arrays
+    resolution_kinds: np.ndarray  # (n_dyn_groups + n_expressions + n_conv_steps,) int8
+    resolution_indices: np.ndarray  # (n_dyn_groups + n_expressions + n_conv_steps,) int
+
+    # --- Resolved-trace convolution program (Phase 6.3) ---
+    # Each conv step rewrites a trace row in-place after its PARAM_PLUS_TRACE
+    # is fully resolved.  Chained CONVOLUTION nodes emit multiple steps
+    # targeting the same row, executed in order.  Kernel values are
+    # recomputed per theta from conv_param_rows; support values are frozen
+    # at plan-build time from ``node.arrays["kernel_time"]``.  Only
+    # ``package == "time"`` kernels are lowered.
+    n_conv_steps: int
+    conv_target_rows: np.ndarray  # (n_conv_steps,) int -- trace row rewritten
+    conv_func_ids: np.ndarray  # (n_conv_steps,) int -- kernel function registry id
+    conv_param_indptr: np.ndarray  # (n_conv_steps + 1,) int -- CSR row pointers
+    conv_param_rows: np.ndarray  # (total_conv_params,) int -- kernel param trace rows
+    conv_support_indptr: (
+        np.ndarray
+    )  # (n_conv_steps + 1,) int -- CSR into support values
+    conv_support_values: (
+        np.ndarray
+    )  # (total_support,) float -- kernel time axis samples
 
     # --- Profile-varying parameter groups (fixed aux_axis shape) ---
     n_aux: int
@@ -993,6 +1032,8 @@ def _emit_dynamics_subgraph(
                 function_name=dyn_comp.fct_str,
                 package="time",
             )
+            if dyn_comp.time is not None:
+                b.nodes[nid].arrays["kernel_time"] = dyn_comp.time
             # Wire dynamics params -> conv node
             for pos, dnid in enumerate(dyn_param_nids[i]):
                 b.add_edge(dnid, nid, EdgeKind.PARAM_INPUT, position=pos)
@@ -1434,11 +1475,68 @@ _NON_LOWERABLE_NODE_KINDS_BASE: frozenset[NodeKind] = frozenset(
     }
 )
 
-# 2D backend: profiles are now compilable (Phase 6.2b).
+# 2D backend: profiles (Phase 6.2b) and resolved-trace time-domain
+# convolution (Phase 6.3) are now compilable.  Convolution lowerability
+# is additionally gated per-node by ``_is_lowerable_convolution_2d``.
 _NON_LOWERABLE_2D_NODE_KINDS: frozenset[NodeKind] = (
     _NON_LOWERABLE_NODE_KINDS_BASE
-    - frozenset({NodeKind.PROFILE_SAMPLE, NodeKind.PROFILE_AVERAGE})
+    - frozenset(
+        {
+            NodeKind.PROFILE_SAMPLE,
+            NodeKind.PROFILE_AVERAGE,
+            NodeKind.CONVOLUTION,
+        }
+    )
 )
+
+
+#
+def _is_lowerable_convolution_2d(node: GraphNode, graph: GraphIR) -> bool:
+    """Return True if a CONVOLUTION node can be lowered by the 2D backend.
+
+    Phase 6.3 contract -- all of:
+
+    1. Time-domain kernel (``package == "time"``) with a registered
+       kernel function and a ``kernel_time`` array populated at
+       graph-build time.
+    2. Resolved-trace shape: the node has exactly one ``TRACE_INPUT``
+       ancestor, and walking that chain terminates at a
+       ``PARAM_PLUS_TRACE``.
+
+    The structural check (item 2) is the same walk the scheduler
+    performs in :func:`_resolve_convolution_target_row`, kept in sync so
+    that unsupported conv flavours (spectrum-level ``comp_type="conv"``
+    components that receive ``ADDEND`` from ``peak_sum``, externally
+    produced graphs with unusual conv topology, etc.) fall back to MCP
+    cleanly instead of raising inside ``schedule_2d``.
+    """
+
+    if (
+        node.kind != NodeKind.CONVOLUTION
+        or node.package != "time"
+        or node.function_name not in _FUNCTION_NAME_TO_CONV_KERNEL
+        or "kernel_time" not in node.arrays
+    ):
+        return False
+
+    id_to_node = {n.id: n for n in graph.nodes}
+    current = node
+    # Bounded walk: guards against malformed chains and cycles.
+    for _ in range(len(id_to_node)):
+        trace_parents = [
+            e
+            for e in graph.edges
+            if e.target == current.id and e.kind == EdgeKind.TRACE_INPUT
+        ]
+        if len(trace_parents) != 1:
+            return False
+        parent = id_to_node[trace_parents[0].source]
+        if parent.kind == NodeKind.PARAM_PLUS_TRACE:
+            return True
+        if parent.kind != NodeKind.CONVOLUTION:
+            return False
+        current = parent
+    return False
 
 
 #
@@ -1463,6 +1561,13 @@ def can_lower_2d(graph: GraphIR) -> bool:
         # Reject future node types not yet compilable
         if node.kind in _NON_LOWERABLE_2D_NODE_KINDS:
             return False
+
+        # Convolution nodes are per-node gated: only time-domain kernels
+        # with a registered kernel function, frozen support, and the
+        # resolved-trace topology the scheduler expects are lowered.
+        if node.kind == NodeKind.CONVOLUTION:
+            if not _is_lowerable_convolution_2d(node, graph):
+                return False
 
         # Check component functions are supported
         if node.kind in (NodeKind.COMPONENT_EVAL, NodeKind.SPECTRUM_FED_OP):
@@ -1740,6 +1845,46 @@ def _bind_expr_to_rows(
 
 
 #
+def _resolve_convolution_target_row(
+    conv_node: GraphNode,
+    edges: list[GraphEdge],
+    id_to_node: dict[int, GraphNode],
+    name_to_row: dict[str, int],
+) -> int:
+    """Walk a conv chain back to the underlying PARAM_PLUS_TRACE row.
+
+    CONVOLUTION nodes wrap a resolved trace: their TRACE_INPUT source is
+    either the PARAM_PLUS_TRACE (single conv) or an earlier CONVOLUTION
+    (chained conv).  The lowered plan rewrites the PPT row in place, so
+    every conv in a chain shares the same target row.
+    """
+
+    current = conv_node
+    # Bounded walk: guards against pathological cycles in malformed graphs.
+    for _ in range(len(id_to_node)):
+        trace_parents = [
+            e
+            for e in edges
+            if e.target == current.id and e.kind == EdgeKind.TRACE_INPUT
+        ]
+        if len(trace_parents) != 1:
+            raise ValueError(
+                f"CONVOLUTION node {conv_node.name!r} does not have a"
+                f" single TRACE_INPUT ancestor (found {len(trace_parents)})"
+            )
+        parent = id_to_node[trace_parents[0].source]
+        if parent.kind == NodeKind.PARAM_PLUS_TRACE:
+            return name_to_row[parent.name]
+        if parent.kind != NodeKind.CONVOLUTION:
+            raise ValueError(
+                f"CONVOLUTION chain for {conv_node.name!r} walks through"
+                f" unsupported node kind {parent.kind.name!r}"
+            )
+        current = parent
+    raise ValueError(f"CONVOLUTION chain for {conv_node.name!r} exceeds graph size")
+
+
+#
 def _topological_sort(graph: GraphIR) -> list[int]:
     """Topological sort of graph node IDs.
 
@@ -1859,6 +2004,21 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     row_is_constant = np.zeros(n_params, dtype=np.bool_)
     for node in static_nodes:
         row_is_constant[name_to_row[node.name]] = True
+
+    # CONVOLUTION nodes rewrite a PARAM_PLUS_TRACE row in place, so they
+    # alias their underlying PPT's row rather than occupying a new one.
+    # Downstream edges (component PARAM_INPUT) reference the last node in
+    # the conv chain; this aliasing lets name_to_row resolve them to the
+    # PPT row.  row_is_constant becomes False for conv-touched rows because
+    # kernel params may vary per call.
+    for node in graph.nodes:
+        if node.kind != NodeKind.CONVOLUTION:
+            continue
+        ppt_row = _resolve_convolution_target_row(
+            node, graph.edges, id_to_node, name_to_row
+        )
+        name_to_row[node.name] = ppt_row
+        row_is_constant[ppt_row] = False
 
     # opt_indices and opt_param_names
     n_opt = len(opt_nodes)
@@ -2062,6 +2222,66 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
             gid = _ppt_to_group[_dyn_id_to_ppt[nid]]
             _last_dyn_in_group[gid] = nid
 
+    # Compile CONVOLUTION nodes into a conv program (Phase 6.3).  Walk
+    # topo order so chained conv steps stay in the right sequence and the
+    # kind=2 resolution entries are emitted after the dyn/expr step that
+    # populates the target PARAM_PLUS_TRACE row.
+    conv_nodes_topo: list[GraphNode] = [
+        id_to_node[nid]
+        for nid in topo_order
+        if id_to_node[nid].kind == NodeKind.CONVOLUTION
+    ]
+    _conv_id_to_idx: dict[int, int] = {n.id: i for i, n in enumerate(conv_nodes_topo)}
+    n_conv_steps = len(conv_nodes_topo)
+
+    conv_target_rows_list: list[int] = []
+    conv_func_ids_list: list[int] = []
+    conv_param_indptr_list: list[int] = [0]
+    conv_param_rows_list: list[int] = []
+    conv_support_indptr_list: list[int] = [0]
+    conv_support_values_list: list[float] = []
+
+    for conv_node in conv_nodes_topo:
+        assert conv_node.function_name is not None
+        kernel_kind = _FUNCTION_NAME_TO_CONV_KERNEL.get(conv_node.function_name)
+        if kernel_kind is None:
+            raise ValueError(f"Unknown convolution kernel: {conv_node.function_name!r}")
+        conv_func_ids_list.append(int(kernel_kind))
+
+        target_row = _resolve_convolution_target_row(
+            conv_node, graph.edges, id_to_node, name_to_row
+        )
+        conv_target_rows_list.append(target_row)
+
+        kernel_param_edges = sorted(
+            (
+                e
+                for e in graph.edges
+                if e.target == conv_node.id and e.kind == EdgeKind.PARAM_INPUT
+            ),
+            key=lambda e: e.position or 0,
+        )
+        for edge in kernel_param_edges:
+            src_node = id_to_node[edge.source]
+            conv_param_rows_list.append(name_to_row[src_node.name])
+        conv_param_indptr_list.append(len(conv_param_rows_list))
+
+        support = conv_node.arrays.get("kernel_time")
+        if support is None:
+            raise ValueError(
+                f"CONVOLUTION node {conv_node.name!r} is missing"
+                " kernel_time array (required for lowered convolution)"
+            )
+        conv_support_values_list.extend(float(v) for v in np.asarray(support))
+        conv_support_indptr_list.append(len(conv_support_values_list))
+
+    conv_target_rows = np.array(conv_target_rows_list, dtype=np.intp)
+    conv_func_ids = np.array(conv_func_ids_list, dtype=np.intp)
+    conv_param_indptr = np.array(conv_param_indptr_list, dtype=np.intp)
+    conv_param_rows = np.array(conv_param_rows_list, dtype=np.intp)
+    conv_support_indptr = np.array(conv_support_indptr_list, dtype=np.intp)
+    conv_support_values = np.array(conv_support_values_list, dtype=np.float64)
+
     resolution_kinds_list: list[int] = []
     resolution_indices_list: list[int] = []
     emitted_groups: set[int] = set()
@@ -2075,6 +2295,9 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         elif nid in _expr_id_to_idx:
             resolution_kinds_list.append(1)  # expression
             resolution_indices_list.append(_expr_id_to_idx[nid])
+        elif nid in _conv_id_to_idx:
+            resolution_kinds_list.append(2)  # convolution step
+            resolution_indices_list.append(_conv_id_to_idx[nid])
 
     resolution_kinds = np.array(resolution_kinds_list, dtype=np.int8)
     resolution_indices = np.array(resolution_indices_list, dtype=np.intp)
@@ -2514,9 +2737,14 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         int(DynFuncKind.SQRTFUN): fcts_time.sqrtFun,
     }
 
-    # Dynamics groups and expressions are interleaved in topological order
-    # so that expression-valued dynamics params (e.g. expFun_02_t0 =
-    # "expFun_01_t0") are resolved before the group that consumes them.
+    _CONV_KERNEL_DISPATCH: dict[int, Callable[..., Any]] = {
+        int(ConvKernelKind.GAUSSCONV): fcts_time.gaussCONV,
+    }
+    from trspecfit.utils.arrays import my_conv
+
+    # Dynamics groups, expressions, and resolved-trace convolutions are
+    # interleaved in topological order so that downstream consumers see
+    # the fully resolved trace (base + dynamics + expressions + IRF).
     for step in range(len(resolution_kinds)):
         kind = int(resolution_kinds[step])
         idx = int(resolution_indices[step])
@@ -2532,11 +2760,27 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
                 ]
                 func = _DYN_DISPATCH[int(dyn_sub_func_id[s])]
                 param_traces_init[target, :] += func(graph.time, *p_vals)
-        else:  # expression
+        elif kind == 1:  # expression
             target_row = int(expr_target_rows[idx])
             program = expr_programs[idx]
             result = _eval_expr_program_init(program, param_traces_init, n_time)
             param_traces_init[target_row, :] = result
+        else:  # kind == 2: resolved-trace convolution (Phase 6.3)
+            target_row = int(conv_target_rows[idx])
+            kernel_func = _CONV_KERNEL_DISPATCH[int(conv_func_ids[idx])]
+            p_start = int(conv_param_indptr[idx])
+            p_end = int(conv_param_indptr[idx + 1])
+            kernel_params = [
+                float(param_traces_init[int(conv_param_rows[j]), 0])
+                for j in range(p_start, p_end)
+            ]
+            s_start = int(conv_support_indptr[idx])
+            s_end = int(conv_support_indptr[idx + 1])
+            support = conv_support_values[s_start:s_end]
+            kernel = kernel_func(support, *kernel_params)
+            param_traces_init[target_row, :] = my_conv(
+                graph.time, param_traces_init[target_row, :], kernel
+            )
 
     # ------------------------------------------------------------------ #
     # 6b. Precompute constant component contributions                      #
@@ -2647,6 +2891,13 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         op_is_constant=op_is_constant,
         cached_result=cached_result,
         cached_peak_sum=cached_peak_sum,
+        n_conv_steps=n_conv_steps,
+        conv_target_rows=conv_target_rows,
+        conv_func_ids=conv_func_ids,
+        conv_param_indptr=conv_param_indptr,
+        conv_param_rows=conv_param_rows,
+        conv_support_indptr=conv_support_indptr,
+        conv_support_values=conv_support_values,
     )
 
 

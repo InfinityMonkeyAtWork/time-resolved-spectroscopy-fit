@@ -1314,28 +1314,75 @@ user workflows beyond the current lowerable 2D subset.
 - Added integration tests in `test_gir_integration.py`: 2D profile
   dispatch, residual parity, and compare-mode coverage (3 tests)
 
-**Step 6.3: Lower convolution / IRF nodes**
-- Compile `CONVOLUTION` nodes that are already emitted by GraphIR
-- Start with time-domain kernels (`package == "time"`), covering the
-  common IRF / pump-probe case
-- Keep product support scoped to time-domain / Dynamics convolution.
-  Top-level energy-model convolution is explicitly unsupported and
-  remains out of scope for this step
-- Preserve the existing graph boundary between pre-convolution signal
-  accumulation and post-convolution consumers; the scheduler / plan must
-  compile the current `peak_sum` / resolved-trace semantics correctly
-- Target the single-cycle path first; treat this as the heaviest step in
-  Phase 6 rather than a lightweight op-table extension
-- Keep kernel support fixed at model-build / plan-build time, matching
-  current MCP behavior. Kernel values may vary with fit parameters, but
-  support length is not resized during a fit
-- Document per-op numerical parity expectations for convolution
-  explicitly; tolerance may need to be looser than the current
-  non-convolution `~1e-13` examples depending on implementation details
-- Add parity tests against the current `mcp.Model.combine(...)`
-  behavior before widening the lowering gate
-- This is a high-value coverage step for typical pump-probe use; without
-  IRF support many realistic 2D fits still fall back to the interpreter
+**Step 6.3: Lower convolution / IRF nodes (implemented)**
+- Scope: 2D resolved-trace CONVOLUTION only (`NodeKind.CONVOLUTION`
+  wrapping `PARAM_PLUS_TRACE`), `package == "time"`, single-cycle.
+  Deferred as follow-ups: spectrum-level `comp_type="conv"`
+  components, 1D IRF (ScheduledPlan1D has no trace-matrix path),
+  energy-axis kernels, subcycle-aware conv (6.4), dynamic kernel
+  resizing mid-fit
+- Product rule alignment: top-level energy-model convolution is
+  explicitly unsupported and rejected by model validation. The lowered
+  backend therefore targets only the time-domain / Dynamics IRF case
+- Kernel-support contract: `node.arrays["kernel_time"]` must be
+  populated at graph-build time. `_emit_time_vary_subgraph` now stores
+  `dyn_comp.time` on the dynamics `CONVOLUTION` node, mirroring the
+  top-level conv component handling. `can_lower_2d` rejects (and the
+  fit falls back to MCP) if `kernel_time` is missing, the package is
+  not `"time"`, the kernel function is not in
+  `_FUNCTION_NAME_TO_CONV_KERNEL`, or the node does not wrap a
+  `PARAM_PLUS_TRACE` via a single `TRACE_INPUT` chain. The structural
+  shape check mirrors `_resolve_convolution_target_row` so the gate
+  admits exactly the graphs the scheduler can compile; unsupported
+  flavours (for example, internally constructed graphs with
+  spectrum-level `comp_type="conv"` nodes receiving `ADDEND` from
+  `peak_sum`, or unusual conv wiring that does not wrap a
+  `PARAM_PLUS_TRACE`) fall back to MCP cleanly instead of raising
+  inside `schedule_2d`. No fallback to re-deriving support from MCP
+  helpers -- the graph is the sole source of truth
+- Kernel-function registry (`ConvKernelKind`, today:
+  `gaussCONV` only). `CONV_KERNEL_DISPATCH` in `eval_2d.py` maps to
+  the time-domain function; adding new kernels is a two-entry change
+- Plan encoding: CSR conv program on `ScheduledPlan2D`
+  (`conv_target_rows`, `conv_func_ids`,
+  `conv_param_indptr` / `conv_param_rows`,
+  `conv_support_indptr` / `conv_support_values`).
+  CONVOLUTION nodes do not occupy their own trace-matrix row;
+  `schedule_2d` aliases each conv node's name to the underlying
+  `PARAM_PLUS_TRACE` row so downstream `op_param_indices` lookups stay
+  unchanged. Chained conv nodes emit multiple steps targeting the same
+  row and execute in topo order
+- Resolution ordering: `resolution_kinds` extended with `kind = 2`
+  (conv step, index into `conv_*`). Walking `topo_order` while
+  emitting resolution entries naturally places each conv after the
+  `dyn_group` / expression that populates its target row, so the
+  "pre-conv `peak_sum` accumulation vs post-conv consumers" boundary
+  is preserved without bespoke scheduling
+- Execution: `evaluate_2d` and the trace-matrix initializer in
+  `schedule_2d` both gather kernel params from the current trace rows,
+  evaluate `kernel_func(support, *params)` on the frozen support, and
+  rewrite the target row in-place via `utils.arrays.my_conv` -- the
+  same code MCP calls. Kernel values are recomputed per theta; support
+  length is fixed
+- Numerical parity: both paths share `my_conv` and the kernel
+  registry, so IRF parity lands at the same `rtol = atol = 1e-10`
+  used for every other `OpKind`. `fit_model_compare` at
+  `spectra.py:238` was left unchanged; a looser per-plan tolerance is
+  only needed if a future kernel backend (e.g. FFT) or chained conv
+  introduces drift
+- Test coverage:
+  - `tests/test_graph_ir.py::TestDynamicsConvolution` --
+    kernel_time populated on dynamics conv, lowerable gate flipped,
+    missing-`kernel_time` fallback
+  - `tests/test_evaluate_2d.py::TestDynamicsConvolution` -- 8 tests
+    covering parity at initial + perturbed theta, conv program CSR
+    layout, target / param row validity, support frozen from
+    `kernel_time`, `kind == 2` ordered after its producing
+    `dyn_group`, non-IRF regression guard
+  - `tests/test_gir_integration.py` -- dispatch test
+    `test_fit_2d_uses_gir_for_irf`, residual parity
+    `test_residual_same_gir_vs_mcp_irf`, `fit_model_compare` through
+    `test_compare_mode_irf`
 
 **Step 6.4: Lower subcycle dynamics**
 - Compile `SUBCYCLE_REMAP` and `SUBCYCLE_MASK`

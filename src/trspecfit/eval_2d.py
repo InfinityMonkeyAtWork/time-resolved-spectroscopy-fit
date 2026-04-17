@@ -15,12 +15,14 @@ from trspecfit.functions import time as fcts_time
 from trspecfit.graph_ir import (
     OP_DISPATCH,
     PROFILE_DISPATCH,
+    ConvKernelKind,
     DynFuncKind,
     ExprNodeKind,
     ExprProgram,
     ParamSourceKind,
     ScheduledPlan2D,
 )
+from trspecfit.utils.arrays import my_conv
 
 # ---------------------------------------------------------------------------
 # Dynamics dispatch table
@@ -33,6 +35,13 @@ DYNAMICS_DISPATCH: dict[int, tuple] = {
     DynFuncKind.SINDIVX: (fcts_time.sinDivX, 4),
     DynFuncKind.ERFFUN: (fcts_time.erfFun, 4),
     DynFuncKind.SQRTFUN: (fcts_time.sqrtFun, 3),
+}
+
+# Convolution kernel dispatch: kernel function evaluated on the frozen
+# kernel-time support with per-theta kernel parameters.  Mirrors MCP's
+# Model.combine(...) path.
+CONV_KERNEL_DISPATCH: dict[int, tuple] = {
+    ConvKernelKind.GAUSSCONV: (fcts_time.gaussCONV, 1),
 }
 
 
@@ -313,9 +322,24 @@ def evaluate_2d(plan: ScheduledPlan2D, theta: np.ndarray) -> np.ndarray:
                 param_rows = plan.dyn_sub_param_rows[s, :n_par]
                 dyn_params = [float(traces[int(row), 0]) for row in param_rows]
                 traces[target, :] += func(plan.time, *dyn_params)
-        else:  # expression
+        elif kind == 1:  # expression
             target = int(plan.expr_target_rows[idx])
             traces[target, :] = eval_expr_program(plan.expr_programs[idx], traces)
+        else:  # kind == 2: resolved-trace convolution (Phase 6.3)
+            target = int(plan.conv_target_rows[idx])
+            func_id = int(plan.conv_func_ids[idx])
+            kernel_func, _k_par = CONV_KERNEL_DISPATCH[func_id]
+            p_start = int(plan.conv_param_indptr[idx])
+            p_end = int(plan.conv_param_indptr[idx + 1])
+            kernel_params = [
+                float(traces[int(plan.conv_param_rows[j]), 0])
+                for j in range(p_start, p_end)
+            ]
+            s_start = int(plan.conv_support_indptr[idx])
+            s_end = int(plan.conv_support_indptr[idx + 1])
+            support = plan.conv_support_values[s_start:s_end]
+            kernel = kernel_func(support, *kernel_params)
+            traces[target, :] = my_conv(plan.time, traces[target, :], kernel)
 
     # 1e. Profile evaluation (after parameter resolution).
     profile_sample_values = _evaluate_profile_sample_values_2d(

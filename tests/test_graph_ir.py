@@ -1375,11 +1375,68 @@ class TestDynamicsConvolution:
         assert "expFun" in trace_fns
 
     #
-    def test_irf_dynamics_not_lowerable(self):
-        """Dynamics with convolution should make can_lower_2d return False."""
+    def test_irf_dynamics_lowerable_in_2d(self):
+        """Time-domain IRF dynamics are lowerable as of Phase 6.3.
+
+        The CONVOLUTION node carries ``package == "time"``, a registered
+        kernel function, and a populated ``kernel_time`` array, so
+        ``can_lower_2d`` accepts the graph.
+        """
 
         _file, model = _make_irf_dynamics_model()
         graph = build_graph(model)
+        assert can_lower_2d(graph)
+
+    #
+    def test_irf_without_kernel_time_not_lowerable(self):
+        """CONVOLUTION missing ``kernel_time`` falls back to MCP.
+
+        Safety guard for the lowering contract: if the graph builder
+        omits the frozen support metadata (e.g. a future code path that
+        doesn't populate it), the 2D backend must reject the graph
+        rather than silently producing wrong numerics.
+        """
+
+        _file, model = _make_irf_dynamics_model()
+        graph = build_graph(model)
+        conv_nodes = _nodes_by_kind(graph, NodeKind.CONVOLUTION)
+        assert len(conv_nodes) == 1
+        del conv_nodes[0].arrays["kernel_time"]
+        assert not can_lower_2d(graph)
+
+    #
+    def test_conv_without_ppt_chain_not_lowerable(self):
+        """Structural gate: conv must wrap a PARAM_PLUS_TRACE to be lowered.
+
+        Phase 6.3 supports resolved-trace convolution only.  Other
+        topologies (spectrum-level ``comp_type="conv"`` components
+        receiving ``ADDEND`` from ``peak_sum``, externally produced
+        graphs with unusual conv wiring) must fall back cleanly rather
+        than pass ``can_lower_2d`` and then fail inside the scheduler.
+        Simulated here by rerouting the IRF conv's ``TRACE_INPUT`` to an
+        ``OPT_PARAM`` source.
+        """
+
+        from trspecfit.graph_ir import EdgeKind
+
+        _file, model = _make_irf_dynamics_model()
+        graph = build_graph(model)
+
+        conv_nodes = _nodes_by_kind(graph, NodeKind.CONVOLUTION)
+        assert len(conv_nodes) == 1
+        conv_id = conv_nodes[0].id
+
+        opt_param_ids = [n.id for n in graph.nodes if n.kind == NodeKind.OPT_PARAM]
+        assert opt_param_ids
+
+        conv_trace_edges = [
+            e
+            for e in graph.edges
+            if e.target == conv_id and e.kind == EdgeKind.TRACE_INPUT
+        ]
+        assert len(conv_trace_edges) == 1
+        conv_trace_edges[0].source = opt_param_ids[0]
+
         assert not can_lower_2d(graph)
 
     #
@@ -1431,6 +1488,28 @@ class TestDynamicsConvolution:
         A_edge = [e for e in param_edges if e.position == 0][0]
         source = graph.nodes[A_edge.source]
         assert source.kind == NodeKind.CONVOLUTION
+
+    #
+    def test_kernel_time_populated_on_dynamics_conv(self):
+        """Dynamics CONVOLUTION nodes carry the kernel time axis in arrays.
+
+        Phase 6.3 contract: lowered time-domain convolution requires
+        ``node.arrays["kernel_time"]`` to be present at graph-build time so
+        the scheduler can freeze kernel support without re-deriving it from
+        MCP helpers.  Mirrors the top-level handling for conv components.
+        """
+
+        _file, model = _make_irf_dynamics_model()
+        graph = build_graph(model)
+
+        conv_nodes = _nodes_by_kind(graph, NodeKind.CONVOLUTION)
+        assert len(conv_nodes) == 1
+        conv = conv_nodes[0]
+        assert conv.package == "time"
+        assert "kernel_time" in conv.arrays
+        kernel_time = conv.arrays["kernel_time"]
+        assert kernel_time.ndim == 1
+        assert kernel_time.size > 0
 
 
 #
