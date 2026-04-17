@@ -1284,24 +1284,35 @@ user workflows beyond the current lowerable 2D subset.
 - Added parity coverage against MCP plus compare-mode / dispatch tests
   for the newly lowerable 1D profile cases
 
-**Step 6.2b: Lower profile-varying parameters in `fit_2d()` (follow-up)**
-- Extend profile lowering from the current 1D path into
-  `ScheduledPlan2D` / `evaluate_2d(plan, theta)` so the default
-  compiled 2D path no longer falls back when a model contains
-  `PROFILE_SAMPLE` / `PROFILE_AVERAGE`
-- Support full 2D fits with profile-varying parameters and
-  profile-dependent expressions, matching the graph semantics already
-  emitted by `build_graph(...)`
-- Preserve currently supported model patterns where a profile's internal
-  parameters are themselves time-dependent via standard single-cycle
-  dynamics; this is the hardest part of the remaining profile work
-- Keep `aux_axis` length fixed in the compiled plan shape, as in the 1D
-  profile path
-- Ship direct parity tests against MCP, compare-mode coverage, and
-  end-to-end `fit_2d()` integration coverage before widening the 2D
-  lowering gate
-- This remaining step is what closes the profile-related fallback gap
-  for example 04 and completes Phase 6 profile coverage
+**Step 6.2b: Lower profile-varying parameters in `fit_2d()` (implemented)**
+- Extended profile lowering into `ScheduledPlan2D` / `evaluate_2d` so
+  the default compiled 2D path no longer falls back when a model
+  contains `PROFILE_SAMPLE` / `PROFILE_AVERAGE`
+- Widened `can_lower_2d` by carving profile nodes out of the
+  non-lowerable set (`_NON_LOWERABLE_2D_NODE_KINDS`)
+- Added profile fields to `ScheduledPlan2D`: aux_axis, profile sample
+  groups (CSR-encoded), profile expression programs, and per-op
+  `op_param_source_kinds` / `op_is_profiled` arrays
+- Extended `schedule_2d` with three new compilation phases (4b, 4c, and
+  profiled-component handling in phase 5), mirroring the 1D profile
+  compilation in `schedule_1d`
+- Profile sample values are `(n_groups, n_time, n_aux)`: profile
+  functions broadcast naturally with `aux=(1, n_aux)` and param
+  traces `(n_time, 1)`. Profile expressions use a virtual trace
+  matrix `(n_params + n_groups, n_time * n_aux)` to reuse the
+  standard RPN evaluator
+- Profiled component evaluation loops over `n_aux` points, gathering
+  `(n_time, 1)` params per aux point and averaging the results
+- Handles PARAM_PLUS_TRACE sources in profile compilation (profile
+  function params that are themselves time-dependent via dynamics)
+  by stripping the `_resolved` suffix for name parsing while using
+  the resolved trace-matrix row
+- Added parity tests in `test_evaluate_2d.py`: profiled amplitude,
+  profile with no dynamics, two profiles on one component, profile-
+  dependent expressions, profiled Shirley, and profile params with
+  time-dependent dynamics (6 tests)
+- Added integration tests in `test_gir_integration.py`: 2D profile
+  dispatch, residual parity, and compare-mode coverage (3 tests)
 
 **Step 6.3: Lower convolution / IRF nodes**
 - Compile `CONVOLUTION` nodes that are already emitted by GraphIR

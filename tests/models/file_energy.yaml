@@ -132,6 +132,20 @@ two_glp_expr_amplitude:
       F: [1.0, True, 0.75, 2.5]
       m: [0.3, True, 0, 1]
 
+# two GLPs: GLP_02_A references profiled GLP_01_A AND time-dep GLP_01_x0
+# exercises mixed profile+dynamics in a single per-sample expression
+two_glp_mixed_profile_dynamics:
+    GLP:
+      A: [20, True, 5, 25]
+      x0: [85.0, True, 82, 88]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+    GLP:
+      A: ["GLP_01_A * GLP_01_x0 / 85"]
+      x0: [87.0, True, 82, 90]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+
 #
 # all following models should fail
 #

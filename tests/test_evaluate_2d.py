@@ -13,7 +13,12 @@ import pytest
 
 from trspecfit import File, Project
 from trspecfit.eval_2d import evaluate_2d
-from trspecfit.graph_ir import OpKind, build_graph, can_lower_2d, schedule_2d
+from trspecfit.graph_ir import (
+    OpKind,
+    build_graph,
+    can_lower_2d,
+    schedule_2d,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -424,3 +429,223 @@ class TestStaticComponentCaching:
         theta = _compare_evaluator_vs_interpreter(model, plan)
         p_idx = plan.opt_param_names.index("Shirley_pShirley")
         _perturb_theta(plan, model, theta, [p_idx], [1.0e-4])
+
+
+# ---------------------------------------------------------------------------
+# Profile models (2D with aux-axis-varying parameters)
+# ---------------------------------------------------------------------------
+
+_FILE_ENERGY_YAML = "models/file_energy.yaml"
+_PROFILE_YAML = "models/file_profile.yaml"
+
+
+#
+def _make_2d_profile_model(
+    model_info,
+    dynamics_params,
+    profiles,
+    *,
+    energy=None,
+    time=None,
+    aux_axis=None,
+    model_yaml=None,
+):
+    """Load energy model + add dynamics + profiles -> 2D profiled model."""
+
+    if energy is None:
+        energy = np.linspace(83, 87, 61)
+    if time is None:
+        time = np.linspace(-10, 100, 31)
+    if aux_axis is None:
+        aux_axis = np.linspace(0, 4, 5)
+    if model_yaml is None:
+        model_yaml = _FILE_ENERGY_YAML
+
+    project = Project(path="tests")
+    file = File(parent_project=project, energy=energy, time=time, aux_axis=aux_axis)
+    file.load_model(model_yaml=model_yaml, model_info=model_info)
+    model = file.model_active
+    assert model is not None
+
+    for target_par, dyn_model in dynamics_params:
+        file.add_time_dependence(
+            target_model=model_info[0],
+            target_parameter=target_par,
+            dynamics_yaml=_TIME_YAML,
+            dynamics_model=dyn_model,
+        )
+
+    for target_parameter, profile_model in profiles:
+        file.add_par_profile(
+            target_model=model_info[0],
+            target_parameter=target_parameter,
+            profile_yaml=_PROFILE_YAML,
+            profile_model=profile_model,
+        )
+
+    return file, model
+
+
+#
+#
+class TestProfileModels:
+    """2D models with aux-axis-varying parameters (profiles)."""
+
+    #
+    def test_profiled_amplitude(self):
+        """Single profiled parameter on a Gauss peak with dynamics."""
+
+        _file, model = _make_2d_profile_model(
+            ["single_gauss"],
+            [("Gauss_01_x0", ["MonoExpPos"])],
+            [("Gauss_01_A", ["profile_pExpDecay"])],
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+
+        A_idx = plan.opt_param_names.index("Gauss_01_A_pExpDecay_01_A")
+        tau_idx = plan.opt_param_names.index("Gauss_01_A_pExpDecay_01_tau")
+        _perturb_theta(plan, model, theta, [A_idx, tau_idx], [1.5, -0.15])
+
+    #
+    def test_profiled_amplitude_no_dynamics(self):
+        """Profile on a 2D model where no param has dynamics (all static over time)."""
+
+        _file, model = _make_2d_profile_model(
+            ["single_gauss"],
+            [],
+            [("Gauss_01_A", ["profile_pExpDecay"])],
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        _compare_evaluator_vs_interpreter(model, plan)
+
+    #
+    def test_two_profiles_same_component(self):
+        """Multiple profiled params (x0 and A) on same component in 2D."""
+
+        _file, model = _make_2d_profile_model(
+            ["single_gauss"],
+            [("Gauss_01_SD", ["MonoExpPos"])],
+            [
+                ("Gauss_01_x0", ["roundtrip_pLinear_x0"]),
+                ("Gauss_01_A", ["roundtrip_pExpDecay_A"]),
+            ],
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+
+        amp_idx = plan.opt_param_names.index("Gauss_01_A_pExpDecay_01_A")
+        slope_idx = plan.opt_param_names.index("Gauss_01_x0_pLinear_01_m")
+        _perturb_theta(plan, model, theta, [amp_idx, slope_idx], [0.75, -0.05])
+
+    #
+    def test_profile_dependent_expression(self):
+        """Expression referencing profiled param propagates in 2D."""
+
+        _file, model = _make_2d_profile_model(
+            ["two_glp_expr_amplitude"],
+            [("GLP_01_x0", ["MonoExpPos"])],
+            [("GLP_01_A", ["profile_pLinear"])],
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+
+        amp_idx = plan.opt_param_names.index("GLP_01_A")
+        slope_idx = plan.opt_param_names.index("GLP_01_A_pLinear_01_m")
+        _perturb_theta(plan, model, theta, [amp_idx, slope_idx], [1.0, 0.08])
+
+    #
+    def test_profile_expr_with_time_dep_ref(self):
+        """Per-sample expression referencing both a profiled param and a
+        time-dependent param binds the resolved trace, not the stale base.
+        """
+
+        _file, model = _make_2d_profile_model(
+            ["two_glp_mixed_profile_dynamics"],
+            [("GLP_01_x0", ["MonoExpPos"])],
+            [("GLP_01_A", ["profile_pLinear"])],
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+
+        # Perturb the dynamics param that the expression reads
+        x0_dyn_A_idx = plan.opt_param_names.index("GLP_01_x0_expFun_01_A")
+        slope_idx = plan.opt_param_names.index("GLP_01_A_pLinear_01_m")
+        _perturb_theta(plan, model, theta, [x0_dyn_A_idx, slope_idx], [0.3, 0.05])
+
+    #
+    def test_profiled_shirley(self):
+        """Profiled spectrum-fed op (Shirley) stays in parity."""
+
+        _file, model = _make_2d_profile_model(
+            ["shirley_peak"],
+            [("GLP_01_A", ["MonoExpPos"])],
+            [("Shirley_pShirley", ["profile_pLinear"])],
+            model_yaml=_ENERGY_YAML,
+            energy=np.linspace(80, 90, 101),
+        )
+        model.lmfit_pars["Shirley_pShirley_pLinear_01_m"].value = 1.0e-5
+
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        _compare_evaluator_vs_interpreter(model, plan)
+
+    #
+    def test_profile_with_time_dep_profile_params(self):
+        """Profile function params themselves have dynamics (the hard case).
+
+        The profile pExpDecay amplitude is time-dependent via expFun,
+        so at each time step the profile shape changes.
+        Profile must be added first, then dynamics on the profile param.
+        """
+
+        project = Project(path="tests")
+        file = File(
+            parent_project=project,
+            energy=np.linspace(83, 87, 61),
+            time=np.linspace(-10, 100, 31),
+            aux_axis=np.linspace(0, 4, 5),
+        )
+        file.load_model(
+            model_yaml=_FILE_ENERGY_YAML,
+            model_info=["single_gauss"],
+        )
+        # First: attach profile
+        file.add_par_profile(
+            target_model="single_gauss",
+            target_parameter="Gauss_01_A",
+            profile_yaml=_PROFILE_YAML,
+            profile_model=["profile_pExpDecay"],
+        )
+        # Then: add dynamics to the profile's own amplitude param
+        file.add_time_dependence(
+            target_model="single_gauss",
+            target_parameter="Gauss_01_A_pExpDecay_01_A",
+            dynamics_yaml=_TIME_YAML,
+            dynamics_model=["MonoExpPosStrong"],
+        )
+        model = file.model_active
+        assert model is not None  # type guard
+
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+
+        # Perturb the dynamics param that feeds into the profile
+        dyn_A_idx = plan.opt_param_names.index("Gauss_01_A_pExpDecay_01_A_expFun_01_A")
+        dyn_tau_idx = plan.opt_param_names.index(
+            "Gauss_01_A_pExpDecay_01_A_expFun_01_tau"
+        )
+        _perturb_theta(plan, model, theta, [dyn_A_idx, dyn_tau_idx], [0.5, 0.5])

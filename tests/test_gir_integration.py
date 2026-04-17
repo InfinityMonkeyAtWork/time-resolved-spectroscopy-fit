@@ -86,6 +86,39 @@ def _make_1d_profile_model(project, model_info, profiles):
 
 
 #
+def _make_2d_profile_model(project, model_info, dynamics_params, profiles):
+    """Load energy model + add dynamics + profiles -> 2D profiled model."""
+
+    file = File(
+        parent_project=project,
+        energy=np.linspace(83, 87, 61),
+        time=np.linspace(-10, 100, 31),
+        aux_axis=np.linspace(0, 4, 5),
+    )
+    file.load_model(model_yaml="models/file_energy.yaml", model_info=model_info)
+
+    for target_par, dyn_model in dynamics_params:
+        file.add_time_dependence(
+            target_model=model_info[0],
+            target_parameter=target_par,
+            dynamics_yaml=_TIME_YAML,
+            dynamics_model=dyn_model,
+        )
+
+    for target_parameter, profile_model in profiles:
+        file.add_par_profile(
+            target_model=model_info[0],
+            target_parameter=target_parameter,
+            profile_yaml=_PROFILE_YAML,
+            profile_model=profile_model,
+        )
+
+    model = file.model_active
+    assert model is not None
+    return file, model
+
+
+#
 def _extract_par_list(model):
     """Return full parameter value list in model.parameter_names order."""
 
@@ -129,35 +162,6 @@ class TestGIRDispatch:
             file.energy, par, True, plan, theta_indices, model, 2
         )
         assert result.shape == (len(file.time), len(file.energy))
-
-    #
-    def test_fit_2d_falls_back_for_non_lowerable(self):
-        """Real non-lowerable model (profile) falls back to interpreter."""
-
-        project = _make_project()
-        aux_axis = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
-        file = File(parent_project=project, aux_axis=aux_axis)
-        file.energy = np.linspace(80, 90, 101)
-        file.load_model(
-            model_yaml="models/file_energy.yaml",
-            model_info=["single_gauss"],
-        )
-        file.add_par_profile(
-            target_model="single_gauss",
-            target_parameter="Gauss_01_A",
-            profile_yaml="models/file_profile.yaml",
-            profile_model=["profile_pExpDecay"],
-        )
-        model = file.model_active
-        assert model is not None
-
-        graph = build_graph(model)
-        assert not can_lower_2d(graph)
-
-        # fit_model_gir should delegate to fit_model_mcp when given Model args
-        par = _extract_par_list(model)
-        result = spectra.fit_model_gir(file.energy, par, True, model, 1)
-        assert result is not None
 
     #
     def test_force_interpreter(self):
@@ -226,6 +230,34 @@ class TestGIRDispatch:
         )
         assert isinstance(result, np.ndarray)
         assert result.shape == (len(file.energy),)
+
+    #
+    def test_2d_profile_fit_uses_gir_when_lowerable(self):
+        """2D profiled model dispatches through the compiled fast path."""
+
+        project = _make_project()
+        file, model = _make_2d_profile_model(
+            project,
+            ["single_gauss"],
+            [("Gauss_01_x0", ["MonoExpPos"])],
+            [("Gauss_01_A", ["profile_pExpDecay"])],
+        )
+
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+
+        plan = schedule_2d(graph)
+        name_to_idx = {n: i for i, n in enumerate(model.parameter_names)}
+        theta_indices = np.array(
+            [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
+        )
+
+        par = _extract_par_list(model)
+        result = spectra.fit_model_gir(
+            file.energy, par, True, plan, theta_indices, model, 2
+        )
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (len(file.time), len(file.energy))
 
     #
     def test_1d_plot_sum_false_falls_back(self):
@@ -725,6 +757,76 @@ class TestGIR1DvsInterpreter:
             file.energy, par, True, plan, theta_indices, model, 1
         )
         assert result.shape == (len(file.energy),)
+
+    #
+    def test_residual_same_gir_vs_mcp_profile_2d(self):
+        """2D profile residuals match between GIR and MCP paths."""
+
+        project = _make_project()
+        file, model = _make_2d_profile_model(
+            project,
+            ["single_gauss"],
+            [("Gauss_01_x0", ["MonoExpPos"])],
+            [("Gauss_01_A", ["profile_pExpDecay"])],
+        )
+
+        model.create_value_2d()
+        assert model.value_2d is not None
+        data = model.value_2d + 0.01
+
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        name_to_idx = {n: i for i, n in enumerate(model.parameter_names)}
+        theta_indices = np.array(
+            [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
+        )
+
+        par = model.lmfit_pars
+        res_gir = fitlib.residual_fun(
+            par=par,
+            x=file.energy,
+            data=data,
+            package=spectra,
+            fit_fun_str="fit_model_gir",
+            args=(plan, theta_indices, model, 2),
+        )
+        res_mcp = fitlib.residual_fun(
+            par=par,
+            x=file.energy,
+            data=data,
+            package=spectra,
+            fit_fun_str="fit_model_mcp",
+            args=(model, 2),
+        )
+
+        np.testing.assert_allclose(res_gir, res_mcp, rtol=1e-10, atol=1e-10)
+
+    #
+    def test_compare_mode_profile_2d(self):
+        """2D profiled models run through compare mode without mismatch."""
+
+        project = _make_project(spec_fun_str="fit_model_compare")
+        file, model = _make_2d_profile_model(
+            project,
+            ["single_gauss"],
+            [("Gauss_01_x0", ["MonoExpPos"])],
+            [("Gauss_01_A", ["profile_pExpDecay"])],
+        )
+
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        name_to_idx = {n: i for i, n in enumerate(model.parameter_names)}
+        theta_indices = np.array(
+            [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
+        )
+        par = _extract_par_list(model)
+
+        result = spectra.fit_model_compare(
+            file.energy, par, True, plan, theta_indices, model, 2
+        )
+        assert result.shape == (len(file.time), len(file.energy))
 
 
 # ---------------------------------------------------------------------------

@@ -143,7 +143,7 @@ class ProfileFuncKind(IntEnum):
 #
 #
 class ParamSourceKind(IntEnum):
-    """Parameter source kinds for lowered 1D component evaluation."""
+    """Parameter source kinds for profiled component evaluation (1D and 2D)."""
 
     SCALAR = 0
     PROFILE_SAMPLE = 1
@@ -475,14 +475,28 @@ class ScheduledPlan2D:
     resolution_kinds: np.ndarray  # (n_dyn_groups + n_expressions,) int8
     resolution_indices: np.ndarray  # (n_dyn_groups + n_expressions,) int
 
+    # --- Profile-varying parameter groups (fixed aux_axis shape) ---
+    n_aux: int
+    aux_axis: np.ndarray  # (n_aux,)
+    n_profile_samples: int
+    profile_sample_base_rows: np.ndarray  # (n_profile_samples,) int
+    profile_sample_component_indptr: np.ndarray  # (n_profile_samples + 1,) int
+    profile_component_func_ids: np.ndarray  # (n_profile_components,) int
+    profile_component_param_indptr: np.ndarray  # (n_profile_components + 1,) int
+    profile_component_param_rows: np.ndarray  # (total_profile_component_params,) int
+    n_profile_exprs: int
+    profile_expr_programs: list[ExprProgram]
+
     # --- Scheduled component ops ---
     n_ops: int
     op_schedule: np.ndarray  # (n_ops,) int
     op_kinds: np.ndarray  # (n_ops,) OpKind int codes
     op_param_indptr: np.ndarray  # (n_ops + 1,) int -- CSR row pointers
-    op_param_indices: np.ndarray  # (total_op_params,) int -- row indices
+    op_param_source_kinds: np.ndarray  # (total_op_params,) ParamSourceKind int codes
+    op_param_indices: np.ndarray  # (total_op_params,) int -- row/group indices
     op_needs_spectrum: np.ndarray  # (n_ops,) bool
     op_is_pre_spectrum: np.ndarray  # (n_ops,) bool
+    op_is_profiled: np.ndarray  # (n_ops,) bool
     op_is_constant: np.ndarray  # (n_ops,) bool
     cached_result: np.ndarray  # (n_time, n_energy)
     cached_peak_sum: np.ndarray  # (n_time, n_energy)
@@ -1407,7 +1421,10 @@ _LOWERABLE_2D_FUNCTIONS: frozenset[str] = frozenset(
     }
 )
 
-_NON_LOWERABLE_NODE_KINDS: frozenset[NodeKind] = frozenset(
+# Base set of non-lowerable node kinds shared across backends.
+# Backend-specific sets below carve out nodes as each backend gains
+# support (e.g. profile nodes for 1D and 2D).
+_NON_LOWERABLE_NODE_KINDS_BASE: frozenset[NodeKind] = frozenset(
     {
         NodeKind.CONVOLUTION,
         NodeKind.PROFILE_SAMPLE,
@@ -1415,6 +1432,12 @@ _NON_LOWERABLE_NODE_KINDS: frozenset[NodeKind] = frozenset(
         NodeKind.SUBCYCLE_MASK,
         NodeKind.SUBCYCLE_REMAP,
     }
+)
+
+# 2D backend: profiles are now compilable (Phase 6.2b).
+_NON_LOWERABLE_2D_NODE_KINDS: frozenset[NodeKind] = (
+    _NON_LOWERABLE_NODE_KINDS_BASE
+    - frozenset({NodeKind.PROFILE_SAMPLE, NodeKind.PROFILE_AVERAGE})
 )
 
 
@@ -1438,7 +1461,7 @@ def can_lower_2d(graph: GraphIR) -> bool:
 
     for node in graph.nodes:
         # Reject future node types not yet compilable
-        if node.kind in _NON_LOWERABLE_NODE_KINDS:
+        if node.kind in _NON_LOWERABLE_2D_NODE_KINDS:
             return False
 
         # Check component functions are supported
@@ -1449,6 +1472,11 @@ def can_lower_2d(graph: GraphIR) -> bool:
         # Check dynamics functions are supported
         if node.kind == NodeKind.DYNAMICS_TRACE:
             if node.function_name not in _FUNCTION_NAME_TO_DYN_FUNC:
+                return False
+
+        # Check profile nodes have required aux_axis array
+        if node.kind == NodeKind.PROFILE_SAMPLE:
+            if "aux_axis" not in node.arrays:
                 return False
 
         # Check expressions are arithmetic-only (defer full AST check
@@ -1466,7 +1494,7 @@ def can_lower_2d(graph: GraphIR) -> bool:
 # automatically, then carve out the Phase 6.2 profile nodes that 1D now
 # lowers explicitly.
 _NON_LOWERABLE_1D_NODE_KINDS: frozenset[NodeKind] = (
-    _NON_LOWERABLE_NODE_KINDS
+    _NON_LOWERABLE_NODE_KINDS_BASE
     - frozenset({NodeKind.PROFILE_SAMPLE, NodeKind.PROFILE_AVERAGE})
     | frozenset(
         {
@@ -1813,7 +1841,7 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
 
     for nid in topo_order:
         node = id_to_node[nid]
-        if node.kind not in _ROW_KINDS:
+        if node.kind not in _ROW_KINDS or _is_profile_expr_node(node):
             continue
         if node.kind == NodeKind.OPT_PARAM and node.vary:
             opt_nodes.append(node)
@@ -1947,6 +1975,7 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         id_to_node[nid]
         for nid in topo_order
         if id_to_node[nid].kind == NodeKind.EXPRESSION
+        and not _is_profile_expr_node(id_to_node[nid])
     ]
     n_expressions = len(expr_nodes_topo)
 
@@ -2051,6 +2080,225 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     resolution_indices = np.array(resolution_indices_list, dtype=np.intp)
 
     # ------------------------------------------------------------------ #
+    # 4b. Compile PROFILE_SAMPLE groups                                    #
+    # ------------------------------------------------------------------ #
+    # Build edge indexes for profile compilation (mirrors schedule_1d).
+    param_edges_by_target: dict[int, list[GraphEdge]] = {}
+    expr_ref_edges_by_target: dict[int, list[GraphEdge]] = {}
+    addend_edges_by_target: dict[int, list[GraphEdge]] = {}
+    spectrum_input_targets: set[int] = set()
+    for edge in graph.edges:
+        if edge.kind == EdgeKind.PARAM_INPUT:
+            param_edges_by_target.setdefault(edge.target, []).append(edge)
+        elif edge.kind == EdgeKind.EXPR_REF:
+            expr_ref_edges_by_target.setdefault(edge.target, []).append(edge)
+        elif edge.kind == EdgeKind.ADDEND:
+            addend_edges_by_target.setdefault(edge.target, []).append(edge)
+        elif edge.kind == EdgeKind.SPECTRUM_INPUT:
+            spectrum_input_targets.add(edge.target)
+
+    profile_sample_groups: dict[str, list[GraphNode]] = {}
+    for nid in topo_order:
+        node = id_to_node[nid]
+        if node.kind != NodeKind.PROFILE_SAMPLE:
+            continue
+        group_name = _profile_group_name(node.name, "profile_sample")
+        profile_sample_groups.setdefault(group_name, []).append(node)
+
+    plan_aux_axis = np.zeros(0, dtype=np.float64)
+    n_aux = 0
+    profile_sample_base_rows_list: list[int] = []
+    profile_sample_component_indptr_list: list[int] = [0]
+    profile_component_func_ids_list: list[int] = []
+    profile_component_param_indptr_list: list[int] = [0]
+    profile_component_param_rows_list: list[int] = []
+    profile_sample_is_constant_list: list[bool] = []
+    profile_sample_group_idx: dict[str, int] = {}
+
+    for group_name, sample_nodes in profile_sample_groups.items():
+        sample_nodes_sorted = sorted(
+            sample_nodes,
+            key=lambda node: _profile_group_index(node.name, "profile_sample"),
+        )
+        aux_indices = [
+            _profile_group_index(node.name, "profile_sample")
+            for node in sample_nodes_sorted
+        ]
+        if aux_indices != list(range(len(sample_nodes_sorted))):
+            raise ValueError(
+                f"PROFILE_SAMPLE nodes for {group_name!r} do not cover "
+                "a contiguous aux-axis range"
+            )
+
+        aux_axis = sample_nodes_sorted[0].arrays.get("aux_axis")
+        if aux_axis is None:
+            raise ValueError(f"PROFILE_SAMPLE {group_name!r} is missing aux_axis")
+        aux_axis = np.asarray(aux_axis, dtype=np.float64)
+        if n_aux == 0:
+            n_aux = len(aux_axis)
+            plan_aux_axis = aux_axis.copy()
+        elif len(aux_axis) != n_aux or not np.array_equal(aux_axis, plan_aux_axis):
+            raise ValueError("All lowered profile groups must share one fixed aux_axis")
+        if len(sample_nodes_sorted) != n_aux:
+            raise ValueError(
+                f"PROFILE_SAMPLE group {group_name!r} has "
+                f"{len(sample_nodes_sorted)} samples but aux_axis length {n_aux}"
+            )
+
+        rep_node = sample_nodes_sorted[0]
+        rep_param_edges = sorted(
+            param_edges_by_target.get(rep_node.id, []),
+            key=lambda edge: edge.position or 0,
+        )
+        if not rep_param_edges:
+            raise ValueError(f"PROFILE_SAMPLE {group_name!r} has no PARAM_INPUT edges")
+
+        base_node = id_to_node[rep_param_edges[0].source]
+        base_row = name_to_row[base_node.name]
+        is_constant = bool(row_is_constant[base_row])
+        profile_sample_base_rows_list.append(base_row)
+
+        component_func_by_name: dict[str, int] = {}
+        component_param_rows_by_name: dict[str, list[int]] = {}
+        component_order: list[str] = []
+        for edge in rep_param_edges[1:]:
+            src_node = id_to_node[edge.source]
+            src_row = name_to_row[src_node.name]
+            # PARAM_PLUS_TRACE nodes have a "_resolved" suffix; strip
+            # it for profile component parsing but use the resolved row.
+            parse_name = src_node.name
+            if src_node.kind == NodeKind.PARAM_PLUS_TRACE:
+                parse_name = parse_name.removesuffix("_resolved")
+            comp_name, func_name = _parse_profile_component_param_name(
+                group_name,
+                parse_name,
+            )
+            prof_func_kind = _FUNCTION_NAME_TO_PROFILE_FUNC.get(func_name)
+            if prof_func_kind is None:
+                raise ValueError(f"Unknown profile function: {func_name!r}")
+
+            if comp_name not in component_func_by_name:
+                component_order.append(comp_name)
+                component_func_by_name[comp_name] = int(prof_func_kind)
+                component_param_rows_by_name[comp_name] = []
+
+            component_param_rows_by_name[comp_name].append(src_row)
+            is_constant = is_constant and bool(row_is_constant[src_row])
+
+        for comp_name in component_order:
+            profile_component_func_ids_list.append(component_func_by_name[comp_name])
+            profile_component_param_rows_list.extend(
+                component_param_rows_by_name[comp_name]
+            )
+            profile_component_param_indptr_list.append(
+                len(profile_component_param_rows_list)
+            )
+        profile_sample_component_indptr_list.append(
+            len(profile_component_func_ids_list)
+        )
+
+        group_idx = len(profile_sample_base_rows_list) - 1
+        profile_sample_group_idx[group_name] = group_idx
+        profile_sample_is_constant_list.append(is_constant)
+
+    n_profile_samples = len(profile_sample_base_rows_list)
+    profile_sample_base_rows = np.array(profile_sample_base_rows_list, dtype=np.intp)
+    profile_sample_component_indptr = np.array(
+        profile_sample_component_indptr_list, dtype=np.intp
+    )
+    profile_component_func_ids = np.array(
+        profile_component_func_ids_list, dtype=np.intp
+    )
+    profile_component_param_indptr = np.array(
+        profile_component_param_indptr_list, dtype=np.intp
+    )
+    profile_component_param_rows = np.array(
+        profile_component_param_rows_list, dtype=np.intp
+    )
+    profile_sample_is_constant = np.array(
+        profile_sample_is_constant_list, dtype=np.bool_
+    )
+
+    # ------------------------------------------------------------------ #
+    # 4c. Compile per-sample profile expressions                           #
+    # ------------------------------------------------------------------ #
+    profile_expr_groups: dict[str, list[GraphNode]] = {}
+    for nid in topo_order:
+        node = id_to_node[nid]
+        if _is_profile_expr_node(node):
+            group_name = _profile_group_name(node.name, "profile_expr")
+            profile_expr_groups.setdefault(group_name, []).append(node)
+
+    profile_expr_programs_2d: list[ExprProgram] = []
+    profile_expr_is_constant_list: list[bool] = []
+    profile_expr_group_idx: dict[str, int] = {}
+    for group_name, p_expr_nodes in profile_expr_groups.items():
+        p_expr_nodes_sorted = sorted(
+            p_expr_nodes,
+            key=lambda node: _profile_group_index(node.name, "profile_expr"),
+        )
+        aux_indices = [
+            _profile_group_index(node.name, "profile_expr")
+            for node in p_expr_nodes_sorted
+        ]
+        if aux_indices != list(range(len(p_expr_nodes_sorted))):
+            raise ValueError(
+                f"Profile expression nodes for {group_name!r} do not cover "
+                "a contiguous aux-axis range"
+            )
+        if len(p_expr_nodes_sorted) != n_aux:
+            raise ValueError(
+                f"Profile expression group {group_name!r} has "
+                f"{len(p_expr_nodes_sorted)} samples but aux_axis length {n_aux}"
+            )
+
+        rep_node = p_expr_nodes_sorted[0]
+        if rep_node.expr_string is None:
+            raise ValueError(
+                f"Profile expression {group_name!r} is missing expr_string"
+            )
+        expr_refs = set(_extract_expression_references(rep_node.expr_string))
+
+        prof_ref_map: dict[str, int] = {}
+        for edge in expr_ref_edges_by_target.get(rep_node.id, []):
+            src_node = id_to_node[edge.source]
+            if src_node.kind == NodeKind.PROFILE_SAMPLE:
+                sample_name = _profile_group_name(src_node.name, "profile_sample")
+                src_idx = n_params + profile_sample_group_idx[sample_name]
+                match_name = sample_name
+            else:
+                src_idx = name_to_row[src_node.name]
+                match_name = src_node.name
+                # PARAM_PLUS_TRACE nodes carry a "_resolved" suffix;
+                # the expression string uses the bare param name.
+                if match_name not in expr_refs and src_node.name.endswith("_resolved"):
+                    match_name = src_node.name.removesuffix("_resolved")
+
+            if match_name in expr_refs:
+                prof_ref_map[match_name] = src_idx
+
+        symbolic = compile_expr_symbolic(rep_node.expr_string)
+        prof_binding: dict[str, int] = dict(name_to_row)
+        prof_binding.update(prof_ref_map)
+        program = _bind_expr_to_rows(symbolic, prof_binding)
+        profile_expr_programs_2d.append(program)
+
+        is_constant = True
+        for name in symbolic.referenced_names:
+            bound_idx = int(prof_binding[name])
+            if bound_idx < n_params:
+                is_constant = is_constant and bool(row_is_constant[bound_idx])
+            else:
+                is_constant = is_constant and bool(
+                    profile_sample_is_constant[bound_idx - n_params]
+                )
+        profile_expr_is_constant_list.append(is_constant)
+        profile_expr_group_idx[group_name] = len(profile_expr_programs_2d) - 1
+
+    n_profile_exprs = len(profile_expr_programs_2d)
+    profile_expr_is_constant = np.array(profile_expr_is_constant_list, dtype=np.bool_)
+
+    # ------------------------------------------------------------------ #
     # 5. Schedule component ops                                            #
     # ------------------------------------------------------------------ #
     # Identify peak_sum contributors: nodes with ADDEND edges into the
@@ -2058,68 +2306,188 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     peak_sum_sources: set[int] = set()
     peak_sum_nid = graph.node_by_name.get("peak_sum")
     if peak_sum_nid is not None:
-        for e in graph.edges:
-            if e.target == peak_sum_nid and e.kind == EdgeKind.ADDEND:
-                peak_sum_sources.add(e.source)
+        for e in addend_edges_by_target.get(peak_sum_nid, []):
+            peak_sum_sources.add(e.source)
+
+    # Collect per-sample component inputs for PROFILE_AVERAGE nodes.
+    profile_avg_sample_inputs: dict[int, list[GraphNode]] = {}
+    sample_component_ids: set[int] = set()
+    for nid in topo_order:
+        node = id_to_node[nid]
+        if node.kind != NodeKind.PROFILE_AVERAGE:
+            continue
+        sample_nodes = [
+            id_to_node[edge.source]
+            for edge in addend_edges_by_target.get(node.id, [])
+            if id_to_node[edge.source].kind
+            in (NodeKind.COMPONENT_EVAL, NodeKind.SPECTRUM_FED_OP)
+        ]
+        profile_avg_sample_inputs[node.id] = sample_nodes
+        sample_component_ids.update(sample.id for sample in sample_nodes)
 
     comp_op_kinds = {NodeKind.COMPONENT_EVAL, NodeKind.SPECTRUM_FED_OP}
     comp_nodes_topo = [
-        id_to_node[nid] for nid in topo_order if id_to_node[nid].kind in comp_op_kinds
+        id_to_node[nid]
+        for nid in topo_order
+        if (
+            (id_to_node[nid].kind in comp_op_kinds and nid not in sample_component_ids)
+            or id_to_node[nid].kind == NodeKind.PROFILE_AVERAGE
+        )
     ]
     n_ops = len(comp_nodes_topo)
 
     op_schedule = np.arange(n_ops, dtype=np.intp)
     op_kinds_list: list[int] = []
     op_param_indptr_list: list[int] = [0]
+    op_param_source_kinds_list: list[int] = []
     op_param_indices_list: list[int] = []
     op_needs_spectrum_list: list[bool] = []
     op_is_pre_spectrum_list: list[bool] = []
+    op_is_profiled_list: list[bool] = []
     op_is_constant_list: list[bool] = []
 
     for comp_node in comp_nodes_topo:
-        # OpKind
-        assert comp_node.function_name is not None
-        op = _FUNCTION_NAME_TO_OP.get(comp_node.function_name)
-        if op is None:
-            raise ValueError(f"Unknown component function: {comp_node.function_name!r}")
-        op_kinds_list.append(int(op))
-
-        # Param rows (from PARAM_INPUT edges, ordered by position)
-        param_edges = sorted(
-            (
-                e
-                for e in graph.edges
-                if e.target == comp_node.id and e.kind == EdgeKind.PARAM_INPUT
-            ),
-            key=lambda e: e.position or 0,
-        )
-        for pe in param_edges:
-            src_node = id_to_node[pe.source]
-            op_param_indices_list.append(name_to_row[src_node.name])
-        op_param_indptr_list.append(len(op_param_indices_list))
-
-        # Needs spectrum?
-        has_spec_input = any(
-            e.target == comp_node.id and e.kind == EdgeKind.SPECTRUM_INPUT
-            for e in graph.edges
-        )
-        op_needs_spectrum_list.append(has_spec_input)
-        op_is_constant_list.append(
-            (not has_spec_input)
-            and all(
-                row_is_constant[name_to_row[id_to_node[pe.source].name]]
-                for pe in param_edges
+        if comp_node.kind == NodeKind.PROFILE_AVERAGE:
+            # Profiled component: gather from per-sample COMPONENT_EVAL inputs.
+            sample_nodes = sorted(
+                profile_avg_sample_inputs.get(comp_node.id, []),
+                key=lambda node: _profile_component_sample_index(node.name),
             )
-        )
+            if not sample_nodes:
+                raise ValueError(
+                    f"PROFILE_AVERAGE {comp_node.name!r} has no sample component inputs"
+                )
+            if len(sample_nodes) != n_aux:
+                raise ValueError(
+                    f"PROFILE_AVERAGE {comp_node.name!r} has "
+                    f"{len(sample_nodes)} samples "
+                    f"but aux_axis length {n_aux}"
+                )
 
-        # Contributes to peak_sum?
+            rep_node = sample_nodes[0]
+            assert rep_node.function_name is not None
+            op = _FUNCTION_NAME_TO_OP.get(rep_node.function_name)
+            if op is None:
+                raise ValueError(
+                    f"Unknown component function: {rep_node.function_name!r}"
+                )
+            op_kinds_list.append(int(op))
+            op_is_profiled_list.append(True)
+
+            rep_param_edges = sorted(
+                param_edges_by_target.get(rep_node.id, []),
+                key=lambda edge: edge.position or 0,
+            )
+            sample_param_edges = [
+                sorted(
+                    param_edges_by_target.get(sample_node.id, []),
+                    key=lambda edge: edge.position or 0,
+                )
+                for sample_node in sample_nodes
+            ]
+            is_constant = True
+            for pos, rep_edge in enumerate(rep_param_edges):
+                src_node = id_to_node[rep_edge.source]
+                if src_node.kind == NodeKind.PROFILE_SAMPLE:
+                    group_name = _profile_group_name(src_node.name, "profile_sample")
+                    source_kind = int(ParamSourceKind.PROFILE_SAMPLE)
+                    source_idx = profile_sample_group_idx[group_name]
+                    is_constant = is_constant and bool(
+                        profile_sample_is_constant[source_idx]
+                    )
+                    for aux_i, edges in enumerate(sample_param_edges):
+                        sample_src = id_to_node[edges[pos].source]
+                        if sample_src.kind != NodeKind.PROFILE_SAMPLE:
+                            raise ValueError(
+                                "Mixed parameter source kinds "
+                                f"in profiled op {comp_node.name!r}"
+                            )
+                        if (
+                            _profile_group_name(sample_src.name, "profile_sample")
+                            != group_name
+                            or _profile_group_index(sample_src.name, "profile_sample")
+                            != aux_i
+                        ):
+                            raise ValueError(
+                                "Inconsistent PROFILE_SAMPLE wiring "
+                                f"in {comp_node.name!r}"
+                            )
+                elif _is_profile_expr_node(src_node):
+                    group_name = _profile_group_name(src_node.name, "profile_expr")
+                    source_kind = int(ParamSourceKind.PROFILE_EXPR)
+                    source_idx = profile_expr_group_idx[group_name]
+                    is_constant = is_constant and bool(
+                        profile_expr_is_constant[source_idx]
+                    )
+                    for aux_i, edges in enumerate(sample_param_edges):
+                        sample_src = id_to_node[edges[pos].source]
+                        if not _is_profile_expr_node(sample_src):
+                            raise ValueError(
+                                "Mixed expression source kinds "
+                                f"in profiled op {comp_node.name!r}"
+                            )
+                        if (
+                            _profile_group_name(sample_src.name, "profile_expr")
+                            != group_name
+                            or _profile_group_index(sample_src.name, "profile_expr")
+                            != aux_i
+                        ):
+                            raise ValueError(
+                                "Inconsistent profile-expression "
+                                f"wiring in {comp_node.name!r}"
+                            )
+                else:
+                    source_kind = int(ParamSourceKind.SCALAR)
+                    source_idx = name_to_row[src_node.name]
+                    is_constant = is_constant and bool(row_is_constant[source_idx])
+                    for edges in sample_param_edges[1:]:
+                        if id_to_node[edges[pos].source].id != src_node.id:
+                            raise ValueError(
+                                "Scalar parameter source changed "
+                                f"across samples in {comp_node.name!r}"
+                            )
+
+                op_param_source_kinds_list.append(source_kind)
+                op_param_indices_list.append(source_idx)
+
+            op_param_indptr_list.append(len(op_param_indices_list))
+        else:
+            # Non-profiled component: standard param row wiring.
+            assert comp_node.function_name is not None
+            op = _FUNCTION_NAME_TO_OP.get(comp_node.function_name)
+            if op is None:
+                raise ValueError(
+                    f"Unknown component function: {comp_node.function_name!r}"
+                )
+            op_kinds_list.append(int(op))
+            op_is_profiled_list.append(False)
+
+            param_edges = sorted(
+                param_edges_by_target.get(comp_node.id, []),
+                key=lambda edge: edge.position or 0,
+            )
+            is_constant = True
+            for pe in param_edges:
+                src_node = id_to_node[pe.source]
+                src_row = name_to_row[src_node.name]
+                op_param_source_kinds_list.append(int(ParamSourceKind.SCALAR))
+                op_param_indices_list.append(src_row)
+                is_constant = is_constant and bool(row_is_constant[src_row])
+
+            op_param_indptr_list.append(len(op_param_indices_list))
+
+        has_spec_input = comp_node.id in spectrum_input_targets
+        op_needs_spectrum_list.append(has_spec_input)
         op_is_pre_spectrum_list.append(comp_node.id in peak_sum_sources)
+        op_is_constant_list.append((not has_spec_input) and is_constant)
 
     op_kinds = np.array(op_kinds_list, dtype=np.intp)
     op_param_indptr = np.array(op_param_indptr_list, dtype=np.intp)
+    op_param_source_kinds = np.array(op_param_source_kinds_list, dtype=np.int8)
     op_param_indices = np.array(op_param_indices_list, dtype=np.intp)
     op_needs_spectrum = np.array(op_needs_spectrum_list, dtype=np.bool_)
     op_is_pre_spectrum = np.array(op_is_pre_spectrum_list, dtype=np.bool_)
+    op_is_profiled = np.array(op_is_profiled_list, dtype=np.bool_)
     op_is_constant = np.array(op_is_constant_list, dtype=np.bool_)
 
     # ------------------------------------------------------------------ #
@@ -2173,6 +2541,28 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     # ------------------------------------------------------------------ #
     # 6b. Precompute constant component contributions                      #
     # ------------------------------------------------------------------ #
+    # Evaluate profile sample/expr values at initial traces for caching.
+    from trspecfit.eval_2d import (
+        _evaluate_profile_expr_values_2d,
+        _evaluate_profile_sample_values_2d,
+    )
+
+    profile_sample_values_init = _evaluate_profile_sample_values_2d(
+        plan_aux_axis,
+        param_traces_init,
+        profile_sample_base_rows,
+        profile_sample_component_indptr,
+        profile_component_func_ids,
+        profile_component_param_indptr,
+        profile_component_param_rows,
+    )
+    profile_expr_values_init = _evaluate_profile_expr_values_2d(
+        param_traces_init,
+        profile_sample_values_init,
+        n_params,
+        profile_expr_programs_2d,
+    )
+
     energy = graph.energy[np.newaxis, :]
     cached_result = np.zeros((n_time, len(graph.energy)), dtype=np.float64)
     cached_peak_sum = np.zeros_like(cached_result)
@@ -2181,13 +2571,33 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
             continue
         start = int(op_param_indptr[op_idx])
         end = int(op_param_indptr[op_idx + 1])
-        param_rows = op_param_indices[start:end]
-        params = [param_traces_init[int(row), :][:, np.newaxis] for row in param_rows]
-        func, needs_spectrum = OP_DISPATCH[int(op_kinds[op_idx])]
-        if needs_spectrum:
-            component = func(energy, *params, cached_peak_sum)
+
+        if op_is_profiled[op_idx]:
+            from trspecfit.eval_2d import _evaluate_profiled_op_2d
+
+            component = _evaluate_profiled_op_2d(
+                energy,
+                int(op_kinds[op_idx]),
+                op_param_source_kinds[start:end],
+                op_param_indices[start:end],
+                param_traces_init,
+                profile_sample_values_init,
+                profile_expr_values_init,
+                cached_peak_sum,
+                needs_spectrum=bool(op_needs_spectrum[op_idx]),
+                n_aux=n_aux,
+            )
         else:
-            component = func(energy, *params)
+            param_rows = op_param_indices[start:end]
+            params = [
+                param_traces_init[int(row), :][:, np.newaxis] for row in param_rows
+            ]
+            func, _needs = OP_DISPATCH[int(op_kinds[op_idx])]
+            if op_needs_spectrum[op_idx]:
+                component = func(energy, *params, cached_peak_sum)
+            else:
+                component = func(energy, *params)
+
         cached_result += component
         if op_is_pre_spectrum[op_idx]:
             cached_peak_sum += component
@@ -2215,13 +2625,25 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         expr_programs=expr_programs,
         resolution_kinds=resolution_kinds,
         resolution_indices=resolution_indices,
+        n_aux=n_aux,
+        aux_axis=plan_aux_axis,
+        n_profile_samples=n_profile_samples,
+        profile_sample_base_rows=profile_sample_base_rows,
+        profile_sample_component_indptr=profile_sample_component_indptr,
+        profile_component_func_ids=profile_component_func_ids,
+        profile_component_param_indptr=profile_component_param_indptr,
+        profile_component_param_rows=profile_component_param_rows,
+        n_profile_exprs=n_profile_exprs,
+        profile_expr_programs=profile_expr_programs_2d,
         n_ops=n_ops,
         op_schedule=op_schedule,
         op_kinds=op_kinds,
         op_param_indptr=op_param_indptr,
+        op_param_source_kinds=op_param_source_kinds,
         op_param_indices=op_param_indices,
         op_needs_spectrum=op_needs_spectrum,
         op_is_pre_spectrum=op_is_pre_spectrum,
+        op_is_profiled=op_is_profiled,
         op_is_constant=op_is_constant,
         cached_result=cached_result,
         cached_peak_sum=cached_peak_sum,
@@ -2691,13 +3113,13 @@ def schedule_1d(graph: GraphIR) -> ScheduledPlan1D:
                 group_name,
                 src_node.name,
             )
-            func_kind = _FUNCTION_NAME_TO_PROFILE_FUNC.get(func_name)
-            if func_kind is None:
+            prof_func_kind = _FUNCTION_NAME_TO_PROFILE_FUNC.get(func_name)
+            if prof_func_kind is None:
                 raise ValueError(f"Unknown profile function: {func_name!r}")
 
             if comp_name not in component_func_by_name:
                 component_order.append(comp_name)
-                component_func_by_name[comp_name] = int(func_kind)
+                component_func_by_name[comp_name] = int(prof_func_kind)
                 component_param_indices_by_name[comp_name] = []
 
             src_idx = name_to_idx[src_node.name]
