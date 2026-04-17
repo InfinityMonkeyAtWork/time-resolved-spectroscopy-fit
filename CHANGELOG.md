@@ -4,8 +4,8 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com),
 and this project adheres to [Semantic Versioning](https://semver.org/).
-This file is maintained using the `/changelog` skill in
-[`.claude/skills/changelog/`](.claude/skills/changelog/SKILL.md).
+This file is maintained using the shared changelog workflow in
+[`docs/ai/changelog.md`](docs/ai/changelog.md).
 
 ## [0.7.4] - 2026-04-02
 

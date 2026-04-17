@@ -10,7 +10,7 @@ A Python library for fitting multi-component spectral models to time-resolved sp
    installation
    quickstart
    examples/index
-   design/model_design_rules
+   design/supported_models
    api/index
 
 Overview
@@ -35,7 +35,7 @@ Design Guidance
 ---------------
 
 For the current supported model-composition rules and expression semantics,
-see :doc:`design/model_design_rules`. This is the reference guide for which
+see :doc:`design/supported_models`. This is the reference guide for which
 model combinations are intended to work today, which are explicitly excluded,
 and which edge cases are tolerated for now but may change in the future.
 

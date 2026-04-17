@@ -1,0 +1,14 @@
+For code review tasks in this repo, use
+[docs/ai/code-review.md](docs/ai/code-review.md) as the shared source
+of truth.
+
+For documentation audits, doc-heavy changes, or docs-focused review, also use
+[docs/ai/check-docs.md](docs/ai/check-docs.md).
+
+Accepted code-review scope arguments:
+
+- `diff` (default)
+- `full`
+- file / directory / glob
+
+When this wrapper and the shared doc differ, follow the shared doc.

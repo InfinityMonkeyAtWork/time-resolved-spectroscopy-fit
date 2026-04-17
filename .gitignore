@@ -218,7 +218,3 @@ examples/simulatorBL931/
 # Generated simulated data (from simulator and ML training examples)
 /simulated_data/
 examples/**/simulated_data/
-
-# AI tools
-.codex/
-.codex

@@ -73,7 +73,7 @@ Full docs are hosted on [Read the Docs](https://time-resolved-spectroscopy-fit.r
 [Installation](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/installation.html) |
 [Quick Start](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/quickstart.html) |
 [Examples](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/examples/index.html) |
-[Model Design Rules](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/design/model_design_rules.html) |
+[Supported Models](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/design/supported_models.html) |
 [API Reference](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/api/index.html)
 
 ## Citation

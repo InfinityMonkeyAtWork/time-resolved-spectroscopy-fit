@@ -1,4 +1,4 @@
-# Model Design Rules
+# Supported Models
 
 ## Supported Today
 

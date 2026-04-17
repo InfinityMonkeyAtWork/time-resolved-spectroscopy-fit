@@ -1,9 +1,10 @@
-# Numba vs JAX: Backend Decision for the Lowered Evaluator
+# Archived Decision: Numba vs JAX for the Lowered Evaluator
 
-> This document extends Phase 5 of the execution plan — see
-> [lowered_evaluator.md](lowered_evaluator.md). It is a working document for
-> the open backend decision; it should be updated as benchmark data
-> comes in and either resolves the decision or shifts the analysis.
+> Archived on 2026-04-17 after the backend decision closed.
+> Keep [../lowered_evaluator.md](../lowered_evaluator.md) as the long-lived
+> design/spec and [../../../PLAN.md](../../../PLAN.md) as the implementation
+> tracker. This file preserves the benchmark data and tradeoff analysis behind
+> the decision.
 
 ## Context
 
@@ -32,27 +33,27 @@ something defensible.
 
 Relevant entry points (for grounding the analysis below):
 
-- `evaluate_2d` at [src/trspecfit/eval_2d.py:115](../../src/trspecfit/eval_2d.py#L115),
+- `evaluate_2d` at [src/trspecfit/eval_2d.py:115](../../../src/trspecfit/eval_2d.py#L115),
   with two hot loops:
-  - Resolution loop at [eval_2d.py:155–173](../../src/trspecfit/eval_2d.py#L155-L173):
+  - Resolution loop at [eval_2d.py:155–173](../../../src/trspecfit/eval_2d.py#L155-L173):
     dynamics groups + inline expression evaluation.
-  - Component loop at [eval_2d.py:180–205](../../src/trspecfit/eval_2d.py#L180-L205):
+  - Component loop at [eval_2d.py:180–205](../../../src/trspecfit/eval_2d.py#L180-L205):
     peak/background op dispatch via `OP_DISPATCH`.
-- `eval_expr_program` RPN evaluator at [eval_2d.py:43–106](../../src/trspecfit/eval_2d.py#L43-L106).
-- `ScheduledPlan2D` at [src/trspecfit/graph_ir.py:399](../../src/trspecfit/graph_ir.py#L399).
+- `eval_expr_program` RPN evaluator at [eval_2d.py:43–106](../../../src/trspecfit/eval_2d.py#L43-L106).
+- `ScheduledPlan2D` at [src/trspecfit/graph_ir.py:399](../../../src/trspecfit/graph_ir.py#L399).
   Most fields are already flat NumPy arrays (`opt_indices`,
   `dyn_group_target_row`, `op_param_indices`, ...); the one notable
   exception is `expr_programs: list[ExprProgram]` at
-  [graph_ir.py:432](../../src/trspecfit/graph_ir.py#L432), which holds
+  [graph_ir.py:432](../../../src/trspecfit/graph_ir.py#L432), which holds
   Python-wrapped instruction arrays.
 - Voigt / Faddeeva via `scipy.special.wofz` at two sites only:
-  [functions/energy.py:272](../../src/trspecfit/functions/energy.py#L272)
-  and [functions/time.py:357](../../src/trspecfit/functions/time.py#L357).
+  [functions/energy.py:272](../../../src/trspecfit/functions/energy.py#L272)
+  and [functions/time.py:357](../../../src/trspecfit/functions/time.py#L357).
 - Plan construction: `build_graph` + `schedule_2d` at
-  [src/trspecfit/trspecfit.py:2755–2757](../../src/trspecfit/trspecfit.py#L2755-L2757),
+  [src/trspecfit/trspecfit.py:2755–2757](../../../src/trspecfit/trspecfit.py#L2755-L2757),
   once per `File.fit_2d` call.
 - Outer optimizer: `lmfit.Minimizer(residual_fun, par_ini, ...)` at
-  [src/trspecfit/fitlib.py:574](../../src/trspecfit/fitlib.py#L574),
+  [src/trspecfit/fitlib.py:574](../../../src/trspecfit/fitlib.py#L574),
   with no `Dfun` currently wired.
 
 A few properties of the evaluator that matter for the Numba/JAX
@@ -60,15 +61,15 @@ comparison:
 
 - The evaluator is **mutation-heavy**. `traces[...] = ...`, `+=`, and
   `.copy()` show up roughly eight times between
-  [eval_2d.py:145](../../src/trspecfit/eval_2d.py#L145) and
-  [eval_2d.py:205](../../src/trspecfit/eval_2d.py#L205). JAX's pure-array
+  [eval_2d.py:145](../../../src/trspecfit/eval_2d.py#L145) and
+  [eval_2d.py:205](../../../src/trspecfit/eval_2d.py#L205). JAX's pure-array
   model requires each of these to become a functional update.
 - The evaluator has **no theta-dependent branches**. Every `for` and
   `if` depends on `plan` state that is fixed at `schedule_2d` time.
   Good for either backend: branches are plan-dependent, so they can be
   unrolled at trace time (JAX) or turned into straight-line integer
   dispatch (Numba).
-- `DYNAMICS_DISPATCH` at [eval_2d.py:27](../../src/trspecfit/eval_2d.py#L27)
+- `DYNAMICS_DISPATCH` at [eval_2d.py:27](../../../src/trspecfit/eval_2d.py#L27)
   and `OP_DISPATCH` imported from `graph_ir` both map integer kinds
   to Python callables that live in `src/trspecfit/functions/energy.py`
   and `src/trspecfit/functions/time.py`. Neither Numba nor JAX can
@@ -80,7 +81,7 @@ comparison:
 Two of the variance-reducing benchmarks listed further down have been
 run; this section records the measurements and the consequences for the
 analysis below. The raw flamegraph from py-spy is at
-[docs/design/benchmarks/gir_profile.svg](benchmarks/gir_profile.svg);
+[docs/design/archive/numba_vs_jax_benchmarks.svg](numba_vs_jax_benchmarks.svg);
 the cProfile and nfev captures were produced by
 `.claude/skills/benchmark/benchmark_gir.py` with the `--profile` and
 `--nfev` flags.
@@ -96,7 +97,7 @@ Grid 212 × 1131. Before any further optimization the GIR per-call was
 | `GLP` peak function                   | **72.3%**      | Pure numpy: `np.exp` + arithmetic. Two peaks × 1020 calls         |
 | `Shirley` (incl. `cumsum`)            | **11.0%**      | `flip + cumsum + flip`. Pure numpy                                |
 | `evaluate_2d` self-time (dispatch)    | **7.2%**       | Resolution loop, op-dispatch loop, param list comprehensions      |
-| `ndarray.copy`                        | **6.2%**       | 7144 copies across [eval_2d.py:145, 177, 178, 80](../../src/trspecfit/eval_2d.py#L145) |
+| `ndarray.copy`                        | **6.2%**       | 7144 copies across [eval_2d.py:145, 177, 178, 80](../../../src/trspecfit/eval_2d.py#L145) |
 | `fit_model_gir` wrapper               | **2.3%**       | Entry overhead                                                    |
 | `eval_expr_program` self              | **0.2%**       | RPN evaluator is not a hotspot                                    |
 | Everything else                       | <1%            | Enum lookups, list pops, `np.full`, etc.                          |
@@ -110,7 +111,7 @@ GLP-like expressions, not from eliminating interpreter overhead.
 
 ### GLP fusion rewrite (free, no backend)
 
-The original GLP at [energy.py:342–346](../../src/trspecfit/functions/energy.py#L342-L346)
+The original GLP at [energy.py:342–346](../../../src/trspecfit/functions/energy.py#L342-L346)
 computed `((x - x0) / F) ** 2` twice — once in the `np.exp` numerator
 and once in the denominator. Factoring it into a shared `u2` variable:
 
@@ -247,8 +248,8 @@ most of the `functions/` registry layout — unchanged.
   callables; inside `nopython` mode this cannot stand. Two options:
   - Decorate every registry function upstream with `@njit` so they can
     be called through a jitted dispatch. This touches
-    [functions/energy.py](../../src/trspecfit/functions/energy.py) and
-    [functions/time.py](../../src/trspecfit/functions/time.py)
+    [functions/energy.py](../../../src/trspecfit/functions/energy.py) and
+    [functions/time.py](../../../src/trspecfit/functions/time.py)
     broadly, and the parser introspection that reads positional
     parameter lists must continue to work after decoration.
   - Reimplement the formulas inline in a single `if/elif` ladder in
@@ -256,7 +257,7 @@ most of the `functions/` registry layout — unchanged.
   Either path is more work than it sounds; this is the largest single
   hidden cost in a Numba port.
 - **Replace Python list gathers.** The `params: list[np.ndarray]`
-  comprehension at [eval_2d.py:189–191](../../src/trspecfit/eval_2d.py#L189-L191)
+  comprehension at [eval_2d.py:189–191](../../../src/trspecfit/eval_2d.py#L189-L191)
   and the row-by-row gathers in the dynamics loop become typed array
   gathers.
 - **Handle `wofz`.** Numba cannot call `scipy.special.wofz` directly in
@@ -326,7 +327,7 @@ evaluator is called from the existing `residual_fun`.
 - **Mutation → functional.** Every `traces[...] = X` becomes
   `traces = traces.at[...].set(X)` and every `+=` becomes
   `.at[...].add(...)`. Eight-ish sites across
-  [eval_2d.py:145–205](../../src/trspecfit/eval_2d.py#L145-L205).
+  [eval_2d.py:145–205](../../../src/trspecfit/eval_2d.py#L145-L205).
   Mechanical but pervasive — every hot-path statement in the
   evaluator has to be rewritten.
 - **Drop `.copy()` calls.** JAX arrays are immutable; copies are
@@ -334,7 +335,7 @@ evaluator is called from the existing `residual_fun`.
   gives way to a threaded state variable carried through the
   resolution loop.
 - **Remove Python exceptions from the jitted region.** The length
-  check at [eval_2d.py:138](../../src/trspecfit/eval_2d.py#L138)
+  check at [eval_2d.py:138](../../../src/trspecfit/eval_2d.py#L138)
   becomes a host-side check outside `jit`.
 - **Convert dispatch to JAX control flow.** `lax.switch` over
   `op_kind` / `dyn_func_id`, or trace-time unroll: because `plan.n_ops`
@@ -347,7 +348,7 @@ evaluator is called from the existing `residual_fun`.
   downstream machinery. Per-call overhead is small but nonzero.
 - **Analytic Jacobian (separate, follow-on step).** Wrap the evaluator
   with `jax.jacrev`, package as an lmfit `Dfun`, and pass it in at
-  [fitlib.py:574](../../src/trspecfit/fitlib.py#L574), which currently
+  [fitlib.py:574](../../../src/trspecfit/fitlib.py#L574), which currently
   constructs `lmfit.Minimizer` without `Dfun`. Verified feasible:
   `lmfit.Minimizer.minimize(method="leastsq", ...)` accepts `Dfun`
   through its Minimizer constructor. This is additional plumbing, not
@@ -396,7 +397,7 @@ copy cost) and the measured nfev range of 200–700 per fit.
 - JAX is a heavy dependency.
 - Tracing and compilation happen at the first call with a given
   shape. If plans rebuild per fit
-  ([trspecfit.py:2755](../../src/trspecfit/trspecfit.py#L2755)) and
+  ([trspecfit.py:2755](../../../src/trspecfit/trspecfit.py#L2755)) and
   each plan has a unique shape signature, we pay the trace cost at
   every fit. If many fits share a plan shape, we amortize.
 - No native `scipy.special.wofz` under JIT — Humlíček maintained by us.
@@ -457,7 +458,7 @@ through are complete; see "Measured benchmarks" above for results.
 
 1. ~~**Per-call profile of the GIR-only loop.**~~ Done (2026-04-15).
    py-spy + cProfile on `bench_gir_only`, example 02. Output in
-   [docs/design/benchmarks/gir_profile.svg](benchmarks/gir_profile.svg).
+   [docs/design/archive/numba_vs_jax_benchmarks.svg](numba_vs_jax_benchmarks.svg).
    Answered: Python dispatch ~10%, NumPy math ~83% (GLP dominant).
 2. ~~**`nfev` capture per fit.**~~ Done (2026-04-15). Counter wrapper
    around `fitlib.residual_fun`; run via
@@ -564,7 +565,7 @@ been made.
 - Wrap the evaluator for `jax.jacrev`.
 - Pass the Jacobian to lmfit via the `Dfun` parameter. Requires
   plumbing at
-  [src/trspecfit/fitlib.py:574](../../src/trspecfit/fitlib.py#L574),
+  [src/trspecfit/fitlib.py:574](../../../src/trspecfit/fitlib.py#L574),
   which currently constructs `lmfit.Minimizer` without `Dfun`.
 - Measure iteration count reduction against the finite-difference
   baseline.
