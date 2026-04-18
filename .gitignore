@@ -218,3 +218,6 @@ examples/simulatorBL931/
 # Generated simulated data (from simulator and ML training examples)
 /simulated_data/
 examples/**/simulated_data/
+
+# Local Claude settings
+.claude/settings.json

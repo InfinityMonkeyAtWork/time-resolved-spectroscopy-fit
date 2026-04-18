@@ -80,10 +80,12 @@ branching on model structure (the plan already captured it).**
 ### `spectra.py` — evaluator bridge
 
 Thin module that the fitting engine calls on every residual evaluation.
-`fit_model_mcp` picks the right evaluator (`evaluate_1d` / `evaluate_2d`)
-given a model and its compiled plan, pushes the optimizer's parameter
-vector in, and returns a spectrum (or component-wise spectra for plots).
-Users can swap in a custom spectrum function via `Project.spec_fun_str`.
+`fit_model_gir` (the default) dispatches to the compiled evaluator
+(`evaluate_1d` / `evaluate_2d`) when a `ScheduledPlan` is present, and
+falls back to `fit_model_mcp` — the mcp reference evaluator — when the
+model is not lowerable or when 1D component-wise spectra are requested
+for plotting. Users can swap in a custom spectrum function via
+`Project.spec_fun_str`.
 
 ### `fitlib.py` — lmfit wrappers, CI, MCMC, plotting
 
@@ -212,7 +214,7 @@ For a 2D fit via `File.fit_2d`:
 2. `Model` is lowered to a `ScheduledPlan2D` via `graph_ir.schedule_2d`
    once, up front.
 3. `fitlib.fit_wrapper` runs lmfit; each residual call goes
-   `residual_fun` → `spectra.fit_model_mcp` → `eval_2d.evaluate_2d(plan, theta)`.
+   `residual_fun` → `spectra.fit_model_gir` → `eval_2d.evaluate_2d(plan, theta)`.
 4. `evaluate_2d` produces the model spectrum using only the plan arrays
    and the parameter vector — no mcp objects touched in the hot path.
 5. After the fit: confidence intervals / MCMC / plotting run in

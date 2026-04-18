@@ -7,13 +7,7 @@
 
 Note: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling — make configurable via `mc_settings` if users need it.
 
-## UX improvements
-
-- [ ] **ROI input for SNR**: `Simulator.snr()` uses full data array for signal power. Allow user to specify a region of interest.
-
 ## Performance & architecture
-
-Don't touch until feature set is stable.
 
 - [ ] **Project-level fit backend**: `Project.fit_2d()` already supports `Project`/`File`/`Static` vary levels, but it currently evaluates through `fit_project_mcp()` and `Model.create_value_2d()` rather than the GIR scheduler/evaluator path. Decide whether to lower the multi-file residual to GIR or explicitly prefer project-managed per-file loops when we want maximum graph-IR speedups.
 - [ ] **Evaluation order correctness**: component eval order depends on coincidental list position; make it explicit. One option: build a directed acyclic graph (DAG) at model construction and topological-sort.
