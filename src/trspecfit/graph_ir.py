@@ -477,6 +477,13 @@ class ScheduledPlan2D:
     dyn_sub_func_id: np.ndarray  # (n_substeps,) int
     dyn_sub_param_rows: np.ndarray  # (n_substeps, max_dyn_params) int, -1 padded
     dyn_sub_n_params: np.ndarray  # (n_substeps,) int
+    # Per-substep subcycle schedule data (Phase 6.4).  SUBCYCLE_REMAP /
+    # SUBCYCLE_MASK graph nodes are compiled away here: non-subcycle
+    # substeps get ``time`` and ``ones`` defaults, subcycle substeps get
+    # ``time_norm`` and ``time_n_sub`` copies.  Evaluator applies them as
+    # ``func(dyn_sub_time_axes[s], ...) * dyn_sub_masks[s]``.
+    dyn_sub_time_axes: np.ndarray  # (n_substeps, n_time) float64
+    dyn_sub_masks: np.ndarray  # (n_substeps, n_time) float64
 
     # --- Expression evaluation ---
     n_expressions: int
@@ -1475,9 +1482,11 @@ _NON_LOWERABLE_NODE_KINDS_BASE: frozenset[NodeKind] = frozenset(
     }
 )
 
-# 2D backend: profiles (Phase 6.2b) and resolved-trace time-domain
-# convolution (Phase 6.3) are now compilable.  Convolution lowerability
-# is additionally gated per-node by ``_is_lowerable_convolution_2d``.
+# 2D backend: profiles (Phase 6.2b), resolved-trace time-domain
+# convolution (Phase 6.3), and subcycle dynamics (Phase 6.4) are now
+# compilable.  Convolution lowerability is additionally gated per-node by
+# ``_is_lowerable_convolution_2d``.  Subcycle substeps are compiled away
+# into dyn_sub_time_axes / dyn_sub_masks schedule arrays.
 _NON_LOWERABLE_2D_NODE_KINDS: frozenset[NodeKind] = (
     _NON_LOWERABLE_NODE_KINDS_BASE
     - frozenset(
@@ -1485,6 +1494,8 @@ _NON_LOWERABLE_2D_NODE_KINDS: frozenset[NodeKind] = (
             NodeKind.PROFILE_SAMPLE,
             NodeKind.PROFILE_AVERAGE,
             NodeKind.CONVOLUTION,
+            NodeKind.SUBCYCLE_MASK,
+            NodeKind.SUBCYCLE_REMAP,
         }
     )
 )
@@ -1540,6 +1551,64 @@ def _is_lowerable_convolution_2d(node: GraphNode, graph: GraphIR) -> bool:
 
 
 #
+def _is_lowerable_subcycle_2d(node: GraphNode, graph: GraphIR) -> bool:
+    """Return True if a SUBCYCLE_REMAP / MASK node meets the Phase 6.4 contract.
+
+    The scheduler replaces per-substep ``graph.time`` / all-ones defaults
+    with the payload carried by these nodes; once ``can_lower_2d``
+    vouches, ``schedule_2d`` reads the arrays unconditionally.  All of:
+
+    1. The required payload array is present on the node and is a 1D
+       ``float64``-compatible ndarray of length ``len(graph.time)``.
+    2. Canonical topology:
+         SUBCYCLE_REMAP -> DYNAMICS_TRACE  (TRACE_INPUT)
+         DYNAMICS_TRACE -> SUBCYCLE_MASK   (TRACE_INPUT, if present)
+         SUBCYCLE_MASK  -> PARAM_PLUS_TRACE (TRACE_INPUT)
+       Anything off-pattern (multiple consumers, chain doesn't end at a
+       PPT, etc.) is rejected so malformed graphs fall back to MCP
+       cleanly instead of silently producing wrong output.
+    """
+
+    if node.kind not in (NodeKind.SUBCYCLE_REMAP, NodeKind.SUBCYCLE_MASK):
+        return False
+    if graph.time is None:
+        return False
+    n_time = len(graph.time)
+
+    key = "time_norm" if node.kind == NodeKind.SUBCYCLE_REMAP else "time_n_sub"
+    arr = node.arrays.get(key)
+    if arr is None or not isinstance(arr, np.ndarray):
+        return False
+    if arr.ndim != 1 or arr.shape[0] != n_time:
+        return False
+
+    id_to_node = {n.id: n for n in graph.nodes}
+    if node.kind == NodeKind.SUBCYCLE_REMAP:
+        outs = [
+            e
+            for e in graph.edges
+            if e.source == node.id and e.kind == EdgeKind.TRACE_INPUT
+        ]
+        if len(outs) != 1:
+            return False
+        return id_to_node[outs[0].target].kind == NodeKind.DYNAMICS_TRACE
+
+    # SUBCYCLE_MASK: one TRACE_INPUT in from DYNAMICS_TRACE, one out to PPT.
+    ins = [
+        e for e in graph.edges if e.target == node.id and e.kind == EdgeKind.TRACE_INPUT
+    ]
+    outs = [
+        e for e in graph.edges if e.source == node.id and e.kind == EdgeKind.TRACE_INPUT
+    ]
+    if len(ins) != 1 or len(outs) != 1:
+        return False
+    return (
+        id_to_node[ins[0].source].kind == NodeKind.DYNAMICS_TRACE
+        and id_to_node[outs[0].target].kind == NodeKind.PARAM_PLUS_TRACE
+    )
+
+
+#
 def can_lower_2d(graph: GraphIR) -> bool:
     """Check whether the 2D NumPy backend can compile this graph.
 
@@ -1567,6 +1636,12 @@ def can_lower_2d(graph: GraphIR) -> bool:
         # resolved-trace topology the scheduler expects are lowered.
         if node.kind == NodeKind.CONVOLUTION:
             if not _is_lowerable_convolution_2d(node, graph):
+                return False
+
+        # Subcycle nodes are per-node gated: required payload arrays and
+        # canonical REMAP -> DYNAMICS_TRACE -> MASK? -> PPT topology.
+        if node.kind in (NodeKind.SUBCYCLE_REMAP, NodeKind.SUBCYCLE_MASK):
+            if not _is_lowerable_subcycle_2d(node, graph):
                 return False
 
         # Check component functions are supported
@@ -2041,6 +2116,10 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     sub_param_row_lists: list[list[int]] = []
     sub_ppt_row: list[int] = []  # which PPT row this trace targets
     sub_base_row: list[int] = []
+    # Per-substep subcycle arrays (Phase 6.4).  ``None`` marks "no
+    # subcycle" (use defaults: ``graph.time`` axis, all-ones mask).
+    sub_time_axis: list[np.ndarray | None] = []
+    sub_mask: list[np.ndarray | None] = []
 
     for dyn_node in dyn_trace_nodes:
         assert dyn_node.function_name is not None
@@ -2062,7 +2141,23 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
             [name_to_row[id_to_node[e.source].name] for e in param_edges]
         )
 
-        # Target: the PARAM_PLUS_TRACE node this trace feeds
+        # Subcycle REMAP upstream: incoming TRACE_INPUT from SUBCYCLE_REMAP
+        # carries the ``time_norm`` axis that replaces ``graph.time`` for
+        # this substep.  Invariants (array present, (n_time,) shape) are
+        # enforced by ``_is_lowerable_subcycle_2d`` before we get here.
+        remap_time_axis: np.ndarray | None = None
+        for e in graph.edges:
+            if e.target == dyn_node.id and e.kind == EdgeKind.TRACE_INPUT:
+                src = id_to_node[e.source]
+                if src.kind == NodeKind.SUBCYCLE_REMAP:
+                    remap_time_axis = src.arrays["time_norm"]
+                    break
+        sub_time_axis.append(remap_time_axis)
+
+        # Target: the PARAM_PLUS_TRACE node this trace feeds.  For
+        # subcycle-bearing traces, a SUBCYCLE_MASK sits between the
+        # DYNAMICS_TRACE and its PARAM_PLUS_TRACE consumer; walk past it
+        # and record the mask array for the evaluator.
         ppt_edges = [
             e
             for e in graph.edges
@@ -2070,9 +2165,29 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         ]
         assert len(ppt_edges) == 1, (
             f"DYNAMICS_TRACE '{dyn_node.name}' must feed exactly one"
-            f" PARAM_PLUS_TRACE, found {len(ppt_edges)}"
+            f" downstream node, found {len(ppt_edges)}"
         )
-        ppt_node = id_to_node[ppt_edges[0].target]
+        downstream = id_to_node[ppt_edges[0].target]
+        mask_array: np.ndarray | None = None
+        if downstream.kind == NodeKind.SUBCYCLE_MASK:
+            mask_array = downstream.arrays["time_n_sub"]
+            mask_out = [
+                e
+                for e in graph.edges
+                if e.source == downstream.id and e.kind == EdgeKind.TRACE_INPUT
+            ]
+            assert len(mask_out) == 1, (
+                f"SUBCYCLE_MASK '{downstream.name}' must feed exactly one"
+                f" PARAM_PLUS_TRACE, found {len(mask_out)}"
+            )
+            ppt_node = id_to_node[mask_out[0].target]
+        else:
+            ppt_node = downstream
+        sub_mask.append(mask_array)
+        assert ppt_node.kind == NodeKind.PARAM_PLUS_TRACE, (
+            f"DYNAMICS_TRACE '{dyn_node.name}' chain does not terminate at"
+            f" PARAM_PLUS_TRACE (got {ppt_node.kind.name})"
+        )
         sub_ppt_row.append(name_to_row[ppt_node.name])
 
         # Base row: the BASE_INPUT to the PARAM_PLUS_TRACE
@@ -2116,11 +2231,22 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     dyn_sub_param_rows = np.full((n_substeps, max_dyn_params), -1, dtype=np.intp)
     dyn_sub_n_params_list: list[int] = []
     dyn_sub_func_id_list: list[int] = []
+    # Per-substep subcycle schedule arrays.  Default: ``graph.time`` and
+    # an all-ones mask.  Overridden from upstream SUBCYCLE_REMAP / MASK
+    # nodes.  Float64 kept uniform so the evaluator hot loop has a single
+    # dtype contract.
+    dyn_sub_time_axes = np.empty((n_substeps, n_time), dtype=np.float64)
+    dyn_sub_time_axes[:, :] = graph.time
+    dyn_sub_masks = np.ones((n_substeps, n_time), dtype=np.float64)
     for flat_i, orig_i in enumerate(flat_sub_indices):
         rows = sub_param_row_lists[orig_i]
         dyn_sub_param_rows[flat_i, : len(rows)] = rows
         dyn_sub_n_params_list.append(len(rows))
         dyn_sub_func_id_list.append(sub_func_ids[orig_i])
+        if sub_time_axis[orig_i] is not None:
+            dyn_sub_time_axes[flat_i, :] = sub_time_axis[orig_i]
+        if sub_mask[orig_i] is not None:
+            dyn_sub_masks[flat_i, :] = sub_mask[orig_i]
 
     dyn_group_target_row = np.array(group_target_rows, dtype=np.intp)
     dyn_group_base_row = np.array(group_base_rows, dtype=np.intp)
@@ -2759,7 +2885,9 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
                     for j in range(n_dp)
                 ]
                 func = _DYN_DISPATCH[int(dyn_sub_func_id[s])]
-                param_traces_init[target, :] += func(graph.time, *p_vals)
+                param_traces_init[target, :] += (
+                    func(dyn_sub_time_axes[s], *p_vals) * dyn_sub_masks[s]
+                )
         elif kind == 1:  # expression
             target_row = int(expr_target_rows[idx])
             program = expr_programs[idx]
@@ -2864,6 +2992,8 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         dyn_sub_func_id=dyn_sub_func_id,
         dyn_sub_param_rows=dyn_sub_param_rows,
         dyn_sub_n_params=dyn_sub_n_params,
+        dyn_sub_time_axes=dyn_sub_time_axes,
+        dyn_sub_masks=dyn_sub_masks,
         n_expressions=n_expressions,
         expr_target_rows=expr_target_rows,
         expr_programs=expr_programs,

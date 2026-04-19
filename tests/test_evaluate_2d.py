@@ -42,24 +42,33 @@ def _make_energy_model(model_info):
 
 
 #
-def _make_2d_model(model_info, dynamics_params):
-    """Load energy model + add dynamics -> 2D model."""
+def _make_2d_model(model_info, dynamics_params, *, frequency=None, time=None):
+    """Load energy model + add dynamics -> 2D model.
+
+    ``dynamics_params`` is a list of ``(target_par, dyn_model)`` tuples
+    passed to ``File.add_time_dependence``.  ``frequency`` (optional) is
+    forwarded to every call so subcycle-aware fixtures can set it in one
+    place; ``time`` (optional) overrides the default time axis.
+    """
 
     project = Project(path="tests")
     file = File(parent_project=project)
     file.energy = np.linspace(80, 90, 101)
-    file.time = np.linspace(-10, 100, 51)
+    file.time = np.linspace(-10, 100, 51) if time is None else time
     file.load_model(model_yaml=_ENERGY_YAML, model_info=model_info)
     model = file.model_active
     assert model is not None
 
     for target_par, dyn_model in dynamics_params:
-        file.add_time_dependence(
-            target_model=model_info[0],
-            target_parameter=target_par,
-            dynamics_yaml=_TIME_YAML,
-            dynamics_model=dyn_model,
-        )
+        kwargs = {
+            "target_model": model_info[0],
+            "target_parameter": target_par,
+            "dynamics_yaml": _TIME_YAML,
+            "dynamics_model": dyn_model,
+        }
+        if frequency is not None:
+            kwargs["frequency"] = frequency
+        file.add_time_dependence(**kwargs)
 
     return file, model
 
@@ -786,3 +795,167 @@ class TestDynamicsConvolution:
         assert plan.conv_param_rows.shape == (0,)
         assert plan.conv_support_values.shape == (0,)
         assert 2 not in plan.resolution_kinds.tolist()
+
+
+# ---------------------------------------------------------------------------
+# Subcycle dynamics -- Phase 6.4
+# ---------------------------------------------------------------------------
+
+
+#
+#
+class TestSubcycleDynamics:
+    """Multi-cycle dynamics: SUBCYCLE_REMAP/MASK nodes are compiled into
+    per-substep ``dyn_sub_time_axes`` / ``dyn_sub_masks`` schedule arrays.
+
+    The evaluator applies them as
+    ``func(dyn_sub_time_axes[s], *pars) * dyn_sub_masks[s]``, which must
+    match MCP's ``fct(time_norm, ...) * time_n_sub``.
+    """
+
+    #
+    def _make_two_subcycle_plan(self):
+        file, model = _make_2d_model(
+            ["glp_only"],
+            [("GLP_01_A", ["ModelNone", "MonoExpNeg"])],
+            frequency=10,
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        return plan, graph, model
+
+    #
+    def _make_three_subcycle_plan(self):
+        """Three-subcycle model with cross-subcycle expression refs.
+
+        ``MonoExpPosExpr`` references ``MonoExpNeg``'s params via
+        expressions (``"-expFun_01_A"``, ``"expFun_01_tau"``), so this
+        exercises the expression/subcycle interaction.
+        """
+
+        file, model = _make_2d_model(
+            ["glp_only"],
+            [("GLP_01_A", ["ModelNone", "MonoExpNeg", "MonoExpPosExpr"])],
+            frequency=10,
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        return plan, graph, model
+
+    #
+    def test_two_subcycle_parity_at_initial_theta(self):
+        """evaluate_2d == interpreter at initial theta for two-subcycle fit."""
+
+        plan, _graph, model = self._make_two_subcycle_plan()
+        _compare_evaluator_vs_interpreter(model, plan)
+
+    #
+    def test_two_subcycle_parity_under_perturbation(self):
+        """Perturb subcycle-1 tau / amplitude and check parity holds."""
+
+        plan, _graph, model = self._make_two_subcycle_plan()
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+        A_idx = plan.opt_param_names.index("GLP_01_A_expFun_01_A")
+        tau_idx = plan.opt_param_names.index("GLP_01_A_expFun_01_tau")
+        _perturb_theta(plan, model, theta, [A_idx, tau_idx], [-0.3, 0.8])
+
+    #
+    def test_three_subcycle_with_cross_expression_parity(self):
+        """Cross-subcycle expression refs (MonoExpPosExpr) match MCP."""
+
+        plan, _graph, model = self._make_three_subcycle_plan()
+        _compare_evaluator_vs_interpreter(model, plan)
+
+    #
+    def test_three_subcycle_cross_expression_under_perturbation(self):
+        """Perturb subcycle-1 params; subcycle-2 expression deps must follow."""
+
+        plan, _graph, model = self._make_three_subcycle_plan()
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+        A_idx = plan.opt_param_names.index("GLP_01_A_expFun_01_A")
+        tau_idx = plan.opt_param_names.index("GLP_01_A_expFun_01_tau")
+        _perturb_theta(plan, model, theta, [A_idx, tau_idx], [-0.2, 1.5])
+
+    #
+    def test_subcycle_plan_has_nontrivial_axes_and_masks(self):
+        """Plan's per-substep arrays carry non-default values where expected."""
+
+        plan, _graph, _model = self._make_two_subcycle_plan()
+        assert plan.dyn_sub_time_axes.shape == (
+            plan.dyn_sub_func_id.shape[0],
+            plan.n_time,
+        )
+        assert plan.dyn_sub_masks.shape == plan.dyn_sub_time_axes.shape
+        # At least one substep must use a non-default time axis (time_norm
+        # differs from plan.time) and a non-default mask (not all-ones).
+        any_norm = any(
+            not np.array_equal(plan.dyn_sub_time_axes[s], plan.time)
+            for s in range(plan.dyn_sub_time_axes.shape[0])
+        )
+        any_mask = any(
+            not np.all(plan.dyn_sub_masks[s] == 1.0)
+            for s in range(plan.dyn_sub_masks.shape[0])
+        )
+        assert any_norm, "subcycle substep should use time_norm, not plan.time"
+        assert any_mask, "subcycle substep should have a <1.0 mask entry"
+        # Mask values are binary (0 or 1).
+        assert set(np.unique(plan.dyn_sub_masks).tolist()).issubset({0.0, 1.0})
+
+    #
+    def test_non_subcycle_plan_has_default_axes_and_ones_mask(self):
+        """Regression guard: single-cycle dynamics keep defaults."""
+
+        file, model = _make_2d_model(
+            ["glp_only"],
+            [("GLP_01_A", ["MonoExpPos"])],
+        )
+        graph = build_graph(model)
+        plan = schedule_2d(graph)
+        for s in range(plan.dyn_sub_time_axes.shape[0]):
+            np.testing.assert_array_equal(plan.dyn_sub_time_axes[s], plan.time)
+            np.testing.assert_array_equal(plan.dyn_sub_masks[s], np.ones(plan.n_time))
+
+    #
+    def test_mixed_irf_and_subcycle_parity(self):
+        """Global IRF on one par + subcycle dynamics on another: both lower.
+
+        Confirms the Phase 6.4 allowance that a resolved-trace IRF
+        (``subcycle=0`` convolution path from Phase 6.3) coexists with
+        subcycle-aware dynamics in the same model.
+        """
+
+        project = Project(path="tests")
+        file = File(parent_project=project)
+        file.energy = np.linspace(80, 90, 101)
+        file.time = np.linspace(-10, 100, 51)
+        file.load_model(model_yaml=_ENERGY_YAML, model_info=["offset_only"])
+        model = file.model_active
+        assert model is not None
+
+        file.add_time_dependence(
+            target_model="offset_only",
+            target_parameter="GLP_01_A",
+            dynamics_yaml=_TIME_YAML,
+            dynamics_model=["ModelNone", "MonoExpNeg"],
+            frequency=10,
+        )
+        file.add_time_dependence(
+            target_model="offset_only",
+            target_parameter="Offset_y0",
+            dynamics_yaml=_TIME_YAML,
+            dynamics_model=["MonoExpPosIRF"],
+        )
+
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        # Resolved-trace IRF: exactly one conv step.  Subcycle substeps:
+        # at least one mask row < 1.0 somewhere.
+        assert plan.n_conv_steps == 1
+        assert any(
+            not np.all(plan.dyn_sub_masks[s] == 1.0)
+            for s in range(plan.dyn_sub_masks.shape[0])
+        )
+        _compare_evaluator_vs_interpreter(model, plan)

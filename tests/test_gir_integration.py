@@ -42,8 +42,12 @@ def _make_project(*, spec_fun_str="fit_model_gir"):
 
 
 #
-def _make_2d_model(project, model_info, dynamics_params):
-    """Load energy model + add dynamics -> 2D model."""
+def _make_2d_model(project, model_info, dynamics_params, *, frequency=None):
+    """Load energy model + add dynamics -> 2D model.
+
+    ``frequency`` (optional) is forwarded to every ``add_time_dependence``
+    call, enabling subcycle-aware fixtures.
+    """
 
     file = File(parent_project=project)
     file.energy = np.linspace(80, 90, 101)
@@ -53,12 +57,15 @@ def _make_2d_model(project, model_info, dynamics_params):
     assert model is not None
 
     for target_par, dyn_model in dynamics_params:
-        file.add_time_dependence(
-            target_model=model_info[0],
-            target_parameter=target_par,
-            dynamics_yaml=_TIME_YAML,
-            dynamics_model=dyn_model,
-        )
+        kwargs = {
+            "target_model": model_info[0],
+            "target_parameter": target_par,
+            "dynamics_yaml": _TIME_YAML,
+            "dynamics_model": dyn_model,
+        }
+        if frequency is not None:
+            kwargs["frequency"] = frequency
+        file.add_time_dependence(**kwargs)
 
     return file, model
 
@@ -520,6 +527,75 @@ class TestGIRvsInterpreter:
         par = _extract_par_list(model)
 
         # fit_model_compare asserts GIR == MCP internally at rtol=atol=1e-10.
+        result = spectra.fit_model_compare(
+            file.energy, par, True, plan, theta_indices, model, 2
+        )
+        assert result.shape == (len(file.time), len(file.energy))
+
+    #
+    def test_subcycle_residual_gir_vs_mcp(self):
+        """Subcycle dynamics residual matches between GIR and MCP (Phase 6.4)."""
+
+        project = _make_project()
+        file, model = _make_2d_model(
+            project,
+            ["glp_only"],
+            [("GLP_01_A", ["ModelNone", "MonoExpNeg", "MonoExpPosExpr"])],
+            frequency=10,
+        )
+
+        model.create_value_2d()
+        assert model.value_2d is not None
+        data = model.value_2d + 0.01
+
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        name_to_idx = {n: i for i, n in enumerate(model.parameter_names)}
+        theta_indices = np.array(
+            [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
+        )
+        par = model.lmfit_pars
+
+        res_gir = fitlib.residual_fun(
+            par=par,
+            x=file.energy,
+            data=data,
+            package=spectra,
+            fit_fun_str="fit_model_gir",
+            args=(plan, theta_indices, model, 2),
+        )
+        res_mcp = fitlib.residual_fun(
+            par=par,
+            x=file.energy,
+            data=data,
+            package=spectra,
+            fit_fun_str="fit_model_mcp",
+            args=(model, 2),
+        )
+        np.testing.assert_allclose(res_gir, res_mcp, rtol=1e-10, atol=1e-10)
+
+    #
+    def test_subcycle_compare_mode(self):
+        """fit_model_compare runs GIR and MCP on a subcycle model without error."""
+
+        project = _make_project(spec_fun_str="fit_model_compare")
+        file, model = _make_2d_model(
+            project,
+            ["glp_only"],
+            [("GLP_01_A", ["ModelNone", "MonoExpNeg"])],
+            frequency=10,
+        )
+
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        name_to_idx = {n: i for i, n in enumerate(model.parameter_names)}
+        theta_indices = np.array(
+            [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
+        )
+        par = _extract_par_list(model)
+
         result = spectra.fit_model_compare(
             file.energy, par, True, plan, theta_indices, model, 2
         )

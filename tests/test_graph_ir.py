@@ -983,11 +983,41 @@ class TestSubcycleNodes:
             assert remap.arrays["time_norm"].shape == (111,)
 
     #
-    def test_subcycle_triggers_can_lower_2d_false(self):
-        """Models with subcycle nodes are not lowerable in v1."""
+    def test_subcycle_is_lowerable_2d(self):
+        """Phase 6.4: subcycle dynamics are lowerable on the 2D backend."""
 
         _file, model = _make_subcycle_model()
         graph = build_graph(model)
+        assert can_lower_2d(graph)
+
+    #
+    def test_subcycle_missing_payload_rejects_lowering(self):
+        """Defensive gate: stripping time_norm from a REMAP node must
+        force can_lower_2d to False so the scheduler cannot silently
+        fall back to the non-subcycle default axis.
+        """
+
+        _file, model = _make_subcycle_model()
+        graph = build_graph(model)
+        assert can_lower_2d(graph)  # baseline: intact graph lowers
+
+        # Corrupt one REMAP node by removing its time_norm payload.
+        remap_nodes = _nodes_by_kind(graph, NodeKind.SUBCYCLE_REMAP)
+        assert len(remap_nodes) >= 1
+        remap_nodes[0].arrays.pop("time_norm")
+
+        assert not can_lower_2d(graph)
+
+    #
+    def test_subcycle_wrong_payload_shape_rejects_lowering(self):
+        """Payload of the wrong length must also be rejected."""
+
+        _file, model = _make_subcycle_model()
+        graph = build_graph(model)
+        mask_nodes = _nodes_by_kind(graph, NodeKind.SUBCYCLE_MASK)
+        assert len(mask_nodes) >= 1
+        mask_nodes[0].arrays["time_n_sub"] = np.ones(3, dtype=np.float64)
+
         assert not can_lower_2d(graph)
 
     #

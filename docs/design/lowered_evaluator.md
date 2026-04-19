@@ -413,7 +413,11 @@ dynamics graphs remain graph-valid but backend-out-of-scope for now.
   truly reads the accumulated peak sum)
 - All `EXPRESSION` nodes contain only arithmetic operations
   (add, sub, mul, div, neg, pow, literal constants, parameter references)
-- No `CONVOLUTION`, `PROFILE_*`, or `SUBCYCLE_*` nodes
+- `CONVOLUTION`, `PROFILE_*`, and `SUBCYCLE_*` nodes are all now
+  compilable (Phases 6.2-6.4).  Convolution is gated per-node by
+  ``_is_lowerable_convolution_2d`` (time-domain kernel, resolved-trace
+  topology); subcycle nodes are compiled away in ``schedule_2d`` into
+  per-substep ``dyn_sub_time_axes`` / ``dyn_sub_masks`` schedule arrays.
 - `graph.domain == ENERGY_TIME_2D` (has both energy and time axes)
 
 **Voigt exclusion:** `Voigt` (energy.py:259-260) normalizes with
@@ -426,16 +430,16 @@ function is patched to `max(axis=-1, keepdims=True)`.
 **Falls back to interpreter when `can_lower_2d` returns False:**
 - 1D-only models (domain != ENERGY_TIME_2D; future `can_lower_1d` would
   target `ENERGY_1D`, not `TIME_1D`, in the current roadmap)
-- Convolution components
-- Profile-varying parameters
 - Non-arithmetic expressions
-- Subcycle dynamics
 - Voigt peaks (until broadcast-safe)
+- Convolution shapes outside the resolved-trace contract encoded in
+  ``_is_lowerable_convolution_2d`` (e.g. spectrum-level ``comp_type="conv"``,
+  non-time kernels)
 
-Future node types (`CONVOLUTION`, `PROFILE_*`, `SUBCYCLE_*`) are part of
-the GraphIR spec and can be represented in the graph. They just can't be
-compiled to the NumPy backend yet. As each one gets a compiler pass,
-`can_lower_2d` widens.
+Phases 6.2-6.4 folded `CONVOLUTION`, `PROFILE_*`, and `SUBCYCLE_*` into
+the 2D backend.  A resolved-trace (``subcycle=0``) IRF coexists with
+subcycle-aware dynamics in the same model; only ``subcycle>0`` substeps
+carry ``time_norm`` / ``time_n_sub`` schedule arrays.
 
 
 ### 3. ScheduledPlan2D -- the compiled 2D execution schedule
@@ -961,9 +965,9 @@ Implemented behavior:
 | Arithmetic expressions | Yes | Yes | Compiled to RPN |
 | Time-dependent params (Dynamics) | Yes | Yes | Dynamics subgraph compiled |
 | Voigt | No (broadcast issue) | Yes | Needs per-slice max fix |
-| Convolution components | No | Yes (CONVOLUTION node) | Requires sequential accumulation |
-| Profile-varying params | No | Yes (PROFILE_* nodes) | Requires per-aux-point eval loop |
-| Subcycle dynamics | No | Yes (SUBCYCLE_* nodes) | Needs time_norm/time_n_sub indexing |
+| Convolution components | Yes (Phase 6.3) | Yes (CONVOLUTION node) | Resolved-trace time-domain IRF; gated by ``_is_lowerable_convolution_2d`` |
+| Profile-varying params | Yes (Phase 6.2) | Yes (PROFILE_* nodes) | 1D and 2D backends |
+| Subcycle dynamics | Yes (Phase 6.4) | Yes (SUBCYCLE_* nodes) | Compiled into per-substep ``dyn_sub_time_axes`` / ``dyn_sub_masks`` |
 | Non-arithmetic expressions | No | Partial | Would extend ExprNodeKind |
 | Project-level fits | No | Deferred | Multi-graph coordination |
 

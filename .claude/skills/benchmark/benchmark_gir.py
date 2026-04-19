@@ -211,11 +211,11 @@ def bench_per_call(file, *, n_warmup=5, n_calls=200):
 
     # --- GIR path ---
     for _ in range(n_warmup):
-        spectra.fit_model_gir(energy, par, True, plan, theta_indices)
+        spectra.fit_model_gir(energy, par, True, plan, theta_indices, model, 2)
 
     t0 = time.perf_counter()
     for _ in range(n_calls):
-        spectra.fit_model_gir(energy, par, True, plan, theta_indices)
+        spectra.fit_model_gir(energy, par, True, plan, theta_indices, model, 2)
     gir_total = time.perf_counter() - t0
     gir_per_call = gir_total / n_calls
 
@@ -230,7 +230,7 @@ def bench_per_call(file, *, n_warmup=5, n_calls=200):
     mcp_per_call = mcp_total / n_calls
 
     # --- Correctness check ---
-    fast = spectra.fit_model_gir(energy, par, True, plan, theta_indices)
+    fast = spectra.fit_model_gir(energy, par, True, plan, theta_indices, model, 2)
     slow = spectra.fit_model_mcp(energy, par, True, model, 2)
     max_diff = np.max(np.abs(fast - slow))
 
@@ -280,11 +280,11 @@ def bench_gir_only(file, *, n_warmup=50, n_calls=5000):
     energy = file.energy
 
     for _ in range(n_warmup):
-        spectra.fit_model_gir(energy, par, True, plan, theta_indices)
+        spectra.fit_model_gir(energy, par, True, plan, theta_indices, model, 2)
 
     t0 = time.perf_counter()
     for _ in range(n_calls):
-        spectra.fit_model_gir(energy, par, True, plan, theta_indices)
+        spectra.fit_model_gir(energy, par, True, plan, theta_indices, model, 2)
     total = time.perf_counter() - t0
 
     print("=" * 60)

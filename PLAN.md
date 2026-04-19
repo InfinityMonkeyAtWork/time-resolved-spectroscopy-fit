@@ -14,9 +14,10 @@ lowered evaluator.
 - Phases 1-5 are complete: GraphIR, scheduling, the lowered evaluator,
   integration, compare mode, benchmark-driven backend validation, static
   caching, and Voigt lowering all landed.
-- Phase 6 is partially complete: `ENERGY_1D`, 1D/2D profile lowering, and
-  2D time-domain IRF/convolution lowering are implemented.
-- The current active step is subcycle-aware lowering.
+- Phase 6 is complete: `ENERGY_1D`, 1D/2D profile lowering, 2D time-domain
+  IRF/convolution lowering, and subcycle-aware lowering are all implemented.
+  `fit_model_gir` now covers the full MCP-supported model surface for
+  the bundled examples.
 
 ## Completed implementation history
 
@@ -42,18 +43,17 @@ lowered evaluator.
 - Phase 6.3: lowered 2D time-domain IRF/convolution nodes for single-cycle
   resolved-trace cases. The graph remains the sole source of truth; unsupported
   convolution shapes still fall back cleanly to MCP.
-
-## Active next step: Phase 6.4
-
-Lower subcycle dynamics.
-
-- Compile `SUBCYCLE_REMAP` and `SUBCYCLE_MASK`.
-- Extend the profile-capable / convolution-capable lowering path to
-  subcycle-aware models once the single-cycle path is solid.
-- Keep GraphIR as the sole semantic source of truth instead of re-deriving
-  support from MCP-side helpers.
-- Ship direct parity tests against MCP plus compare-mode integration coverage
-  before widening the lowering gate.
+- Phase 6.4: lowered subcycle dynamics. `SUBCYCLE_REMAP` / `SUBCYCLE_MASK`
+  graph nodes are compiled away in `schedule_2d` into per-substep
+  `dyn_sub_time_axes` / `dyn_sub_masks` arrays -- no new OpKinds, no
+  runtime graph traversal. The evaluator hot loop becomes
+  `func(axis[s], *pars) * mask[s]`. Resolved-trace (`subcycle=0`)
+  convolution coexists with subcycle-aware dynamics in the same model;
+  only `subcycle>0` substeps carry remap/mask data. Parity verified
+  against MCP on two-/three-subcycle fixtures (including cross-subcycle
+  expressions) and on a mixed IRF + subcycle model; example 3
+  (multi_cycle) benchmarks at ~3.8x over MCP at 7e-15 parity, with no
+  regression on non-subcycle example 2 (~3.4x, 1e-13 parity).
 
 ## Non-goals for this plan
 

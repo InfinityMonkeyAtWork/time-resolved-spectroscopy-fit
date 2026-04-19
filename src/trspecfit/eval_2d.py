@@ -321,7 +321,9 @@ def evaluate_2d(plan: ScheduledPlan2D, theta: np.ndarray) -> np.ndarray:
                 n_par = int(plan.dyn_sub_n_params[s])
                 param_rows = plan.dyn_sub_param_rows[s, :n_par]
                 dyn_params = [float(traces[int(row), 0]) for row in param_rows]
-                traces[target, :] += func(plan.time, *dyn_params)
+                traces[target, :] += (
+                    func(plan.dyn_sub_time_axes[s], *dyn_params) * plan.dyn_sub_masks[s]
+                )
         elif kind == 1:  # expression
             target = int(plan.expr_target_rows[idx])
             traces[target, :] = eval_expr_program(plan.expr_programs[idx], traces)
