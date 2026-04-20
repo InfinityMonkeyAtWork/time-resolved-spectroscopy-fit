@@ -5,12 +5,25 @@ A Python library for fitting multi-component spectral models to time-resolved sp
 
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
+   :caption: User Guide:
 
    installation
    quickstart
    examples/index
    design/supported_models
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Developer Info:
+
+   design/repo_architecture
+   design/lowered_evaluator
+   ai/index
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Reference:
+
    api/index
 
 Overview

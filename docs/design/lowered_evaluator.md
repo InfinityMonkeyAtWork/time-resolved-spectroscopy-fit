@@ -1,4 +1,4 @@
-# Execution Plan: Lowered Evaluator for 2D Model Fitting
+# Execution Plan: Lowered Evaluator
 
 ## Motivation
 
@@ -1049,6 +1049,6 @@ in its component's function.
 This document is the long-lived design/spec for the lowered evaluator.
 
 - Implementation status, completed phases, and active follow-up work live in
-  [../../PLAN.md](../../PLAN.md).
+  `PLAN.md` at the repo root.
 - The closed backend-decision benchmark write-up lives in
   [archive/numba_vs_jax.md](archive/numba_vs_jax.md).

@@ -2,6 +2,8 @@
 
 ## Supported Today
 
+All combinations below are supported by both the 1D (energy-only) and 2D (energy × time) evaluators, with time-axis features (dynamics, subcycle, convolution) active only in 2D.
+
 - Plain energy models.
 - Energy model with dynamics on a top-level energy parameter.
 - Energy model with subcycle dynamics on a top-level parameter.
@@ -9,6 +11,7 @@
 - Energy model with a profile model on a top-level energy parameter.
 - Energy model with a profile on one parameter and dynamics on a different top-level parameter. (Any number of top-level time-dependent and/or profiled parameters on the same energy model are supported as long as any given top-level energy parameter has no more than one directly attached model.)
 - Energy model with a profile on a top-level parameter and standard dynamics on one of that profile's internal parameters. (Single-cycle only; no multi-cycle / subcycle models.)
+- A single 2D fit may combine several of the features above — e.g. multiple profiled parameters, standard and subcycle dynamics on other parameters, and IRF convolution on the resulting time traces — within one model.
 
 ## Expression Support Today
 

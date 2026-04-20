@@ -1,8 +1,12 @@
+---
+orphan: true
+---
+
 # Archived Decision: Numba vs JAX for the Lowered Evaluator
 
 > Archived on 2026-04-17 after the backend decision closed.
 > Keep [../lowered_evaluator.md](../lowered_evaluator.md) as the long-lived
-> design/spec and [../../../PLAN.md](../../../PLAN.md) as the implementation
+> design/spec and `PLAN.md` at the repo root as the implementation
 > tracker. This file preserves the benchmark data and tradeoff analysis behind
 > the decision.
 

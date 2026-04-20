@@ -113,8 +113,8 @@ names are available. Provides `all_functions`, `background_functions`,
 `convolution_functions`, `energy_functions`, `numbering_exceptions`,
 `get_function_parameters`. The YAML parser and mcp use this to decide
 which components can be numbered (`GLP_01`, `GLP_02`, ...) and which are
-singletons (backgrounds, convolutions). **If you add a new background or
-convolution function, register it here.**
+singletons (backgrounds, convolutions). **If you add a new background
+function, register it here.**
 
 ### `config/plot.py`
 
@@ -129,7 +129,7 @@ keyword arguments for styling.
 Three flat modules of numeric functions. **Function names and parameter
 names deliberately use CamelCase / PascalCase** (not snake_case) because
 `_` is the component-ID delimiter (`{model}_{component}_{param}`). See
-[../../CLAUDE.md](../../CLAUDE.md) for the full naming rule. These
+`CLAUDE.md` at the repo root for the full naming rule. These
 functions are called directly from the compiled evaluators — they should
 be fast, numpy-only, and free of Python-level allocation where possible.
 
@@ -226,9 +226,7 @@ evaluator. New features are generally prototyped on that slow path first.
 
 ## Where to put new code — quick guide
 
-- **New peak / background shape** → `functions/energy.py` (register backgrounds in `config/functions.py`).
-- **New dynamics / IRF kernel** → `functions/time.py`.
-- **New profile shape** → `functions/profile.py` (name must start with `p`).
+- **New energy / time / profile function** → implement it in `functions/{energy,time,profile}.py`; for the full checklist (tests, registration, and GIR follow-up when needed), use [../ai/add-function.md](../ai/add-function.md).
 - **New YAML keyword / syntax** → `utils/parsing.py` + validation.
 - **New user-facing method on a file** → `File` in `trspecfit.py`.
 - **New model composition rule** → mcp first; update `supported_models.md`; lower into `graph_ir` once stable.
