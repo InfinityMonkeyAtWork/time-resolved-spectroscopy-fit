@@ -405,8 +405,8 @@ dynamics graphs remain graph-valid but backend-out-of-scope for now.
 **Compilable in v1:**
 - All `COMPONENT_EVAL` nodes have a `function_name` that `schedule_2d`
   can map to a supported `OpKind` with verified broadcast semantics.
-  v1 list: `Gauss`, `GaussAsym`, `Lorentz`, `GLS`, `GLP`, `DS`,
-  `Offset`, `LinBack`. (Not `Voigt` -- see below.)
+  v1 list: `Gauss`, `GaussAsym`, `Lorentz`, `Voigt`, `GLS`, `GLP`,
+  `DS`, `Offset`, `LinBack`.
   Offset and LinBack are `COMPONENT_EVAL`, not `SPECTRUM_FED_OP` --
   they do not consume the accumulated spectrum (see section 4).
 - `SPECTRUM_FED_OP` nodes: `Shirley` only (the sole function that
@@ -420,18 +420,10 @@ dynamics graphs remain graph-valid but backend-out-of-scope for now.
   per-substep ``dyn_sub_time_axes`` / ``dyn_sub_masks`` schedule arrays.
 - `graph.domain == ENERGY_TIME_2D` (has both energy and time axes)
 
-**Voigt exclusion:** `Voigt` (energy.py:259-260) normalizes with
-`np.max(voigt)`, which takes a global max. When broadcasting over
-`(n_time, n_energy)`, this would take the max over the entire 2D array
-instead of per-time-slice. Either the function needs a per-slice fix or
-it stays in the interpreter. v1 excludes it; can be added once the
-function is patched to `max(axis=-1, keepdims=True)`.
-
 **Falls back to interpreter when `can_lower_2d` returns False:**
 - 1D-only models (domain != ENERGY_TIME_2D; future `can_lower_1d` would
   target `ENERGY_1D`, not `TIME_1D`, in the current roadmap)
 - Non-arithmetic expressions
-- Voigt peaks (until broadcast-safe)
 - Convolution shapes outside the resolved-trace contract encoded in
   ``_is_lowerable_convolution_2d`` (e.g. spectrum-level ``comp_type="conv"``,
   non-time kernels)
@@ -959,12 +951,12 @@ Implemented behavior:
 
 | Feature | v1 compiler | Graph representable | Notes |
 |---|---|---|---|
-| Additive peaks (Gauss, GLP, GLS, DS, etc.) | Yes (excl. Voigt) | Yes | Core use case |
+| Additive peaks (Gauss, GLP, GLS, DS, Voigt, etc.) | Yes | Yes | Core use case |
 | Offset, LinBack | Yes | Yes | Reclassified as COMPONENT_EVAL (no spectrum dep) |
 | Shirley | Yes | Yes | SPECTRUM_FED_OP using last-axis cumulative sum |
 | Arithmetic expressions | Yes | Yes | Compiled to RPN |
 | Time-dependent params (Dynamics) | Yes | Yes | Dynamics subgraph compiled |
-| Voigt | No (broadcast issue) | Yes | Needs per-slice max fix |
+| Voigt | Yes | Yes | Broadcast-safe on the current evaluator path |
 | Convolution components | Yes (Phase 6.3) | Yes (CONVOLUTION node) | Resolved-trace time-domain IRF; gated by ``_is_lowerable_convolution_2d`` |
 | Profile-varying params | Yes (Phase 6.2) | Yes (PROFILE_* nodes) | 1D and 2D backends |
 | Subcycle dynamics | Yes (Phase 6.4) | Yes (SUBCYCLE_* nodes) | Compiled into per-substep ``dyn_sub_time_axes`` / ``dyn_sub_masks`` |
