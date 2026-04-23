@@ -1,5 +1,7 @@
 # Execution Plan: Lowered Evaluator
 
+> Implementation history (Phases 1-6): [archive/lowered_evaluator_implementation.md](archive/lowered_evaluator_implementation.md).
+
 ## Motivation
 
 A 2D fit (400 energy x 440 time, 4 free params, 556 optimizer iterations)
@@ -1040,7 +1042,8 @@ in its component's function.
 
 This document is the long-lived design/spec for the lowered evaluator.
 
-- Implementation status, completed phases, and active follow-up work live in
-  `PLAN.md` at the repo root.
+- The completed implementation history (all phases of the GIR / lowered
+  evaluator rollout) is archived in
+  [archive/lowered_evaluator_implementation.md](archive/lowered_evaluator_implementation.md).
 - The closed backend-decision benchmark write-up lives in
   [archive/numba_vs_jax.md](archive/numba_vs_jax.md).

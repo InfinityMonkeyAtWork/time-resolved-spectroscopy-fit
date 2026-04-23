@@ -1367,7 +1367,7 @@ class Component:
         # Captures: (function_name)(_NN_param_name)
         pattern = r"\b([A-Za-z_][A-Za-z0-9_]*?)(_\d{2,}_[A-Za-z_][A-Za-z0-9_]*)\b"
 
-        def replace_with_prefix(match: re.Match[str]) -> str:
+        def _replace_with_prefix(match: re.Match[str]) -> str:
             func_name = match.group(1)  # e.g., "expFun" or "GLP"
             rest = match.group(2)  # e.g., "_01_tau"
             full_match = match.group(0)  # e.g., "expFun_01_tau"
@@ -1387,7 +1387,7 @@ class Component:
             # Unknown function - leave unchanged and let lmfit error naturally
             return full_match
 
-        return re.sub(pattern, replace_with_prefix, expr)
+        return re.sub(pattern, _replace_with_prefix, expr)
 
     #
     def add_pars(self, par_info_dict: dict[str, list]) -> None:

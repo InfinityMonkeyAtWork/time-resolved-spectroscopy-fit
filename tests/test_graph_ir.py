@@ -748,7 +748,7 @@ class TestProfileNodes:
 
     #
     def test_profile_triggers_can_lower_2d_false(self):
-        """Models with profile nodes are not lowerable in v1."""
+        """Energy+profile models (no time axis) are rejected by can_lower_2d."""
 
         _file, model = _make_profile_model(
             ["single_gauss"], "Gauss_01_A", ["profile_pExpDecay"]
@@ -984,7 +984,7 @@ class TestSubcycleNodes:
 
     #
     def test_subcycle_is_lowerable_2d(self):
-        """Phase 6.4: subcycle dynamics are lowerable on the 2D backend."""
+        """Subcycle dynamics are lowerable on the 2D backend."""
 
         _file, model = _make_subcycle_model()
         graph = build_graph(model)
@@ -1406,7 +1406,7 @@ class TestDynamicsConvolution:
 
     #
     def test_irf_dynamics_lowerable_in_2d(self):
-        """Time-domain IRF dynamics are lowerable as of Phase 6.3.
+        """Time-domain IRF dynamics are lowerable on the 2D backend.
 
         The CONVOLUTION node carries ``package == "time"``, a registered
         kernel function, and a populated ``kernel_time`` array, so
@@ -1438,13 +1438,13 @@ class TestDynamicsConvolution:
     def test_conv_without_ppt_chain_not_lowerable(self):
         """Structural gate: conv must wrap a PARAM_PLUS_TRACE to be lowered.
 
-        Phase 6.3 supports resolved-trace convolution only.  Other
-        topologies (spectrum-level ``comp_type="conv"`` components
-        receiving ``ADDEND`` from ``peak_sum``, externally produced
-        graphs with unusual conv wiring) must fall back cleanly rather
-        than pass ``can_lower_2d`` and then fail inside the scheduler.
-        Simulated here by rerouting the IRF conv's ``TRACE_INPUT`` to an
-        ``OPT_PARAM`` source.
+        The 2D lowering backend supports resolved-trace convolution
+        only.  Other topologies (spectrum-level ``comp_type="conv"``
+        components receiving ``ADDEND`` from ``peak_sum``, externally
+        produced graphs with unusual conv wiring) must fall back
+        cleanly rather than pass ``can_lower_2d`` and then fail inside
+        the scheduler.  Simulated here by rerouting the IRF conv's
+        ``TRACE_INPUT`` to an ``OPT_PARAM`` source.
         """
 
         from trspecfit.graph_ir import EdgeKind
@@ -1523,7 +1523,7 @@ class TestDynamicsConvolution:
     def test_kernel_time_populated_on_dynamics_conv(self):
         """Dynamics CONVOLUTION nodes carry the kernel time axis in arrays.
 
-        Phase 6.3 contract: lowered time-domain convolution requires
+        Lowering contract: lowered time-domain convolution requires
         ``node.arrays["kernel_time"]`` to be present at graph-build time so
         the scheduler can freeze kernel support without re-deriving it from
         MCP helpers.  Mirrors the top-level handling for conv components.
@@ -1726,7 +1726,7 @@ class TestProfileCollapsing:
 
 
 # ===================================================================== #
-# Phase 2: Expression compiler tests                                     #
+# Expression compiler tests                                              #
 # ===================================================================== #
 
 
@@ -1872,7 +1872,7 @@ class TestCompileExprSymbolic:
 
 
 # ===================================================================== #
-# Phase 2: schedule_2d structural validation tests                       #
+# schedule_2d structural validation tests                                #
 # ===================================================================== #
 
 
@@ -2112,8 +2112,8 @@ class TestSchedule2DSimple:
 class TestSchedule2DExpressions:
     """Test schedule_2d with energy_expression + MonoExpPos on GLP_01_A.
 
-    Key phase-2 interaction: expression must read the resolved
-    time-dependent parameter, not the base scalar.
+    Key interaction: expression must read the resolved time-dependent
+    parameter, not the base scalar.
     """
 
     #
@@ -2381,12 +2381,12 @@ class TestSchedule2DExpressionOnly:
 
 #
 #
-class TestExprCompilerVsAsteval:
+class TestExprCompilerParity:
     """Compare compiled RPN evaluation against asteval as external oracle.
 
-    Verifies that the custom AST-to-RPN path in compile_expr_symbolic +
-    _eval_expr_program_init produces the same results as lmfit's
-    expression engine.
+    Verifies that the custom AST-to-RPN path (``compile_expr_symbolic``
+    -> ``_bind_expr_to_rows`` -> ``eval_expr_program``) produces the same
+    results as asteval for arithmetic expressions.
     """
 
     _CASES = [
@@ -2418,9 +2418,9 @@ class TestExprCompilerVsAsteval:
 
         from asteval import Interpreter as AstevalInterpreter
 
+        from trspecfit.eval_2d import eval_expr_program
         from trspecfit.graph_ir import (
             _bind_expr_to_rows,
-            _eval_expr_program_init,
             compile_expr_symbolic,
         )
 
@@ -2442,7 +2442,7 @@ class TestExprCompilerVsAsteval:
             traces[i, :] = val
 
         program = _bind_expr_to_rows(symbolic, name_to_row)
-        result = _eval_expr_program_init(program, traces, n_time)
+        result = eval_expr_program(program, traces)
 
         # All time steps should match the scalar asteval result
         assert np.allclose(result, expected, rtol=1e-12), (
@@ -2681,8 +2681,9 @@ class TestExprBindingUsesEdges:
         )
         assert can_lower_2d(g)
 
-        # This used to crash with KeyError because the scheduler reparsed
-        # expr_string instead of using EXPR_REF edges.
+        # Scheduler must resolve EXPR_REF edges rather than reparsing
+        # expr_string, so it can build a plan for an expression that
+        # references a resolved (time-varying) row.
         plan = schedule_2d(g)
         assert plan.n_expressions == 1
 
@@ -2695,11 +2696,11 @@ class TestExprBindingUsesEdges:
 #
 #
 class TestCanLower2DChecksDynamics:
-    """Regression: can_lower_2d must reject unknown dynamics functions.
+    """Regression: ``can_lower_2d`` must reject unknown dynamics functions.
 
-    Previously, can_lower_2d only checked component functions but not
-    DYNAMICS_TRACE.function_name.  A graph with an unsupported dynamics
-    function would pass can_lower_2d and then crash in schedule_2d.
+    It has to check ``DYNAMICS_TRACE.function_name`` in addition to
+    component functions; otherwise a graph with an unsupported dynamics
+    function would pass the gate and then crash in ``schedule_2d``.
     """
 
     #
@@ -2791,7 +2792,6 @@ class TestCanLower2DChecksDynamics:
             node_by_name={n.name: n.id for n in nodes},
         )
 
-        # Previously returned True; now must return False
         assert not can_lower_2d(g)
 
 
@@ -2920,7 +2920,6 @@ class TestNonDenseNodeIds:
         )
         assert can_lower_2d(g)
 
-        # Previously crashed with IndexError
         plan = schedule_2d(g)
 
         assert plan.n_dyn_groups == 1

@@ -663,9 +663,6 @@ class TestParConstruct:
     def test_string_vary_mapped_to_bool(self):
         """par_construct must call _vary_to_bool so 'project'/'file'/'static'
         become True/True/False on Parameter.vary, not raw strings.
-
-        Previously par_construct passed vary through as-is to lmfit.add(),
-        yielding Parameter.vary == 'project' instead of True.
         """
 
         from trspecfit.utils.lmfit import par_construct

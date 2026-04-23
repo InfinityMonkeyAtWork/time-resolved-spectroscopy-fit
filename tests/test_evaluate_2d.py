@@ -661,7 +661,7 @@ class TestProfileModels:
 
 
 # ---------------------------------------------------------------------------
-# Resolved-trace convolution (IRF) -- Phase 6.3
+# Resolved-trace convolution (IRF)
 # ---------------------------------------------------------------------------
 
 
@@ -798,7 +798,7 @@ class TestDynamicsConvolution:
 
 
 # ---------------------------------------------------------------------------
-# Subcycle dynamics -- Phase 6.4
+# Subcycle dynamics
 # ---------------------------------------------------------------------------
 
 
@@ -921,9 +921,8 @@ class TestSubcycleDynamics:
     def test_mixed_irf_and_subcycle_parity(self):
         """Global IRF on one par + subcycle dynamics on another: both lower.
 
-        Confirms the Phase 6.4 allowance that a resolved-trace IRF
-        (``subcycle=0`` convolution path from Phase 6.3) coexists with
-        subcycle-aware dynamics in the same model.
+        Confirms that a resolved-trace IRF (``subcycle=0`` convolution
+        path) coexists with subcycle-aware dynamics in the same model.
         """
 
         project = Project(path="tests")

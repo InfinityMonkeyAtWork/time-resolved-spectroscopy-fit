@@ -327,7 +327,7 @@ def evaluate_2d(plan: ScheduledPlan2D, theta: np.ndarray) -> np.ndarray:
         elif kind == 1:  # expression
             target = int(plan.expr_target_rows[idx])
             traces[target, :] = eval_expr_program(plan.expr_programs[idx], traces)
-        else:  # kind == 2: resolved-trace convolution (Phase 6.3)
+        else:  # kind == 2: resolved-trace convolution
             target = int(plan.conv_target_rows[idx])
             func_id = int(plan.conv_func_ids[idx])
             kernel_func, _k_par = CONV_KERNEL_DISPATCH[func_id]

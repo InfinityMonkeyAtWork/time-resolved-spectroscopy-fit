@@ -187,7 +187,7 @@ class TestGIRDispatch:
 
     #
     def test_fit_2d_uses_gir_for_irf(self):
-        """Phase 6.3: 2D IRF models no longer fall back to MCP."""
+        """2D IRF models are lowered by the GIR backend."""
 
         project = _make_project()
         file, model = _make_2d_model(
@@ -463,7 +463,7 @@ class TestGIRvsInterpreter:
 
     #
     def test_residual_same_gir_vs_mcp_irf(self):
-        """Phase 6.3: residual_fun parity for IRF / CONVOLUTION dynamics."""
+        """residual_fun parity for IRF / CONVOLUTION dynamics."""
 
         project = _make_project()
         file, model = _make_2d_model(
@@ -534,7 +534,7 @@ class TestGIRvsInterpreter:
 
     #
     def test_subcycle_residual_gir_vs_mcp(self):
-        """Subcycle dynamics residual matches between GIR and MCP (Phase 6.4)."""
+        """Subcycle dynamics residual matches between GIR and MCP."""
 
         project = _make_project()
         file, model = _make_2d_model(

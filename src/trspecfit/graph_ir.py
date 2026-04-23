@@ -171,7 +171,6 @@ _FUNCTION_NAME_TO_PROFILE_FUNC: dict[str, ProfileFuncKind] = {
 class ConvKernelKind(IntEnum):
     """Registry IDs for convolution kernel functions.
 
-    Phase 6.3 covers resolved-trace IRF convolution on the time axis.
     Only kernel functions listed here can be lowered; other kernels
     (or non-time packages) fall back to MCP.
     """
@@ -477,7 +476,7 @@ class ScheduledPlan2D:
     dyn_sub_func_id: np.ndarray  # (n_substeps,) int
     dyn_sub_param_rows: np.ndarray  # (n_substeps, max_dyn_params) int, -1 padded
     dyn_sub_n_params: np.ndarray  # (n_substeps,) int
-    # Per-substep subcycle schedule data (Phase 6.4).  SUBCYCLE_REMAP /
+    # Per-substep subcycle schedule data.  SUBCYCLE_REMAP /
     # SUBCYCLE_MASK graph nodes are compiled away here: non-subcycle
     # substeps get ``time`` and ``ones`` defaults, subcycle substeps get
     # ``time_norm`` and ``time_n_sub`` copies.  Evaluator applies them as
@@ -502,7 +501,7 @@ class ScheduledPlan2D:
     resolution_kinds: np.ndarray  # (n_dyn_groups + n_expressions + n_conv_steps,) int8
     resolution_indices: np.ndarray  # (n_dyn_groups + n_expressions + n_conv_steps,) int
 
-    # --- Resolved-trace convolution program (Phase 6.3) ---
+    # --- Resolved-trace convolution program ---
     # Each conv step rewrites a trace row in-place after its PARAM_PLUS_TRACE
     # is fully resolved.  Chained CONVOLUTION nodes emit multiple steps
     # targeting the same row, executed in order.  Kernel values are
@@ -729,6 +728,8 @@ class _GraphBuilder:
     def add_edge(
         self, source: int, target: int, kind: EdgeKind, *, position: int | None = None
     ) -> None:
+        """Append an edge connecting source -> target with the given kind."""
+
         self.edges.append(
             GraphEdge(source=source, target=target, kind=kind, position=position)
         )
@@ -1482,11 +1483,11 @@ _NON_LOWERABLE_NODE_KINDS_BASE: frozenset[NodeKind] = frozenset(
     }
 )
 
-# 2D backend: profiles (Phase 6.2b), resolved-trace time-domain
-# convolution (Phase 6.3), and subcycle dynamics (Phase 6.4) are now
-# compilable.  Convolution lowerability is additionally gated per-node by
-# ``_is_lowerable_convolution_2d``.  Subcycle substeps are compiled away
-# into dyn_sub_time_axes / dyn_sub_masks schedule arrays.
+# 2D backend: profiles, resolved-trace time-domain convolution, and
+# subcycle dynamics are compilable.  Convolution lowerability is
+# additionally gated per-node by ``_is_lowerable_convolution_2d``.
+# Subcycle substeps are compiled away into dyn_sub_time_axes /
+# dyn_sub_masks schedule arrays.
 _NON_LOWERABLE_2D_NODE_KINDS: frozenset[NodeKind] = (
     _NON_LOWERABLE_NODE_KINDS_BASE
     - frozenset(
@@ -1505,7 +1506,7 @@ _NON_LOWERABLE_2D_NODE_KINDS: frozenset[NodeKind] = (
 def _is_lowerable_convolution_2d(node: GraphNode, graph: GraphIR) -> bool:
     """Return True if a CONVOLUTION node can be lowered by the 2D backend.
 
-    Phase 6.3 contract -- all of:
+    Lowering contract -- all of:
 
     1. Time-domain kernel (``package == "time"``) with a registered
        kernel function and a ``kernel_time`` array populated at
@@ -1552,7 +1553,7 @@ def _is_lowerable_convolution_2d(node: GraphNode, graph: GraphIR) -> bool:
 
 #
 def _is_lowerable_subcycle_2d(node: GraphNode, graph: GraphIR) -> bool:
-    """Return True if a SUBCYCLE_REMAP / MASK node meets the Phase 6.4 contract.
+    """Return True if a SUBCYCLE_REMAP / MASK node meets the lowering contract.
 
     The scheduler replaces per-substep ``graph.time`` / all-ones defaults
     with the payload carried by these nodes; once ``can_lower_2d``
@@ -1671,8 +1672,8 @@ def can_lower_2d(graph: GraphIR) -> bool:
 # Node kinds that are never valid in 1D energy models.  1D models have
 # no time axis, so DYNAMICS_TRACE / PARAM_PLUS_TRACE should not appear.
 # Start from the 2D blocklist so future unsupported node kinds propagate
-# automatically, then carve out the Phase 6.2 profile nodes that 1D now
-# lowers explicitly.
+# automatically, then carve out the profile nodes that 1D lowers
+# explicitly.
 _NON_LOWERABLE_1D_NODE_KINDS: frozenset[NodeKind] = (
     _NON_LOWERABLE_NODE_KINDS_BASE
     - frozenset({NodeKind.PROFILE_SAMPLE, NodeKind.PROFILE_AVERAGE})
@@ -1762,7 +1763,7 @@ def _is_arithmetic_expression(expr_string: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Symbolic expression compiler (Phase 2.1)
+# Symbolic expression compiler
 # ---------------------------------------------------------------------------
 
 
@@ -1915,7 +1916,7 @@ def _bind_expr_to_rows(
 
 
 # ---------------------------------------------------------------------------
-# schedule_2d (Phase 2.2)
+# schedule_2d
 # ---------------------------------------------------------------------------
 
 
@@ -2116,8 +2117,8 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     sub_param_row_lists: list[list[int]] = []
     sub_ppt_row: list[int] = []  # which PPT row this trace targets
     sub_base_row: list[int] = []
-    # Per-substep subcycle arrays (Phase 6.4).  ``None`` marks "no
-    # subcycle" (use defaults: ``graph.time`` axis, all-ones mask).
+    # Per-substep subcycle arrays.  ``None`` marks "no subcycle"
+    # (use defaults: ``graph.time`` axis, all-ones mask).
     sub_time_axis: list[np.ndarray | None] = []
     sub_mask: list[np.ndarray | None] = []
 
@@ -2348,8 +2349,8 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
             gid = _ppt_to_group[_dyn_id_to_ppt[nid]]
             _last_dyn_in_group[gid] = nid
 
-    # Compile CONVOLUTION nodes into a conv program (Phase 6.3).  Walk
-    # topo order so chained conv steps stay in the right sequence and the
+    # Compile CONVOLUTION nodes into a conv program.  Walk topo order
+    # so chained conv steps stay in the right sequence and the
     # kind=2 resolution entries are emitted after the dyn/expr step that
     # populates the target PARAM_PLUS_TRACE row.
     conv_nodes_topo: list[GraphNode] = [
@@ -2866,6 +2867,7 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     _CONV_KERNEL_DISPATCH: dict[int, Callable[..., Any]] = {
         int(ConvKernelKind.GAUSSCONV): fcts_time.gaussCONV,
     }
+    from trspecfit.eval_2d import eval_expr_program
     from trspecfit.utils.arrays import my_conv
 
     # Dynamics groups, expressions, and resolved-trace convolutions are
@@ -2891,9 +2893,10 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         elif kind == 1:  # expression
             target_row = int(expr_target_rows[idx])
             program = expr_programs[idx]
-            result = _eval_expr_program_init(program, param_traces_init, n_time)
-            param_traces_init[target_row, :] = result
-        else:  # kind == 2: resolved-trace convolution (Phase 6.3)
+            param_traces_init[target_row, :] = eval_expr_program(
+                program, param_traces_init
+            )
+        else:  # kind == 2: resolved-trace convolution
             target_row = int(conv_target_rows[idx])
             kernel_func = _CONV_KERNEL_DISPATCH[int(conv_func_ids[idx])]
             p_start = int(conv_param_indptr[idx])
@@ -3031,25 +3034,8 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     )
 
 
-#
-def _eval_expr_program_init(
-    program: ExprProgram,
-    traces: np.ndarray,
-    n_time: int,
-) -> np.ndarray:
-    """Evaluate an RPN ExprProgram against the trace matrix.
-
-    Thin wrapper around :func:`trspecfit.eval_2d.eval_expr_program`
-    kept for backward compatibility in ``schedule_2d`` init.
-    """
-
-    from trspecfit.eval_2d import eval_expr_program
-
-    return eval_expr_program(program, traces)
-
-
 # ---------------------------------------------------------------------------
-# schedule_1d (Phase 6.1)
+# schedule_1d
 # ---------------------------------------------------------------------------
 
 
