@@ -16,6 +16,7 @@ from ruamel.yaml.error import YAMLError
 from trspecfit.config.functions import (
     all_functions,
     background_functions,
+    convolution_functions,
     energy_functions,
     get_function_parameters,
     numbering_exceptions,
@@ -147,6 +148,8 @@ def validate_model_components(
     model_info_dict: dict[str, dict[str, dict[str, Any]]],
     model_info: list[str],
     model_yaml_path: Path,
+    *,
+    is_dynamics: bool = False,
 ) -> None:
     """
     Validate model components and parameters for common errors:
@@ -159,6 +162,7 @@ def validate_model_components(
       - Invalid 'vary' flag (must be boolean)
       - Invalid bounds (min > max)
       - Values outside bounds
+      - Convolution kernels outside Dynamics/time models
 
     Parameters
     ----------
@@ -169,6 +173,9 @@ def validate_model_components(
         List of model names to validate
     model_yaml_path : Path
         Path to YAML file being validated (for error messages)
+    is_dynamics : bool, default=False
+        Whether the loaded model is a Dynamics model. Convolution
+        kernels are only supported in Dynamics/time models.
 
     Raises
     ------
@@ -177,6 +184,7 @@ def validate_model_components(
     """
 
     available_functions = all_functions()
+    conv_functions = set(convolution_functions())
     example_dir = Path(__file__).parent.parent.parent / "examples"
 
     # Only validate models that are being loaded
@@ -197,6 +205,18 @@ def validate_model_components(
                     f"'{model_name}' in {model_yaml_path}\n"
                     f"Available components: {sorted(available_functions)}\n"
                     f"Check for typos in component name."
+                )
+
+            if not is_dynamics and base_comp_name in conv_functions:
+                raise ModelValidationError(
+                    f"Component '{comp_name}' in model '{model_name}' is a "
+                    "convolution function.\n"
+                    "Convolution kernels are only supported in "
+                    "Dynamics/time models, typically for IRF broadening of "
+                    "time-dependent traces.\n"
+                    "Top-level energy-model convolution is not supported.\n"
+                    f"Move '{comp_name}' into a Dynamics model in "
+                    f"{model_yaml_path}"
                 )
 
             # Check 2: Parameters should be a dictionary
@@ -422,7 +442,12 @@ def load_and_number_yaml_components(
                 )
 
             # Validate the loaded model structure
-            validate_model_components(model_info_dict, model_info, model_yaml_path)
+            validate_model_components(
+                model_info_dict,
+                model_info,
+                model_yaml_path,
+                is_dynamics=is_dynamics,
+            )
 
             # For energy models, numbering is already complete from construct_yaml_map
             return model_info_dict

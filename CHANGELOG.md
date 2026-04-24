@@ -4,8 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com),
 and this project adheres to [Semantic Versioning](https://semver.org/).
-This file is maintained using the `/changelog` skill in
-[`.claude/skills/changelog/`](.claude/skills/changelog/SKILL.md).
+This file is maintained using the shared changelog workflow in
+[`docs/ai/changelog.md`](docs/ai/changelog.md).
+
+## [0.8.0] - 2026-04-20
+
+### Added
+
+- **Compiled fit fast path**: 1D and 2D fits now run through a graph-IR (GIR) backend that lowers the model into a flat scheduled plan executed by a compiled evaluator. All supported functions and model compositions (see [`docs/design/supported_models.md`](docs/design/supported_models.md)) are lowerable. Enabled by default (`spec_fun_str="fit_model_gir"`), with automatic fallback to the interpreter (`fit_model_mcp`) for any model that cannot be lowered. A `fit_model_compare` mode runs both paths and asserts parity for validation.
+- **`Model.visualize()`**: render the model graph as inline SVG (`rendering="graphviz"`) or raw DOT (`rendering="string"`). Per-sample profile nodes collapse into single representatives by default (`collapse_profiles=True`). Falls back gracefully if Graphviz is not installed.
+- Static component caching: time-independent components are evaluated once and reused across the fit hot loop, reducing redundant work.
+
+### Changed
+
+- **Breaking:** convolution functions outside the Dynamics/time layer are now rejected at model-load time with a clear error. Previously this only emitted a warning. IRF-style convolutions belong in the dynamics model.
+- Documentation restructured: shared agent workflows and code-review checklists live under `docs/ai/`, a new `docs/design/repo_architecture.md` documents the module map, and `docs/design/supported_models.md` is the canonical reference for supported model combinations and expressions.
+
+## [0.7.5] - 2026-04-08
+
+### Changed
+
+- `Project` now exposes every `PlotConfig` field as an attribute, so `project.yaml` can fully configure plotting (limits, colors, linestyles, waterfall, etc.) without touching code. `PlotConfig.from_project()` iterates dataclass fields automatically, so new fields are picked up without changes.
+- `Model.plot_1d`, `Model.plot_2d`, `Component.plot`, and `Simulator.plot_comparison` accept a `config=` argument to replace the inherited `PlotConfig` for a single call, plus per-call keyword overrides that are merged on top of the active config.
 
 ## [0.7.4] - 2026-04-02
 

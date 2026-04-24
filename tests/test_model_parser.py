@@ -607,6 +607,44 @@ class TestYAMLValidationErrors:
             )
 
     #
+    def test_energy_convolution_rejected(self):
+        """Top-level energy-model convolution should fail validation early."""
+
+        project = Project(path="tests")
+        file = File(parent_project=project)
+        with pytest.raises(
+            ModelValidationError,
+            match="Top-level energy-model convolution is not supported",
+        ):
+            file.load_model(
+                model_yaml="models/file_energy.yaml",
+                model_info="energy_convolution_unsupported",
+            )
+
+    #
+    def test_unknown_function_name_raises(self):
+        """Unknown component name (typo: GLLP) should fail with a clear error.
+
+        The message must name the offending token *and* enumerate the valid
+        components -- both are load-bearing for the user's ability to find the
+        typo quickly, so pin both in the assertion.
+        """
+
+        project = Project(path="tests")
+        file = File(parent_project=project)
+        with pytest.raises(ModelValidationError) as exc_info:
+            file.load_model(
+                model_yaml="models/file_energy.yaml",
+                model_info="unknown_function_name",
+            )
+        msg = str(exc_info.value)
+        assert "Unknown component type 'GLLP'" in msg
+        assert "Available components:" in msg
+        # At least one real energy component should be enumerated.
+        assert "GLP" in msg
+        assert "Gauss" in msg
+
+    #
     def test_conv_last_raises(self):
         """Convolution as last component should fail ordering validation."""
 
@@ -648,9 +686,6 @@ class TestParConstruct:
     def test_string_vary_mapped_to_bool(self):
         """par_construct must call _vary_to_bool so 'project'/'file'/'static'
         become True/True/False on Parameter.vary, not raw strings.
-
-        Previously par_construct passed vary through as-is to lmfit.add(),
-        yielding Parameter.vary == 'project' instead of True.
         """
 
         from trspecfit.utils.lmfit import par_construct

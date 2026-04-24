@@ -13,6 +13,10 @@ TARGET_FILES = [
     SRC / "mcp.py",
     SRC / "fitlib.py",
     SRC / "simulator.py",
+    SRC / "spectra.py",
+    SRC / "graph_ir.py",
+    SRC / "eval_1d.py",
+    SRC / "eval_2d.py",
     *sorted(SRC.glob("functions/*.py")),
 ]
 

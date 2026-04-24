@@ -353,6 +353,21 @@ class TestVoigt:
         assert voigt_fwhm > gauss_fwhm
         assert voigt_fwhm > W
 
+    #
+    def test_2d_broadcast_normalizes_per_slice(self):
+        """Broadcasted 2D Voigt keeps peak height A for each time slice."""
+
+        x = make_energy_axis()[np.newaxis, :]
+        A = np.array([1.5, 3.0])[:, np.newaxis]
+        x0 = np.array([0.0, 0.0])[:, np.newaxis]
+        SD = np.array([0.8, 1.4])[:, np.newaxis]
+        W = np.array([1.0, 2.0])[:, np.newaxis]
+
+        result = Voigt(x, A=A, x0=x0, SD=SD, W=W)
+
+        assert result.shape == (2, x.shape[-1])
+        np.testing.assert_allclose(np.max(result, axis=-1), A[:, 0], rtol=1e-3)
+
 
 #
 #

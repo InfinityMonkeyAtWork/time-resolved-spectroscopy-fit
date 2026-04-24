@@ -51,6 +51,61 @@ MonoExpPosIRF:
         t0: [0, False, 0, 1]
         y0: [0, False, 0, 1]
 
+MonoExpPosLorentzIRF:
+    lorentzCONV:
+        W: [0.5, True, 0.01, 5]
+    expFun:
+        A: [1, True, 0, 5]
+        tau: [2.5, True, 1, 10]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]
+
+MonoExpPosVoigtIRF:
+    voigtCONV:
+        SD: [0.1, True, 0.01, 1]
+        W: [0.1, True, 0.01, 1]
+    expFun:
+        A: [1, True, 0, 5]
+        tau: [2.5, True, 1, 10]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]
+
+MonoExpPosExpSymIRF:
+    expSymCONV:
+        tau: [1.0, True, 0.1, 10]
+    expFun:
+        A: [1, True, 0, 5]
+        tau: [2.5, True, 1, 10]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]
+
+MonoExpPosExpDecayIRF:
+    expDecayCONV:
+        tau: [1.0, True, 0.1, 10]
+    expFun:
+        A: [1, True, 0, 5]
+        tau: [2.5, True, 1, 10]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]
+
+MonoExpPosExpRiseIRF:
+    expRiseCONV:
+        tau: [1.0, True, 0.1, 10]
+    expFun:
+        A: [1, True, 0, 5]
+        tau: [2.5, True, 1, 10]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]
+
+MonoExpPosBoxIRF:
+    boxCONV:
+        width: [2.0, True, 0.1, 20]
+    expFun:
+        A: [1, True, 0, 5]
+        tau: [2.5, True, 1, 10]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]
+
 # Empty subcycle placeholder (applies to all times in multi-cycle)
 ModelNone:
     none: {}
@@ -63,6 +118,20 @@ MonoExpPosExpr:
         A: ["-expFun_01_A"]
         tau: ["expFun_01_tau"]
         t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]
+
+# Bi-exponential: two expFun, second shares t0 with first via expression.
+# Single-cycle, no convolution -- fully lowerable.
+BiExpSharedT0:
+    expFun:
+        A: [3, True, 0, 10]
+        tau: [5, True, 1, 20]
+        t0: [0, False, 0, 1]
+        y0: [0, False, 0, 1]
+    expFun:
+        A: [-1, True, -5, 0]
+        tau: [20, True, 5, 50]
+        t0: ["expFun_01_t0"]
         y0: [0, False, 0, 1]
 
 # convolution as last component (should fail ordering validation)

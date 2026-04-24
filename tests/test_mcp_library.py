@@ -327,6 +327,28 @@ class TestMCPDynamics:
         assert t_mod.components[0].par_dict["A"] == [1, True, 0, 5]
         assert t_mod.components[0].par_dict["tau"] == [2.5, True, 1, 10]
 
+    #
+    def test_voigt_kernel_axis_uses_both_width_parameters(self):
+        """Voigt kernel support widens when Lorentzian tails dominate."""
+
+        t_mod = Model("test_voigt_irf")
+        t_mod.time = np.arange(-5, 6, 1.0)
+
+        c_irf = Component("voigtCONV", fcts_time)
+        c_irf.add_pars(
+            {
+                "SD": [0.1, True, 0.01, 1],
+                "W": [4.0, True, 0.01, 10],
+            }
+        )
+
+        t_mod.add_components([c_irf])
+
+        # Support should span the larger of 12*SD and 10*W.
+        assert c_irf.time is not None
+        assert c_irf.time[0] == pytest.approx(-40.0)
+        assert c_irf.time[-1] == pytest.approx(40.0)
+
 
 #
 #

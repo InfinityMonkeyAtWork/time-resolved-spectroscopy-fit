@@ -219,5 +219,5 @@ examples/simulatorBL931/
 /simulated_data/
 examples/**/simulated_data/
 
-# AI tools
-.codex/
+# Local Claude settings
+.claude/settings.json

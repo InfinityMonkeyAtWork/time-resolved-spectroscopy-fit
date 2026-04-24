@@ -1,38 +1,19 @@
 # Quick Start
 
-## Get running in 3 steps
+## Get running
 
-**1. Install with Jupyter notebook support**
+These steps assume you have `trspecfit[lab]` installed — see [Installation](installation.md) if not.
 
-```bash
-python -m pip install "trspecfit[lab]"
-```
-
-**2. Download the examples**
-
-The [example notebooks](examples/index.rst) and data are not included in the pip package.
-Download them from GitHub:
-
-```bash
-curl -L https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/archive/refs/heads/main.zip -o trspecfit-examples.zip
-unzip trspecfit-examples.zip "time-resolved-spectroscopy-fit-main/examples/*" -d .
-mv time-resolved-spectroscopy-fit-main/examples ./trspecfit-examples
-rm -rf time-resolved-spectroscopy-fit-main trspecfit-examples.zip
-```
-
-Or clone the full repo:
+If you followed the step-by-step install guide, you already have the repo (and the [example notebooks](examples/index.rst)) on disk. If you installed from PyPI instead, clone the repo to get the examples:
 
 ```bash
 git clone https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit.git
-mv time-resolved-spectroscopy-fit/examples ./trspecfit-examples
 ```
 
-**3. Open the first example**
-
-Start with **01** and work forward — each builds on the previous one.
+**Open the first example.** Start with **01** and work forward — each builds on the previous one.
 
 ```bash
-cd trspecfit-examples/fitting_workflows/01_basic_fitting
+cd time-resolved-spectroscopy-fit/examples/fitting_workflows/01_basic_fitting
 jupyter lab example.ipynb
 ```
 
@@ -91,9 +72,9 @@ model_name:
 
 **Available component types:**
 
-- **Peaks**: `GLP`, `Gauss`, `Lorentz`, `GLS`, `DS`
+- **Peaks**: `Gauss`, `GaussAsym`, `Lorentz`, `Voigt`, `GLP`, `GLS`, `DS`
 - **Backgrounds**: `LinBack`, `Shirley`, `Offset`
-- **Time dynamics**: `expFun`, `expRiseFun`, `SinFun`, `SinDivX`
+- **Time dynamics**: `linFun`, `expFun`, `sinFun`, `sinDivX`, `erfFun`, `sqrtFun`
 - **Convolution kernels**: `gaussCONV`, `lorentzCONV`, `expDecayCONV`, `expRiseCONV`
 - **Profile functions**: `pExpDecay`, `pLinear`, `pGauss`
 
@@ -106,7 +87,5 @@ parameter descriptions.
 - **Disallowed:** profile + dynamics on the same base parameter
   (disabled to avoid strongly correlated fits)
 
-## Next steps
-
-- [Examples](examples/index.rst) — full notebooks with real data
-- [API Reference](api/index.rst) — complete method and function documentation
+See [Supported Models](design/supported_models.md) for the full reference on
+supported model combinations, expression semantics, and edge cases.

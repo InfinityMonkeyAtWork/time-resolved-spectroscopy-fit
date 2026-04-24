@@ -32,6 +32,9 @@ from typing import Any
 
 import numpy as np
 
+from trspecfit.eval_1d import evaluate_1d
+from trspecfit.eval_2d import evaluate_2d
+from trspecfit.graph_ir import ScheduledPlan1D, ScheduledPlan2D
 from trspecfit.mcp import Model
 
 
@@ -145,6 +148,96 @@ def fit_model_mcp(
             raise RuntimeError("Model evaluation did not produce value_2d")
         return model.value_2d
     raise ValueError(f"Unsupported dim={dim}; expected 1 or 2")
+
+
+#
+def fit_model_gir(
+    x: Sequence[float] | np.ndarray,
+    par: Sequence[float] | np.ndarray,
+    plot_sum: bool,
+    *args: Any,
+) -> np.ndarray | list[np.ndarray]:
+    """Generate spectrum using the compiled GIR backend when available.
+
+    When the first element of *args* is a compiled plan the fast
+    evaluator is used.  Otherwise the call is forwarded to
+    :func:`fit_model_mcp`.
+
+    Parameters
+    ----------
+    x : array-like
+        Independent variable axis (energy or time).
+    par : array-like
+        Full parameter vector (all params, fixed + varying).
+    plot_sum : bool
+        Component return mode.  For 1D compiled plans,
+        ``plot_sum=False`` falls back to the interpreter for
+        component extraction.
+    *args
+        Either ``(plan, theta_indices, model, dim)`` for the compiled
+        path, or ``(model, dim)`` for the interpreter fallback.
+        The compiled path always carries *model* and *dim* so the
+        interpreter is available when needed (e.g. component
+        extraction).
+    """
+
+    if isinstance(args[0], (ScheduledPlan2D, ScheduledPlan1D)):
+        plan = args[0]
+        theta_indices: np.ndarray = args[1]
+        model: Model = args[2]
+        dim: int = args[3]
+
+        # 1D component extraction requires the interpreter.
+        if isinstance(plan, ScheduledPlan1D) and not plot_sum:
+            return fit_model_mcp(x, par, plot_sum, model, dim)
+
+        par_arr = np.asarray(par, dtype=np.float64)
+        theta = par_arr[theta_indices]
+        if isinstance(plan, ScheduledPlan2D):
+            return evaluate_2d(plan, theta)
+        return evaluate_1d(plan, theta)
+
+    # Non-lowerable fallback
+    return fit_model_mcp(x, par, plot_sum, *args)
+
+
+#
+def fit_model_compare(
+    x: Sequence[float] | np.ndarray,
+    par: Sequence[float] | np.ndarray,
+    plot_sum: bool,
+    *args: Any,
+) -> np.ndarray | list[np.ndarray]:
+    """Run both GIR and interpreter paths, compare results.
+
+    When the first element of *args* is a compiled plan
+    (:class:`ScheduledPlan2D` or :class:`ScheduledPlan1D`) the fast
+    path is executed and its output compared against the interpreter
+    via ``np.testing.assert_allclose``.  On fallback the interpreter
+    is called directly.
+
+    Parameters
+    ----------
+    x : array-like
+        Independent variable axis (energy or time).
+    par : array-like
+        Full parameter vector (all params, fixed + varying).
+    plot_sum : bool
+        Component return mode.
+    *args
+        ``(plan, theta_indices, model, dim)`` for the comparison path,
+        or ``(model, dim)`` for interpreter-only fallback.
+    """
+
+    if isinstance(args[0], (ScheduledPlan2D, ScheduledPlan1D)):
+        theta_indices: np.ndarray = args[1]
+        model: Model = args[2]
+        dim: int = args[3]
+        fast = fit_model_gir(x, par, plot_sum, args[0], theta_indices, model, dim)
+        slow = fit_model_mcp(x, par, plot_sum, model, dim)
+        np.testing.assert_allclose(fast, slow, rtol=1e-10, atol=1e-10)
+        return fast
+    return fit_model_mcp(x, par, plot_sum, *args)
 
 
 #
