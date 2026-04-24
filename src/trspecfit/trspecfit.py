@@ -57,7 +57,7 @@ import re
 import time
 import types
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 # TYPE_CHECKING is False at runtime so this import is skipped during execution.
@@ -71,7 +71,7 @@ import pandas as pd
 from IPython.display import display
 from ruamel.yaml import YAML
 
-from trspecfit import fitlib, mcp, spectra
+from trspecfit import fitlib, mcp
 
 # standardized plotting configuration
 from trspecfit.config.plot import PlotConfig
@@ -135,10 +135,9 @@ class Project:
           displayed or saved
         - 1: Interactive / notebook / UI mode -- show timing, fit results,
           save plots and data
-    spec_lib : module
-        Module containing spectrum fitting functions (default: spectra)
     spec_fun_str : str
-        Name of fitting function in spec_lib
+        Name of fitting function in ``trspecfit.spectra`` (e.g.
+        ``'fit_model_gir'``, ``'fit_model_mcp'``, ``'fit_model_compare'``)
     skip_first_n_spec, first_n_spec_only : int
         Slice selection for partial fitting (-1 = all slices)
 
@@ -226,18 +225,9 @@ class Project:
         self.da_fmt = "%04d"
         self.da_slices_fmt = "%06d"
         # Advanced settings
-        self.spec_lib = spectra
         self.spec_fun_str = "fit_model_gir"
         self.skip_first_n_spec = -1
         self.first_n_spec_only = -1
-
-    @property
-    def spec_fun(self) -> Callable:
-        """
-        Dynamically get the spectrum fitting function.
-        """
-
-        return cast("Callable", getattr(self.spec_lib, self.spec_fun_str))
 
     #
     def __repr__(self) -> str:
@@ -905,7 +895,6 @@ class Project:
         const: tuple[Any, ...] = (
             np.array([]),  # x — unused by fit_project_mcp
             concat_data,
-            spectra,
             "fit_project_mcp",
             0,
             [],  # no additional e_lim slicing
@@ -1592,7 +1581,6 @@ class File:
                 x=self.energy,
                 y=self.data_base,
                 fit_fun_str=self.p.spec_fun_str,
-                package=self.p.spec_lib,
                 par_init=[],
                 par_fin=mod.lmfit_pars,
                 args=(mod, 1),
@@ -2033,7 +2021,6 @@ class File:
         self.model_base.const = (
             self.energy,
             self.data_base,
-            self.p.spec_lib,
             _fun_str,
             0,
             self.e_lim,
@@ -2075,7 +2062,6 @@ class File:
             x=self.energy,
             y=self.data_base,
             fit_fun_str=self.p.spec_fun_str,
-            package=self.p.spec_lib,
             par_init=initial_guess,
             par_fin=self.model_base.result[1],
             args=self.model_base.args,
@@ -2206,12 +2192,11 @@ class File:
         # define (and create) path where spectrum fit results will be saved to
         path_spec_results = self.create_model_path(model_name)
 
-        # const = (x, data, package, fnctn string, unpack, energy limits, time limits)
+        # const = (x, data, fnctn string, unpack, energy limits, time limits)
         _fun_str = self.p.spec_fun_str
         self.model_spec.const = (
             self.energy,
             self.data_spec,
-            self.p.spec_lib,
             _fun_str,
             0,
             self.e_lim,
@@ -2257,7 +2242,6 @@ class File:
             x=self.energy,
             y=self.data_spec,
             fit_fun_str=self.p.spec_fun_str,
-            package=self.p.spec_lib,
             par_init=initial_guess,
             par_fin=self.model_spec.result[1],
             args=self.model_spec.args,
@@ -2390,11 +2374,10 @@ class File:
                 self.model_sbs.lmfit_pars, return_type="list"
             )
 
-            # const = (x, data, package, fnctn str, unpack, energy limits, time limits)
+            # const = (x, data, fnctn str, unpack, energy limits, time limits)
             self.model_sbs.const = (
                 self.energy,
                 s,
-                self.p.spec_lib,
                 _fun_str,
                 0,
                 self.e_lim,
@@ -2424,7 +2407,6 @@ class File:
                 x=self.model_sbs.const[0],
                 y=self.model_sbs.const[1],
                 fit_fun_str=self.p.spec_fun_str,
-                package=self.p.spec_lib,
                 par_init=initial_guess,
                 par_fin=result_sbs[1],
                 args=self.model_sbs.args,
@@ -2830,11 +2812,10 @@ class File:
         else:
             _args = (self.model_2d, 2)
 
-        # const [x, data, package, function string, unpack, energy limits, time limits]
+        # const [x, data, function string, unpack, energy limits, time limits]
         self.model_2d.const = (
             self.energy,
             self.data,
-            self.p.spec_lib,
             _fun_str,
             0,
             self.e_lim,

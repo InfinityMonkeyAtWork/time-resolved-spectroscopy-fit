@@ -687,7 +687,6 @@ class TestFitLimitsSlicing:
         const = (
             file.energy,
             file.data,
-            file.p.spec_lib,
             file.p.spec_fun_str,
             0,
             file.e_lim,
