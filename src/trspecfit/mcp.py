@@ -216,6 +216,25 @@ class Model:
         cls = type(self).__name__
         return f"{cls}('{self.name}', {n_comp} comp, {n_par} pars, dim={dim})"
 
+    #
+    def __getstate__(self) -> dict[str, Any]:
+        """Pickle protocol: strip back-refs and transient state.
+
+        Pickled Models are for short-lived process-boundary transfer
+        (multiprocessing, ``copy.deepcopy``), **not** for persistence.
+        ``parent_file`` (and, on Dynamics/Profile subclasses,
+        ``parent_model``) is nulled to keep pickles bounded in size —
+        otherwise the whole ``Project`` graph would be dragged in.
+        Transient fit state (``const``, ``args``) is stripped because it
+        is meant to be re-populated by the caller before the next fit.
+        """
+
+        state = self.__dict__.copy()
+        for key in ("parent_file", "parent_model", "const", "args"):
+            if key in state:
+                state[key] = None
+        return state
+
     @property
     def plot_config(self) -> PlotConfig:
         """
@@ -1238,6 +1257,30 @@ class Component:
         n = len(self.pars)
         return f"Component('{self.comp_name}', type='{self.comp_type}', {n} pars)"
 
+    #
+    def __getstate__(self) -> dict[str, Any]:
+        """Pickle protocol: strip module and back-refs.
+
+        ``package`` is a live module reference (e.g.
+        ``trspecfit.functions.energy``), which is not picklable. Replace
+        it with the dotted module name; ``__setstate__`` restores the
+        module via ``importlib.import_module``. ``parent_model`` is
+        nulled — pickled Components are detached from their parent Model.
+        """
+
+        state = self.__dict__.copy()
+        state["package"] = self.package.__name__
+        state["parent_model"] = None
+        return state
+
+    #
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Pickle protocol: restore the ``package`` module from its name."""
+
+        package_name = state.pop("package")
+        self.__dict__.update(state)
+        self.package = importlib.import_module(package_name)
+
     # [automatic] create self.fct attribute that will update if either
     # self.package or self.fct_str changes [attribute is read only]
     @property
@@ -1972,6 +2015,20 @@ class Par:
             flags.append(f"expr='{self.expr_string}'")
         extra = f" [{', '.join(flags)}]" if flags else ""
         return f"Par('{self.name}'{extra})"
+
+    #
+    def __getstate__(self) -> dict[str, Any]:
+        """Pickle protocol: null the ``parent_model`` back-reference.
+
+        Pickled ``Par`` instances are detached from their parent Model;
+        anything that relied on ``parent_model`` (e.g. expression
+        resolution that needs the full parameter set) must re-attach
+        after unpickling.
+        """
+
+        state = self.__dict__.copy()
+        state["parent_model"] = None
+        return state
 
     #
     def describe(self, detail: int = 0) -> None:

@@ -35,6 +35,7 @@ from IPython.display import display
 from lmfit.minimizer import MinimizerResult
 from numpy.typing import ArrayLike
 
+from trspecfit import spectra
 from trspecfit.config.plot import PlotConfig
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import plot as uplt
@@ -67,7 +68,6 @@ def residual_fun(
     par: Any,
     x: ArrayLike,
     data: np.ndarray,
-    package: Any,
     fit_fun_str: str,
     unpack: int = 0,
     e_lim: list[int] | None = None,
@@ -97,10 +97,9 @@ def residual_fun(
         - 1D: [n_energy] for energy-resolved fits
         - 2D: [n_time, n_energy] for time- and energy-resolved fits
 
-    package : module
-        Python module containing the fit function (typically trspecfit.spectra)
     fit_fun_str : str
-        Name of fit function within package (e.g., 'fit_model_mcp')
+        Name of fit function in ``trspecfit.spectra``
+        (e.g., ``'fit_model_mcp'``, ``'fit_model_gir'``)
     unpack : {0, 1}, default=0
         Parameter passing mode:
 
@@ -145,7 +144,7 @@ def residual_fun(
         args = ()
 
     # define the fit function
-    fit_fun = getattr(package, fit_fun_str)
+    fit_fun = getattr(spectra, fit_fun_str)
 
     # if the minimizer calling this is from the lmfit package, then
     # extract the value from their lmfit.Parameter() (dictionary)
@@ -390,7 +389,7 @@ def fit_wrapper(
     ----------
     const : tuple
         Constants for residual_fun:
-        (x, data, package, function_str, unpack, e_lim, t_lim)
+        (x, data, function_str, unpack, e_lim, t_lim)
     args : tuple
         Arguments for fit function (passed to residual_fun):
         Typically (model, dim) for MCP models
@@ -947,7 +946,7 @@ def results_to_fit_2d(
 
     const : tuple
         Constants for residual_fun:
-        (x, data, package, function_str, unpack, e_lim, t_lim)
+        (x, data, function_str, unpack, e_lim, t_lim)
         Used to evaluate fit function at each time point.
     args : tuple
         Arguments for fit function (model, dim).
@@ -977,7 +976,6 @@ def results_to_fit_2d(
     (
         x_const,
         data_const,
-        package_const,
         fit_fun_const,
         unpack_const,
         e_lim_const,
@@ -992,7 +990,6 @@ def results_to_fit_2d(
                     results[i][1].params,
                     x_const,
                     np.asarray(data_const),
-                    package_const,
                     fit_fun_const,
                     unpack=cast("int", unpack_const),
                     e_lim=cast("list[int]", e_lim_const),
@@ -1008,7 +1005,6 @@ def results_to_fit_2d(
                     results.iloc[i].values,
                     x_const,
                     np.asarray(data_const),
-                    package_const,
                     fit_fun_const,
                     unpack=cast("int", unpack_const),
                     e_lim=cast("list[int]", e_lim_const),
@@ -1037,7 +1033,6 @@ def plt_fit_res_1d(
     x: ArrayLike,
     y: ArrayLike,
     fit_fun_str: str,
-    package: Any,
     par_init: Any,
     par_fin: Any,
     args: tuple[Any, ...] | None = None,
@@ -1064,9 +1059,8 @@ def plt_fit_res_1d(
     y : array
         Y-axis data (spectrum to be fitted)
     fit_fun_str : str
-        Name of fitting function in package (e.g., 'fit_model_mcp')
-    package : module
-        Python module containing fit_fun_str (typically trspecfit.spectra)
+        Name of fitting function in ``trspecfit.spectra``
+        (e.g., ``'fit_model_mcp'``, ``'fit_model_gir'``)
     par_init : list or lmfit.Parameters
         Initial parameter guess. Can be empty list [] if show_init=False.
     par_fin : lmfit.MinimizerResult or lmfit.Parameters or list
@@ -1133,7 +1127,7 @@ def plt_fit_res_1d(
     save_path = kwargs.get("save_path", "")
 
     # Get fit function
-    fit_fun = getattr(package, fit_fun_str)
+    fit_fun = getattr(spectra, fit_fun_str)
 
     x_arr = np.asarray(x, dtype=float)
     y_arr = np.asarray(y, dtype=float)

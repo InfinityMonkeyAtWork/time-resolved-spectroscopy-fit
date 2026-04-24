@@ -369,7 +369,6 @@ class TestGIRvsInterpreter:
             par=par,
             x=file.energy,
             data=data,
-            package=spectra,
             fit_fun_str="fit_model_gir",
             args=(plan, theta_indices, model, 2),
         )
@@ -379,7 +378,6 @@ class TestGIRvsInterpreter:
             par=par,
             x=file.energy,
             data=data,
-            package=spectra,
             fit_fun_str="fit_model_mcp",
             args=(model, 2),
         )
@@ -442,7 +440,6 @@ class TestGIRvsInterpreter:
             par=par,
             x=file.energy,
             data=data,
-            package=spectra,
             fit_fun_str="fit_model_gir",
             e_lim=e_lim,
             t_lim=t_lim,
@@ -453,7 +450,6 @@ class TestGIRvsInterpreter:
             par=par,
             x=file.energy,
             data=data,
-            package=spectra,
             fit_fun_str="fit_model_mcp",
             e_lim=e_lim,
             t_lim=t_lim,
@@ -505,7 +501,6 @@ class TestGIRvsInterpreter:
             par=par,
             x=file.energy,
             data=data,
-            package=spectra,
             fit_fun_str="fit_model_gir",
             args=(plan, theta_indices, model, 2),
         )
@@ -514,7 +509,6 @@ class TestGIRvsInterpreter:
             par=par,
             x=file.energy,
             data=data,
-            package=spectra,
             fit_fun_str="fit_model_mcp",
             args=(model, 2),
         )
@@ -576,7 +570,6 @@ class TestGIRvsInterpreter:
             par=par,
             x=file.energy,
             data=data,
-            package=spectra,
             fit_fun_str="fit_model_gir",
             args=(plan, theta_indices, model, 2),
         )
@@ -584,7 +577,6 @@ class TestGIRvsInterpreter:
             par=par,
             x=file.energy,
             data=data,
-            package=spectra,
             fit_fun_str="fit_model_mcp",
             args=(model, 2),
         )
@@ -790,7 +782,6 @@ class TestGIR1DvsInterpreter:
             par=par,
             x=file.energy,
             data=data,
-            package=spectra,
             fit_fun_str="fit_model_gir",
             args=(plan, theta_indices, model, 1),
         )
@@ -800,7 +791,6 @@ class TestGIR1DvsInterpreter:
             par=par,
             x=file.energy,
             data=data,
-            package=spectra,
             fit_fun_str="fit_model_mcp",
             args=(model, 1),
         )
@@ -834,7 +824,6 @@ class TestGIR1DvsInterpreter:
             par=par,
             x=file.energy,
             data=data,
-            package=spectra,
             fit_fun_str="fit_model_gir",
             e_lim=e_lim,
             args=(plan, theta_indices, model, 1),
@@ -844,7 +833,6 @@ class TestGIR1DvsInterpreter:
             par=par,
             x=file.energy,
             data=data,
-            package=spectra,
             fit_fun_str="fit_model_mcp",
             e_lim=e_lim,
             args=(model, 1),
@@ -880,7 +868,6 @@ class TestGIR1DvsInterpreter:
             par=par,
             x=file.energy,
             data=data,
-            package=spectra,
             fit_fun_str="fit_model_gir",
             args=(plan, theta_indices, model, 1),
         )
@@ -888,7 +875,6 @@ class TestGIR1DvsInterpreter:
             par=par,
             x=file.energy,
             data=data,
-            package=spectra,
             fit_fun_str="fit_model_mcp",
             args=(model, 1),
         )
@@ -973,7 +959,6 @@ class TestGIR1DvsInterpreter:
             par=par,
             x=file.energy,
             data=data,
-            package=spectra,
             fit_fun_str="fit_model_gir",
             args=(plan, theta_indices, model, 2),
         )
@@ -981,7 +966,6 @@ class TestGIR1DvsInterpreter:
             par=par,
             x=file.energy,
             data=data,
-            package=spectra,
             fit_fun_str="fit_model_mcp",
             args=(model, 2),
         )

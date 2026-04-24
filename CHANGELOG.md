@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [Unreleased]
+
+### Added
+
+- `Model`, `Component`, and `Par` are now pickleable (and therefore deep-copyable) via `__getstate__` / `__setstate__`. This enables `copy.deepcopy(model)` and lets live models cross process boundaries, which unblocks future multiprocessing workflows and fixes latent MCMC parallelism (see `Fixed`). Pickled instances are for short-lived transfer, not persistence — parent back-references (`parent_file`, `parent_model`) and transient fit state (`const`, `args`) are nulled.
+
+### Changed
+
+- **Breaking (internal):** removed `Project.spec_lib` attribute and `Project.spec_fun` property. Fitting functions always live in `trspecfit.spectra`, so the indirection is hardcoded. Only affects code reaching into `project.spec_lib` / `project.spec_fun`; no public fit-workflow API changes.
+- `fitlib.residual_fun()` and `fitlib.plt_fit_res_1d()` no longer accept a `package` argument. The constant tuple passed to `fit_wrapper()` drops its third entry (`package`) and now has shape `(x, data, function_str, unpack, e_lim, t_lim)`.
+
+### Fixed
+
+- **MCMC `workers > 1`**: `lmfit.emcee(workers=N)` via `ulmfit.MC(workers=N)` previously failed with `TypeError: cannot pickle 'module' object` because the residual closure carried a live module reference. The pickleable-model work plus the `spec_lib` removal close both sources of the error; MCMC parallel sampling now works end-to-end.
+
 ## [0.8.0] - 2026-04-20
 
 ### Added
