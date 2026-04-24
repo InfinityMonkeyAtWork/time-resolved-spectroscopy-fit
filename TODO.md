@@ -9,6 +9,7 @@ Note: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling — make
 
 ## Performance & architecture
 
+- [ ] **Slice-by-slice parallelism**: `n_workers` kwarg on `File.fit_slice_by_slice()`, `ProcessPoolExecutor` dispatch with tqdm progress, Agg backend in workers. Precondition (pickleable Model) shipped.
 - [ ] **Project-level fit backend**: `Project.fit_2d()` already supports `Project`/`File`/`Static` vary levels, but it currently evaluates through `fit_project_mcp()` and `Model.create_value_2d()` rather than the GIR scheduler/evaluator path. Decide whether to lower the multi-file residual to GIR or explicitly prefer project-managed per-file loops when we want maximum graph-IR speedups.
 - [ ] **JAX backend / Jacobian follow-on**: if we revisit a JAX evaluator, analytic Jacobians, or optimizer replacement, use [docs/design/jax-planning.md](docs/design/jax-planning.md) as the roadmap for scope, sequencing, and open technical constraints.
 - [ ] **Evaluation order correctness**: component eval order depends on coincidental list position; make it explicit. One option: build a directed acyclic graph (DAG) at model construction and topological-sort.

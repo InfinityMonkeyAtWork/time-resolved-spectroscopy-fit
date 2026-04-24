@@ -844,5 +844,137 @@ class TestMCPProfile:
         assert not np.allclose(val_early, val_late)
 
 
+#
+#
+class TestMCPPickling:
+    """Pickle / deepcopy contract for Model, Component, and Par.
+
+    These exist to (a) enable multiprocessing dispatch of live models
+    (e.g. lmfit.emcee ``workers > 1``, future slice-by-slice parallelism)
+    and (b) make ``copy.deepcopy`` work for safe comparison workflows.
+    Pickled instances are for short-lived process-boundary transfer,
+    NOT for persistence — parent back-refs are nulled.
+    """
+
+    #
+    def _make_fittable_file(self):
+        """File with a 1D energy model loaded and data populated."""
+
+        from trspecfit import File, Project
+
+        project = Project(path="tests")
+        project.show_output = 0
+        file = File(parent_project=project, energy=np.linspace(80, 90, 101))
+        file.load_model(
+            model_yaml="models/file_energy.yaml",
+            model_info="single_glp",
+        )
+        # synthesize clean 1D data from the model
+        assert file.model_active is not None  # type guard
+        file.model_active.create_value_1d()
+        assert file.model_active.value_1d is not None  # type guard
+        file.data_base = file.model_active.value_1d.copy()
+        file.e_lim = [0, len(file.energy)]
+        return file
+
+    #
+    def test_pickle_component_roundtrip(self):
+        """Component roundtrips through pickle with package module restored."""
+
+        import pickle
+
+        comp = Component("GLP_01")
+        comp.add_pars(
+            {
+                "A": [10, True, 0, 20],
+                "x0": [85, True, 80, 90],
+                "F": [1.5, True, 1, 2],
+                "m": [0.3, False, 0, 1],
+            }
+        )
+
+        blob = pickle.dumps(comp)
+        restored = pickle.loads(blob)
+
+        # package reloaded as module (not a string)
+        import types
+
+        assert isinstance(restored.package, types.ModuleType)
+        assert restored.package.__name__ == comp.package.__name__
+        assert callable(restored.fct)
+        # par_dict values survive roundtrip
+        assert restored.par_dict == comp.par_dict
+        # parent_model is nulled on pickle (detached state)
+        assert restored.parent_model is None
+
+    #
+    def test_pickle_model_roundtrip_and_evaluate(self):
+        """Pickled Model can still evaluate create_value_1d after roundtrip."""
+
+        import pickle
+
+        file = self._make_fittable_file()
+        model = file.model_active
+        expected = model.value_1d.copy()
+
+        restored = pickle.loads(pickle.dumps(model))
+        # parent_file stripped on pickle (detached state)
+        assert restored.parent_file is None
+        # transient fit state stripped
+        assert restored.const is None
+        assert restored.args is None
+        # model can still evaluate after roundtrip
+        restored.create_value_1d()
+        np.testing.assert_allclose(restored.value_1d, expected, rtol=1e-12)
+
+    #
+    def test_deepcopy_model_is_independent(self):
+        """copy.deepcopy produces a fresh Model that can be mutated safely."""
+
+        import copy
+
+        file = self._make_fittable_file()
+        model = file.model_active
+        clone = copy.deepcopy(model)
+
+        assert clone is not model
+        assert clone.components[0] is not model.components[0]
+
+        # Mutating the clone must not affect the original
+        original_par_name = clone.parameter_names[0]
+        clone.lmfit_pars[original_par_name].value = 42.0
+        assert model.lmfit_pars[original_par_name].value != 42.0
+
+    #
+    @pytest.mark.slow
+    def test_mcmc_workers_2_does_not_pickle_error(self):
+        """lmfit.emcee(workers=2) must not fail with TypeError: cannot pickle module.
+
+        This was a latent bug before the pickle hooks landed: MCMC
+        parallelism was parameterized via ``MC(workers=N)`` but silently
+        broken because the residual closure could not cross the
+        multiprocessing boundary.
+        """
+
+        from trspecfit.utils.lmfit import MC
+
+        file = self._make_fittable_file()
+        # Tiny MCMC settings so the test runs quickly. nwalkers must exceed
+        # 2 * n_params for emcee's red-blue move, hence 32 for a 4-param GLP.
+        mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1, workers=2)
+
+        # fit_baseline raises TypeError before the pickle hooks were added;
+        # after the hooks, it completes (even if MCMC itself converges poorly
+        # on 20 steps, the point here is that it doesn't crash).
+        try:
+            file.fit_baseline(
+                model_name="single_glp", stages=1, try_ci=0, mc_settings=mc
+            )
+        except TypeError as e:
+            if "pickle" in str(e) or "module" in str(e):
+                pytest.fail(f"MCMC workers=2 hit a pickle error: {e}")
+            raise
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
