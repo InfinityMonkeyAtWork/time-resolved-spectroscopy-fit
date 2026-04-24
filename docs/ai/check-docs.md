@@ -43,9 +43,14 @@ Report any missing docstrings with file and line number.
 ## 4. Stale docstrings (signature vs Parameters mismatch)
 
 For public functions and methods in user-facing files (`trspecfit.py`,
-`mcp.py`, `functions/*.py`, `fitlib.py`, `simulator.py`), compare the function
-signature parameters against the docstring Parameters section. Skip `self`,
-`cls`, `*args`, `**kwargs`.
+`mcp.py`, `functions/*.py`, `fitlib.py`, `simulator.py`) and the bridge /
+compiled-layer APIs (`spectra.py`, `graph_ir.py`, `eval_1d.py`,
+`eval_2d.py`), compare the function signature parameters against the
+docstring Parameters section. Skip `self`, `cls`, `*args`, `**kwargs`.
+
+Functions with no `Parameters` section are skipped silently, so minimal
+internal docstrings in the compiled layer do not produce noise — only
+layer-boundary APIs that document their parameters are audited.
 
 ```bash
 python .claude/skills/check-docs/check_stale_docstrings.py

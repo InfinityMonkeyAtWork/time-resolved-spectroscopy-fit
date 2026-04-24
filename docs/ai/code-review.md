@@ -186,6 +186,66 @@ Scan test files for coverage of:
 
 Report as INFO with suggestions for what to add.
 
+## 18. GIR / MCP parity
+
+Trigger when the diff touches any of `src/trspecfit/graph_ir.py`,
+`src/trspecfit/eval_1d.py`, `src/trspecfit/eval_2d.py`,
+`src/trspecfit/spectra.py`, or `src/trspecfit/functions/*.py`.
+
+Verify:
+
+- `fit_model_compare` parity coverage still exists for the modified path
+  (see `tests/test_gir_integration.py` and integration harnesses).
+- New functions either lower to GIR or route cleanly to MCP-only fallback via
+  `can_lower_1d()` / `can_lower_2d()` returning `False`.
+- Evaluator semantics changes are reflected in both paths, or the MCP-only
+  behavior is preserved with an explicit test.
+
+Report as FAIL if parity is broken without a test; WARN if parity tests exist
+but do not cover the new code path.
+
+## 19. Two-layer design compliance
+
+Per CLAUDE.md "Architecture guardrails" the repo has a deliberate split:
+
+- **Authoring layer** (`mcp.py`, `trspecfit.py`, `simulator.py`,
+  `utils/parsing.py`): optimize for readability, validation, and clear errors.
+- **Compiled hot-path** (`graph_ir.py`, `eval_1d.py`, `eval_2d.py`, numeric
+  bodies in `functions/`): array-oriented; no Python-object attribute access
+  or model-structure branching in inner loops.
+
+Flag:
+
+- Python-object access, `isinstance` checks, or model-structure branching
+  inside inner loops of `eval_1d.py` / `eval_2d.py`.
+- Validation-heavy helpers or error-formatting code landing in `graph_ir.py`
+  or `eval_*.py` when it belongs in the authoring layer.
+- Performance micro-optimizations landing in `mcp.py` / `trspecfit.py` when
+  the goal of that layer is readability.
+
+Report as WARN with file/line and a suggestion for which layer the code
+belongs in.
+
+## 20. `can_lower_*` hygiene
+
+Trigger when the diff introduces a new `NodeKind` or modifies
+lowerability-gating logic in `graph_ir.py`.
+
+Verify:
+
+- The new kind is correctly included in or excluded from
+  `_NON_LOWERABLE_NODE_KINDS_BASE` and `_NON_LOWERABLE_2D_NODE_KINDS`.
+- `can_lower_1d()` and `can_lower_2d()` handle the new kind — either it is
+  lowered, or it is explicitly routed to the MCP fallback.
+- The MCP fallback path has at least one test exercising a model containing
+  the new kind with lowering disabled (or provably rejected by
+  `can_lower_*`).
+- Per-node gates like `_is_lowerable_convolution_2d` /
+  `_is_lowerable_subcycle_2d` are updated when the structural contract they
+  enforce changes.
+
+Report as FAIL if a new node kind has no coverage in either direction.
+
 ## Summary
 
 Print a summary table:
@@ -209,5 +269,8 @@ Print a summary table:
 | 15 | Global mutable state | ... | ... |
 | 16 | Security | ... | ... |
 | 17 | Edge-case tests | ... | ... |
+| 18 | GIR / MCP parity | ... | ... |
+| 19 | Two-layer design compliance | ... | ... |
+| 20 | `can_lower_*` hygiene | ... | ... |
 
 Then list any FAIL or WARN items with actionable next steps.

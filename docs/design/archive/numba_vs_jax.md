@@ -27,12 +27,10 @@ is what the next backend step should be:
   follow-on work for analytic Jacobians (`jax.jacrev`) and eventually
   GPU acceleration.
 
-We are on the `np-to-jax` branch, which signals an initial lean toward
-JAX, but the decision is not made. The purpose of this document is to
-(a) lay out the real work/speedup tradeoff as precisely as the current
-information allows, (b) call out the numbers that are shakiest, and
-(c) specify a benchmark plan that should collapse the decision into
-something defensible.
+The purpose of this document is to (a) lay out the real work/speedup
+tradeoff as precisely as the current information allows, (b) call out
+the numbers that are shakiest, and (c) specify a benchmark plan that
+should collapse the decision into something defensible.
 
 ## Current state of the lowered evaluator
 
