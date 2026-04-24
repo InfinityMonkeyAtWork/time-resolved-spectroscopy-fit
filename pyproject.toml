@@ -125,4 +125,12 @@ pep621_dev_dependency_groups = ["dev"]
 # keep these as runtime deps even though used indirectly via lmfit
 # py-spy is a CLI tool invoked via shell (see benchmark skill), not imported
 [tool.deptry.per_rule_ignores]
-DEP002 = ["numdifftools", "emcee", "tqdm", "ipykernel", "jupyterlab", "py-spy"]
+DEP002 = [
+  "numdifftools", 
+  "emcee", 
+  "tqdm", 
+  "ipykernel", 
+  "jupyterlab", 
+  "graphviz", 
+  "py-spy",
+]

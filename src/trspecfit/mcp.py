@@ -53,6 +53,7 @@ Key Features
 - Automatic component combination (addition, convolution, backgrounds)
 """
 
+import importlib
 import inspect
 import re
 import types
@@ -316,7 +317,7 @@ class Model:
 
         if rendering == "graphviz":
             try:
-                import graphviz as gv
+                gv = cast(Any, importlib.import_module("graphviz"))
             except ImportError:
                 import warnings
 
