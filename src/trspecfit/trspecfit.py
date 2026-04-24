@@ -51,6 +51,7 @@ Examples
 See examples/ directory for complete workflows.
 """
 
+import copy
 import pathlib
 import re
 import time
@@ -2039,29 +2040,7 @@ class File:
             [],
         )
         # --- dispatch: GIR fast path vs interpreter ---
-        if _fun_str in ("fit_model_gir", "fit_model_compare"):
-            from trspecfit.graph_ir import build_graph, can_lower_1d, schedule_1d
-
-            _graph = build_graph(self.model_base)
-            if can_lower_1d(_graph):
-                _plan = schedule_1d(_graph)
-                _name_to_idx = {
-                    n: i for i, n in enumerate(self.model_base.parameter_names)
-                }
-                _theta_indices = np.array(
-                    [_name_to_idx[n] for n in _plan.opt_param_names],
-                    dtype=np.intp,
-                )
-                _args: tuple[Any, ...] = (
-                    _plan,
-                    _theta_indices,
-                    self.model_base,
-                    1,
-                )
-            else:
-                _args = (self.model_base, 1)
-        else:
-            _args = (self.model_base, 1)
+        _args = self._build_1d_dispatch_args(self.model_base, _fun_str)
         self.model_base.args = _args
         # fit (optionally) with confidence intervals
         self.model_base.result = fitlib.fit_wrapper(
@@ -2239,29 +2218,7 @@ class File:
             [],
         )
         # --- dispatch: GIR fast path vs interpreter ---
-        if _fun_str in ("fit_model_gir", "fit_model_compare"):
-            from trspecfit.graph_ir import build_graph, can_lower_1d, schedule_1d
-
-            _graph = build_graph(self.model_spec)
-            if can_lower_1d(_graph):
-                _plan = schedule_1d(_graph)
-                _name_to_idx = {
-                    n: i for i, n in enumerate(self.model_spec.parameter_names)
-                }
-                _theta_indices = np.array(
-                    [_name_to_idx[n] for n in _plan.opt_param_names],
-                    dtype=np.intp,
-                )
-                _args: tuple[Any, ...] = (
-                    _plan,
-                    _theta_indices,
-                    self.model_spec,
-                    1,
-                )
-            else:
-                _args = (self.model_spec, 1)
-        else:
-            _args = (self.model_spec, 1)
+        _args = self._build_1d_dispatch_args(self.model_spec, _fun_str)
         self.model_spec.args = _args
         # fit
         self.model_spec.result = fitlib.fit_wrapper(
@@ -2405,6 +2362,10 @@ class File:
             base_df, row=["name", e_pos_pars], col="value", astype="series"
         )
 
+        # --- dispatch: GIR fast path vs interpreter ---
+        _fun_str = self.p.spec_fun_str
+        _args_sbs = self._build_1d_dispatch_args(self.model_sbs, _fun_str)
+
         # cycle through all spectra and fit them
         self.results_sbs = []  # (re-)initialize placeholder for results
         for s_i, s in enumerate(self.data):
@@ -2434,13 +2395,13 @@ class File:
                 self.energy,
                 s,
                 self.p.spec_lib,
-                self.p.spec_fun_str,
+                _fun_str,
                 0,
                 self.e_lim,
                 [],
             )
             # args [for fit function called in residual function]
-            self.model_sbs.args = (self.model_sbs, 1)
+            self.model_sbs.args = _args_sbs
 
             # fit with confidence intervals
             result_sbs = fitlib.fit_wrapper(
@@ -2571,6 +2532,40 @@ class File:
                 f"Available models: {available or 'none loaded'}"
             )
         return mod
+
+    #
+    def _build_1d_dispatch_args(
+        self,
+        model: mcp.Model,
+        fit_fun_str: str,
+    ) -> tuple[Any, ...]:
+        """Return compiled 1D evaluator args when available.
+
+        Plain energy models loaded on a 2D File inherit the file time axis for
+        convenience. For 1D fitting workflows we compile against a copied model
+        with ``time=None`` so the graph lowers as ``ENERGY_1D`` while the
+        runtime still evaluates against the original model object.
+        """
+
+        if fit_fun_str not in ("fit_model_gir", "fit_model_compare"):
+            return (model, 1)
+
+        from trspecfit.graph_ir import build_graph, can_lower_1d, schedule_1d
+
+        model_1d = copy.copy(model)
+        model_1d.time = None
+
+        graph = build_graph(model_1d)
+        if can_lower_1d(graph):
+            plan = schedule_1d(graph)
+            name_to_idx = {n: i for i, n in enumerate(model.parameter_names)}
+            theta_indices = np.array(
+                [name_to_idx[n] for n in plan.opt_param_names],
+                dtype=np.intp,
+            )
+            return (plan, theta_indices, model, 1)
+
+        return (model, 1)
 
     #
     def _resolve_time_selection(

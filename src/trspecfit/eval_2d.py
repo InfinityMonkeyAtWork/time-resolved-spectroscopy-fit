@@ -42,6 +42,12 @@ DYNAMICS_DISPATCH: dict[int, tuple] = {
 # Model.combine(...) path.
 CONV_KERNEL_DISPATCH: dict[int, tuple] = {
     ConvKernelKind.GAUSSCONV: (fcts_time.gaussCONV, 1),
+    ConvKernelKind.LORENTZCONV: (fcts_time.lorentzCONV, 1),
+    ConvKernelKind.VOIGTCONV: (fcts_time.voigtCONV, 2),
+    ConvKernelKind.EXPSYMCONV: (fcts_time.expSymCONV, 1),
+    ConvKernelKind.EXPDECAYCONV: (fcts_time.expDecayCONV, 1),
+    ConvKernelKind.EXPRISECONV: (fcts_time.expRiseCONV, 1),
+    ConvKernelKind.BOXCONV: (fcts_time.boxCONV, 1),
 }
 
 

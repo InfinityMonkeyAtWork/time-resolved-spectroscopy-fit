@@ -622,6 +622,29 @@ class TestYAMLValidationErrors:
             )
 
     #
+    def test_unknown_function_name_raises(self):
+        """Unknown component name (typo: GLLP) should fail with a clear error.
+
+        The message must name the offending token *and* enumerate the valid
+        components -- both are load-bearing for the user's ability to find the
+        typo quickly, so pin both in the assertion.
+        """
+
+        project = Project(path="tests")
+        file = File(parent_project=project)
+        with pytest.raises(ModelValidationError) as exc_info:
+            file.load_model(
+                model_yaml="models/file_energy.yaml",
+                model_info="unknown_function_name",
+            )
+        msg = str(exc_info.value)
+        assert "Unknown component type 'GLLP'" in msg
+        assert "Available components:" in msg
+        # At least one real energy component should be enumerated.
+        assert "GLP" in msg
+        assert "Gauss" in msg
+
+    #
     def test_conv_last_raises(self):
         """Convolution as last component should fail ordering validation."""
 

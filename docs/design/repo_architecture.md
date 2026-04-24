@@ -147,7 +147,7 @@ Dynamics and convolution kernels. Dynamics functions (e.g. `expFun`,
 `sinFun`, `linFun`, `erfFun`, `sqrtFun`) share signature
 `func(t, par1, ..., t0, y0)` with the invariant `f(t < t0) = 0`.
 Convolution kernels are named `funcCONV` (e.g. `gaussCONV`) with a
-companion `funcCONV_kernel_width()` returning the kernel-width multiplier.
+companion `funcCONV_kernel_width(...)` returning the kernel-width multiplier.
 Add new time-domain behavior or IRF kernels here.
 
 ### `functions/profile.py`

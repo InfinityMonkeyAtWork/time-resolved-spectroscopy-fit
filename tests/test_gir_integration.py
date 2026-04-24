@@ -14,6 +14,7 @@ import pytest
 
 from trspecfit import File, Project, Simulator, fitlib, spectra
 from trspecfit.graph_ir import (
+    ScheduledPlan1D,
     build_graph,
     can_lower_1d,
     can_lower_2d,
@@ -462,14 +463,28 @@ class TestGIRvsInterpreter:
         np.testing.assert_allclose(res_gir, res_mcp, rtol=1e-10, atol=1e-10)
 
     #
-    def test_residual_same_gir_vs_mcp_irf(self):
-        """residual_fun parity for IRF / CONVOLUTION dynamics."""
+    @pytest.mark.parametrize(
+        "dyn_model",
+        [
+            "MonoExpPosIRF",
+            "MonoExpPosLorentzIRF",
+            "MonoExpPosVoigtIRF",
+            "MonoExpPosExpSymIRF",
+            "MonoExpPosExpDecayIRF",
+            "MonoExpPosExpRiseIRF",
+            "MonoExpPosBoxIRF",
+        ],
+    )
+    def test_residual_same_gir_vs_mcp_irf(self, dyn_model):
+        """residual_fun parity for IRF / CONVOLUTION dynamics across all
+        lowerable kernel functions.
+        """
 
         project = _make_project()
         file, model = _make_2d_model(
             project,
             ["glp_only"],
-            [("GLP_01_A", ["MonoExpPosIRF"])],
+            [("GLP_01_A", [dyn_model])],
         )
 
         model.create_value_2d()
@@ -1039,6 +1054,32 @@ class TestFileFitBaseline:
     """End-to-end tests through File.fit_baseline dispatch + writeback."""
 
     #
+    def test_1d_dispatch_args_lower_on_2d_file(self):
+        """1D workflow args compile on a 2D File with a plain energy model."""
+
+        project = _make_project()
+        energy = np.linspace(83, 87, 50)
+        time = np.linspace(-2, 10, 12)
+        fit_file = File(
+            parent_project=project,
+            name="fit_1d_lowerable",
+            data=np.zeros((len(time), len(energy))),
+            energy=energy.copy(),
+            time=time.copy(),
+        )
+        fit_file.load_model(model_yaml=_FILE_ENERGY_YAML, model_info="single_glp")
+
+        args = fit_file._build_1d_dispatch_args(fit_file.model_active, "fit_model_gir")
+        # Contract: (ScheduledPlan1D, theta_indices, original model, dim==1).
+        assert len(args) == 4
+        assert isinstance(args[0], ScheduledPlan1D)
+        assert isinstance(args[1], np.ndarray)
+        assert args[1].dtype == np.intp
+        assert len(args[1]) == len(args[0].opt_param_names)
+        assert args[2] is fit_file.model_active
+        assert args[3] == 1
+
+    #
     @pytest.mark.slow
     def test_gir_baseline_writes_back(self):
         """After GIR baseline fit, model_base.lmfit_pars reflects results."""
@@ -1138,3 +1179,38 @@ class TestFileFitSpectrum:
             show_plot=False,
             try_ci=0,
         )
+
+
+#
+#
+class TestFileFitSliceBySlice:
+    """End-to-end tests through File.fit_slice_by_slice dispatch."""
+
+    #
+    @pytest.mark.slow
+    def test_compare_mode_through_fit_slice_by_slice(self):
+        """fit_slice_by_slice uses the 1D GIR path when the model lowers."""
+
+        project = Project(path="tests", name="gir_sbs_cmp")
+        project.show_output = 0
+        project.spec_fun_str = "fit_model_compare"
+        # Fit 3 slices so we exercise the hoisted-args reuse across the loop
+        # and the multi-row save_sbs_fit reconstruction path.
+        project.first_n_spec_only = 2
+
+        truth = _make_1d_truth_file(project)
+        truth.model_active.create_value_1d()
+        spectrum_1d = truth.model_active.value_1d.copy()
+        data_2d = np.tile(spectrum_1d, (len(truth.time), 1))
+
+        fit_file = _make_1d_fit_file(project, data_2d, truth.energy, truth.time)
+        fit_file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+
+        # If GIR and interpreter disagree, fit_model_compare raises.
+        fit_file.fit_slice_by_slice(model_name="single_glp", stages=1, try_ci=0)
+
+        assert fit_file.model_sbs is not None
+        assert fit_file.model_sbs.args is not None
+        assert len(fit_file.model_sbs.args) == 4
+        assert isinstance(fit_file.model_sbs.args[0], ScheduledPlan1D)
+        assert len(fit_file.results_sbs) == 3

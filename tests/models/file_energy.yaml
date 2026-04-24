@@ -192,6 +192,17 @@ energy_convolution_unsupported:
       F: [1.0, True, 0.75, 2.5]
       m: [0.3, True, 0, 1]
 
+# unknown function name (typo: GLLP instead of GLP) — should fail with a
+# clear error listing the available component names
+unknown_function_name:
+    Offset:
+      y0: [2, True, 0, 5]
+    GLLP:
+      A: [20, True, 5, 25]
+      x0: [84.5, True, 82, 88]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+
 # Integer vary value — used to verify 0/1 are rejected by validation
 # (Python 0 == False would pass the old set-membership check silently)
 vary_int_bad:

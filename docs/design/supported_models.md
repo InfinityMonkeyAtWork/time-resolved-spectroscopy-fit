@@ -36,6 +36,18 @@ Definitions:
 - Adding a convolution kernel as a top-level energy-model component. Convolution is supported only in Dynamics/time models; the main supported use case is IRF broadening.
 - Transitive expression chains that pass through time-varying or profile-varying parameters are not supported; users should reference the varying base parameter directly instead of chaining through another expression.
 
+## Lowering Notes
+
+The sections above describe model semantics. The graph intermediate representation (GIR) backend lowers most supported single-file energy and 2D models, but a few cases still use the model/component/parameter (MCP) reference evaluator:
+
+- Standalone ``TIME_1D`` dynamics models are graph-valid and supported by MCP,
+  but remain outside the lowered backend scope for now.
+- Expression parameters lower only when the expression is arithmetic-only.
+  Function calls, attribute access, subscripts, and other non-arithmetic AST
+  forms fall back to MCP.
+- Project-level fitting is still wired through ``fit_project_mcp`` even when
+  the underlying per-file models are lowerable.
+
 ## Notes/ Future Changes
 
 We may choose to disallow all transitive expression chains in the future. Static transitive expression chains in energy models are currently allowed. However there is a user experience issue: a chain that works in the static case can become invalid once dynamics or a profile is added. This is surprising and hard to document/ communicate clearly.

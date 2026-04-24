@@ -176,10 +176,22 @@ class ConvKernelKind(IntEnum):
     """
 
     GAUSSCONV = 0
+    LORENTZCONV = 1
+    VOIGTCONV = 2
+    EXPSYMCONV = 3
+    EXPDECAYCONV = 4
+    EXPRISECONV = 5
+    BOXCONV = 6
 
 
 _FUNCTION_NAME_TO_CONV_KERNEL: dict[str, ConvKernelKind] = {
     "gaussCONV": ConvKernelKind.GAUSSCONV,
+    "lorentzCONV": ConvKernelKind.LORENTZCONV,
+    "voigtCONV": ConvKernelKind.VOIGTCONV,
+    "expSymCONV": ConvKernelKind.EXPSYMCONV,
+    "expDecayCONV": ConvKernelKind.EXPDECAYCONV,
+    "expRiseCONV": ConvKernelKind.EXPRISECONV,
+    "boxCONV": ConvKernelKind.BOXCONV,
 }
 
 _FUNCTION_NAME_TO_OP: dict[str, OpKind] = {
@@ -2866,6 +2878,12 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
 
     _CONV_KERNEL_DISPATCH: dict[int, Callable[..., Any]] = {
         int(ConvKernelKind.GAUSSCONV): fcts_time.gaussCONV,
+        int(ConvKernelKind.LORENTZCONV): fcts_time.lorentzCONV,
+        int(ConvKernelKind.VOIGTCONV): fcts_time.voigtCONV,
+        int(ConvKernelKind.EXPSYMCONV): fcts_time.expSymCONV,
+        int(ConvKernelKind.EXPDECAYCONV): fcts_time.expDecayCONV,
+        int(ConvKernelKind.EXPRISECONV): fcts_time.expRiseCONV,
+        int(ConvKernelKind.BOXCONV): fcts_time.boxCONV,
     }
     from trspecfit.eval_2d import eval_expr_program
     from trspecfit.utils.arrays import my_conv

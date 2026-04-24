@@ -18,7 +18,8 @@ Signature: funcCONV(t, par1, par2, ...)
 - t: Time axis centered at zero (from create_t_kernel)
 - par1, par2, ...: Kernel parameters
 - Returns: Normalized kernel function
-- Must have companion function: funcCONV_kernel_width() returning multiplier
+- Must have companion function: funcCONV_kernel_width(...) returning a
+  support multiplier; helpers may inspect the kernel parameters when needed
 
 **Time Zero Convention:**
 All dynamics functions are zero before t0 and activate at t >= t0.
@@ -296,7 +297,7 @@ def gaussCONV(x: np.ndarray, SD: float) -> np.ndarray:
 
 
 #
-def gaussCONV_kernel_width() -> int:
+def gaussCONV_kernel_width(SD: float | None = None) -> int:
     """
     Kernel width multiplier for Gaussian convolution.
     Kernel extends to ±4*SD from center.
@@ -328,7 +329,7 @@ def lorentzCONV(x: np.ndarray, W: float) -> np.ndarray:
 
 
 #
-def lorentzCONV_kernel_width() -> int:
+def lorentzCONV_kernel_width(W: float | None = None) -> int:
     """Kernel width multiplier for Lorentzian (10×W)."""
 
     return 10
@@ -359,10 +360,18 @@ def voigtCONV(x: np.ndarray, SD: float, W: float) -> np.ndarray:
 
 
 #
-def voigtCONV_kernel_width() -> int:
-    """Kernel width multiplier for Voigt (12)."""
+def voigtCONV_kernel_width(SD: float = 1.0, W: float = 0.0) -> float:
+    """Kernel width multiplier for Voigt support.
 
-    return 12
+    ``create_t_kernel`` multiplies the first kernel parameter by this
+    value. For ``voigtCONV`` the first parameter is ``SD``, but broad
+    Lorentzian tails are controlled by ``W``. Return a multiplier large
+    enough that the support spans at least ``max(12*SD, 10*W)``.
+    """
+
+    if SD <= 0:
+        return 12.0
+    return max(12.0, 10.0 * W / SD)
 
 
 #
@@ -389,7 +398,7 @@ def expSymCONV(x: np.ndarray, tau: float) -> np.ndarray:
 
 
 #
-def expSymCONV_kernel_width() -> int:
+def expSymCONV_kernel_width(tau: float | None = None) -> int:
     """Kernel width multiplier for symmetric exponential (6×tau)."""
 
     return 6
@@ -417,7 +426,7 @@ def expDecayCONV(x: np.ndarray, tau: float) -> np.ndarray:
 
 
 #
-def expDecayCONV_kernel_width() -> int:
+def expDecayCONV_kernel_width(tau: float | None = None) -> int:
     """Kernel width multiplier for decay exponential (6×tau)."""
 
     return 6
@@ -445,7 +454,7 @@ def expRiseCONV(x: np.ndarray, tau: float) -> np.ndarray:
 
 
 #
-def expRiseCONV_kernel_width() -> int:
+def expRiseCONV_kernel_width(tau: float | None = None) -> int:
     """Kernel width multiplier for rise exponential (6×tau)."""
 
     return 6
@@ -473,7 +482,7 @@ def boxCONV(x: np.ndarray, width: float) -> np.ndarray:
 
 
 #
-def boxCONV_kernel_width() -> int:
+def boxCONV_kernel_width(width: float | None = None) -> int:
     """Kernel width multiplier for box (1×width)."""
 
     return 1

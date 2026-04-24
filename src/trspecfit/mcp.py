@@ -1564,8 +1564,9 @@ class Component:
 
         # get kernel parameters i.e. component parameters
         par_k = cast("list[Any]", ulmfit.par_extract(self.par_dict, return_type="list"))
-        # define kernel time axis
-        kernel_width = getattr(fcts_time, self.fct_str + "_kernel_width")()
+        # define kernel time axis. Kernel-width helpers may inspect the
+        # full parameter list for multi-parameter kernels such as Voigt.
+        kernel_width = getattr(fcts_time, self.fct_str + "_kernel_width")(*par_k)
         t_range = par_k[0] * kernel_width
         if self.time is None or len(self.time) < 2:
             raise ValueError(f"time axis of component {self.fct_str} not defined")

@@ -145,7 +145,7 @@ Convolution kernels:
 - [ ] Verify unsupported kernels still fall back cleanly to MCP.
 - [ ] If lowering fails, recommend a kernel signature and behavior compatible
       with the current compiled path (pure kernel function, explicit parameter
-      list, companion `<name>_kernel_width()`, no hidden state).
+      list, companion `<name>_kernel_width(...)`, no hidden state).
 
 Profile functions:
 

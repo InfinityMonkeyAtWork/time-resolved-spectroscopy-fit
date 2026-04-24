@@ -796,6 +796,52 @@ class TestDynamicsConvolution:
         assert plan.conv_support_values.shape == (0,)
         assert 2 not in plan.resolution_kinds.tolist()
 
+    # Per-kernel parity: every lowerable kernel must match MCP at
+    # initial theta AND under perturbation of every kernel parameter.
+    # Parametrized by dyn_model YAML and the list of (param_suffix, delta)
+    # pairs to perturb -- one entry per kernel param, so voigtCONV's
+    # two-param case is covered alongside the one-param kernels.
+    _KERNEL_PARITY_CASES = [
+        ("MonoExpPosLorentzIRF", [("lorentzCONV_W", 0.2)]),
+        ("MonoExpPosVoigtIRF", [("voigtCONV_SD", 0.05), ("voigtCONV_W", 0.05)]),
+        ("MonoExpPosExpSymIRF", [("expSymCONV_tau", 0.5)]),
+        ("MonoExpPosExpDecayIRF", [("expDecayCONV_tau", 0.5)]),
+        ("MonoExpPosExpRiseIRF", [("expRiseCONV_tau", 0.5)]),
+        ("MonoExpPosBoxIRF", [("boxCONV_width", 0.5)]),
+    ]
+
+    #
+    @pytest.mark.parametrize(
+        ("dyn_model", "kernel_perturbations"),
+        _KERNEL_PARITY_CASES,
+        ids=[c[0] for c in _KERNEL_PARITY_CASES],
+    )
+    def test_kernel_parity_initial_and_perturbed(self, dyn_model, kernel_perturbations):
+        """evaluate_2d == interpreter for every registered lowerable kernel."""
+
+        _file, model = _make_2d_model(
+            ["glp_only"],
+            [("GLP_01_A", [dyn_model])],
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+        perturb_idx = [
+            plan.opt_param_names.index(f"GLP_01_A_{suffix}")
+            for suffix, _ in kernel_perturbations
+        ]
+        perturb_deltas = [delta for _, delta in kernel_perturbations]
+        tau_idx = plan.opt_param_names.index("GLP_01_A_expFun_01_tau")
+        _perturb_theta(
+            plan,
+            model,
+            theta,
+            perturb_idx + [tau_idx],
+            perturb_deltas + [0.5],
+        )
+
 
 # ---------------------------------------------------------------------------
 # Subcycle dynamics
