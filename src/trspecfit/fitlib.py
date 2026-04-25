@@ -772,65 +772,11 @@ def fit_wrapper(
 
 
 #
-def results_select(data: Any, skip: int = -1, n: int = -1, dim: int = 1) -> Any:
-    """
-    Select slice of results array for partial fitting analysis.
-
-    Parameters
-    ----------
-    data : array-like
-        Data array to slice
-    skip : int, default=-1
-        Number of initial elements to skip. -1 means skip none.
-    n : int, default=-1
-        Number of elements to include. -1 means include all (after skip).
-    dim : int, default=1
-        Dimensionality (currently only dim=1 supported).
-
-    Returns
-    -------
-    array-like
-        Sliced data
-
-    Examples
-    --------
-    >>> # Get all data
-    >>> results_select(data)
-
-    >>> # Skip first 10 points
-    >>> results_select(data, skip=10)
-
-    >>> # Get first 50 points only
-    >>> results_select(data, n=50)
-
-    >>> # Get points 10-60
-    >>> results_select(data, skip=10, n=60)
-    """
-
-    if dim == 1:
-        if n == -1:
-            if skip == -1:
-                return data  # full data set
-            out = data[skip:]
-        else:  # "+1" accounts for Python's exclusive upper bound
-            if skip == -1:
-                out = data[: n + 1]
-            else:
-                out = data[skip : n + 1]
-    else:
-        raise ValueError(f"Unsupported dim={dim}; only dim=1 is implemented")
-
-    return out
-
-
-#
 def results_to_df(
     results: list[Any],
     x: ArrayLike | None = None,
     index: ArrayLike | None = None,
     config: PlotConfig | None = None,
-    first_n_spec_only: int = -1,
-    skip_first_n_spec: int = -1,
     save_df: int = 0,
     save_path: PathLike = "",
 ) -> pd.DataFrame:
@@ -852,10 +798,6 @@ def results_to_df(
         Index values (e.g., slice numbers). If provided, included as column.
     config : PlotConfig, optional
         Plot configuration. If None, uses defaults.
-    first_n_spec_only : int, default=-1
-        If != -1, include only first N results (for partial fitting).
-    skip_first_n_spec : int, default=-1
-        If != -1, skip first N results (for partial fitting).
     save_df : {-1, 0, 1}, default=0
         Save outputs:
 
@@ -886,22 +828,22 @@ def results_to_df(
     # get columns names for plot before adding x/index
     cols_plt = df.columns
 
-    # select x (time) and index data if passed
+    # insert x (time) and index data if passed
     if x is not None:
-        x_save = results_select(data=x, skip=skip_first_n_spec, n=first_n_spec_only)
-        df.insert(0, config.y_label, x_save)  # and insert into dataframe
+        df.insert(0, config.y_label, x)
     if index is not None:
-        ind_save = results_select(
-            data=index, skip=skip_first_n_spec, n=first_n_spec_only
-        )
-        df.insert(0, "index", ind_save)  # and insert into dataframe
+        df.insert(0, "index", index)
 
     # get par_fin([1]) of first slice(index=0)
     # (their "vary" attribute is the same for all)
     df_par_fin_slice0 = ulmfit.par_to_df(
         lmfit_params=results[0][1].params, col_type="min"
     )
-    save_array = [-1 if not vary else 1 for vary in df_par_fin_slice0["vary"]]
+    if save_df < 0:
+        # Silent/API mode should not display parameter-evolution figures.
+        save_array = len(df_par_fin_slice0["vary"]) * [-1]
+    else:
+        save_array = [-1 if not vary else 1 for vary in df_par_fin_slice0["vary"]]
 
     if save_df != 0:
         # save the dataframe (index, x axis, parameter1, parameter2, ...
@@ -909,7 +851,7 @@ def results_to_df(
         # plot individual parameters as a function of time (s)
         plt_fit_res_pars(
             df=df.loc[:, list(cols_plt)],
-            x=x_save if x is not None else None,
+            x=x,
             config=config,
             save_img=save_array,
             save_path=save_path,

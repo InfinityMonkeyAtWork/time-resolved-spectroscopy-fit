@@ -11,12 +11,17 @@ This file is maintained using the shared changelog workflow in
 
 ### Added
 
+- **Slice-by-Slice parallelism**: `File.fit_slice_by_slice()` accepts an `n_workers` keyword argument that dispatches per-slice fits across a `ProcessPoolExecutor` using the `spawn` start method (only portable option — Windows lacks `fork`). Default is `os.cpu_count() - 1`, capped at the number of slices. Set `n_workers=1` to keep the original serial path as a debug escape hatch. Workers reuse one pickled model installed at startup, render plots with the non-interactive Agg backend, and report progress via `tqdm`. On Linux/macOS spawn startup is a few hundred ms per worker; on Windows ~1-2s per worker, so very small fits (~< 20 slices) usually want `n_workers=1`. SbS seeding is now explicit too: `seed_source` chooses the shared template (`"model"`, `"baseline"`, or `"explicit"`), and `seed_adapt` controls the optional per-slice x0 tweak (`None` or `"argmax_shift"`).
 - `Model`, `Component`, and `Par` are now pickleable (and therefore deep-copyable) via `__getstate__` / `__setstate__`. This enables `copy.deepcopy(model)` and lets live models cross process boundaries, which unblocks future multiprocessing workflows and fixes latent MCMC parallelism (see `Fixed`). Pickled instances are for short-lived transfer, not persistence — parent back-references (`parent_file`, `parent_model`) and transient fit state (`const`, `args`) are nulled.
 
 ### Changed
 
 - **Breaking (internal):** removed `Project.spec_lib` attribute and `Project.spec_fun` property. Fitting functions always live in `trspecfit.spectra`, so the indirection is hardcoded. Only affects code reaching into `project.spec_lib` / `project.spec_fun`; no public fit-workflow API changes.
 - `fitlib.residual_fun()` and `fitlib.plt_fit_res_1d()` no longer accept a `package` argument. The constant tuple passed to `fit_wrapper()` drops its third entry (`package`) and now has shape `(x, data, function_str, unpack, e_lim, t_lim)`.
+
+### Removed
+
+- **Breaking:** `Project.skip_first_n_spec` and `Project.first_n_spec_only` debug controls (and the `first_n_spec_only` / `skip_first_n_spec` parameters on `fitlib.results_to_df()`, plus the now-unused `fitlib.results_select()` helper). With Slice-by-Slice parallelism a 200-slice fit takes seconds, so the "fit only the first N slices" debug shortcut no longer earns its keep. Users who want to fit a sub-range can slice the input array directly: `file.data = file.data[start:stop]; file.time = file.time[start:stop]`.
 
 ### Fixed
 

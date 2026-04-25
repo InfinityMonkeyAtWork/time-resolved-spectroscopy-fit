@@ -51,7 +51,10 @@ Examples
 See examples/ directory for complete workflows.
 """
 
+import concurrent.futures
 import copy
+import multiprocessing
+import os
 import pathlib
 import re
 import time
@@ -70,6 +73,7 @@ import numpy as np
 import pandas as pd
 from IPython.display import display
 from ruamel.yaml import YAML
+from tqdm import tqdm
 
 from trspecfit import fitlib, mcp
 
@@ -80,7 +84,6 @@ from trspecfit.config.plot import PlotConfig
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import profile as fcts_profile
 from trspecfit.functions import time as fcts_time
-from trspecfit.utils import arrays as uarr
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import parsing as uparsing
 from trspecfit.utils import plot as uplt
@@ -92,6 +95,198 @@ ModelRef = str | int | list[str]
 # multi-subcycle models allow for convolution only in the "0th subcycle"
 # i.e. first model_info element which affects all times t.
 # "conv" functions in individual subcycles are currently ignored
+
+
+# --- Slice-by-Slice multiprocessing workers ----------------------------------
+# These globals are populated only inside ProcessPoolExecutor worker
+# processes by ``_sbs_worker_init``.  They let workers reuse a single
+# pickled Model and dispatch_args across all slices they process,
+# avoiding per-task pickle overhead.
+
+_WORKER_MODEL: "mcp.Model | None" = None
+_WORKER_DISPATCH_ARGS: tuple[Any, ...] | None = None
+_WORKER_SEED_TEMPLATE: list[float] | None = None
+
+
+#
+def _extract_sbs_seed_template(
+    seed_values: Any, parameter_names: Sequence[str]
+) -> list[float]:
+    """Normalize explicit SbS seed values to a full ordered parameter list."""
+
+    if isinstance(seed_values, dict):
+        missing = [name for name in parameter_names if name not in seed_values]
+        extra = [name for name in seed_values if name not in parameter_names]
+        if missing or extra:
+            raise ValueError(
+                "Explicit SbS seed dict must define exactly the model parameters.\n"
+                f"Missing: {missing or 'none'}\n"
+                f"Extra: {extra or 'none'}"
+            )
+        out: list[float] = []
+        for name in parameter_names:
+            value = seed_values[name]
+            if isinstance(value, (list, tuple, np.ndarray)):
+                if len(value) == 0:
+                    raise ValueError(
+                        f"Explicit SbS seed for parameter '{name}' is empty."
+                    )
+                value = value[0]
+            out.append(float(value))
+        return out
+
+    out = ulmfit.par_extract(seed_values, return_type="list")
+    if len(out) != len(parameter_names):
+        raise ValueError(
+            "Explicit SbS seed must provide one value per model parameter.\n"
+            f"Expected {len(parameter_names)} values, got {len(out)}."
+        )
+    return out
+
+
+#
+def _prepare_sbs_model_for_slice(
+    model: "mcp.Model",
+    dispatch_args: tuple[Any, ...],
+    seed_template: list[float],
+    *,
+    seed_adapt: Literal["argmax_shift"] | None,
+    s: np.ndarray,
+    energy: np.ndarray,
+    e_lim: list[int] | None,
+    e_pos_pars: list[str],
+    e_pos_vals: pd.Series | None,
+    data_base_argmax_energy: float | None,
+    fit_fun_str: str,
+) -> list[float]:
+    """Reset the shared SbS model to the seed template for one slice."""
+
+    model.update_value(new_par_values=seed_template, par_select="all")
+
+    if seed_adapt == "argmax_shift":
+        if e_pos_vals is None or data_base_argmax_energy is None:
+            raise ValueError(
+                "argmax_shift seed adaptation requires baseline-derived x0 values."
+            )
+        delta_max = energy[np.argmax(s)] - data_base_argmax_energy
+        new_e_vals = list(e_pos_vals.add(delta_max))
+        model.update_value(new_par_values=new_e_vals, par_select=e_pos_pars)
+
+    initial_guess = ulmfit.par_extract(model.lmfit_pars, return_type="list")
+    model.const = (energy, s, fit_fun_str, 0, e_lim, [])
+    model.args = dispatch_args
+    return initial_guess
+
+
+#
+def _sbs_worker_init(
+    model: "mcp.Model",
+    dispatch_args: tuple[Any, ...],
+    seed_template: list[float],
+) -> None:
+    """Executor initializer: install per-worker model and Agg backend.
+
+    Runs once per worker process before any task. Stashes the deep-pickled
+    model and GIR/MCP dispatch args as worker-local globals so individual
+    slice tasks don't have to pay the pickle cost on every submission.
+    Forces matplotlib to the non-interactive Agg backend so the per-slice
+    plot calls inside workers don't try to open a display.
+    """
+
+    global _WORKER_MODEL, _WORKER_DISPATCH_ARGS, _WORKER_SEED_TEMPLATE
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    _WORKER_MODEL = model
+    _WORKER_DISPATCH_ARGS = dispatch_args
+    _WORKER_SEED_TEMPLATE = seed_template
+
+
+#
+def _sbs_fit_one_slice(
+    s_i: int,
+    s: np.ndarray,
+    *,
+    energy: np.ndarray,
+    e_lim: list[int] | None,
+    seed_adapt: Literal["argmax_shift"] | None,
+    e_pos_pars: list[str],
+    e_pos_vals: pd.Series | None,
+    data_base_argmax_energy: float | None,
+    fit_fun_str: str,
+    stages: int,
+    path_slice: pathlib.Path,
+    plot_config: PlotConfig,
+    fit_wrapper_kwargs: dict[str, Any],
+) -> tuple[int, list[Any]]:
+    """Fit one energy slice in a worker process.
+
+    Uses worker-local ``_WORKER_MODEL`` and ``_WORKER_DISPATCH_ARGS``
+    installed by :func:`_sbs_worker_init`. Mutates the worker's model
+    state (x0 params, ``const``, ``args``) — this is safe because tasks
+    within a single worker run sequentially and each slice overwrites
+    the relevant fields.
+
+    Returns
+    -------
+    tuple[int, list]
+        (slice_index, fit_wrapper_result) so the caller can reassemble
+        out-of-order completions back into slice order.
+    """
+
+    assert _WORKER_MODEL is not None, "_sbs_worker_init must run first"
+    assert _WORKER_DISPATCH_ARGS is not None
+    assert _WORKER_SEED_TEMPLATE is not None
+    model = _WORKER_MODEL
+    dispatch_args = _WORKER_DISPATCH_ARGS
+    seed_template = _WORKER_SEED_TEMPLATE
+
+    initial_guess = _prepare_sbs_model_for_slice(
+        model,
+        dispatch_args,
+        seed_template,
+        seed_adapt=seed_adapt,
+        s=s,
+        energy=energy,
+        e_lim=e_lim,
+        e_pos_pars=e_pos_pars,
+        e_pos_vals=e_pos_vals,
+        data_base_argmax_energy=data_base_argmax_energy,
+        fit_fun_str=fit_fun_str,
+    )
+    const = model.const
+    args = model.args
+    assert const is not None
+    assert args is not None
+
+    result_sbs = fitlib.fit_wrapper(
+        const=const,
+        args=args,
+        par_names=model.parameter_names,
+        par=model.lmfit_pars,
+        stages=stages,
+        show_output=0,
+        save_output=1,
+        save_path=path_slice,
+        **fit_wrapper_kwargs,
+    )
+
+    fitlib.plt_fit_res_1d(
+        x=const[0],
+        y=const[1],
+        fit_fun_str=fit_fun_str,
+        par_init=initial_guess,
+        par_fin=result_sbs[1],
+        args=args,
+        plot_sum=False,
+        show_init=True,
+        fit_lim=e_lim,
+        config=plot_config,
+        save_img=-1,
+        save_path=path_slice.with_suffix(".png"),
+    )
+
+    return s_i, result_sbs
 
 
 #
@@ -138,8 +333,6 @@ class Project:
     spec_fun_str : str
         Name of fitting function in ``trspecfit.spectra`` (e.g.
         ``'fit_model_gir'``, ``'fit_model_mcp'``, ``'fit_model_compare'``)
-    skip_first_n_spec, first_n_spec_only : int
-        Slice selection for partial fitting (-1 = all slices)
 
     Notes
     -----
@@ -226,8 +419,6 @@ class Project:
         self.da_slices_fmt = "%06d"
         # Advanced settings
         self.spec_fun_str = "fit_model_gir"
-        self.skip_first_n_spec = -1
-        self.first_n_spec_only = -1
 
     #
     def __repr__(self) -> str:
@@ -2270,13 +2461,23 @@ class File:
 
     #
     def fit_slice_by_slice(
-        self, model_name: str, stages: int = 1, **fit_wrapper_kwargs
+        self,
+        model_name: str,
+        stages: int = 1,
+        n_workers: int | None = None,
+        *,
+        seed_source: Literal["model", "baseline", "explicit"] = "baseline",
+        seed_values: Any | None = None,
+        seed_adapt: Literal["argmax_shift"] | None = "argmax_shift",
+        **fit_wrapper_kwargs,
     ) -> None:
         """
         Fit time- and energy-resolved spectrum Slice-by-Slice (SbS).
 
-        Treats every time step as independent from other times. Requires fitting
-        the baseline first using fit_baseline().
+        Treats every time step as independent from other times. Each slice starts
+        from a shared seed template selected via ``seed_source``, optionally
+        adapted per slice via ``seed_adapt``. There is no cross-slice warm start,
+        which keeps the workflow embarrassingly parallel.
 
         Parameters
         ----------
@@ -2288,15 +2489,53 @@ class File:
             - 1: Single optimization with ``fit_alg_1``
             - 2: Two-stage fit (``fit_alg_1`` then ``fit_alg_2``)
 
+        n_workers : int or None, default=None
+            Number of parallel worker processes. Slices are independent
+            so SbS is embarrassingly parallel.
+
+            - ``None``: auto, ``os.cpu_count() - 1`` (leaves one core free)
+            - ``1``: serial path (debug escape hatch — no pool overhead)
+            - ``N > 1``: ``ProcessPoolExecutor`` with the ``spawn`` start
+              method, the only portable option (Windows lacks ``fork``).
+              Workers reuse one pickled model installed at startup, so
+              per-slice pickle overhead is bounded.
+
+            Notes for very small fits: spawn worker startup costs
+            ~200-500ms on Linux/macOS and ~1-2s on Windows per worker,
+            so for fits of fewer than ~20 slices, ``n_workers=1`` is
+            usually faster.
+
+        seed_source : {'model', 'baseline', 'explicit'}, default='baseline'
+            Shared parameter template used to seed every slice before any
+            per-slice adaptation is applied.
+
+            - ``'model'``: use the current ``model_sbs.lmfit_pars`` values
+            - ``'baseline'``: use the stored ``fit_baseline()`` result values
+            - ``'explicit'``: use ``seed_values`` after normalizing it to the
+              model parameter order
+
+        seed_values : optional
+            Explicit seed template used when ``seed_source='explicit'``.
+            Accepts the same broad value shapes as ``ulmfit.par_extract()``
+            plus dicts keyed by parameter name.
+
+        seed_adapt : {None, 'argmax_shift'}, default='argmax_shift'
+            Optional per-slice tweak applied after resolving the shared seed
+            template and before fitting a slice.
+
+            - ``None``: use the same initial guess for every slice
+            - ``'argmax_shift'``: shift all parameters ending in ``'_x0'`` by the
+              difference between the current slice's argmax energy and the
+              baseline spectrum's argmax energy
+
         **fit_wrapper_kwargs
             Additional keyword arguments passed to fitlib.fit_wrapper
 
         Notes
         -----
-        Note:
-        Currently the energy position guesses (x0) are shifted on a per slice basis
-        according to the position in energy (x) of the maximum value of the spectrum
-        (NOT always a good idea!)
+        The actual per-slice fit results live in ``self.results_sbs``.
+        ``self.model_sbs`` is retained as shared model/reconstruction context
+        and is restored to the unadapted seed template after fitting.
         """
 
         t_sbs = time.time()  # start timing for SbS fit
@@ -2308,18 +2547,27 @@ class File:
                 "be used for Slice-by-Slice fitting. "
                 "Use a model without dynamics, or use fit_2d() instead."
             )
-        if self.model_base is None:
-            raise ValueError(
-                "Baseline model is not fitted yet; run fit_baseline() first."
-            )
-        if (
-            self.data is None
-            or self.time is None
-            or self.energy is None
-            or self.data_base is None
+        if self.data is None or self.time is None or self.energy is None:
+            raise ValueError("Data/axes missing; cannot run Slice-by-Slice fit.")
+        if seed_source not in ("model", "baseline", "explicit"):
+            raise ValueError("seed_source must be 'model', 'baseline', or 'explicit'.")
+        if seed_adapt not in (None, "argmax_shift"):
+            raise ValueError("seed_adapt must be None or 'argmax_shift'.")
+        if seed_source == "baseline" and (
+            self.model_base is None or not self.model_base.result
         ):
             raise ValueError(
-                "Data/axes/baseline missing; cannot run Slice-by-Slice fit."
+                "Baseline seed requested but baseline model is not fitted yet; "
+                "run fit_baseline() first or use seed_source='model'/'explicit'."
+            )
+        if seed_source != "explicit" and seed_values is not None:
+            raise ValueError("seed_values is only used when seed_source='explicit'.")
+        if seed_source == "explicit" and seed_values is None:
+            raise ValueError("seed_source='explicit' requires seed_values.")
+        if seed_adapt == "argmax_shift" and self.data_base is None:
+            raise ValueError(
+                "seed_adapt='argmax_shift' requires baseline data; "
+                "run define_baseline() first or use seed_adapt=None."
             )
 
         # define (and create) path where SbS fit results will be saved to
@@ -2330,99 +2578,170 @@ class File:
             ],
         )
 
-        # set all fixed SbS fit parameters equal to baseline model results
-        base_df = ulmfit.par_to_df(self.model_base.lmfit_pars, col_type="min")
-        self.model_sbs.update_value(
-            new_par_values=list(base_df["value"]), par_select="all"
-        )
+        if seed_source == "model":
+            seed_template = ulmfit.par_extract(
+                self.model_sbs.lmfit_pars, return_type="list"
+            )
+        elif seed_source == "baseline":
+            assert self.model_base is not None  # type guard
+            seed_template = ulmfit.par_extract(
+                self.model_base.result[1], return_type="list"
+            )
+        else:
+            seed_template = _extract_sbs_seed_template(
+                seed_values,
+                self.model_sbs.parameter_names,
+            )
+
+        self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
 
         # find all parameters with names ending in "x0"
         # so they can be updated for every slice
         e_pos_pars = [
             name for name in self.model_sbs.parameter_names if name.endswith("_x0")
         ]
-        # find their corresponding values
-        e_pos_vals = uarr.get_item(
-            base_df, row=["name", e_pos_pars], col="value", astype="series"
-        )
+        e_pos_vals: pd.Series | None
+        data_base_argmax_energy: float | None
+        if seed_adapt == "argmax_shift":
+            e_pos_vals = pd.Series(
+                data=[self.model_sbs.lmfit_pars[name].value for name in e_pos_pars],
+                index=e_pos_pars,
+                dtype=float,
+            )
+            assert self.data_base is not None  # type guard
+            data_base_argmax_energy = float(self.energy[np.argmax(self.data_base)])
+        else:
+            e_pos_vals = None
+            data_base_argmax_energy = None
 
         # --- dispatch: GIR fast path vs interpreter ---
         _fun_str = self.p.spec_fun_str
         _args_sbs = self._build_1d_dispatch_args(self.model_sbs, _fun_str)
 
-        # cycle through all spectra and fit them
-        self.results_sbs = []  # (re-)initialize placeholder for results
-        for s_i, s in enumerate(self.data):
-            print(f"Analyzing slice number {s_i + 1}/{len(self.time)}", end="\r")
-            if s_i < self.p.skip_first_n_spec:
-                continue  # skip past baseline spectra for debugging
-            # define path for files saved for this slice
-            path_slice = path_sbs_results / "slices" / str(self.p.da_slices_fmt % s_i)
+        n_slices = len(self.data)
 
-            # update the "x0" peak energy guess(es) using
-            # "max(baseline) -(max current slice)" [ in eV]
-            delta_max = (
-                self.energy[np.argmax(s)] - self.energy[np.argmax(self.data_base)]
-            )
-            # update all guesses for parameters with names ending in "x0"
-            new_e_vals = list(e_pos_vals.add(delta_max))
-            self.model_sbs.update_value(
-                new_par_values=new_e_vals, par_select=e_pos_pars
-            )
-            # get initial guess
-            initial_guess = ulmfit.par_extract(
-                self.model_sbs.lmfit_pars, return_type="list"
-            )
+        def _slice_path(s_i: int) -> pathlib.Path:
+            return path_sbs_results / "slices" / str(self.p.da_slices_fmt % s_i)
 
-            # const = (x, data, fnctn str, unpack, energy limits, time limits)
+        # resolve worker count: None -> auto, otherwise honour user.
+        if n_workers is None:
+            n_workers = max(1, (os.cpu_count() or 1) - 1)
+        # No point spawning more workers than slices.
+        n_workers = max(1, min(n_workers, n_slices))
+
+        if n_workers == 1:
+            # serial path (debug escape hatch).
+            self.results_sbs = []
+            for s_i, s in enumerate(self.data):
+                print(f"Analyzing slice number {s_i + 1}/{len(self.time)}", end="\r")
+                path_slice = _slice_path(s_i)
+
+                initial_guess = _prepare_sbs_model_for_slice(
+                    self.model_sbs,
+                    _args_sbs,
+                    seed_template,
+                    seed_adapt=seed_adapt,
+                    s=s,
+                    energy=self.energy,
+                    e_lim=self.e_lim,
+                    e_pos_pars=e_pos_pars,
+                    e_pos_vals=e_pos_vals,
+                    data_base_argmax_energy=data_base_argmax_energy,
+                    fit_fun_str=_fun_str,
+                )
+                const = self.model_sbs.const
+                args = self.model_sbs.args
+                assert const is not None
+                assert args is not None
+
+                result_sbs = fitlib.fit_wrapper(
+                    const=const,
+                    args=args,
+                    par_names=self.model_sbs.parameter_names,
+                    par=self.model_sbs.lmfit_pars,
+                    stages=stages,
+                    show_output=0,
+                    save_output=1,
+                    save_path=path_slice,
+                    **fit_wrapper_kwargs,
+                )
+                self.results_sbs.append(result_sbs)
+
+                fitlib.plt_fit_res_1d(
+                    x=const[0],
+                    y=const[1],
+                    fit_fun_str=self.p.spec_fun_str,
+                    par_init=initial_guess,
+                    par_fin=result_sbs[1],
+                    args=args,
+                    plot_sum=False,
+                    show_init=True,
+                    fit_lim=self.e_lim,
+                    config=self.plot_config,
+                    save_img=-1,
+                    save_path=path_slice.with_suffix(".png"),
+                )
+        else:
+            # parallel path: spawn pool, install model once per worker.
+            ctx = multiprocessing.get_context("spawn")
+            by_id: dict[int, list[Any]] = {}
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=n_workers,
+                mp_context=ctx,
+                initializer=_sbs_worker_init,
+                initargs=(self.model_sbs, _args_sbs, seed_template),
+            ) as executor:
+                futures = {
+                    executor.submit(
+                        _sbs_fit_one_slice,
+                        s_i,
+                        self.data[s_i],
+                        energy=self.energy,
+                        e_lim=self.e_lim,
+                        seed_adapt=seed_adapt,
+                        e_pos_pars=e_pos_pars,
+                        e_pos_vals=e_pos_vals,
+                        data_base_argmax_energy=data_base_argmax_energy,
+                        fit_fun_str=_fun_str,
+                        stages=stages,
+                        path_slice=_slice_path(s_i),
+                        plot_config=self.plot_config,
+                        fit_wrapper_kwargs=fit_wrapper_kwargs,
+                    ): s_i
+                    for s_i in range(n_slices)
+                }
+                try:
+                    for fut in tqdm(
+                        concurrent.futures.as_completed(futures),
+                        total=len(futures),
+                        desc=f"SbS fit ({n_workers} workers)",
+                    ):
+                        slice_idx, result_sbs = fut.result()
+                        by_id[slice_idx] = result_sbs
+                except BaseException:
+                    # fail-fast: cancel remaining futures and re-raise
+                    for f in futures:
+                        f.cancel()
+                    raise
+            self.results_sbs = [by_id[i] for i in sorted(by_id)]
+            # mirror the serial path's final model state so downstream
+            # consumers (save_sbs_fit, plot helpers) see identical
+            # const/args regardless of which path produced the results.
             self.model_sbs.const = (
                 self.energy,
-                s,
+                self.data[n_slices - 1],
                 _fun_str,
                 0,
                 self.e_lim,
                 [],
             )
-            # args [for fit function called in residual function]
             self.model_sbs.args = _args_sbs
-
-            # fit with confidence intervals
-            result_sbs = fitlib.fit_wrapper(
-                const=self.model_sbs.const,
-                args=self.model_sbs.args,
-                par_names=self.model_sbs.parameter_names,
-                par=self.model_sbs.lmfit_pars,
-                stages=stages,
-                show_output=0,
-                save_output=1,
-                save_path=path_slice,
-                **fit_wrapper_kwargs,
-            )
-
-            # add final fit parameters to list of fit parameters of all spectra
-            self.results_sbs.append(result_sbs)
-
-            # (optionally) plot and (always) save fit summary for this slice
-            fitlib.plt_fit_res_1d(
-                x=self.model_sbs.const[0],
-                y=self.model_sbs.const[1],
-                fit_fun_str=self.p.spec_fun_str,
-                par_init=initial_guess,
-                par_fin=result_sbs[1],
-                args=self.model_sbs.args,
-                plot_sum=False,
-                show_init=True,
-                fit_lim=self.e_lim,
-                config=self.plot_config,
-                save_img=-1,
-                save_path=path_slice.with_suffix(".png"),
-            )
-            #
-            if s_i == self.p.first_n_spec_only:
-                break  # for debugging: only fit first N spectra
 
         if stages >= 1:
             self.save_sbs_fit(save_path=path_sbs_results)
+        self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
+        self.model_sbs.args = _args_sbs
+        if stages >= 1:
             fitlib.time_display(
                 t_start=t_sbs, print_str="Time elapsed for Slice-by-Slice fit: "
             )
@@ -2458,8 +2777,6 @@ class File:
             x=self.time,
             index=np.arange(0, len(self.time)),
             config=self.plot_config,
-            skip_first_n_spec=self.p.skip_first_n_spec,
-            first_n_spec_only=self.p.first_n_spec_only,
             save_df=-1 if self.p.show_output == 0 else 1,
             save_path=save_path,
         )
@@ -2475,19 +2792,17 @@ class File:
         )
 
         # plot data, fit, and residual 2D maps
-        # (works if full 2D map is fitted/ no slices skipped)
-        if self.p.first_n_spec_only == -1 and self.p.skip_first_n_spec == -1:
-            fitlib.plt_fit_res_2d(
-                data=self.data,
-                fit=fit_2d_sbs,
-                x=self.energy,
-                y=self.time,
-                config=self.plot_config,
-                x_lim=self.e_lim,
-                y_lim=self.t_lim,
-                save_img=-1 if self.p.show_output == 0 else 1,
-                save_path=save_path,
-            )
+        fitlib.plt_fit_res_2d(
+            data=self.data,
+            fit=fit_2d_sbs,
+            x=self.energy,
+            y=self.time,
+            config=self.plot_config,
+            x_lim=self.e_lim,
+            y_lim=self.t_lim,
+            save_img=-1 if self.p.show_output == 0 else 1,
+            save_path=save_path,
+        )
 
     #
     def _resolve_model(self, model_name: str | None) -> mcp.Model:
