@@ -1238,7 +1238,7 @@ class TestProfileExpressionInteraction:
 
 # Time-dependent profile parameter tests
 #
-def _make_time_dep_profile_model():
+def _make_time_dep_profile_model(dynamics_model=None):
     """Create model with a profiled par whose profile slope is time-dependent.
 
     single_glp with pLinear(m=-0.5, b=0) on GLP_01_A,
@@ -1264,7 +1264,7 @@ def _make_time_dep_profile_model():
         target_model="single_glp",
         target_parameter="GLP_01_A_pLinear_01_m",
         dynamics_yaml="models/file_time.yaml",
-        dynamics_model=["MonoExpPos"],
+        dynamics_model=dynamics_model or ["MonoExpPos"],
     )
     model = file.model_active
     assert model is not None
@@ -1345,6 +1345,18 @@ class TestTimeDependentProfileParams:
                     found_resolved_in_sample = True
                     break
         assert found_resolved_in_sample
+
+    #
+    def test_schedule_2d_accepts_profile_par_dynamics_convolution(self):
+        """Profile-param IRF dynamics lower through schedule_2d."""
+
+        _file, model = _make_time_dep_profile_model(["MonoExpPosIRF"])
+        graph = build_graph(model)
+
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+
+        assert plan.n_profile_samples > 0
 
 
 # Dynamics convolution tests
