@@ -934,33 +934,85 @@ class TestFitPreconditions:
     # -- fit_slice_by_slice --
 
     #
-    def test_fit_sbs_no_baseline_model_raises(self):
-        """fit_slice_by_slice raises ValueError when baseline not fitted."""
+    def test_fit_sbs_default_seed_requires_fitted_baseline(self):
+        """Default SbS seeding requires a completed baseline fit."""
 
         file = self._make_file_with_model()
-        file.model_base = None
-        with pytest.raises(ValueError, match="fit_baseline"):
+        file.model_base = file.model_active
+        with pytest.raises(ValueError, match="Baseline seed requested"):
             file.fit_slice_by_slice("simple_energy")
+
+    #
+    def test_fit_sbs_model_seed_allows_no_baseline_fit(self):
+        """seed_source='model' can run without a baseline fit or baseline data."""
+
+        file = self._make_file_with_model()
+        file.p.spec_fun_str = "fit_model_mcp"
+
+        with (
+            unittest.mock.patch(
+                "trspecfit.trspecfit.fitlib.fit_wrapper",
+                return_value=[None, object(), None, None, None],
+            ) as mock_fit,
+            unittest.mock.patch("trspecfit.trspecfit.fitlib.plt_fit_res_1d"),
+            unittest.mock.patch.object(file, "save_sbs_fit"),
+            unittest.mock.patch("trspecfit.trspecfit.fitlib.time_display"),
+        ):
+            file.fit_slice_by_slice(
+                "simple_energy",
+                n_workers=1,
+                seed_source="model",
+                seed_adapt=None,
+            )
+
+        assert mock_fit.call_count == len(file.time)
+
+    #
+    def test_fit_sbs_explicit_seed_requires_values(self):
+        """seed_source='explicit' must be accompanied by seed_values."""
+
+        file = self._make_file_with_model()
+        with pytest.raises(ValueError, match="requires seed_values"):
+            file.fit_slice_by_slice(
+                "simple_energy",
+                seed_source="explicit",
+                seed_adapt=None,
+            )
+
+    #
+    def test_fit_sbs_nonexplicit_seed_rejects_seed_values(self):
+        """seed_values should not be accepted for non-explicit seed sources."""
+
+        file = self._make_file_with_model()
+        with pytest.raises(ValueError, match="only used when seed_source='explicit'"):
+            file.fit_slice_by_slice(
+                "simple_energy",
+                seed_source="model",
+                seed_values=[1.0, 2.0],
+                seed_adapt=None,
+            )
 
     #
     def test_fit_sbs_no_data_raises(self):
         """fit_slice_by_slice raises ValueError when data is missing."""
 
         file = self._make_file_with_model()
-        file.model_base = file.model_active  # satisfy baseline check
         file.data = None
         with pytest.raises(ValueError, match="missing"):
-            file.fit_slice_by_slice("simple_energy")
+            file.fit_slice_by_slice(
+                "simple_energy", seed_source="model", seed_adapt=None
+            )
 
     #
     def test_fit_sbs_no_time_raises(self):
         """fit_slice_by_slice raises ValueError when time axis is missing."""
 
         file = self._make_file_with_model()
-        file.model_base = file.model_active
         file.time = None
         with pytest.raises(ValueError, match="missing"):
-            file.fit_slice_by_slice("simple_energy")
+            file.fit_slice_by_slice(
+                "simple_energy", seed_source="model", seed_adapt=None
+            )
 
     # -- fit_2d --
 

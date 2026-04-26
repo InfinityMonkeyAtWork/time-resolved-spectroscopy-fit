@@ -21,6 +21,7 @@ from trspecfit.graph_ir import (
     schedule_1d,
     schedule_2d,
 )
+from trspecfit.utils import lmfit as ulmfit
 
 _ENERGY_YAML = "models/eval_2d_energy.yaml"
 _TIME_YAML = "models/file_time.yaml"
@@ -1172,15 +1173,19 @@ class TestFileFitSliceBySlice:
 
     #
     @pytest.mark.slow
-    def test_compare_mode_through_fit_slice_by_slice(self):
-        """fit_slice_by_slice uses the 1D GIR path when the model lowers."""
+    @pytest.mark.parametrize("n_workers", [1, 2])
+    def test_compare_mode_through_fit_slice_by_slice(self, n_workers):
+        """fit_slice_by_slice uses the 1D GIR path when the model lowers.
 
-        project = Project(path="tests", name="gir_sbs_cmp")
+        Run under both the serial (n_workers=1) and parallel
+        (n_workers=2) dispatch paths to ensure GIR/MCP parity holds in
+        both, and that the parallel path leaves the same downstream
+        model state (const, args) the serial path does.
+        """
+
+        project = Project(path="tests", name=f"gir_sbs_cmp_w{n_workers}")
         project.show_output = 0
         project.spec_fun_str = "fit_model_compare"
-        # Fit 3 slices so we exercise the hoisted-args reuse across the loop
-        # and the multi-row save_sbs_fit reconstruction path.
-        project.first_n_spec_only = 2
 
         truth = _make_1d_truth_file(project)
         truth.model_active.create_value_1d()
@@ -1191,10 +1196,132 @@ class TestFileFitSliceBySlice:
         fit_file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
 
         # If GIR and interpreter disagree, fit_model_compare raises.
-        fit_file.fit_slice_by_slice(model_name="single_glp", stages=1, try_ci=0)
+        fit_file.fit_slice_by_slice(
+            model_name="single_glp", stages=1, try_ci=0, n_workers=n_workers
+        )
 
         assert fit_file.model_sbs is not None
         assert fit_file.model_sbs.args is not None
         assert len(fit_file.model_sbs.args) == 4
         assert isinstance(fit_file.model_sbs.args[0], ScheduledPlan1D)
-        assert len(fit_file.results_sbs) == 3
+        assert len(fit_file.results_sbs) == len(truth.time)
+
+    #
+    @pytest.mark.slow
+    def test_serial_and_parallel_produce_same_fit(self):
+        """n_workers=1 and n_workers=2 must converge to identical params.
+
+        Slices are independent, so each path optimizes the same residual
+        on the same data with the same initial guess. Any divergence
+        would indicate a state-leak bug in worker dispatch.
+        """
+
+        def _run_sbs(name: str, n_workers: int) -> tuple[list, int]:
+            project = Project(path="tests", name=name)
+            project.show_output = 0
+            project.spec_fun_str = "fit_model_mcp"
+
+            truth = _make_1d_truth_file(project)
+            truth.model_active.create_value_1d()
+            spectrum_1d = truth.model_active.value_1d.copy()
+            data_2d = np.tile(spectrum_1d, (len(truth.time), 1))
+
+            fit_file = _make_1d_fit_file(project, data_2d, truth.energy, truth.time)
+            fit_file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+            fit_file.fit_slice_by_slice(
+                model_name="single_glp",
+                stages=1,
+                try_ci=0,
+                n_workers=n_workers,
+            )
+            assert fit_file.results_sbs is not None  # type guard
+            return fit_file.results_sbs, len(truth.time)
+
+        serial, n_serial = _run_sbs("sbs_serial", n_workers=1)
+        parallel, n_parallel = _run_sbs("sbs_parallel", n_workers=2)
+
+        assert len(serial) == len(parallel) == n_serial == n_parallel
+        for s_i, (r_serial, r_parallel) in enumerate(
+            zip(serial, parallel, strict=True)
+        ):
+            # result_sbs[1] is the lmfit MinimizerResult; compare its
+            # final parameter values across the two paths.
+            params_serial = r_serial[1].params
+            params_parallel = r_parallel[1].params
+            assert list(params_serial.keys()) == list(params_parallel.keys())
+            for name in params_serial.keys():
+                np.testing.assert_allclose(
+                    params_serial[name].value,
+                    params_parallel[name].value,
+                    rtol=1e-10,
+                    atol=1e-12,
+                    err_msg=f"slice {s_i} param {name} diverged",
+                )
+
+    #
+    @pytest.mark.slow
+    @pytest.mark.parametrize("n_workers", [1, 2])
+    @pytest.mark.parametrize(
+        ("seed_source", "seed_adapt"),
+        [
+            ("baseline", "argmax_shift"),
+            ("model", None),
+            ("explicit", None),
+        ],
+    )
+    def test_fit_slice_by_slice_restores_seed_template(
+        self,
+        n_workers,
+        seed_source,
+        seed_adapt,
+    ):
+        """SbS leaves model_sbs at the shared seed template in both paths."""
+
+        project = Project(
+            path="tests", name=f"sbs_seed_restore_{seed_source}_w{n_workers}"
+        )
+        project.show_output = 0
+        project.spec_fun_str = "fit_model_mcp"
+
+        truth = _make_1d_truth_file(project)
+        truth.model_active.create_value_1d()
+        spectrum_1d = truth.model_active.value_1d.copy()
+        data_2d = np.tile(spectrum_1d, (len(truth.time), 1))
+
+        fit_file = _make_1d_fit_file(project, data_2d, truth.energy, truth.time)
+        fit_file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+
+        assert fit_file.model_base is not None
+        expected = ulmfit.par_extract(fit_file.model_base.result[1], return_type="list")
+        seed_values = None
+
+        if seed_source == "model":
+            expected = expected.copy()
+            expected[0] = expected[0] + 1.234 if expected[0] == 0 else expected[0] * 0.8
+            fit_file.model_active.update_value(expected)
+        elif seed_source == "explicit":
+            expected = expected.copy()
+            expected[0] = expected[0] + 0.456 if expected[0] == 0 else expected[0] * 1.1
+            seed_values = expected
+
+        fit_file.fit_slice_by_slice(
+            model_name="single_glp",
+            stages=1,
+            try_ci=0,
+            n_workers=n_workers,
+            seed_source=seed_source,
+            seed_values=seed_values,
+            seed_adapt=seed_adapt,
+        )
+
+        assert fit_file.model_sbs is not None
+        for name, expected_value in zip(
+            fit_file.model_sbs.parameter_names, expected, strict=True
+        ):
+            np.testing.assert_allclose(
+                fit_file.model_sbs.lmfit_pars[name].value,
+                expected_value,
+                rtol=1e-12,
+                atol=1e-12,
+                err_msg=(f"{seed_source=} {n_workers=} left {name} in the wrong state"),
+            )

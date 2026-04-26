@@ -1933,19 +1933,12 @@ def _bind_expr_to_rows(
 
 
 #
-def _resolve_convolution_target_row(
+def _walk_convolution_to_param_plus_trace(
     conv_node: GraphNode,
     edges: list[GraphEdge],
     id_to_node: dict[int, GraphNode],
-    name_to_row: dict[str, int],
-) -> int:
-    """Walk a conv chain back to the underlying PARAM_PLUS_TRACE row.
-
-    CONVOLUTION nodes wrap a resolved trace: their TRACE_INPUT source is
-    either the PARAM_PLUS_TRACE (single conv) or an earlier CONVOLUTION
-    (chained conv).  The lowered plan rewrites the PPT row in place, so
-    every conv in a chain shares the same target row.
-    """
+) -> GraphNode:
+    """Walk a conv chain back to its underlying PARAM_PLUS_TRACE node."""
 
     current = conv_node
     # Bounded walk: guards against pathological cycles in malformed graphs.
@@ -1962,7 +1955,7 @@ def _resolve_convolution_target_row(
             )
         parent = id_to_node[trace_parents[0].source]
         if parent.kind == NodeKind.PARAM_PLUS_TRACE:
-            return name_to_row[parent.name]
+            return parent
         if parent.kind != NodeKind.CONVOLUTION:
             raise ValueError(
                 f"CONVOLUTION chain for {conv_node.name!r} walks through"
@@ -1970,6 +1963,25 @@ def _resolve_convolution_target_row(
             )
         current = parent
     raise ValueError(f"CONVOLUTION chain for {conv_node.name!r} exceeds graph size")
+
+
+#
+def _resolve_convolution_target_row(
+    conv_node: GraphNode,
+    edges: list[GraphEdge],
+    id_to_node: dict[int, GraphNode],
+    name_to_row: dict[str, int],
+) -> int:
+    """Walk a conv chain back to the underlying PARAM_PLUS_TRACE row.
+
+    CONVOLUTION nodes wrap a resolved trace: their TRACE_INPUT source is
+    either the PARAM_PLUS_TRACE (single conv) or an earlier CONVOLUTION
+    (chained conv).  The lowered plan rewrites the PPT row in place, so
+    every conv in a chain shares the same target row.
+    """
+
+    ppt_node = _walk_convolution_to_param_plus_trace(conv_node, edges, id_to_node)
+    return name_to_row[ppt_node.name]
 
 
 #
@@ -2526,11 +2538,19 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         for edge in rep_param_edges[1:]:
             src_node = id_to_node[edge.source]
             src_row = name_to_row[src_node.name]
-            # PARAM_PLUS_TRACE nodes have a "_resolved" suffix; strip
-            # it for profile component parsing but use the resolved row.
+            # PARAM_PLUS_TRACE nodes have a "_resolved" suffix; CONVOLUTION
+            # nodes wrap a PPT for profile-time-dynamics and carry their own
+            # "<par>_<kernel>_dynamics" name.  In both cases, walk back to
+            # the underlying PPT so profile component parsing sees the
+            # original profile parameter name.
             parse_name = src_node.name
             if src_node.kind == NodeKind.PARAM_PLUS_TRACE:
                 parse_name = parse_name.removesuffix("_resolved")
+            elif src_node.kind == NodeKind.CONVOLUTION:
+                ppt_node = _walk_convolution_to_param_plus_trace(
+                    src_node, graph.edges, id_to_node
+                )
+                parse_name = ppt_node.name.removesuffix("_resolved")
             comp_name, func_name = _parse_profile_component_param_name(
                 group_name,
                 parse_name,

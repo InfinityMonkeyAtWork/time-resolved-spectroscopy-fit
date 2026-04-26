@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trspecfit"
-version = "0.8.1"
+version = "0.8.2"
 authors = [
     {name = "Johannes Mahl", email = "johannes.a.mahl@gmail.com"},
 ]
@@ -107,6 +107,7 @@ markers = ["slow: long-running round-trip tests (skipped by default, use -m slow
 filterwarnings = [
     "ignore:FigureCanvasAgg is non-interactive:UserWarning",
     "ignore:invalid value encountered in scalar divide:RuntimeWarning:lmfit",
+    "ignore:This process .* use of fork\\(\\) may lead to deadlocks in the child\\.:DeprecationWarning",
 ]
 
 [tool.ruff]
