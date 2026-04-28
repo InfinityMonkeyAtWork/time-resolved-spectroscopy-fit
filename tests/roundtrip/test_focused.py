@@ -156,6 +156,31 @@ def test_w2_sbs_f1():
     assert len(fit_file.results_sbs) == len(fit_file.time)
 
 
+# ---- W2 on a profile family: pickles Par.p_model into workers ----
+
+
+#
+def test_w2_sbs_f6_profile():
+    """SbS workers=2 on a profile-bearing family.
+
+    Per-slice fits are 1D, so dynamics aren't inside the worker model,
+    but profiles are: ``Par.p_model`` (a Profile sub-Model) must survive
+    the worker pickle boundary or this fails. F1 doesn't exercise that
+    path.
+    """
+
+    fit_file, family = _build_fit_file_for_baseline("F6")
+    fit_file.fit_slice_by_slice(
+        model_name=family.model_name("default"),
+        stages=1,
+        n_workers=2,
+        seed_source="model",
+        seed_adapt=None,
+        try_ci=0,
+    )
+    assert len(fit_file.results_sbs) == len(fit_file.time)
+
+
 # ---- SbS seed combos: explicit seed + baseline+argmax_shift ----
 
 
