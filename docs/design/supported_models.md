@@ -48,7 +48,9 @@ The sections above describe model semantics. The graph intermediate representati
 - Project-level fitting is still wired through ``fit_project_mcp`` even when
   the underlying per-file models are lowerable.
 
-## Notes/ Future Changes
+## Notes
 
-We may choose to disallow all transitive expression chains in the future. Static transitive expression chains in energy models are currently allowed. However there is a user experience issue: a chain that works in the static case can become invalid once dynamics or a profile is added. This is surprising and hard to document/ communicate clearly.
-If this change is implemented the recommended pattern would be direct fan-out expressions from the base parameter rather than multi-step chains.
+Static energy-only expression chains are handled by lmfit, so they may continue to work in interpreter-backed workflows. They are not the model shape we use as
+the backend-portability contract, because the same chain pattern becomes invalid
+or ambiguous once dynamics or profiles enter the dependency path. The recommended
+pattern is direct fan-out from base parameters instead of multi-step chains.

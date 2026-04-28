@@ -6,17 +6,9 @@ matplotlib.use("Agg")
 
 import numpy as np
 import pytest
+from _utils import make_project, simulate_clean
 
-from trspecfit import File, Project, Simulator
-
-
-#
-def _make_project():
-    """Create a silent project pointing to tests/ for YAML access."""
-
-    project = Project(path="tests", name="fit_spectrum")
-    project.show_output = 0
-    return project
+from trspecfit import File
 
 
 #
@@ -64,32 +56,6 @@ def _make_fit_file(project, data, energy, time):
 
 
 #
-def _extract_par_dict(model):
-    """Return {name: value} for all non-expression parameters."""
-
-    return {
-        name: model.lmfit_pars[name].value
-        for name in model.parameter_names
-        if model.lmfit_pars[name].expr is None
-    }
-
-
-#
-def _simulate_clean(truth_file):
-    """Generate noiseless 2D data from the truth model."""
-
-    sim = Simulator(
-        model=truth_file.model_active,
-        detection="analog",
-        noise_level=0.0,
-        noise_type="none",
-        seed=42,
-    )
-    clean, _, _ = sim.simulate_2d()
-    return clean
-
-
-#
 #
 class TestFitSpectrumErrors:
     """Validation errors for fit_spectrum()."""
@@ -98,7 +64,7 @@ class TestFitSpectrumErrors:
     def test_1d_data_raises(self):
         """fit_spectrum raises ValueError for 1D data."""
 
-        project = _make_project()
+        project = make_project(name="fit_spectrum")
         file = File(
             parent_project=project,
             name="err_1d",
@@ -116,7 +82,7 @@ class TestFitSpectrumErrors:
     def test_no_time_selection_raises(self):
         """fit_spectrum raises ValueError if neither time_point nor time_range given."""
 
-        project = _make_project()
+        project = make_project(name="fit_spectrum")
         energy = np.linspace(83, 87, 30)
         time = np.linspace(-2, 10, 24)
         data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
@@ -138,7 +104,7 @@ class TestFitSpectrumErrors:
     def test_both_time_point_and_range_raises(self):
         """fit_spectrum raises ValueError if both time_point and time_range given."""
 
-        project = _make_project()
+        project = make_project(name="fit_spectrum")
         energy = np.linspace(83, 87, 30)
         time = np.linspace(-2, 10, 24)
         data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
@@ -160,9 +126,9 @@ class TestFitSpectrumErrors:
     def test_2d_model_raises(self):
         """fit_spectrum raises ValueError for a model with time dependence (dim=2)."""
 
-        project = _make_project()
+        project = make_project(name="fit_spectrum")
         truth_file = _make_truth_file(project)
-        clean = _simulate_clean(truth_file)
+        clean = simulate_clean(truth_file.model_active)
 
         fit_file = _make_fit_file(project, clean, truth_file.energy, truth_file.time)
         fit_file.add_time_dependence(
@@ -178,9 +144,9 @@ class TestFitSpectrumErrors:
     def test_time_point_out_of_range_raises(self):
         """fit_spectrum raises ValueError for a time_point beyond the time axis."""
 
-        project = _make_project()
+        project = make_project(name="fit_spectrum")
         truth_file = _make_truth_file(project)
-        clean = _simulate_clean(truth_file)
+        clean = simulate_clean(truth_file.model_active)
 
         fit_file = _make_fit_file(project, clean, truth_file.energy, truth_file.time)
         with pytest.raises(ValueError, match="out-of-range"):
@@ -190,9 +156,9 @@ class TestFitSpectrumErrors:
     def test_time_point_ind_out_of_range_raises(self):
         """fit_spectrum raises ValueError for an index beyond the time axis."""
 
-        project = _make_project()
+        project = make_project(name="fit_spectrum")
         truth_file = _make_truth_file(project)
-        clean = _simulate_clean(truth_file)
+        clean = simulate_clean(truth_file.model_active)
 
         fit_file = _make_fit_file(project, clean, truth_file.energy, truth_file.time)
         with pytest.raises(ValueError, match="out-of-range"):
@@ -202,9 +168,9 @@ class TestFitSpectrumErrors:
     def test_reversed_time_range_raises(self):
         """fit_spectrum raises ValueError for a reversed time_range (start > stop)."""
 
-        project = _make_project()
+        project = make_project(name="fit_spectrum")
         truth_file = _make_truth_file(project)
-        clean = _simulate_clean(truth_file)
+        clean = simulate_clean(truth_file.model_active)
 
         fit_file = _make_fit_file(project, clean, truth_file.energy, truth_file.time)
         with pytest.raises(ValueError, match="empty or out-of-range"):
@@ -221,9 +187,9 @@ class TestFitSpectrumTimePoint:
     def test_time_point_abs_recovery(self):
         """Fit at a time_point (abs) recovers the 1D spectrum parameters."""
 
-        project = _make_project()
+        project = make_project(name="fit_spectrum")
         truth_file = _make_truth_file(project)
-        clean = _simulate_clean(truth_file)
+        clean = simulate_clean(truth_file.model_active)
 
         fit_file = _make_fit_file(project, clean, truth_file.energy, truth_file.time)
         fit_file.fit_spectrum(
@@ -246,9 +212,9 @@ class TestFitSpectrumTimePoint:
     def test_time_point_ind(self):
         """Fit at a time_point using index addressing."""
 
-        project = _make_project()
+        project = make_project(name="fit_spectrum")
         truth_file = _make_truth_file(project)
-        clean = _simulate_clean(truth_file)
+        clean = simulate_clean(truth_file.model_active)
 
         fit_file = _make_fit_file(project, clean, truth_file.energy, truth_file.time)
         fit_file.fit_spectrum(
@@ -274,9 +240,9 @@ class TestFitSpectrumTimeRange:
     def test_time_range_abs(self):
         """Fit averaged spectrum over a time range (abs)."""
 
-        project = _make_project()
+        project = make_project(name="fit_spectrum")
         truth_file = _make_truth_file(project)
-        clean = _simulate_clean(truth_file)
+        clean = simulate_clean(truth_file.model_active)
 
         fit_file = _make_fit_file(project, clean, truth_file.energy, truth_file.time)
         fit_file.fit_spectrum(
@@ -299,9 +265,9 @@ class TestFitSpectrumTimeRange:
     def test_time_range_ind(self):
         """Fit averaged spectrum over a time range using indices."""
 
-        project = _make_project()
+        project = make_project(name="fit_spectrum")
         truth_file = _make_truth_file(project)
-        clean = _simulate_clean(truth_file)
+        clean = simulate_clean(truth_file.model_active)
 
         fit_file = _make_fit_file(project, clean, truth_file.energy, truth_file.time)
         fit_file.fit_spectrum(
@@ -321,9 +287,9 @@ class TestFitSpectrumTimeRange:
     def test_data_spec_matches_manual_average(self):
         """Extracted spectrum matches manual np.mean over the same range."""
 
-        project = _make_project()
+        project = make_project(name="fit_spectrum")
         truth_file = _make_truth_file(project)
-        clean = _simulate_clean(truth_file)
+        clean = simulate_clean(truth_file.model_active)
 
         fit_file = _make_fit_file(project, clean, truth_file.energy, truth_file.time)
         fit_file.fit_spectrum(

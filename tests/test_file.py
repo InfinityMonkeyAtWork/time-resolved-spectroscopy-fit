@@ -8,8 +8,9 @@ import unittest.mock
 
 import numpy as np
 import pytest
+from _utils import make_project
 
-from trspecfit import File, Project
+from trspecfit import File
 
 
 #
@@ -21,7 +22,7 @@ class TestModelManagement:
     def _make_file_with_axes(self):
         """Create project and file with axes and dummy data."""
 
-        project = Project(path="tests")
+        project = make_project()
         aux_axis = np.array([0.0, 1.0, 2.0, 3.0])
         file = File(parent_project=project, aux_axis=aux_axis)
         file.energy = np.linspace(80, 90, 201)
@@ -361,7 +362,7 @@ class TestFitLimitsAndBaseline:
     def _make_file_with_data(self):
         """Create file with axes and 2D data."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 201)
         file.time = np.linspace(-10, 100, 111)
@@ -414,7 +415,7 @@ class TestFitLimitsAndBaseline:
     def test_set_fit_limits_descending_energy(self):
         """set_fit_limits should handle descending energy axes correctly."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.energy = np.linspace(90, 80, 201)  # descending
         file.time = np.linspace(-10, 100, 111)
@@ -436,7 +437,7 @@ class TestFitLimitsAndBaseline:
     def test_set_fit_limits_time_without_time_axis_raises(self):
         """set_fit_limits with time_limits but no time axis (1D) should raise."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 201)
         file.dim = 1
@@ -447,7 +448,7 @@ class TestFitLimitsAndBaseline:
     def test_set_fit_limits_no_data_raises(self):
         """set_fit_limits without data or energy should raise."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         with pytest.raises(ValueError, match="cannot set fit limits"):
             file.set_fit_limits([82, 88], show_plot=False)
@@ -505,7 +506,7 @@ class TestFitLimitsAndBaseline:
     def test_define_baseline_no_data_raises(self):
         """define_baseline without data should raise."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.dim = 2
         with pytest.raises(ValueError, match="No data loaded"):
@@ -534,7 +535,7 @@ class TestFitLimitsSlicing:
     def _make_file(self, *, energy, time=None):
         """Create a File with given energy axis and optional time axis."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.energy = energy
         if time is not None:
@@ -650,7 +651,7 @@ class TestFitLimitsSlicing:
     ):
         """Helper: File with data, loaded model, and fit limits set."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.energy = energy
         if time is not None:
@@ -806,7 +807,7 @@ class TestFitLimitsOutOfRange:
     def _make_file(self, *, energy, time=None):
         """Create a File with data on the given axes."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.energy = energy
         if time is not None:
@@ -897,7 +898,7 @@ class TestFitPreconditions:
     def _make_file_with_model(self):
         """Create file with axes, 2D data, and a loaded energy model."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 201)
         file.time = np.linspace(-10, 100, 111)
@@ -1097,8 +1098,7 @@ class TestFileNameAndProjectAccess:
     def _make_project(self):
         """Create a silent project with three files."""
 
-        project = Project(path="tests", name="access")
-        project.show_output = 0
+        project = make_project(name="access")
 
         energy = np.arange(10)
         time_ax = np.arange(5)
@@ -1176,16 +1176,14 @@ class TestFileNameAndProjectAccess:
 
     #
     def test_duplicate_name_raises(self):
-        project = Project(path="tests", name="dup")
-        project.show_output = 0
+        project = make_project(name="dup")
         File(parent_project=project, path="scan1/data.csv")
         with pytest.raises(ValueError, match="Duplicate file name"):
             File(parent_project=project, path="scan2/data.csv")
 
     #
     def test_duplicate_name_resolved_with_explicit_name(self):
-        project = Project(path="tests", name="dup2")
-        project.show_output = 0
+        project = make_project(name="dup2")
         File(parent_project=project, path="scan1/data.csv")
         File(parent_project=project, path="scan2/data.csv", name="data_2")
         assert project["data"].path == "scan1/data.csv"
@@ -1201,7 +1199,7 @@ class TestDescribeWaterfall:
     def _make_file(self, *, n_time):
         """Create a 2D File with *n_time* spectra."""
 
-        project = Project(path="tests")
+        project = make_project(show_output=1)
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 50)
         file.time = np.linspace(0, 10, n_time)
@@ -1373,7 +1371,7 @@ class TestDescribeWaterfall:
     def test_describe_1d_unaffected(self):
         """waterfall parameter should not affect 1D data display."""
 
-        project = Project(path="tests")
+        project = make_project(show_output=1)
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 50)
         file.data = np.random.default_rng(42).normal(size=50)

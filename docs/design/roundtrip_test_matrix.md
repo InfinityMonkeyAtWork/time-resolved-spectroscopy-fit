@@ -60,7 +60,7 @@ be parameterized under the same row instead of getting separate rows.
 | ID | Model family | Representative fixture(s) |
 | --- | --- | --- |
 | `F1` | Plain energy model | `single_glp`, `glp_only` |
-| `F2` | Static expressions in energy model: direct refs, fan-out, forward refs, static chains | `two_glp_expr_amplitude`, `expression_fan_out`, `energy_expression_forward_reference`, `expression_chain`, `glp_expression` |
+| `F2` | Static expressions in energy model: direct refs, fan-out, forward refs | `two_glp_expr_amplitude`, `expression_fan_out`, `energy_expression_forward_reference`, `glp_expression` |
 | `F3` | Top-level standard dynamics | `single_glp` + `MonoExpPos` |
 | `F4` | Top-level dynamics with IRF / convolution | `single_glp` + `MonoExpPosIRF` and other lowerable IRF kernels |
 | `F5` | Top-level subcycle / multi-cycle dynamics | `single_glp` + `["ModelNone", "MonoExpNeg", "MonoExpPosExpr"]`, `frequency=10` |
@@ -103,7 +103,7 @@ apply cleanly yet.
 | --- | --- | --- |
 | `PF1` Shared plain dynamics across files | `M` | Current core project roundtrip surface |
 | `PF2` Project-level expressions | `M` | Includes file/project prefix rewriting and shared refs |
-| `PF3` Shared dynamics with IRF | `M` | Add once project fixtures exist |
+| `PF3` Shared dynamics with IRF | `M` | Covered with `BiExpProject` + `gaussCONV` |
 | `PF4` Shared subcycle dynamics | `M` | Add once project fixtures exist |
 
 Future:
@@ -140,18 +140,16 @@ Rationale:
 
 ### SbS worker requirements
 
-Yes, `SbS` should eventually distinguish `W1` and `W2`, but only after
-parallel SbS exists as a real API.
+Yes, `SbS` should distinguish `W1` and `W2` because `n_workers=1` uses the
+serial path and `n_workers>1` crosses a process boundary.
 
 Current status:
 
-- today `File.fit_slice_by_slice()` does not expose a worker-count API, so only
-  serial `SbS` roundtrips are testable
+- the main `SbS` matrix runs with `n_workers=1`
+- one focused `W2` test covers `F1` with `n_workers=2`
 
-Future requirement after `n_workers` lands:
+Future requirement if worker-specific risk grows:
 
-- `W1`: one canonical `SbS` roundtrip on `F1`
-- `W2`: the same canonical `SbS` roundtrip on `F1`
 - `W2`: one expression/profile-sensitive `SbS` case, likely `F2` or `F6`
 
 ### Project worker requirements
@@ -198,35 +196,31 @@ clean matrix above is the baseline contract.
 This is the current high-level state of the suite, not a substitute for the
 table above.
 
-- Covered reasonably well today:
-  - `F1` on `B`, `Sp`, `SbS`, and `2D` for GIR-path or compare-mode smoke
-  - `F3` on `2D` for GIR roundtrip and compare-mode
-  - `F4` on `2D` for parity / compare-mode
-  - `F5` on `2D` for parity / compare-mode
-  - `F6` on `B` for GIR roundtrip
-  - `F8` on `2D` for GIR roundtrip
-  - project-level `M` roundtrips for plain shared-dynamics fits
+- Covered today:
+  - the full single-file clean matrix above for `M/G/C`
+  - `F2` variants for direct, fan-out, and forward-reference expressions
+  - noisy second-layer checks for `F3`, `F6`, and `F8` on the GIR path
+  - focused MCMC checks for `MC1`, `MC2`, expression-sensitive `MC2`, and 2D `MC2`
+  - focused `W2` coverage for `fit_slice_by_slice()`
+  - project-level `M` roundtrips for `PF1`, `PF2`, and `PF3`
 
 - Thin or missing today:
-  - forced `M` roundtrip coverage for almost every family
-  - full workflow roundtrips for `F2`, `F5`, `F7`, `F9`, `F10`, `F11`, `F12`
-  - explicit `SbS` roundtrips outside the plain-energy family
-  - expression-heavy roundtrips through serialization-sensitive paths
-  - MCMC coverage beyond a simple plain-model smoke case
-  - any worker-mode matrix for `SbS` because parallel `SbS` does not exist yet
-  - project-level coverage for expression/subcycle/IRF families
+  - project-level `PF4` shared subcycle dynamics
+  - project-level `G/C` coverage, because project fitting is still MCP-only
+  - expression/profile-sensitive `W2` coverage for `fit_slice_by_slice()`
+  - MCMC assertions beyond no-crash / process-boundary coverage
+  - exhaustive noisy coverage, intentionally kept out of the main matrix
 
 ## Suggested implementation order
 
-If we fill this incrementally, the highest-value order is:
+The original single-file matrix is implemented. Highest-value next steps:
 
-1. Add forced-`M` twins for the existing plain and profile roundtrips.
-2. Add `F9` and `F10` because expression + varying-parameter interactions are a known bug surface.
-3. Add `MC2` coverage for one expression-heavy case and one nested-model case.
-4. Add one canonical `F5` subcycle roundtrip through `fit_2d`.
-5. Add one canonical `F4` IRF roundtrip through `fit_2d`.
-6. Add `F7`, `F11`, and `F12` as the mixed-feature stress cases.
-7. Expand the separate project-level matrix, starting with project expressions.
+1. Add `PF4` once a shared project-subcycle fixture exists.
+2. Add a focused expression/profile-sensitive `W2` `SbS` test if process-boundary
+   risk shows up beyond the plain `F1` case.
+3. Add lightweight recovery or constraint-preservation assertions to focused
+   MCMC tests when runtime allows.
+4. Upgrade project-level cells from `M` to `M/G/C` if project-level GIR lands.
 
 ## Non-goals
 

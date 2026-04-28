@@ -9,8 +9,9 @@ For each model we:
 """
 
 import numpy as np
+from _utils import make_project
 
-from trspecfit import File, Project
+from trspecfit import File
 from trspecfit.eval_1d import evaluate_1d
 from trspecfit.graph_ir import build_graph, can_lower_1d, schedule_1d
 
@@ -27,7 +28,7 @@ _PROFILE_YAML = "models/file_profile.yaml"
 def _make_energy_model(model_info):
     """Load a 1D energy model from eval_2d_energy.yaml."""
 
-    project = Project(path="tests")
+    project = make_project()
     file = File(parent_project=project, energy=np.linspace(80, 90, 101))
     file.load_model(model_yaml=_ENERGY_YAML, model_info=model_info)
     model = file.model_active
@@ -53,7 +54,7 @@ def _make_profile_energy_model(
     if model_yaml is None:
         model_yaml = _FILE_ENERGY_YAML
 
-    project = Project(path="tests")
+    project = make_project()
     file = File(parent_project=project, energy=energy, aux_axis=aux_axis)
     file.load_model(model_yaml=model_yaml, model_info=model_info)
     for target_parameter, profile_model in profiles:
@@ -363,7 +364,7 @@ class TestCanLower1D:
     def test_2d_model_is_not_lowerable_1d(self):
         """A model with dynamics should not pass can_lower_1d."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(
             parent_project=project,
             energy=np.linspace(80, 90, 101),

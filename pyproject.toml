@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trspecfit"
-version = "0.8.2"
+version = "0.8.3"
 authors = [
     {name = "Johannes Mahl", email = "johannes.a.mahl@gmail.com"},
 ]
@@ -100,7 +100,7 @@ reportMissingImports = true
 typeCheckingMode = "basic"
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
 testpaths = ["tests"]
 addopts = "-m 'not slow'"
 markers = ["slow: long-running round-trip tests (skipped by default, use -m slow)"]

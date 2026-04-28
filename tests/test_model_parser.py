@@ -6,7 +6,9 @@ import numpy as np
 import pytest
 
 # local imports
-from trspecfit import File, Project
+from _utils import make_project
+
+from trspecfit import File
 from trspecfit.utils.parsing import ModelValidationError
 
 
@@ -19,7 +21,7 @@ class TestEnergyParsing:
     def _load_energy_model(self, model_info):
         """Create project, file, and load energy model."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.load_model(
             model_yaml="models/file_energy.yaml",
@@ -184,7 +186,7 @@ class TestTimeParsing:
     def _load_dynamics_model(self, model_info):
         """Create project, file, and load dynamics model."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.time = np.linspace(-10, 100, 111)  # needed for time-dependent models
         model = file.load_model(
@@ -300,7 +302,7 @@ class Test2DModelParsing:
     ) -> File:
         """Create a File with loaded energy model and time axis."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project, aux_axis=aux_axis)
         file.load_model(
             model_yaml="models/file_energy.yaml",
@@ -413,7 +415,7 @@ class TestProfileParsing:
     ) -> File:
         """Create a File with loaded energy model and optional aux axis."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project, aux_axis=aux_axis)
         file.energy = np.linspace(80, 90, 201)
         file.load_model(
@@ -558,7 +560,7 @@ class TestYAMLValidationErrors:
     def test_wrong_parameter_order_accepted(self):
         """Parameters in non-standard order should still parse correctly."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.load_model(
             model_yaml="models/file_energy.yaml",
@@ -574,7 +576,7 @@ class TestYAMLValidationErrors:
     def test_wrong_parameter_name_raises(self):
         """Unknown parameter name (q instead of m for GLP) should fail validation."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         with pytest.raises(ModelValidationError, match="Invalid parameter"):
             file.load_model(
@@ -586,7 +588,7 @@ class TestYAMLValidationErrors:
     def test_nonexistent_model_raises(self):
         """Loading a model name that doesn't exist in the YAML should fail."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         with pytest.raises(ValueError, match="not found in"):
             file.load_model(
@@ -598,7 +600,7 @@ class TestYAMLValidationErrors:
     def test_background_last_raises(self):
         """Background as last component should fail ordering validation."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         with pytest.raises(ModelValidationError, match="background function"):
             file.load_model(
@@ -610,7 +612,7 @@ class TestYAMLValidationErrors:
     def test_energy_convolution_rejected(self):
         """Top-level energy-model convolution should fail validation early."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         with pytest.raises(
             ModelValidationError,
@@ -630,7 +632,7 @@ class TestYAMLValidationErrors:
         typo quickly, so pin both in the assertion.
         """
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         with pytest.raises(ModelValidationError) as exc_info:
             file.load_model(
@@ -648,7 +650,7 @@ class TestYAMLValidationErrors:
     def test_conv_last_raises(self):
         """Convolution as last component should fail ordering validation."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.time = np.linspace(-10, 100, 111)
         with pytest.raises(ModelValidationError, match="convolution function"):
@@ -668,7 +670,7 @@ class TestYAMLValidationErrors:
         isinstance(vary, bool) to distinguish 0 from False.
         """
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         with pytest.raises(ModelValidationError, match="vary"):
             file.load_model(

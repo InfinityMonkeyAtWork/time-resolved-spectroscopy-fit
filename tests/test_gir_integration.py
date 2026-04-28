@@ -11,8 +11,9 @@ matplotlib.use("Agg")
 
 import numpy as np
 import pytest
+from _utils import extract_truth_pars, make_project, simulate_clean
 
-from trspecfit import File, Project, Simulator, fitlib, spectra
+from trspecfit import File, fitlib, spectra
 from trspecfit.graph_ir import (
     ScheduledPlan1D,
     build_graph,
@@ -35,12 +36,9 @@ _PROFILE_YAML = "models/file_profile.yaml"
 
 #
 def _make_project(*, spec_fun_str="fit_model_gir"):
-    """Create a silent project with configurable spec_fun_str."""
+    """Create a silent project — wraps make_project with a fixed test name."""
 
-    project = Project(path="tests", name="gir_int")
-    project.show_output = 0
-    project.spec_fun_str = spec_fun_str
-    return project
+    return make_project(name="gir_int", spec_fun_str=spec_fun_str)
 
 
 #
@@ -663,25 +661,12 @@ class TestFileFit2D:
     def test_gir_fit_writes_back_to_model(self):
         """After GIR fit, model_2d.lmfit_pars reflects optimized values."""
 
-        project = Project(path="tests", name="gir_e2e")
-        project.show_output = 0
+        project = make_project(name="gir_e2e")
         # Default spec_fun_str is "fit_model_gir"
 
         truth_file = _make_truth_file(project)
-        truth_pars = {
-            name: truth_file.model_active.lmfit_pars[name].value
-            for name in truth_file.model_active.parameter_names
-            if truth_file.model_active.lmfit_pars[name].expr is None
-        }
-
-        sim = Simulator(
-            model=truth_file.model_active,
-            detection="analog",
-            noise_level=0.0,
-            noise_type="none",
-            seed=42,
-        )
-        clean, _, _ = sim.simulate_2d()
+        truth_pars = extract_truth_pars(truth_file.model_active)
+        clean = simulate_clean(truth_file.model_active)
 
         fit_file = _make_fit_file(project, clean, truth_file.energy, truth_file.time)
         fit_file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
@@ -715,20 +700,10 @@ class TestFileFit2D:
     def test_compare_mode_through_fit_2d(self):
         """fit_model_compare through File.fit_2d validates both paths."""
 
-        project = Project(path="tests", name="gir_cmp")
-        project.show_output = 0
-        project.spec_fun_str = "fit_model_compare"
+        project = make_project(name="gir_cmp", spec_fun_str="fit_model_compare")
 
         truth_file = _make_truth_file(project)
-
-        sim = Simulator(
-            model=truth_file.model_active,
-            detection="analog",
-            noise_level=0.0,
-            noise_type="none",
-            seed=42,
-        )
-        clean, _, _ = sim.simulate_2d()
+        clean = simulate_clean(truth_file.model_active)
 
         fit_file = _make_fit_file(project, clean, truth_file.energy, truth_file.time)
         fit_file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
@@ -1069,15 +1044,10 @@ class TestFileFitBaseline:
     def test_gir_baseline_writes_back(self):
         """After GIR baseline fit, model_base.lmfit_pars reflects results."""
 
-        project = Project(path="tests", name="gir_base")
-        project.show_output = 0
+        project = make_project(name="gir_base")
 
         truth = _make_1d_truth_file(project)
-        truth_pars = {
-            name: truth.model_active.lmfit_pars[name].value
-            for name in truth.model_active.parameter_names
-            if truth.model_active.lmfit_pars[name].expr is None
-        }
+        truth_pars = extract_truth_pars(truth.model_active)
 
         # Tile 1D truth spectrum into 2D data (constant across time)
         truth.model_active.create_value_1d()
@@ -1110,9 +1080,7 @@ class TestFileFitBaseline:
     def test_compare_mode_through_baseline(self):
         """fit_model_compare through File.fit_baseline validates both paths."""
 
-        project = Project(path="tests", name="gir_base_cmp")
-        project.show_output = 0
-        project.spec_fun_str = "fit_model_compare"
+        project = make_project(name="gir_base_cmp", spec_fun_str="fit_model_compare")
 
         truth = _make_1d_truth_file(project)
         truth.model_active.create_value_1d()
@@ -1134,9 +1102,7 @@ class TestFileFitSpectrum:
     def test_compare_mode_through_fit_spectrum(self):
         """fit_model_compare through File.fit_spectrum validates both paths."""
 
-        project = Project(path="tests", name="gir_spec_cmp")
-        project.show_output = 0
-        project.spec_fun_str = "fit_model_compare"
+        project = make_project(name="gir_spec_cmp", spec_fun_str="fit_model_compare")
 
         # Build 2D data: tile a 1D spectrum across time so every slice
         # is identical and recovery is deterministic.
@@ -1183,9 +1149,9 @@ class TestFileFitSliceBySlice:
         model state (const, args) the serial path does.
         """
 
-        project = Project(path="tests", name=f"gir_sbs_cmp_w{n_workers}")
-        project.show_output = 0
-        project.spec_fun_str = "fit_model_compare"
+        project = make_project(
+            name=f"gir_sbs_cmp_w{n_workers}", spec_fun_str="fit_model_compare"
+        )
 
         truth = _make_1d_truth_file(project)
         truth.model_active.create_value_1d()
@@ -1217,9 +1183,7 @@ class TestFileFitSliceBySlice:
         """
 
         def _run_sbs(name: str, n_workers: int) -> tuple[list, int]:
-            project = Project(path="tests", name=name)
-            project.show_output = 0
-            project.spec_fun_str = "fit_model_mcp"
+            project = make_project(name=name, spec_fun_str="fit_model_mcp")
 
             truth = _make_1d_truth_file(project)
             truth.model_active.create_value_1d()
@@ -1277,11 +1241,10 @@ class TestFileFitSliceBySlice:
     ):
         """SbS leaves model_sbs at the shared seed template in both paths."""
 
-        project = Project(
-            path="tests", name=f"sbs_seed_restore_{seed_source}_w{n_workers}"
+        project = make_project(
+            name=f"sbs_seed_restore_{seed_source}_w{n_workers}",
+            spec_fun_str="fit_model_mcp",
         )
-        project.show_output = 0
-        project.spec_fun_str = "fit_model_mcp"
 
         truth = _make_1d_truth_file(project)
         truth.model_active.create_value_1d()
