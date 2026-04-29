@@ -16,6 +16,7 @@ This file is maintained using the shared changelog workflow in
 
 ### Changed
 
+- Slice-by-Slice multiprocessing plumbing (worker globals, `_sbs_worker_init`, `_sbs_fit_one_slice`, and the seed-handling helpers) moved out of `trspecfit.py` into `trspecfit.utils.sbs`. `trspecfit.py` now opens directly on `class Project` instead of ~190 lines of worker plumbing. No public API changes.
 - **Breaking (internal):** removed `Project.spec_lib` attribute and `Project.spec_fun` property. Fitting functions always live in `trspecfit.spectra`, so the indirection is hardcoded. Only affects code reaching into `project.spec_lib` / `project.spec_fun`; no public fit-workflow API changes.
 - `fitlib.residual_fun()` and `fitlib.plt_fit_res_1d()` no longer accept a `package` argument. The constant tuple passed to `fit_wrapper()` drops its third entry (`package`) and now has shape `(x, data, function_str, unpack, e_lim, t_lim)`.
 
