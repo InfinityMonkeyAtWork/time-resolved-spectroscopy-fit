@@ -20,4 +20,5 @@ Note: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling — make
 ## Build & release
 
 - [ ] **Automate tagging and pushing**: automate `git tag v1.2.3` + `git push v1.2.3` as part of the release workflow.
+- [ ] **Curate the public API surface before v1.0.0**: audit user-facing classes (`File`, `Project`, `Simulator`, `Model`, etc.) and decide which methods/attributes should be discoverable in notebooks and docs. Add curated `__dir__()` output for autocomplete, keep `__all__`/API docs aligned, and gradually rename or deprecate internal helper methods that should not look like primary user workflows. This should improve both human notebook ergonomics and AI/LLM efficiency by making the intended workflow surface smaller, clearer, and easier to infer.
 - [ ] **Remove legacy/backwards-compat code**: before v1.0.0 release, audit codebase for legacy fallbacks and backwards compatibility shims and consider removing.
