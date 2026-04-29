@@ -146,11 +146,12 @@ serial path and `n_workers>1` crosses a process boundary.
 Current status:
 
 - the main `SbS` matrix runs with `n_workers=1`
-- one focused `W2` test covers `F1` with `n_workers=2`
+- focused `W2` tests cover `F1` and profile-bearing `F6` with `n_workers=2`
 
 Future requirement if worker-specific risk grows:
 
-- `W2`: one expression/profile-sensitive `SbS` case, likely `F2` or `F6`
+- add a more expression-heavy `W2` `SbS` case, likely `F2`, if process-boundary
+  risk shows up beyond the existing plain/profile cases
 
 ### Project worker requirements
 
@@ -201,13 +202,13 @@ table above.
   - `F2` variants for direct, fan-out, and forward-reference expressions
   - noisy second-layer checks for `F3`, `F6`, and `F8` on the GIR path
   - focused MCMC checks for `MC1`, `MC2`, expression-sensitive `MC2`, and 2D `MC2`
-  - focused `W2` coverage for `fit_slice_by_slice()`
+  - focused `W2` coverage for plain and profile-bearing `fit_slice_by_slice()`
   - project-level `M` roundtrips for `PF1`, `PF2`, and `PF3`
 
 - Thin or missing today:
   - project-level `PF4` shared subcycle dynamics
   - project-level `G/C` coverage, because project fitting is still MCP-only
-  - expression/profile-sensitive `W2` coverage for `fit_slice_by_slice()`
+  - expression-heavy `W2` coverage for `fit_slice_by_slice()`
   - MCMC assertions beyond no-crash / process-boundary coverage
   - exhaustive noisy coverage, intentionally kept out of the main matrix
 
@@ -216,8 +217,8 @@ table above.
 The original single-file matrix is implemented. Highest-value next steps:
 
 1. Add `PF4` once a shared project-subcycle fixture exists.
-2. Add a focused expression/profile-sensitive `W2` `SbS` test if process-boundary
-   risk shows up beyond the plain `F1` case.
+2. Add a focused expression-heavy `W2` `SbS` test if process-boundary risk shows
+   up beyond the existing plain/profile cases.
 3. Add lightweight recovery or constraint-preservation assertions to focused
    MCMC tests when runtime allows.
 4. Upgrade project-level cells from `M` to `M/G/C` if project-level GIR lands.
