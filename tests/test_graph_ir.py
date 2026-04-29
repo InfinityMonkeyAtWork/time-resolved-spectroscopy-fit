@@ -2,8 +2,9 @@
 
 import numpy as np
 import pytest
+from _utils import make_project
 
-from trspecfit import File, Project
+from trspecfit import File
 from trspecfit.graph_ir import (
     DomainKind,
     DynFuncKind,
@@ -24,7 +25,7 @@ from trspecfit.graph_ir import (
 def _make_energy_model(model_info):
     """Create project + file + load energy model, return (file, model)."""
 
-    project = Project(path="tests")
+    project = make_project()
     file = File(parent_project=project)
     file.energy = np.linspace(80, 90, 201)
     file.load_model(
@@ -48,7 +49,7 @@ def _make_2d_model(model_info, dynamics_params):
         Each tuple: (target_parameter, dynamics_yaml_model, dynamics_model_info).
     """
 
-    project = Project(path="tests")
+    project = make_project()
     file = File(parent_project=project)
     file.energy = np.linspace(80, 90, 201)
     file.time = np.linspace(-10, 100, 111)
@@ -74,7 +75,7 @@ def _make_2d_model(model_info, dynamics_params):
 def _make_time_only_model(model_info, *, frequency=-1):
     """Create a standalone dynamics model, return (file, model)."""
 
-    project = Project(path="tests")
+    project = make_project()
     file = File(parent_project=project)
     file.time = np.linspace(-10, 100, 111)
     model = file.load_model(
@@ -645,7 +646,7 @@ class TestPackageMapping:
 def _make_profile_model(energy_model_info, target_par, profile_model_info):
     """Create model with a profiled parameter."""
 
-    project = Project(path="tests")
+    project = make_project()
     aux_axis = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
     file = File(parent_project=project, aux_axis=aux_axis)
     file.energy = np.linspace(80, 90, 201)
@@ -892,7 +893,7 @@ class TestProfileNodes:
 def _make_subcycle_model():
     """Create a 2D model with multi-cycle subcycle dynamics."""
 
-    project = Project(path="tests")
+    project = make_project()
     file = File(parent_project=project)
     file.energy = np.linspace(80, 90, 201)
     file.time = np.linspace(-10, 100, 111)
@@ -1245,7 +1246,7 @@ def _make_time_dep_profile_model(dynamics_model=None):
     then MonoExpPos dynamics on GLP_01_A_pLinear_01_m.
     """
 
-    project = Project(path="tests")
+    project = make_project()
     aux_axis = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
     file = File(parent_project=project, aux_axis=aux_axis)
     file.energy = np.linspace(80, 90, 201)
@@ -1364,7 +1365,7 @@ class TestTimeDependentProfileParams:
 def _make_irf_dynamics_model():
     """Create a 2D model where dynamics includes a convolution (gaussCONV)."""
 
-    project = Project(path="tests")
+    project = make_project()
     file = File(parent_project=project)
     file.energy = np.linspace(80, 90, 201)
     file.time = np.linspace(-10, 100, 111)

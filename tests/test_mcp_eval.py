@@ -6,8 +6,9 @@ that should catch regressions in dependent/time-dependent parameter handling.
 
 import numpy as np
 import pytest
+from _utils import make_project
 
-from trspecfit import File, Project
+from trspecfit import File
 from trspecfit.functions.energy import GLP
 from trspecfit.functions.profile import pLinear
 
@@ -21,7 +22,7 @@ class TestEvaluation:
     def _make_file_with_model(self, model_info):
         """Create project, file, and load model."""
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 201)
         file.time = np.linspace(-10, 100, 111)
@@ -37,7 +38,7 @@ class TestEvaluation:
     def _make_file_with_profile_model(self, model_info):
         """Create project, file with aux_axis, and load model."""
 
-        project = Project(path="tests")
+        project = make_project()
         aux_axis = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
         file = File(parent_project=project, aux_axis=aux_axis)
         file.energy = np.linspace(80, 90, 201)

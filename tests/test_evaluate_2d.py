@@ -10,8 +10,9 @@ For each model we:
 
 import numpy as np
 import pytest
+from _utils import make_project
 
-from trspecfit import File, Project
+from trspecfit import File
 from trspecfit.eval_2d import evaluate_2d
 from trspecfit.graph_ir import (
     OpKind,
@@ -32,7 +33,7 @@ _TIME_YAML = "models/file_time.yaml"
 def _make_energy_model(model_info):
     """Load a 1D energy model from eval_2d_energy.yaml."""
 
-    project = Project(path="tests")
+    project = make_project()
     file = File(parent_project=project)
     file.energy = np.linspace(80, 90, 101)
     file.load_model(model_yaml=_ENERGY_YAML, model_info=model_info)
@@ -51,7 +52,7 @@ def _make_2d_model(model_info, dynamics_params, *, frequency=None, time=None):
     place; ``time`` (optional) overrides the default time axis.
     """
 
-    project = Project(path="tests")
+    project = make_project()
     file = File(parent_project=project)
     file.energy = np.linspace(80, 90, 101)
     file.time = np.linspace(-10, 100, 51) if time is None else time
@@ -470,7 +471,7 @@ def _make_2d_profile_model(
     if model_yaml is None:
         model_yaml = _FILE_ENERGY_YAML
 
-    project = Project(path="tests")
+    project = make_project()
     file = File(parent_project=project, energy=energy, time=time, aux_axis=aux_axis)
     file.load_model(model_yaml=model_yaml, model_info=model_info)
     model = file.model_active
@@ -619,7 +620,7 @@ class TestProfileModels:
         Profile must be added first, then dynamics on the profile param.
         """
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(
             parent_project=project,
             energy=np.linspace(83, 87, 61),
@@ -971,7 +972,7 @@ class TestSubcycleDynamics:
         path) coexists with subcycle-aware dynamics in the same model.
         """
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 101)
         file.time = np.linspace(-10, 100, 51)

@@ -8,8 +8,9 @@ from pathlib import Path
 import h5py
 import numpy as np
 import pytest
+from _utils import make_project
 
-from trspecfit import File, Project, Simulator
+from trspecfit import File, Simulator
 from trspecfit.utils.sweep import ParameterSweep, SweepDataset
 
 
@@ -230,7 +231,7 @@ class TestSimulatorParameterSweep:
     def _make_1d_model(self):
         """Create a simple 1D model for sweep testing."""
 
-        project = Project(path="tests", name="test")
+        project = make_project(name="test")
         file = File(
             parent_project=project,
             energy=np.arange(0, 20, 0.5),  # Coarse for speed
@@ -246,7 +247,7 @@ class TestSimulatorParameterSweep:
     def _make_2d_model(self):
         """Create a simple 2D model for sweep testing."""
 
-        project = Project(path="tests", name="test")
+        project = make_project(name="test")
         file = File(
             parent_project=project,
             energy=np.arange(0, 20, 0.5),  # Coarse for speed

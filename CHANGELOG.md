@@ -26,6 +26,7 @@ This file is maintained using the shared changelog workflow in
 ### Fixed
 
 - **MCMC `workers > 1`**: `lmfit.emcee(workers=N)` via `ulmfit.MC(workers=N)` previously failed with `TypeError: cannot pickle 'module' object` because the residual closure carried a live module reference. The pickleable-model work plus the `spec_lib` removal close both sources of the error; MCMC parallel sampling now works end-to-end.
+- **Cross-component expressions across the pickle boundary**: `Model.__getstate__` nulled `parent_model` on every `Par`, which broke `Par._evaluate_dynamic_expression` because it resolves expression references through `parent_model.get_all_parameters()`. Any model whose expression on one Par references a `t_vary` or `p_vary` Par on a different component (e.g. roundtrip family F12) raised `NameError` after unpickling. `Model.__setstate__` now rewires the intra-Model `parent_model` back-refs (Components, Pars, and any attached `Par.t_model` / `Par.p_model` sub-Models) from `self`, so `lmfit.emcee(workers > 1)` and `fit_slice_by_slice(n_workers > 1)` work on those models too.
 
 ## [0.8.0] - 2026-04-20
 

@@ -4,6 +4,7 @@ Test MCP (Model/Component/Parameter) library functionality
 
 import numpy as np
 import pytest
+from _utils import make_project
 
 from trspecfit.functions import profile as fcts_profile
 from trspecfit.functions import time as fcts_time
@@ -359,9 +360,9 @@ class TestMCPIntegration:
     def _make_file(self):
         """Helper: File with energy model loaded via public API."""
 
-        from trspecfit import File, Project
+        from trspecfit import File
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 100)
         file.time = np.linspace(0, 10, 50)
@@ -399,9 +400,9 @@ class TestMCPIntegration:
     def test_parameter_value_updates(self):
         """lmfit parameter values can be read and updated after model loading."""
 
-        from trspecfit import File, Project
+        from trspecfit import File
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 100)
         file.time = np.linspace(0, 10, 50)
@@ -555,9 +556,9 @@ class TestMCPProfile:
     def _make_file(self, *, aux_axis=None):
         """Helper: File with single GLP energy model loaded via public API."""
 
-        from trspecfit import File, Project
+        from trspecfit import File
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project, aux_axis=aux_axis)
         file.energy = np.linspace(80, 90, 100)
         file.time = np.linspace(-10, 50, 60)
@@ -766,9 +767,9 @@ class TestMCPProfile:
     def test_add_profile_raises_for_expression_par(self):
         """add_par_profile() should raise for expression parameters."""
 
-        from trspecfit import File, Project
+        from trspecfit import File
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(
             parent_project=project,
             aux_axis=np.linspace(0, 5, 20),
@@ -793,9 +794,9 @@ class TestMCPProfile:
     def test_file_aux_axis_propagation(self):
         """File.aux_axis should propagate to loaded Model via load_model()."""
 
-        from trspecfit import File, Project
+        from trspecfit import File
 
-        project = Project(path="tests")
+        project = make_project()
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 100)
         file.time = np.linspace(-10, 100, 50)
@@ -860,10 +861,9 @@ class TestMCPPickling:
     def _make_fittable_file(self):
         """File with a 1D energy model loaded and data populated."""
 
-        from trspecfit import File, Project
+        from trspecfit import File
 
-        project = Project(path="tests")
-        project.show_output = 0
+        project = make_project()
         file = File(parent_project=project, energy=np.linspace(80, 90, 101))
         file.load_model(
             model_yaml="models/file_energy.yaml",

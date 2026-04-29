@@ -11,17 +11,9 @@ matplotlib.use("Agg")
 
 import numpy as np
 import pytest
+from _utils import make_project, simulate_clean
 
-from trspecfit import File, Project, Simulator
-
-
-#
-def _make_project():
-    """Create a silent project pointing to tests/ for YAML access."""
-
-    project = Project(path="tests", name="project_fit")
-    project.show_output = 0
-    return project
+from trspecfit import File
 
 
 #
@@ -31,8 +23,7 @@ def _make_truth_file(*, amplitude=20.0, x0_shift=3.0, tau=5.0):
     Uses a throwaway project so truth files don't pollute the fit project.
     """
 
-    truth_project = Project(path="tests", name="truth")
-    truth_project.show_output = 0
+    truth_project = make_project(name="truth")
 
     energy = np.linspace(83, 87, 30)
     time_ax = np.linspace(-2, 10, 24)
@@ -109,78 +100,7 @@ def _make_fit_file(project, data, energy, time_ax, *, name="test"):
 #
 #
 class TestProjectFitClean:
-    """Project-level fit on noiseless data with shared tau."""
-
-    #
-    @pytest.mark.slow
-    def test_shared_tau_recovery(self):
-        """Two files with same tau, different A — project fit recovers both."""
-
-        project = _make_project()
-
-        # Truth: same tau=5, different amplitudes
-        truth1 = _make_truth_file(amplitude=20.0, x0_shift=3.0, tau=5.0)
-        truth2 = _make_truth_file(amplitude=15.0, x0_shift=2.0, tau=5.0)
-
-        # Simulate clean data
-        sim1 = Simulator(
-            model=truth1.model_active,
-            detection="analog",
-            noise_level=0.0,
-            noise_type="none",
-            seed=42,
-        )
-        clean1, _, _ = sim1.simulate_2d()
-
-        sim2 = Simulator(
-            model=truth2.model_active,
-            detection="analog",
-            noise_level=0.0,
-            noise_type="none",
-            seed=43,
-        )
-        clean2, _, _ = sim2.simulate_2d()
-
-        # Create fit files (baseline already fitted inside _make_fit_file)
-        fit1 = _make_fit_file(
-            project, clean1, truth1.energy, truth1.time, name="file_1"
-        )
-        fit2 = _make_fit_file(
-            project, clean2, truth2.energy, truth2.time, name="file_2"
-        )
-
-        # Project-level 2D fit
-        project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
-
-        # Check that tau was recovered (shared parameter)
-        model1 = fit1.select_model("project_glp")
-        model2 = fit2.select_model("project_glp")
-        assert model1 is not None  # type guard
-        assert model2 is not None  # type guard
-
-        tau1 = model1.lmfit_pars["GLP_01_x0_expFun_01_tau"].value
-        tau2 = model2.lmfit_pars["GLP_01_x0_expFun_01_tau"].value
-
-        # Both should have the same tau (project-shared)
-        assert tau1 == tau2, f"tau should be shared: {tau1} != {tau2}"
-        assert np.isclose(tau1, 5.0, rtol=1e-3), (
-            f"tau recovery: true=5.0, fit={tau1:.4f}"
-        )
-
-        # Check file-vary params recovered independently
-        A1 = model1.lmfit_pars["GLP_01_A"].value
-        A2 = model2.lmfit_pars["GLP_01_A"].value
-        assert np.isclose(A1, 20.0, rtol=1e-3), f"A1 recovery: true=20.0, fit={A1:.4f}"
-        assert np.isclose(A2, 15.0, rtol=1e-3), f"A2 recovery: true=15.0, fit={A2:.4f}"
-
-        x0_shift1 = model1.lmfit_pars["GLP_01_x0_expFun_01_A"].value
-        x0_shift2 = model2.lmfit_pars["GLP_01_x0_expFun_01_A"].value
-        assert np.isclose(x0_shift1, 3.0, rtol=1e-3), (
-            f"x0_shift1 recovery: true=3.0, fit={x0_shift1:.4f}"
-        )
-        assert np.isclose(x0_shift2, 2.0, rtol=1e-3), (
-            f"x0_shift2 recovery: true=2.0, fit={x0_shift2:.4f}"
-        )
+    """Project-level fit on noiseless data — non-trivial roundtrips."""
 
     #
     @pytest.mark.slow
@@ -191,7 +111,7 @@ class TestProjectFitClean:
         TRUE_TAU1 = 2.0
         TRUE_TAU2 = 20.0
 
-        project = _make_project()
+        project = make_project(name="project_fit")
 
         # --- build truth files with bi-exponential + Gaussian IRF on x0 ---
         # gaussCONV smooths the hard step at t0 into a smooth onset,
@@ -201,8 +121,7 @@ class TestProjectFitClean:
             (20.0, 2.0, 1.0, 42),
             (15.0, 1.5, 0.8, 43),
         ]:
-            tp = Project(path="tests", name="truth")
-            tp.show_output = 0
+            tp = make_project(name="truth")
             tf = File(parent_project=tp)
             tf.energy = np.linspace(80, 90, 50)
             tf.time = np.linspace(-5, 50, 120)
@@ -234,14 +153,7 @@ class TestProjectFitClean:
 
         # --- simulate and build fit files ---
         for file_idx, (tf, seed) in enumerate(truth_files):
-            sim = Simulator(
-                model=tf.model_active,
-                detection="analog",
-                noise_level=0.0,
-                noise_type="none",
-                seed=seed,
-            )
-            clean, _, _ = sim.simulate_2d()
+            clean = simulate_clean(tf.model_active, seed=seed)
 
             ff = File(
                 parent_project=project,
@@ -312,7 +224,7 @@ class TestVaryLevelParsing:
     def test_vary_levels_on_par(self):
         """Par.vary_level is set from YAML."""
 
-        project = _make_project()
+        project = make_project(name="project_fit")
         file = File(parent_project=project)
         file.energy = np.linspace(83, 87, 10)
         file.time = np.linspace(-2, 10, 10)
@@ -336,7 +248,7 @@ class TestVaryLevelParsing:
     def test_vary_levels_map(self):
         """Model.get_vary_levels returns correct levels for all params."""
 
-        project = _make_project()
+        project = make_project(name="project_fit")
         file = File(parent_project=project)
         file.energy = np.linspace(83, 87, 10)
         file.time = np.linspace(-2, 10, 10)
@@ -376,7 +288,7 @@ class TestVaryLevelParsing:
         silently absent (which would cause _build_fit_params to freeze them).
         """
 
-        project = _make_project()
+        project = make_project(name="project_fit")
         file = File(parent_project=project, aux_axis=np.linspace(0, 4, 5))
         file.energy = np.linspace(83, 87, 10)
         file.time = np.linspace(-2, 10, 10)
@@ -414,7 +326,7 @@ class TestVaryLevelParsing:
     def test_file_level_fit_treats_project_as_vary(self):
         """File-level fitting treats both 'project' and 'file' as vary=True."""
 
-        project = _make_project()
+        project = make_project(name="project_fit")
         file = File(parent_project=project)
         file.energy = np.linspace(83, 87, 10)
         file.time = np.linspace(-2, 10, 10)
@@ -443,7 +355,7 @@ class TestBuildFitParams:
     def test_combined_params_structure(self):
         """Combined params have prefixed file-vary and unprefixed project-vary."""
 
-        project = _make_project()
+        project = make_project(name="project_fit")
 
         for i in range(2):
             f = File(parent_project=project, name=f"file_{i}")
@@ -481,7 +393,7 @@ class TestBuildFitParams:
     def test_expressions_rewritten_with_prefix(self):
         """Expressions referencing file-vary params get file prefix."""
 
-        project = _make_project()
+        project = make_project(name="project_fit")
 
         for i in range(2):
             f = File(parent_project=project, name=f"file_{i}")
@@ -508,7 +420,7 @@ class TestBuildFitParams:
     def test_expr_referencing_project_vary_stays_unprefixed(self):
         """Expression referencing a project-vary param keeps unprefixed name."""
 
-        project = _make_project()
+        project = make_project(name="project_fit")
 
         for i in range(2):
             f = File(parent_project=project, name=f"file_{i}")
@@ -544,7 +456,7 @@ class TestBuildFitParams:
     def test_project_vary_initial_value_conflict_warns(self):
         """Warn when project-vary param has different initial values across files."""
 
-        project = _make_project()
+        project = make_project(name="project_fit")
 
         for i in range(2):
             f = File(parent_project=project, name=f"file_{i}")
@@ -574,7 +486,7 @@ class TestBuildFitParams:
     def test_project_vary_bound_conflict_raises(self):
         """Raise when project-vary param has different min or max across files."""
 
-        project = _make_project()
+        project = make_project(name="project_fit")
 
         for i in range(2):
             f = File(parent_project=project, name=f"file_{i}")
@@ -612,16 +524,9 @@ class TestProjectFitLifecycle:
     def test_model_2d_set_after_project_fit(self):
         """file.model_2d is set on every file after Project.fit_2d()."""
 
-        project = _make_project()
+        project = make_project(name="project_fit")
         truth = _make_truth_file()
-        sim = Simulator(
-            model=truth.model_active,
-            detection="analog",
-            noise_level=0.0,
-            noise_type="none",
-            seed=42,
-        )
-        clean, _, _ = sim.simulate_2d()
+        clean = simulate_clean(truth.model_active)
 
         for i in range(2):
             _make_fit_file(project, clean, truth.energy, truth.time, name=f"file_{i}")
@@ -636,16 +541,9 @@ class TestProjectFitLifecycle:
     def test_get_fit_results_2d_works_after_project_fit(self):
         """get_fit_results("2d") returns a DataFrame on project-fitted files."""
 
-        project = _make_project()
+        project = make_project(name="project_fit")
         truth = _make_truth_file()
-        sim = Simulator(
-            model=truth.model_active,
-            detection="analog",
-            noise_level=0.0,
-            noise_type="none",
-            seed=42,
-        )
-        clean, _, _ = sim.simulate_2d()
+        clean = simulate_clean(truth.model_active)
 
         for i in range(2):
             _make_fit_file(project, clean, truth.energy, truth.time, name=f"file_{i}")
@@ -662,16 +560,9 @@ class TestProjectFitLifecycle:
     def test_save_2d_fit_works_after_project_fit(self, tmp_path):
         """save_2d_fit() runs without error on project-fitted files."""
 
-        project = _make_project()
+        project = make_project(name="project_fit")
         truth = _make_truth_file()
-        sim = Simulator(
-            model=truth.model_active,
-            detection="analog",
-            noise_level=0.0,
-            noise_type="none",
-            seed=42,
-        )
-        clean, _, _ = sim.simulate_2d()
+        clean = simulate_clean(truth.model_active)
 
         for i in range(2):
             _make_fit_file(project, clean, truth.energy, truth.time, name=f"file_{i}")

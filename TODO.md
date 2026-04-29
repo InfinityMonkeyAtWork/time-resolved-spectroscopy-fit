@@ -12,8 +12,6 @@ Note: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling — make
 - [ ] **Project-level fit backend**: `Project.fit_2d()` already supports `Project`/`File`/`Static` vary levels, but it currently evaluates through `fit_project_mcp()` and `Model.create_value_2d()` rather than the GIR scheduler/evaluator path. Decide whether to lower the multi-file residual to GIR or explicitly prefer project-managed per-file loops when we want maximum graph-IR speedups.
 - [ ] **JAX backend / Jacobian follow-on**: if we revisit a JAX evaluator, analytic Jacobians, or optimizer replacement, use [docs/design/jax-planning.md](docs/design/jax-planning.md) as the roadmap for scope, sequencing, and open technical constraints.
 - [ ] **MCMC multiprocessing context**: `lmfit.emcee(workers=N)` currently inherits Python's default multiprocessing start method, which triggers a Python 3.12 `fork()` deprecation warning in multithreaded test runs. Investigate whether we can supply a `spawn`-backed worker pool or otherwise steer emcee/lmfit away from raw `fork`.
-- [ ] **Evaluation order correctness**: component eval order depends on coincidental list position; make it explicit. One option: build a directed acyclic graph (DAG) at model construction and topological-sort.
-- [ ] **Freeze non-varying pars**: pars without time-dependence (or profile dependence) are re-evaluated at every aux-axis point; could evaluate once and reuse.
 
 ## Testing
 

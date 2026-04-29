@@ -30,6 +30,7 @@ import pytest
 
 matplotlib.use("Agg")  # Use non-interactive backend
 import matplotlib.pyplot as plt
+from _utils import make_project
 
 from trspecfit import File, Project
 from trspecfit.config.plot import PlotConfig
@@ -683,7 +684,7 @@ class TestPlotConfigPropagation:
     def _make_file_with_model(self, *, x_dir="rev"):
         """Create a project/file/model with a reversed energy axis."""
 
-        project = Project(path="tests")
+        project = make_project()
         project.x_dir = x_dir
         project.e_label = "Binding Energy (eV)"
 
@@ -829,7 +830,7 @@ class TestHighLevelPlotOverrides:
     def _make_file_with_model(self):
         """Return a File with a loaded energy model, default x_dir='def'."""
 
-        project = Project(path="tests")
+        project = make_project()
         project.e_label = "Binding Energy (eV)"
         project.x_dir = "def"
 

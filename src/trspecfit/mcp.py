@@ -235,6 +235,31 @@ class Model:
                 state[key] = None
         return state
 
+    #
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Pickle protocol: restore intra-Model ``parent_model`` back-refs.
+
+        ``parent_file`` stays ``None`` (caller must re-attach if needed —
+        see ``__getstate__``). ``parent_model`` is different: the back-ref
+        is internal to this Model graph, since this Model owns its
+        Components, their Pars, and any Dynamics/Profile sub-Models
+        attached to those Pars. Rewire from ``self`` so expression-on-Par
+        evaluation paths that traverse ``Par.get_all_parameters`` keep
+        working post-unpickle. Sub-Models (Dynamics/Profile) inherit this
+        method, so their internal back-refs are restored by the same
+        recursion.
+        """
+
+        self.__dict__.update(state)
+        for comp in self.components:
+            comp.parent_model = self
+            for par in comp.pars:
+                par.parent_model = self
+                if par.t_model is not None:
+                    par.t_model.parent_model = self
+                if par.p_model is not None:
+                    par.p_model.parent_model = self
+
     @property
     def plot_config(self) -> PlotConfig:
         """
