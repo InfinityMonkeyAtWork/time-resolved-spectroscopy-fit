@@ -2,7 +2,7 @@
 
 ## Fitting
 
-- [ ] **Fit results save/load**: HDF5 output for fit results, `File.load_fit()` to restore, `File.compare_models()` for model comparison. Keep project/global-fit outputs separate from true file-level fits so users do not assume identical per-file fields/statistics.
+- [ ] **Fit results save/load** `[ACTIVE]`: HDF5 archive of fit results via `Project.save_fits()`; new `FitResults` class for inspection/comparison (`FitResults.load(path)` standalone, `Project.load_fits(path)` convenience, `Project.results` property for in-memory view). `File.compare_models()` kept as a delegate sugar. Project-level / global-fit save deferred from v1. See [PLAN.md](PLAN.md).
 - [ ] **Mismatched initial guesses**: round-trip tests — one each for basic, profile, profile+dynamics.
 
 Note: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling — make configurable via `mc_settings` if users need it.
