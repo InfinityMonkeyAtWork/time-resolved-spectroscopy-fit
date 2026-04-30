@@ -126,8 +126,6 @@ class Project:
         Base project directory containing data and configuration
     path_results : Path
         Results directory (path + '_fits' suffix)
-    path_run : Path
-        Directory for this specific run (path_results / name)
     name : str
         Name for this analysis run
     files : list of File
@@ -170,7 +168,6 @@ class Project:
         self.path = pathlib.Path(path) if path is not None else pathlib.Path("test")
         self.path_results = pathlib.Path(f"{path}_fits")
         self.name = name
-        self.path_run = self.path_results / name
 
         self._config_file: PathLike | None = None
         self.files: list[File] = []
@@ -651,7 +648,10 @@ class Project:
 
             images = []
             for f in self.files:
-                img_path = f.create_model_path(model_name) / "base_fit.png"
+                img_path = (
+                    f.create_model_path(model_name, fit_type="baseline")
+                    / "base_fit.png"
+                )
                 if img_path.exists():
                     images.append(mpimg.imread(str(img_path)))
             if images:
@@ -962,7 +962,7 @@ class Project:
         try:
             for f in self.files:
                 if f.model_2d is not None:
-                    path_2d = f.create_model_path(model_name)
+                    path_2d = f.create_model_path(model_name, fit_type="2d")
                     f.save_2d_fit(save_path=path_2d)
         finally:
             self.show_output = saved
@@ -977,7 +977,10 @@ class Project:
 
             images = []
             for f in self.files:
-                img_path = f.create_model_path(model_name) / "2D_data_fit_res.png"
+                img_path = (
+                    f.create_model_path(model_name, fit_type="2d")
+                    / "2D_data_fit_res.png"
+                )
                 if img_path.exists():
                     images.append(mpimg.imread(str(img_path)))
             if images:
@@ -1028,8 +1031,6 @@ class File:
         Parent project providing configuration
     path : str or Path
         File identifier
-    path_da : Path
-        Directory path for saving this file's fit results
     data : ndarray
         Spectroscopy data (1D or 2D), with dark subtraction and sensitivity
         calibration applied (if any)
@@ -1122,7 +1123,6 @@ class File:
                 f'(e.g. name="{self.name}_2").'
             )
         self.p.files.append(self)  # register with parent project
-        self.path_da = self.p.path_run / path  # path to save fit results to
         self._plot_config: PlotConfig | None = None  # create plot config from project
         self.data = data  # (time-[optional] and) energy-dependent data to fit
         self.data_raw: np.ndarray | None = data.copy() if data is not None else None
@@ -1657,18 +1657,24 @@ class File:
 
     #
     def create_model_path(
-        self, model_name: str, subfolders: list[str] | None = None
+        self,
+        model_name: str,
+        *,
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"],
+        subfolders: list[str] | None = None,
     ) -> pathlib.Path:
         """
         Create directory structure for saving model fit results.
 
-        Constructs path based on file path, YAML file name, and model name.
+        Layout: ``{Project.path_results}/{File.name}/{fit_type}/{model_name}/``.
         Creates directories if they don't exist.
 
         Parameters
         ----------
         model_name : str
             Name of model (must exist in self.models)
+        fit_type : {"baseline", "spectrum", "sbs", "2d"}
+            Fit type segment in the output path.
         subfolders : list of str, default=[]
             Additional subdirs to create (e.g., ['slices'] for Slice-by-Slice fits)
 
@@ -1678,18 +1684,7 @@ class File:
             Path to model results directory
         """
 
-        mod = self.select_model(model_name)  # get model
-        if mod is None:
-            warnings.warn(
-                f"Model '{model_name}' not found; using fallback output path.",
-                stacklevel=2,
-            )
-            path_model = self.path_da / "model_unknown" / model_name
-        else:
-            yaml_name = (
-                mod.yaml_f_name if mod.yaml_f_name is not None else "model_unknown"
-            )
-            path_model = self.path_da / yaml_name / model_name
+        path_model = self.p.path_results / self.name / fit_type / model_name
         path_model.mkdir(parents=True, exist_ok=True)
         if subfolders is None:
             subfolders = []
@@ -2014,7 +2009,7 @@ class File:
             self.model_base.lmfit_pars, return_type="list"
         )
         # define (and create) path where basline fit results will be saved to
-        path_base_results = self.create_model_path(model_name)
+        path_base_results = self.create_model_path(model_name, fit_type="baseline")
 
         # const = (x, data, package, fnctn string, unpack, energy limits, time limits)
         _fun_str = self.p.spec_fun_str
@@ -2190,7 +2185,7 @@ class File:
             self.model_spec.lmfit_pars, return_type="list"
         )
         # define (and create) path where spectrum fit results will be saved to
-        path_spec_results = self.create_model_path(model_name)
+        path_spec_results = self.create_model_path(model_name, fit_type="spectrum")
 
         # const = (x, data, fnctn string, unpack, energy limits, time limits)
         _fun_str = self.p.spec_fun_str
@@ -2382,6 +2377,7 @@ class File:
         # define (and create) path where SbS fit results will be saved to
         path_sbs_results = self.create_model_path(
             model_name,
+            fit_type="sbs",
             subfolders=[
                 "slices",
             ],
@@ -2901,7 +2897,7 @@ class File:
             raise ValueError("Data/axes missing; cannot run 2D fit.")
 
         # define (and create) path where 2D fit results will be saved to
-        path_2d_results = self.create_model_path(model_name)
+        path_2d_results = self.create_model_path(model_name, fit_type="2d")
 
         # set all fixed 2D fit parameters equal to baseline model results
         base_df = ulmfit.par_to_df(self.model_base.lmfit_pars, col_type="min")
