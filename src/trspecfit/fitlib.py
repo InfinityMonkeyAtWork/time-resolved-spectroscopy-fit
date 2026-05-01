@@ -64,6 +64,68 @@ def _result_errorbars(result: MinimizerResult) -> bool:
 
 
 #
+def compute_fit_metrics(
+    *,
+    observed: np.ndarray,
+    fit: np.ndarray,
+    n_free_pars: int,
+) -> dict[str, float]:
+    """
+    Compute fit-quality metrics from observed and fitted arrays.
+
+    Uses unweighted residuals (``observed - fit``); replicates the formulas
+    lmfit uses internally so the values match
+    ``MinimizerResult.chisqr / .redchi / .aic / .bic`` for unweighted fits.
+    R^2 is computed locally (lmfit does not expose it).
+
+    Parameters
+    ----------
+    observed : ndarray
+        Data view that was fit against (e.g. ``data_base`` for baseline,
+        cropped ``data`` for sbs/2d). Any shape; the array is flattened.
+    fit : ndarray
+        Model evaluated at final parameters. Must broadcast to ``observed``.
+    n_free_pars : int
+        Number of varying (non-fixed, non-expression) parameters in the fit.
+        Used as ``nvarys`` in the AIC/BIC and reduced-chi^2 formulas.
+
+    Returns
+    -------
+    dict
+        ``{"chi2", "chi2_red", "r2", "aic", "bic"}``. ``chi2_red``, ``aic``,
+        and ``bic`` are ``float("nan")`` when ``ndata <= n_free_pars`` or
+        ``chi2 == 0`` (degenerate fits).
+    """
+
+    residual = np.asarray(observed) - np.asarray(fit)
+    ndata = residual.size
+    chi2 = float(np.sum(residual**2))
+
+    obs_flat = np.asarray(observed).ravel()
+    ss_tot = float(np.sum((obs_flat - obs_flat.mean()) ** 2))
+    r2 = float("nan") if ss_tot == 0.0 else 1.0 - chi2 / ss_tot
+
+    dof = ndata - n_free_pars
+    chi2_red = chi2 / dof if dof > 0 else float("nan")
+
+    if chi2 > 0 and ndata > 0:
+        log_chi2_per_n = math.log(chi2 / ndata)
+        aic = ndata * log_chi2_per_n + 2 * n_free_pars
+        bic = ndata * log_chi2_per_n + math.log(ndata) * n_free_pars
+    else:
+        aic = float("nan")
+        bic = float("nan")
+
+    return {
+        "chi2": chi2,
+        "chi2_red": chi2_red,
+        "r2": r2,
+        "aic": aic,
+        "bic": bic,
+    }
+
+
+#
 def residual_fun(
     par: Any,
     x: ArrayLike,

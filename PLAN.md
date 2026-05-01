@@ -293,10 +293,17 @@ Notes:
 ### Precursors
 
 - [x] Confirm scope + answers to open questions.
-- [ ] Add `spectrum` to `File.get_fit_results(fit_type=...)`.
-- [ ] Add `fitlib.compute_fit_metrics(observed, fit, n_free_pars) -> dict` returning `{chi2, chi2_red, r2, aic, bic}`. Takes **`observed`** (the actual data view fit against), not raw `file.data`. Use lmfit's `MinimizerResult.chisqr` / `.redchi` / `.aic` / `.bic` where available; compute R² locally.
-- [ ] Wire metric computation into baseline / spectrum / sbs / 2d fit code paths so the values exist on `Model.result` for the writer to pick up.
-- [ ] Capture the `observed` array per fit-type at fit time (or at save time) so the writer has it: `data_base` for baseline, `data_spec` for spectrum, cropped/full data for sbs/2d.
+- [x] Add `spectrum` to `File.get_fit_results(fit_type=...)`.
+- [x] Add `fitlib.compute_fit_metrics(observed, fit, n_free_pars) -> dict` returning `{chi2, chi2_red, r2, aic, bic}`. Takes **`observed`** (the actual data view fit against), not raw `file.data`. Use lmfit's `MinimizerResult.chisqr` / `.redchi` / `.aic` / `.bic` where available; compute R² locally.
+
+**Note on the observed/fit/metrics capture:** the original precursor wording
+("wire metric computation … so the values exist on `Model.result`") is
+**intentionally dropped**. `Model` should not carry archive/history concerns —
+that creates two sources of truth. Instead, `SavedFitSlot` is the first owner
+of `observed`, `fit`, `metrics`, `observed_sha256`, `selection_json`, and
+`history_key`. The fit-path → snapshot args → `_slot_from_<fit_type>` →
+`_fit_history` pipeline captures and computes everything in one shot at fit
+completion. See "Object model + I/O" below.
 
 ### Object model + I/O
 

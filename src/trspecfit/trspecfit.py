@@ -79,11 +79,13 @@ from trspecfit import fitlib, mcp
 
 # standardized plotting configuration
 from trspecfit.config.plot import PlotConfig
+from trspecfit.fit_results import FitResults
 
 # function library for energy, time, and profile components
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import profile as fcts_profile
 from trspecfit.functions import time as fcts_time
+from trspecfit.utils import fit_io
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import parsing as uparsing
 from trspecfit.utils import plot as uplt
@@ -172,6 +174,9 @@ class Project:
         self._config_file: PathLike | None = None
         self.files: list[File] = []
         self._project_fit_result: list[Any] | None = None
+        # Append-only log of completed fit slots, populated eagerly at fit
+        # completion by the _slot_from_<fit_type> helpers in utils/fit_io.py.
+        self._fit_history: list[fit_io.SavedFitSlot] = []
 
         # Set defaults first
         self._set_defaults()
@@ -229,6 +234,21 @@ class Project:
     #
     def __repr__(self) -> str:
         return f"Project(path='{self.path}', name='{self.name}')"
+
+    #
+    @property
+    def results(self) -> FitResults:
+        """
+        Snapshot view over the in-session fit history.
+
+        Returns a fresh ``FitResults`` wrapping a copy of ``_fit_history``;
+        subsequent fits append to the log and do not affect previously
+        returned ``FitResults``. Object identity is unstable
+        (``p.results is p.results`` is False); the contents at a given access
+        are fixed.
+        """
+
+        return FitResults(slots=list(self._fit_history))
 
     #
     def __getitem__(self, key: int | str) -> "File":
@@ -1172,6 +1192,7 @@ class File:
         self.data_spec: np.ndarray | None = None  # extracted 1D spectrum
         self.spec_t_abs: list[float] = []  # time bounds (absolute)
         self.spec_t_ind: list[int] = []  # time bounds (indices)
+        self._fingerprint: dict[str, Any] | None = None  # cached file fingerprint
         # default fit limits to entire dataset (energy is None only for bare File())
         if self.energy is not None:
             self.set_fit_limits(energy_limits=None, show_plot=False)
@@ -1656,6 +1677,26 @@ class File:
         self.models = []
 
     #
+    def fingerprint(self) -> dict[str, Any]:
+        """
+        Multi-sha content fingerprint of this file.
+
+        Cached on first call. Used by slot extraction to identify the source
+        file for each ``SavedFitSlot`` independent of display name. Recompute
+        by clearing ``self._fingerprint``.
+        """
+
+        if self._fingerprint is None:
+            if self.data is None or self.energy is None:
+                raise ValueError(
+                    "Cannot fingerprint a File without data and energy axis."
+                )
+            self._fingerprint = fit_io.compute_file_fingerprint(
+                data=self.data, energy=self.energy, time=self.time
+            )
+        return self._fingerprint
+
+    #
     def create_model_path(
         self,
         model_name: str,
@@ -2046,6 +2087,7 @@ class File:
                     self.model_base.result[1], return_type="list"
                 )
             )
+            self._append_baseline_slot(model_name=model_name, fit_fun_str=_fun_str)
 
         # display/plot and save baseline fit summary
         title_base = (
@@ -2219,6 +2261,13 @@ class File:
                 new_par_values=ulmfit.par_extract(
                     self.model_spec.result[1], return_type="list"
                 )
+            )
+            self._append_spectrum_slot(
+                model_name=model_name,
+                fit_fun_str=_fun_str,
+                time_point=time_point,
+                time_range=list(time_range) if time_range is not None else None,
+                time_type=time_type,
             )
 
         # display/plot and save spectrum fit summary
@@ -2543,6 +2592,10 @@ class File:
             self.model_sbs.args = _args_sbs
 
         if stages >= 1:
+            # Extract slot BEFORE save_sbs_fit / seed restoration so the slot
+            # captures pristine per-slice fit state (results_sbs and parameter
+            # names taken before any post-fit cleanup).
+            self._append_sbs_slot(model_name=model_name, fit_fun_str=_fun_str)
             self.save_sbs_fit(save_path=path_sbs_results)
         self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
         self.model_sbs.args = _args_sbs
@@ -2608,6 +2661,247 @@ class File:
             save_img=-1 if self.p.show_output == 0 else 1,
             save_path=save_path,
         )
+
+    #
+    # ------------------------------------------------------------------
+    # Slot capture (eager extraction into Project._fit_history)
+    # ------------------------------------------------------------------
+
+    #
+    def _append_baseline_slot(self, *, model_name: str, fit_fun_str: str) -> None:
+        """
+        Build a SavedFitSlot from the just-completed baseline fit and append
+        it to ``self.p._fit_history``. Uses copied snapshot args so the slot
+        is invariant to subsequent state changes on ``self.model_base``.
+        """
+
+        assert self.model_base is not None  # type guard
+        assert self.data_base is not None  # type guard
+        assert self.energy is not None  # type guard
+        result_fin = self.model_base.result[1]
+        if not hasattr(result_fin, "params"):
+            return  # mocked / placeholder result; nothing to record
+        # Evaluate model on the same grid as data_base, then crop to e_lim
+        # so observed.shape == fit.shape and matches the residual grid.
+        fit_full = np.asarray(
+            fitlib.residual_fun(
+                par=result_fin.params,
+                x=self.energy,
+                data=self.data_base,
+                fit_fun_str=fit_fun_str,
+                args=self.model_base.args,
+                res_type="fit",
+            )
+        )
+        e_lim = list(self.e_lim) if self.e_lim else None
+        if e_lim:
+            observed = self.data_base[e_lim[0] : e_lim[1]].copy()
+            fit_arr = fit_full[e_lim[0] : e_lim[1]].copy()
+        else:
+            observed = self.data_base.copy()
+            fit_arr = fit_full.copy()
+        params_df = ulmfit.par_to_df(
+            result_fin.params,
+            col_type="min",
+            par_names=self.model_base.parameter_names,
+        )
+        conf_ci = self.model_base.result[2]
+        slot = fit_io._slot_from_baseline(
+            file_fingerprint=self.fingerprint(),
+            file_name=self.name,
+            model_name=model_name,
+            fit_alg=str(getattr(result_fin, "method", "unknown")),
+            yaml_filename=self.model_base.yaml_f_name,
+            params_df=params_df,
+            observed=observed,
+            fit=fit_arr,
+            base_t_ind=list(self.base_t_ind),
+            e_lim=e_lim,
+            n_free_pars=int(getattr(result_fin, "nvarys", 0)),
+            conf_ci=conf_ci if not conf_ci.empty else None,
+        )
+        self.p._fit_history.append(slot)
+
+    #
+    def _append_spectrum_slot(
+        self,
+        *,
+        model_name: str,
+        fit_fun_str: str,
+        time_point: float | None,
+        time_range: list[float] | None,
+        time_type: str,
+    ) -> None:
+        """Build and append a SavedFitSlot for a completed spectrum fit."""
+
+        assert self.model_spec is not None  # type guard
+        assert self.data_spec is not None  # type guard
+        assert self.energy is not None  # type guard
+        result_fin = self.model_spec.result[1]
+        if not hasattr(result_fin, "params"):
+            return  # mocked / placeholder result; nothing to record
+        fit_full = np.asarray(
+            fitlib.residual_fun(
+                par=result_fin.params,
+                x=self.energy,
+                data=self.data_spec,
+                fit_fun_str=fit_fun_str,
+                args=self.model_spec.args,
+                res_type="fit",
+            )
+        )
+        e_lim = list(self.e_lim) if self.e_lim else None
+        if e_lim:
+            observed = self.data_spec[e_lim[0] : e_lim[1]].copy()
+            fit_arr = fit_full[e_lim[0] : e_lim[1]].copy()
+        else:
+            observed = self.data_spec.copy()
+            fit_arr = fit_full.copy()
+        params_df = ulmfit.par_to_df(
+            result_fin.params,
+            col_type="min",
+            par_names=self.model_spec.parameter_names,
+        )
+        conf_ci = self.model_spec.result[2]
+        slot = fit_io._slot_from_spectrum(
+            file_fingerprint=self.fingerprint(),
+            file_name=self.name,
+            model_name=model_name,
+            fit_alg=str(getattr(result_fin, "method", "unknown")),
+            yaml_filename=self.model_spec.yaml_f_name,
+            params_df=params_df,
+            observed=observed,
+            fit=fit_arr,
+            time_point=time_point,
+            time_range=time_range,
+            time_type=time_type,
+            e_lim=e_lim,
+            n_free_pars=int(getattr(result_fin, "nvarys", 0)),
+            conf_ci=conf_ci if not conf_ci.empty else None,
+        )
+        self.p._fit_history.append(slot)
+
+    #
+    def _append_sbs_slot(self, *, model_name: str, fit_fun_str: str) -> None:
+        """
+        Build and append a SavedFitSlot for a completed slice-by-slice fit.
+
+        Must be called BEFORE the seed-template restoration that runs at the
+        end of ``fit_slice_by_slice`` — the helper takes copied snapshot args
+        and is invariant to subsequent state changes, but the per-slice
+        ``residual_fun`` evaluation here uses the still-correct
+        ``self.model_sbs.const/args``.
+        """
+
+        assert self.model_sbs is not None  # type guard
+        assert self.data is not None  # type guard
+        assert self.energy is not None  # type guard
+        if not self.results_sbs or not hasattr(self.results_sbs[0][1], "params"):
+            return  # mocked / placeholder results; nothing to record
+        n_slices = len(self.data)
+        e_lim = list(self.e_lim) if self.e_lim else None
+        # Per-slice observed view + per-slice model evaluation. residual_fun
+        # is called once per slice with that slice's final params.
+        observed_rows = []
+        fit_rows = []
+        for s_i in range(n_slices):
+            slice_data = self.data[s_i]
+            slice_par = self.results_sbs[s_i][1].params
+            fit_full = np.asarray(
+                fitlib.residual_fun(
+                    par=slice_par,
+                    x=self.energy,
+                    data=slice_data,
+                    fit_fun_str=fit_fun_str,
+                    args=self.model_sbs.args,
+                    res_type="fit",
+                )
+            )
+            if e_lim:
+                observed_rows.append(slice_data[e_lim[0] : e_lim[1]].copy())
+                fit_rows.append(fit_full[e_lim[0] : e_lim[1]].copy())
+            else:
+                observed_rows.append(slice_data.copy())
+                fit_rows.append(fit_full.copy())
+        observed = np.stack(observed_rows, axis=0)
+        fit_arr = np.stack(fit_rows, axis=0)
+        # Per-slice DataFrame (one row per slice, columns = parameter values).
+        params_df = ulmfit.list_of_par_to_df(self.results_sbs)
+        # n_free_pars + fit_alg captured from slice 0 (consistent across slices
+        # because the same model_sbs is used for every slice).
+        slice0_result = self.results_sbs[0][1]
+        slice0_conf_ci = self.results_sbs[0][2]
+        slot = fit_io._slot_from_sbs(
+            file_fingerprint=self.fingerprint(),
+            file_name=self.name,
+            model_name=model_name,
+            fit_alg=str(getattr(slice0_result, "method", "unknown")),
+            yaml_filename=self.model_sbs.yaml_f_name,
+            params_df=params_df,
+            observed=observed,
+            fit=fit_arr,
+            e_lim=e_lim,
+            t_lim=None,
+            n_free_pars=int(getattr(slice0_result, "nvarys", 0)),
+            conf_ci=slice0_conf_ci if not slice0_conf_ci.empty else None,
+        )
+        self.p._fit_history.append(slot)
+
+    #
+    def _append_2d_slot(self, *, model_name: str, fit_fun_str: str) -> None:
+        """Build and append a SavedFitSlot for a completed 2D global fit."""
+
+        assert self.model_2d is not None  # type guard
+        assert self.data is not None  # type guard
+        assert self.energy is not None  # type guard
+        result_fin = self.model_2d.result[1]
+        if not hasattr(result_fin, "params"):
+            return  # mocked / placeholder result; nothing to record
+        # Evaluate the 2D model on the full grid; crop to (t_lim, e_lim) so
+        # observed.shape == fit.shape and matches the residual grid.
+        fit_full = np.asarray(
+            fitlib.residual_fun(
+                par=result_fin.params,
+                x=self.energy,
+                data=self.data,
+                fit_fun_str=fit_fun_str,
+                args=self.model_2d.args,
+                res_type="fit",
+            )
+        )
+        e_lim = list(self.e_lim) if self.e_lim else None
+        t_lim = list(self.t_lim) if self.t_lim else None
+        observed = self.data
+        fit_arr = fit_full
+        if t_lim:
+            observed = observed[t_lim[0] : t_lim[1], :]
+            fit_arr = fit_arr[t_lim[0] : t_lim[1], :]
+        if e_lim:
+            observed = observed[:, e_lim[0] : e_lim[1]]
+            fit_arr = fit_arr[:, e_lim[0] : e_lim[1]]
+        observed = observed.copy()
+        fit_arr = fit_arr.copy()
+        params_df = ulmfit.par_to_df(
+            result_fin.params,
+            col_type="min",
+            par_names=self.model_2d.parameter_names,
+        )
+        conf_ci = self.model_2d.result[2]
+        slot = fit_io._slot_from_2d(
+            file_fingerprint=self.fingerprint(),
+            file_name=self.name,
+            model_name=model_name,
+            fit_alg=str(getattr(result_fin, "method", "unknown")),
+            yaml_filename=self.model_2d.yaml_f_name,
+            params_df=params_df,
+            observed=observed,
+            fit=fit_arr,
+            e_lim=e_lim,
+            t_lim=t_lim,
+            n_free_pars=int(getattr(result_fin, "nvarys", 0)),
+            conf_ci=conf_ci if not conf_ci.empty else None,
+        )
+        self.p._fit_history.append(slot)
 
     #
     def _resolve_model(self, model_name: str | None) -> mcp.Model:
@@ -2963,6 +3257,7 @@ class File:
             for name in self.model_2d.parameter_names:
                 if name in final_params:
                     self.model_2d.lmfit_pars[name].value = final_params[name].value
+            self._append_2d_slot(model_name=model_name, fit_fun_str=_fun_str)
 
         if stages >= 1:
             self.save_2d_fit(save_path=path_2d_results)
@@ -3015,25 +3310,26 @@ class File:
     def get_fit_results(
         self,
         *,
-        fit_type: Literal["baseline", "sbs", "2d"] = "baseline",
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] = "baseline",
     ) -> pd.DataFrame:
         """
         Return fit results as a DataFrame for programmatic access.
 
         Parameters
         ----------
-        fit_type : {'baseline', 'sbs', '2d'}, default='baseline'
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
             Which fit results to return:
 
             - 'baseline': Baseline/ground-state fit (from ``fit_baseline``)
+            - 'spectrum': Single-spectrum fit (from ``fit_spectrum``)
             - 'sbs': Slice-by-Slice fit (from ``fit_slice_by_slice``)
             - '2d': 2D global fit (from ``fit_2d``)
 
         Returns
         -------
         pd.DataFrame
-            For 'baseline' and '2d': one row per parameter with columns
-            ``['name', 'value', 'stderr', 'init_value', 'min', 'max',
+            For 'baseline', 'spectrum', and '2d': one row per parameter with
+            columns ``['name', 'value', 'stderr', 'init_value', 'min', 'max',
             'vary', 'expr']``.
             For 'sbs': one row per time slice with columns = parameter names.
 
@@ -3051,6 +3347,14 @@ class File:
                 col_type="min",
                 par_names=self.model_base.parameter_names,
             )
+        if fit_type == "spectrum":
+            if self.model_spec is None or not self.model_spec.result:
+                raise ValueError("No spectrum fit results. Run fit_spectrum() first.")
+            return ulmfit.par_to_df(
+                self.model_spec.result[1].params,
+                col_type="min",
+                par_names=self.model_spec.parameter_names,
+            )
         if fit_type == "sbs":
             if not self.results_sbs:
                 raise ValueError(
@@ -3066,7 +3370,8 @@ class File:
                 par_names=self.model_2d.parameter_names,
             )
         raise ValueError(
-            f"Unknown fit_type={fit_type!r}; use 'baseline', 'sbs', or '2d'."
+            f"Unknown fit_type={fit_type!r}; "
+            "use 'baseline', 'spectrum', 'sbs', or '2d'."
         )
 
     #
