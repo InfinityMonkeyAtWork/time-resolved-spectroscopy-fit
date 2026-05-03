@@ -155,7 +155,7 @@ class Project:
     Only specified settings need to be included; others use defaults.
 
     **File I/O Settings:**
-    Attributes ext, fmt, delim, da_fmt, and da_slices_fmt control file
+    Attributes ext, num_fmt, delim, da_fmt, and da_slices_fmt control file
     export formats and can be customized per project via YAML or direct
     attribute assignment.
     """
@@ -224,7 +224,7 @@ class Project:
         self.y_scale = None
         # File I/O settings
         self.ext = ".dat"
-        self.fmt = "%.6e"
+        self.num_fmt = "%.6e"
         self.delim = ","
         self.da_fmt = "%04d"
         self.da_slices_fmt = "%06d"
@@ -374,7 +374,7 @@ class Project:
             print(f"    res_mult:   {self.res_mult}")
             print("\n  File I/O settings:")
             print(f"    ext:        {self.ext}")
-            print(f"    fmt:        {self.fmt}")
+            print(f"    num_fmt:    {self.num_fmt}")
             print(f"    delim:      {repr(self.delim)}")
             print(f"    da_fmt:     {self.da_fmt}")
             print(f"    DA_slices:  {self.da_slices_fmt}")
@@ -2065,6 +2065,9 @@ class File:
         # --- dispatch: GIR fast path vs interpreter ---
         _args = self._build_1d_dispatch_args(self.model_base, _fun_str)
         self.model_base.args = _args
+        # CSV format/delimiter: project defaults unless caller overrides
+        lmfit_wrapper_kwargs.setdefault("num_fmt", self.p.num_fmt)
+        lmfit_wrapper_kwargs.setdefault("delim", self.p.delim)
         # fit (optionally) with confidence intervals
         self.model_base.result = fitlib.fit_wrapper(
             const=self.model_base.const,
@@ -2088,6 +2091,7 @@ class File:
                 )
             )
             self._append_baseline_slot(model_name=model_name, fit_fun_str=_fun_str)
+            self.save_baseline_fit(save_path=path_base_results)
 
         # display/plot and save baseline fit summary
         title_base = (
@@ -2117,6 +2121,53 @@ class File:
                 t_start=t_base, print_str="Time elapsed for baseline fit: "
             )
             display(self.model_base.result[1].params)  # display final pars below figure
+
+    #
+    def _save_1d_fit(self, model: mcp.Model | None, save_path: PathLike) -> None:
+        """
+        Internal helper: write ``fit_1d.csv`` for a 1D fitted model.
+
+        Columns: ``energy``, ``sum``, then one column per component
+        (named after ``component.name``).
+        """
+
+        if model is None or self.energy is None:
+            raise ValueError("Model/energy missing; nothing to save.")
+        if not model.result or not getattr(model.result[1], "params", None):
+            return  # mocked / placeholder; nothing to dump
+        model.create_value_1d(store_1d=1)
+        if model.value_1d is None:
+            raise ValueError(
+                "Model evaluation did not produce value_1d; nothing to save."
+            )
+        columns: dict[str, np.ndarray] = {
+            "energy": np.asarray(self.energy),
+            "sum": np.asarray(model.value_1d),
+        }
+        for comp, arr in zip(model.components, model.component_spectra, strict=True):
+            columns[comp.name] = np.asarray(arr)
+        pd.DataFrame(columns).to_csv(
+            pathlib.Path(save_path) / "fit_1d.csv",
+            index=False,
+            float_format=self.p.num_fmt,
+            sep=self.p.delim,
+        )
+
+    #
+    def save_baseline_fit(self, save_path: PathLike) -> None:
+        """
+        Export baseline fit as ``fit_1d.csv``.
+
+        Evaluates the baseline model at final parameters and writes a CSV
+        with columns ``energy``, ``sum``, and one column per component.
+
+        Parameters
+        ----------
+        save_path : str or Path
+            Directory path for saving (file: ``save_path/fit_1d.csv``).
+        """
+
+        self._save_1d_fit(self.model_base, save_path)
 
     #
     def fit_spectrum(
@@ -2242,6 +2293,9 @@ class File:
         # --- dispatch: GIR fast path vs interpreter ---
         _args = self._build_1d_dispatch_args(self.model_spec, _fun_str)
         self.model_spec.args = _args
+        # CSV format/delimiter: project defaults unless caller overrides
+        lmfit_wrapper_kwargs.setdefault("num_fmt", self.p.num_fmt)
+        lmfit_wrapper_kwargs.setdefault("delim", self.p.delim)
         # fit
         self.model_spec.result = fitlib.fit_wrapper(
             const=self.model_spec.const,
@@ -2269,6 +2323,7 @@ class File:
                 time_range=list(time_range) if time_range is not None else None,
                 time_type=time_type,
             )
+            self.save_spectrum_fit(save_path=path_spec_results)
 
         # display/plot and save spectrum fit summary
         time_label = (
@@ -2304,6 +2359,22 @@ class File:
                 t_start=t_spec, print_str="Time elapsed for spectrum fit: "
             )
             display(self.model_spec.result[1].params)
+
+    #
+    def save_spectrum_fit(self, save_path: PathLike) -> None:
+        """
+        Export single-spectrum fit as ``fit_1d.csv``.
+
+        Evaluates the spectrum model at final parameters and writes a CSV
+        with columns ``energy``, ``sum``, and one column per component.
+
+        Parameters
+        ----------
+        save_path : str or Path
+            Directory path for saving (file: ``save_path/fit_1d.csv``).
+        """
+
+        self._save_1d_fit(self.model_spec, save_path)
 
     #
     def load_fit(self) -> None:
@@ -2483,6 +2554,11 @@ class File:
         # No point spawning more workers than slices.
         n_workers = max(1, min(n_workers, n_slices))
 
+        # CSV format/delimiter: project defaults unless caller overrides
+        # (forwarded into both the serial and parallel SbS dispatch paths)
+        fit_wrapper_kwargs.setdefault("num_fmt", self.p.num_fmt)
+        fit_wrapper_kwargs.setdefault("delim", self.p.delim)
+
         if n_workers == 1:
             # serial path (debug escape hatch).
             self.results_sbs = []
@@ -2624,10 +2700,25 @@ class File:
             )
         if self.data is None:
             raise ValueError("Data missing; cannot save Slice-by-Slice fit.")
+        if self.energy is None:
+            raise ValueError("Energy axis missing; cannot save Slice-by-Slice fit.")
         if self.model_sbs.const is None or self.model_sbs.args is None:
             raise ValueError(
                 "Slice-by-Slice model const/args missing; cannot reconstruct 2D fit."
             )
+        # axis sidecars (one value per row); paired with fit_2d.csv
+        np.savetxt(
+            pathlib.Path(save_path) / "energy.csv",
+            np.asarray(self.energy),
+            fmt=self.p.num_fmt,
+            delimiter=self.p.delim,
+        )
+        np.savetxt(
+            pathlib.Path(save_path) / "time.csv",
+            np.asarray(self.time),
+            fmt=self.p.num_fmt,
+            delimiter=self.p.delim,
+        )
         # convert results, specifically par_fin to dataframe and save
         # this also plots all parameters as a function of time
         df_sbs = fitlib.results_to_df(
@@ -2637,6 +2728,8 @@ class File:
             config=self.plot_config,
             save_df=-1 if self.p.show_output == 0 else 1,
             save_path=save_path,
+            num_fmt=self.p.num_fmt,
+            delim=self.p.delim,
         )
 
         # get slice-by-slice fit spectra as a 2D map
@@ -2645,6 +2738,8 @@ class File:
             results=df_sbs_pars,
             const=self.model_sbs.const,
             args=self.model_sbs.args,
+            num_fmt=self.p.num_fmt,
+            delim=self.p.delim,
             save_2d=-1 if self.p.show_output == 0 else 1,
             save_path=save_path,
         )
@@ -2678,6 +2773,8 @@ class File:
         assert self.model_base is not None  # type guard
         assert self.data_base is not None  # type guard
         assert self.energy is not None  # type guard
+        if self.data is None:
+            return  # data_base-only fixture / no source File data to fingerprint
         result_fin = self.model_base.result[1]
         if not hasattr(result_fin, "params"):
             return  # mocked / placeholder result; nothing to record
@@ -3237,6 +3334,9 @@ class File:
         )
         self.model_2d.args = _args
 
+        # CSV format/delimiter: project defaults unless caller overrides
+        fit_wrapper_kwargs.setdefault("num_fmt", self.p.num_fmt)
+        fit_wrapper_kwargs.setdefault("delim", self.p.delim)
         # fit (with confidence intervals)
         self.model_2d.result = fitlib.fit_wrapper(
             const=self.model_2d.const,
@@ -3271,8 +3371,8 @@ class File:
         """
         Export 2D model fit results.
 
-        Evaluates model at final parameters, creates 2D data/fit/residual
-        comparison plots, and saves to specified directory.
+        Evaluates model at final parameters, saves the fit map as
+        ``fit_2d.csv``, and creates 2D data/fit/residual comparison plots.
 
         Parameters
         ----------
@@ -3292,6 +3392,26 @@ class File:
             raise ValueError(
                 "2D model evaluation did not produce value_2d; nothing to save."
             )
+        # save 2D fit map as CSV (rows=time, cols=energy), mirroring save_sbs_fit
+        np.savetxt(
+            pathlib.Path(save_path) / "fit_2d.csv",
+            self.model_2d.value_2d,
+            fmt=self.p.num_fmt,
+            delimiter=self.p.delim,
+        )
+        # axis sidecars (one value per row); paired with fit_2d.csv
+        np.savetxt(
+            pathlib.Path(save_path) / "energy.csv",
+            np.asarray(self.energy),
+            fmt=self.p.num_fmt,
+            delimiter=self.p.delim,
+        )
+        np.savetxt(
+            pathlib.Path(save_path) / "time.csv",
+            np.asarray(self.time),
+            fmt=self.p.num_fmt,
+            delimiter=self.p.delim,
+        )
         # plot data, fit, and residual 2D maps
         fitlib.plt_fit_res_2d(
             data=self.data,

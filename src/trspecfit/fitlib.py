@@ -433,6 +433,8 @@ def fit_wrapper(
     show_output: int = 0,
     save_output: int = 0,
     save_path: PathLike = "",
+    num_fmt: str = "%.6e",
+    delim: str = ",",
 ) -> list[Any]:
     """
     Comprehensive fitting wrapper with optimization, CI, and MCMC.
@@ -518,6 +520,10 @@ def fit_wrapper(
         _conf_ci.csv, _emcee_fin.txt, _emcee_flatchain.csv,
         _emcee_ci.csv, _emcee_walker_acceptance_ratio.png,
         _emcee_corner_plot.png
+    num_fmt : str, default='%.6e'
+        Float format applied to CSV outputs (pandas ``float_format``).
+    delim : str, default=','
+        Delimiter applied to CSV outputs (pandas ``sep``).
 
     Returns
     -------
@@ -802,17 +808,32 @@ def fit_wrapper(
     # [if statements check for empty list/dataframe]
     if abs(save_output) == 1:
         # par_ini (pandas DataFrame) as csv file
-        df_par_ini.to_csv(str(save_path) + "_par_ini.csv", index=False)
+        df_par_ini.to_csv(
+            str(save_path) + "_par_ini.csv",
+            index=False,
+            float_format=num_fmt,
+            sep=delim,
+        )
         # par_fin as text dump
         if par_fin:
             with pathlib.Path(f"{save_path}_par_fin.txt").open("w") as par_fin_file:
                 par_fin_file.write(lmfit.fit_report(par_fin))
         # par_fin variables as csv file
         df_par_fin = ulmfit.par_to_df(_result_params(par_fin), "min", par_names)
-        df_par_fin.to_csv(str(save_path) + "_par_fin.csv", index=False)
+        df_par_fin.to_csv(
+            str(save_path) + "_par_fin.csv",
+            index=False,
+            float_format=num_fmt,
+            sep=delim,
+        )
         # conf_ci using pandas as it is a pd.DataFrame
         if not conf_ci.empty:
-            conf_ci.to_csv(str(save_path) + "_conf_ci.csv", index=False)
+            conf_ci.to_csv(
+                str(save_path) + "_conf_ci.csv",
+                index=False,
+                float_format=num_fmt,
+                sep=delim,
+            )
         # emcee_fin (fit_report) as text dump, emcee flatchain as csv
         if emcee_fin is not None:
             with pathlib.Path(f"{save_path}_emcee_fin.txt").open("w") as emcee_fin_file:
@@ -820,10 +841,20 @@ def fit_wrapper(
             emcee_flatchain = cast(
                 "pd.DataFrame", getattr(emcee_fin, "flatchain", pd.DataFrame())
             )
-            emcee_flatchain.to_csv(f"{save_path}_emcee_flatchain.csv", index=False)
+            emcee_flatchain.to_csv(
+                f"{save_path}_emcee_flatchain.csv",
+                index=False,
+                float_format=num_fmt,
+                sep=delim,
+            )
         # emcee_ci using pandas as it is a pd.DataFrame
         if not emcee_ci.empty:
-            emcee_ci.to_csv(str(save_path) + "_emcee_ci.csv", index=False)
+            emcee_ci.to_csv(
+                str(save_path) + "_emcee_ci.csv",
+                index=False,
+                float_format=num_fmt,
+                sep=delim,
+            )
 
     return [par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]
 
@@ -841,6 +872,8 @@ def results_to_df(
     config: PlotConfig | None = None,
     save_df: int = 0,
     save_path: PathLike = "",
+    num_fmt: str = "%.6e",
+    delim: str = ",",
 ) -> pd.DataFrame:
     """
     Convert Slice-by-Slice fit results to DataFrame with parameter plots.
@@ -871,6 +904,10 @@ def results_to_df(
     save_path : str or Path, default=''
         Directory path for saving files (not full filename) (created if not exists).
         Files saved: 'fit_pars.csv', '{param_name}.png' for each parameter
+    num_fmt : str, default='%.6e'
+        Float format applied to ``fit_pars.csv`` (pandas ``float_format``).
+    delim : str, default=','
+        Delimiter applied to ``fit_pars.csv`` (pandas ``sep``).
 
     Returns
     -------
@@ -909,7 +946,11 @@ def results_to_df(
 
     if save_df != 0:
         # save the dataframe (index, x axis, parameter1, parameter2, ...
-        df.to_csv(pathlib.Path(save_path) / "fit_pars.csv")
+        df.to_csv(
+            pathlib.Path(save_path) / "fit_pars.csv",
+            float_format=num_fmt,
+            sep=delim,
+        )
         # plot individual parameters as a function of time (s)
         plt_fit_res_pars(
             df=df.loc[:, list(cols_plt)],

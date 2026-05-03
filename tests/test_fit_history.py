@@ -223,6 +223,7 @@ class TestSpectrumSlot:
             time_point=5,
             time_type="ind",
             stages=1,
+            try_ci=0,
             show_plot=False,
         )
 
@@ -248,6 +249,7 @@ class TestSpectrumSlot:
             time_point=5,
             time_type="ind",
             stages=1,
+            try_ci=0,
             show_plot=False,
         )
         file.fit_spectrum(
@@ -255,6 +257,7 @@ class TestSpectrumSlot:
             time_point=10,
             time_type="ind",
             stages=1,
+            try_ci=0,
             show_plot=False,
         )
         keys = {s.history_key for s in project._fit_history}
@@ -282,6 +285,7 @@ class TestSbSSlot:
             n_workers=1,
             seed_source="model",
             seed_adapt=None,
+            try_ci=0,
         )
 
         assert len(project._fit_history) == 1
@@ -316,6 +320,7 @@ class TestSbSSlot:
             n_workers=1,
             seed_source="model",
             seed_adapt=None,
+            try_ci=0,
         )
 
         # After fit_slice_by_slice returns, the seed-template restoration has
@@ -407,6 +412,7 @@ class TestResultsSnapshot:
             time_point=10,
             time_type="ind",
             stages=1,
+            try_ci=0,
             show_plot=False,
         )
         # r1 still sees only the first slot.
