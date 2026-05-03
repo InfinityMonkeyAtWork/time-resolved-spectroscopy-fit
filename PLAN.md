@@ -307,33 +307,33 @@ completion. See "Object model + I/O" below.
 
 ### Object model + I/O
 
-- [ ] Define `SavedProject` / `SavedFile` / `SavedFitSlot` dataclasses (probably in `utils/fit_io.py`).
-- [ ] Define `FitResults` class in new module `trspecfit/fit_results.py`, exported as `trspecfit.FitResults`. Includes `load` classmethod, `find` / `get` / `files` / `models` / `__iter__` query API, and `compare_models` / `plot_residuals`. Internal key is `(file_fingerprint, model_name, fit_type, selection_json)`; name-based queries resolve to fingerprint internally. Constructor accepts a list of `SavedFitSlot` (used by both `load` and the `Project.results` wrapper path).
-- [ ] Add `Project._fit_history: list[SavedFitSlot]` attr (initialized to `[]` in `Project.__init__`).
-- [ ] Implement per-fit-type extraction helpers in `utils/fit_io.py`. **Each helper takes already-copied snapshot args** (not live `File.model_*` references) so call-site ordering is irrelevant — the helper cannot be broken by post-fit cleanup like the seed-template restoration at [trspecfit.py:2551](src/trspecfit/trspecfit.py#L2551). Signatures:
+- [~] Define `SavedProject` / `SavedFile` / `SavedFitSlot` dataclasses (probably in `utils/fit_io.py`). **`SavedFitSlot` done at [utils/fit_io.py:42](src/trspecfit/utils/fit_io.py#L42); `SavedProject` / `SavedFile` deferred to writer/reader work (step 14/15) since they only describe HDF5-side records.**
+- [~] Define `FitResults` class in new module `trspecfit/fit_results.py`, exported as `trspecfit.FitResults`. Includes `load` classmethod, `find` / `get` / `files` / `models` / `__iter__` query API, and `compare_models` / `plot_residuals`. Internal key is `(file_fingerprint, model_name, fit_type, selection_json)`; name-based queries resolve to fingerprint internally. Constructor accepts a list of `SavedFitSlot` (used by both `load` and the `Project.results` wrapper path). **Skeleton + query API done at [fit_results.py:32](src/trspecfit/fit_results.py#L32); `load` / `compare_models` / `plot_residuals` deferred (`load` lands with reader in step 15; comparison/plotting are their own follow-on items).**
+- [x] Add `Project._fit_history: list[SavedFitSlot]` attr (initialized to `[]` in `Project.__init__`). [trspecfit.py:179](src/trspecfit/trspecfit.py#L179)
+- [x] Implement per-fit-type extraction helpers in `utils/fit_io.py`. **Each helper takes already-copied snapshot args** (not live `File.model_*` references) so call-site ordering is irrelevant — the helper cannot be broken by post-fit cleanup like the seed-template restoration at [trspecfit.py:2551](src/trspecfit/trspecfit.py#L2551). Signatures:
   - `_slot_from_baseline(*, file_fingerprint, fit_alg, yaml_filename, params_df, observed, fit, base_t_ind, e_lim, n_free_pars) -> SavedFitSlot`
   - `_slot_from_spectrum(*, file_fingerprint, fit_alg, yaml_filename, params_df, observed, fit, time_point, time_range, time_type, e_lim, n_free_pars) -> SavedFitSlot`
   - `_slot_from_sbs(*, file_fingerprint, fit_alg, yaml_filename, parameter_names, params_per_slice, observed, fit, e_lim, t_lim, n_free_pars) -> SavedFitSlot` — caller passes already-extracted per-slice params (from a copy of `results_sbs`) plus the parameter_names captured from `model_sbs` *before any restoration*.
   - `_slot_from_2d(*, file_fingerprint, fit_alg, yaml_filename, params_df, observed, fit, e_lim, t_lim, n_free_pars) -> SavedFitSlot`
 
-  Each helper computes `metrics` (via `compute_fit_metrics`), `observed_sha256`, `selection_json`, and `history_key`. Project-level (`_project_fit_result`) is explicitly skipped in v1.
-- [ ] Wire eager extraction into the four fit code paths. Call site is responsible for capturing snapshot args **at the moment results are valid**:
+  Each helper computes `metrics` (via `compute_fit_metrics`), `observed_sha256`, `selection_json`, and `history_key`. Project-level (`_project_fit_result`) is explicitly skipped in v1. **Done at [utils/fit_io.py:247-431](src/trspecfit/utils/fit_io.py#L247-L431).**
+- [x] Wire eager extraction into the four fit code paths. Call site is responsible for capturing snapshot args **at the moment results are valid**:
   - `fit_baseline`: extract immediately after fit completes, before any further mutation.
   - `fit_spectrum`: same; capture `time_point` / `time_range` / `time_type` from fit args.
   - `fit_slice_by_slice`: extract **before** [trspecfit.py:2551](src/trspecfit/trspecfit.py#L2551) (the seed-template restoration that would otherwise blow away `model_sbs.parameter_names`/result state). Snapshot the relevant fields into local copies, then call the helper.
   - `fit_2d`: extract immediately after fit completes.
 
-  All four append the resulting slot to `self.p._fit_history`.
-- [ ] Implement `Project.results` property: returns `FitResults(slots=list(self._fit_history))`. Cheap: no array copies, just a list snapshot.
+  All four append the resulting slot to `self.p._fit_history`. **Done via `_append_baseline_slot` / `_append_spectrum_slot` / `_append_sbs_slot` / `_append_2d_slot` ([trspecfit.py:2795-3053](src/trspecfit/trspecfit.py#L2795-L3053)), called from [fit_baseline](src/trspecfit/trspecfit.py#L2122), [fit_spectrum](src/trspecfit/trspecfit.py#L2348), [fit_slice_by_slice](src/trspecfit/trspecfit.py#L2703), [fit_2d](src/trspecfit/trspecfit.py#L3412), and [Project.fit_2d](src/trspecfit/trspecfit.py#L1009).**
+- [x] Implement `Project.results` property: returns `FitResults(slots=list(self._fit_history))`. Cheap: no array copies, just a list snapshot. [trspecfit.py:239](src/trspecfit/trspecfit.py#L239)
 - [ ] Finalize HDF5 schema (structured-array dtypes, attr keys, MCMC layout) and document in `docs/design/`. **All group-path components are positional zero-padded keys; user-facing names live only in attrs.**
-- [ ] Add identity-key helpers in `utils/fit_io.py`:
+- [x] Add identity-key helpers in `utils/fit_io.py`:
   - `compute_history_key(file_fingerprint, model_name, fit_type, selection_json) -> str` — sha256, used in-memory.
-  - `compute_archive_slot_key(file_ref, model_name, fit_type, selection_json) -> str` — sha256, used at save time once `file_ref` is known.
+  - `compute_archive_slot_key(file_ref, model_name, fit_type, selection_json) -> str` — sha256, used at save time once `file_ref` is known. **Deferred with writer (step 14).**
   - `compute_file_fingerprint(data, energy, time) -> dict[str, str]` — multi-sha (`data_sha256`, `energy_sha256`, `time_sha256`, `shape`).
   - `compute_observed_sha256(observed) -> str` — for the slot's defensive cross-check.
   - `build_selection_json(fit_type, **fields) -> str` — deterministic JSON serialization (sorted keys) so equivalent selections produce identical hashes.
 - [ ] Add `_find_slot_by_archive_key(file_group, archive_slot_key) -> Group | None` and `_find_file_by_fingerprint(archive, fingerprint) -> Group | None` helpers — used by overwrite detection (save) and project-matching (load).
-- [ ] Add `_collapse_history_to_snapshot(slots: list[SavedFitSlot]) -> list[SavedFitSlot]` helper: keeps the latest slot per `history_key` (snapshot semantics for default `save_fits`).
+- [x] Add `_collapse_history_to_snapshot(slots: list[SavedFitSlot]) -> list[SavedFitSlot]` helper: keeps the latest slot per `history_key` (snapshot semantics for default `save_fits`). **Implemented as `collapse_history_to_snapshot` (no leading underscore — module-public) at [utils/fit_io.py:525](src/trspecfit/utils/fit_io.py#L525).**
 - [ ] Implement writer in `utils/fit_io.py`: takes a list of slots (already filtered + collapsed), serializes to HDF5. The writer is *slot-driven*; it does not walk `Project` or live `File.model_*` — that walking is done at fit-completion time by the extraction helpers, with the result accumulating in `_fit_history`.
 - [ ] Implement reader in `utils/fit_io.py`: deserializes HDF5 into a list of `SavedFitSlot` (plus `SavedFile` records for raw arrays). **Does not touch live `File.models` or `_fit_history`.**
 
