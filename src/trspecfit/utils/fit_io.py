@@ -212,6 +212,33 @@ def _now_iso() -> str:
 
 
 #
+def _mcmc_payload(
+    emcee_fin: Any,
+    emcee_ci: pd.DataFrame,
+) -> dict[str, Any] | None:
+    """
+    Build the ``mcmc`` slot payload from ``fit_wrapper``'s emcee outputs.
+
+    Returns ``None`` if MCMC did not run (``emcee_fin is None``). Otherwise
+    returns ``{"flatchain", "ci", "lnsigma"}`` matching ``SavedFitSlot.mcmc``.
+    Frames are copied so the slot is invariant to subsequent state changes.
+    """
+
+    if emcee_fin is None:
+        return None
+    flatchain = getattr(emcee_fin, "flatchain", None)
+    if isinstance(flatchain, pd.DataFrame):
+        flatchain_out: pd.DataFrame | None = flatchain.copy()
+    else:
+        flatchain_out = None
+    params = getattr(emcee_fin, "params", None)
+    lnsigma_par = params.get("__lnsigma") if params is not None else None
+    lnsigma = float(lnsigma_par.value) if lnsigma_par is not None else None
+    ci_out = emcee_ci.copy() if not emcee_ci.empty else None
+    return {"flatchain": flatchain_out, "ci": ci_out, "lnsigma": lnsigma}
+
+
+#
 # --- per-fit-type slot extractors -------------------------------------------
 #
 

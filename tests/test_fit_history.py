@@ -117,6 +117,42 @@ class TestIdentityHelpers:
         assert a == b  # sorted keys
 
     #
+    def test_file_fingerprint_tracks_corrections(self):
+        """File.fingerprint() must reflect the current ``self.data``.
+
+        Regression: an earlier cache held the pre-correction hash so slots
+        recorded after subtract_dark / calibrate_data inherited a stale
+        history_key.
+        """
+
+        rng = np.random.default_rng(0)
+        energy = np.linspace(83, 87, 30)
+        time = np.linspace(-2, 10, 24)
+        raw = rng.standard_normal((24, 30))
+        project = make_project(name="fp")
+        file = File(
+            parent_project=project,
+            name="fp",
+            data=raw,
+            energy=energy,
+            time=time,
+        )
+
+        fp_raw = file.fingerprint()
+        file.subtract_dark(np.full(30, 0.1))
+        fp_after_dark = file.fingerprint()
+        file.calibrate_data(np.full(30, 1.5))
+        fp_after_cal = file.fingerprint()
+        file.reset_dark()
+        file.reset_calibration()
+        fp_reset = file.fingerprint()
+
+        assert fp_raw["data_sha256"] != fp_after_dark["data_sha256"]
+        assert fp_after_dark["data_sha256"] != fp_after_cal["data_sha256"]
+        # Resetting both corrections restores the raw data hash.
+        assert fp_reset["data_sha256"] == fp_raw["data_sha256"]
+
+    #
     def test_history_key_changes_with_selection(self):
         fp = {
             "data_sha256": "x",
@@ -370,6 +406,51 @@ class TestTwoDSlot:
         # Residual reconstruction.
         residual = slot.observed - slot.fit
         assert slot.metrics["chi2"] == pytest.approx(float(np.sum(residual**2)))
+
+
+#
+# --- MCMC payload capture ----------------------------------------------------
+#
+
+
+#
+class TestMcmcPayload:
+    """fit_wrapper's emcee outputs (result[3]/[4]) flow into SavedFitSlot.mcmc.
+
+    Without this wiring the slot's ``mcmc`` field stays None even when MCMC
+    actually ran — see _mcmc_payload in utils/fit_io.py.
+    """
+
+    #
+    @pytest.mark.slow
+    def test_baseline_slot_captures_mcmc(self):
+        from trspecfit.utils.lmfit import MC
+
+        truth_project = make_project(name="truth")
+        truth = _make_truth_file(truth_project)
+        data = simulate_noisy(truth.model_active, noise_level=0.01)
+
+        project = make_project(name="fit")
+        file = _make_fit_file(project, data, truth.energy, truth.time)
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+        # nwalkers > 2 * n_params for emcee's red-blue move.
+        mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1, workers=1)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0, mc_settings=mc)
+
+        slot = project._fit_history[0]
+        assert slot.mcmc is not None
+        assert set(slot.mcmc.keys()) == {"flatchain", "ci", "lnsigma"}
+        assert slot.mcmc["flatchain"] is not None
+        assert slot.mcmc["ci"] is not None
+        assert slot.mcmc["lnsigma"] is not None
+
+    #
+    def test_baseline_slot_mcmc_none_when_mcmc_skipped(self):
+        project, _ = _setup_baseline_fit()  # try_ci=0, no MCMC
+        slot = project._fit_history[0]
+        assert slot.mcmc is None
 
 
 #

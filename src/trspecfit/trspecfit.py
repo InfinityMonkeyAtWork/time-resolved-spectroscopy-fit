@@ -958,23 +958,55 @@ class Project:
         # get_fit_results("2d") work on project-fitted files.
         mapping = project_fit_info["mapping"]
         models = project_fit_info["models"]
-        if result[1]:
-            final_pars = result[1].params
+        joint_result = result[1] if result[1] else None
+        if joint_result:
+            final_pars = joint_result.params
             for proj_name, file_idx, local_name in mapping:
                 if proj_name in final_pars:
                     models[file_idx].lmfit_pars[local_name].value = final_pars[
                         proj_name
                     ].value
 
-        for _file_idx, (f, model) in enumerate(zip(self.files, models, strict=True)):
+        # method/nvarys come from the joint optimizer; per-file stderr/CI are
+        # absent by design (joint covariance does not decompose cleanly per
+        # file). conf_ci is an empty DataFrame so _append_2d_slot's
+        # `result[2].empty` check works without branching.
+        joint_method = (
+            getattr(joint_result, "method", "unknown") if joint_result else "unknown"
+        )
+        joint_nvarys = int(getattr(joint_result, "nvarys", 0)) if joint_result else 0
+        for f, model in zip(self.files, models, strict=True):
             f.model_2d = model
             assert model is not None  # type guard
-            # Synthetic result satisfying result[1].params used by
-            # get_fit_results("2d"). Project fits do not produce per-file
-            # stderr/CI — those fields are absent by design.
-            model.result = [None, types.SimpleNamespace(params=model.lmfit_pars)]
+            assert f.energy is not None and f.data is not None  # type guard
+            # Length-5 list mirrors fit_wrapper's [par_ini, par_fin, conf_ci,
+            # emcee_fin, emcee_ci]. Project fits do not run per-file MCMC, so
+            # emcee slots are inert (None / empty DataFrame).
+            model.result = [
+                None,
+                types.SimpleNamespace(
+                    params=model.lmfit_pars,
+                    method=joint_method,
+                    nvarys=joint_nvarys,
+                ),
+                pd.DataFrame(),
+                None,
+                pd.DataFrame(),
+            ]
+            # const/args mirror File.fit_2d so _append_2d_slot can evaluate
+            # the per-file fit grid via fitlib.residual_fun. Project fits
+            # always go through the MCP path.
+            model.const = (f.energy, f.data, "fit_model_mcp", 0, f.e_lim, f.t_lim)
+            model.args = (model, 2)
 
         self._project_fit_result = result
+
+        # Append a per-file 2D slot to Project._fit_history so the joint fit
+        # is discoverable via Project.results, matching the File.fit_2d()
+        # entry point.
+        if joint_result:
+            for f in self.files:
+                f._append_2d_slot(model_name=model_name, fit_fun_str="fit_model_mcp")
 
         # Save per-file 2D fit results (silently)
         saved = self.show_output
@@ -1192,7 +1224,6 @@ class File:
         self.data_spec: np.ndarray | None = None  # extracted 1D spectrum
         self.spec_t_abs: list[float] = []  # time bounds (absolute)
         self.spec_t_ind: list[int] = []  # time bounds (indices)
-        self._fingerprint: dict[str, Any] | None = None  # cached file fingerprint
         # default fit limits to entire dataset (energy is None only for bare File())
         if self.energy is not None:
             self.set_fit_limits(energy_limits=None, show_plot=False)
@@ -1681,20 +1712,18 @@ class File:
         """
         Multi-sha content fingerprint of this file.
 
-        Cached on first call. Used by slot extraction to identify the source
-        file for each ``SavedFitSlot`` independent of display name. Recompute
-        by clearing ``self._fingerprint``.
+        Recomputed on every call so corrections that mutate ``self.data``
+        (subtract_dark, calibrate_data, reset_corrections) propagate into
+        slot identity. Sha256 over typical data is sub-ms; the cost is
+        negligible compared to a fit, and a stale cache silently collapses
+        pre- and post-correction slots into the same ``history_key``.
         """
 
-        if self._fingerprint is None:
-            if self.data is None or self.energy is None:
-                raise ValueError(
-                    "Cannot fingerprint a File without data and energy axis."
-                )
-            self._fingerprint = fit_io.compute_file_fingerprint(
-                data=self.data, energy=self.energy, time=self.time
-            )
-        return self._fingerprint
+        if self.data is None or self.energy is None:
+            raise ValueError("Cannot fingerprint a File without data and energy axis.")
+        return fit_io.compute_file_fingerprint(
+            data=self.data, energy=self.energy, time=self.time
+        )
 
     #
     def create_model_path(
@@ -2803,6 +2832,10 @@ class File:
             par_names=self.model_base.parameter_names,
         )
         conf_ci = self.model_base.result[2]
+        mcmc = fit_io._mcmc_payload(
+            self.model_base.result[3],
+            self.model_base.result[4],
+        )
         slot = fit_io._slot_from_baseline(
             file_fingerprint=self.fingerprint(),
             file_name=self.name,
@@ -2816,6 +2849,7 @@ class File:
             e_lim=e_lim,
             n_free_pars=int(getattr(result_fin, "nvarys", 0)),
             conf_ci=conf_ci if not conf_ci.empty else None,
+            mcmc=mcmc,
         )
         self.p._fit_history.append(slot)
 
@@ -2860,6 +2894,10 @@ class File:
             par_names=self.model_spec.parameter_names,
         )
         conf_ci = self.model_spec.result[2]
+        mcmc = fit_io._mcmc_payload(
+            self.model_spec.result[3],
+            self.model_spec.result[4],
+        )
         slot = fit_io._slot_from_spectrum(
             file_fingerprint=self.fingerprint(),
             file_name=self.name,
@@ -2875,6 +2913,7 @@ class File:
             e_lim=e_lim,
             n_free_pars=int(getattr(result_fin, "nvarys", 0)),
             conf_ci=conf_ci if not conf_ci.empty else None,
+            mcmc=mcmc,
         )
         self.p._fit_history.append(slot)
 
@@ -2928,6 +2967,13 @@ class File:
         # because the same model_sbs is used for every slice).
         slice0_result = self.results_sbs[0][1]
         slice0_conf_ci = self.results_sbs[0][2]
+        # MCMC payload — captured from slice 0, mirroring fit_alg / nvarys.
+        # Per-slice MCMC chains are not stored; aggregate analysis uses
+        # slice 0 as the representative.
+        slice0_mcmc = fit_io._mcmc_payload(
+            self.results_sbs[0][3],
+            self.results_sbs[0][4],
+        )
         slot = fit_io._slot_from_sbs(
             file_fingerprint=self.fingerprint(),
             file_name=self.name,
@@ -2941,6 +2987,7 @@ class File:
             t_lim=None,
             n_free_pars=int(getattr(slice0_result, "nvarys", 0)),
             conf_ci=slice0_conf_ci if not slice0_conf_ci.empty else None,
+            mcmc=slice0_mcmc,
         )
         self.p._fit_history.append(slot)
 
@@ -2984,6 +3031,10 @@ class File:
             par_names=self.model_2d.parameter_names,
         )
         conf_ci = self.model_2d.result[2]
+        mcmc = fit_io._mcmc_payload(
+            self.model_2d.result[3],
+            self.model_2d.result[4],
+        )
         slot = fit_io._slot_from_2d(
             file_fingerprint=self.fingerprint(),
             file_name=self.name,
@@ -2997,6 +3048,7 @@ class File:
             t_lim=t_lim,
             n_free_pars=int(getattr(result_fin, "nvarys", 0)),
             conf_ci=conf_ci if not conf_ci.empty else None,
+            mcmc=mcmc,
         )
         self.p._fit_history.append(slot)
 
