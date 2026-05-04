@@ -28,6 +28,13 @@ is the wire format.
     `np.nan`. The reader maps NaN back to `None` only for fields where the
     object model permits `None` (`stderr`); other float fields are kept as
     floats.
+  - For optional **strings** inside structured arrays (long-form params
+    `expr`): write `""`. The reader maps `""` back to `None` on
+    columns where the object model permits `None` (lmfit's `expr=None`).
+  - These slot-specific ``↔`` mappings are applied by the slot reader,
+    not the generic DataFrame decoder. ``conf_ci``, ``mcmc/flatchain``,
+    ``mcmc/ci``, and sbs ``params`` carry no None semantics; their
+    literal `""` / `NaN` values are data.
   - For optional **groups/datasets** (`conf_ci`, `mcmc/`): omit the
     group/dataset. The reader treats absence as `None`.
 - **Float dtype**: structured-array float fields and metric attrs are

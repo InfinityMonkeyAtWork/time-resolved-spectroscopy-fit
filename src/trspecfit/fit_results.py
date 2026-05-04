@@ -3,8 +3,8 @@
 
 Two construction paths:
 
-1. **Loaded from disk** — ``FitResults.load(path)`` (deferred until HDF5
-   support lands; not yet implemented).
+1. **Loaded from disk** — ``FitResults.load(path)`` deserializes an HDF5
+   fit archive (see ``docs/design/fit_archive_schema.md``).
 2. **In-memory view** — ``Project.results`` property wraps
    ``Project._fit_history``.
 
@@ -21,9 +21,10 @@ fit_type + selection_json. Name-based query inputs (``file=...``,
 from __future__ import annotations
 
 from collections.abc import Iterator
+from os import PathLike
 from typing import Literal
 
-from trspecfit.utils.fit_io import SavedFitSlot
+from trspecfit.utils.fit_io import SavedFitSlot, read_archive
 
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
 
@@ -34,12 +35,31 @@ class FitResults:
     Immutable view over a list of ``SavedFitSlot``.
 
     Construction is positional-only (``FitResults(slots=...)``); users normally
-    obtain instances via ``Project.results`` or (later) ``FitResults.load(path)``.
+    obtain instances via ``Project.results`` or ``FitResults.load(path)``.
     """
 
     #
     def __init__(self, *, slots: list[SavedFitSlot]) -> None:
         self._slots: tuple[SavedFitSlot, ...] = tuple(slots)
+
+    #
+    @classmethod
+    def load(cls, filepath: PathLike | str) -> FitResults:
+        """
+        Load a fit archive from disk and wrap its slots in a ``FitResults``.
+
+        Calls ``utils.fit_io.read_archive`` and flattens the returned
+        ``SavedProject.files[*].slots`` into a single sequence in
+        archive (file, then slot) order. Independent of any live
+        ``Project``: the returned object is a snapshot of the archive at
+        read time.
+        """
+
+        project = read_archive(filepath)
+        slots: list[SavedFitSlot] = []
+        for sf in project.files:
+            slots.extend(sf.slots)
+        return cls(slots=slots)
 
     #
     def __iter__(self) -> Iterator[SavedFitSlot]:

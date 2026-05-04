@@ -58,6 +58,17 @@ def _as_group(obj: Any) -> h5py.Group:
 
 
 #
+def _as_dataset(obj: Any) -> h5py.Dataset:
+    """``Dataset`` counterpart to :func:`_as_group` for read-side lookups."""
+
+    if not isinstance(obj, h5py.Dataset):
+        raise TypeError(
+            f"expected h5py.Dataset at archive path, got {type(obj).__name__}"
+        )
+    return obj
+
+
+#
 @dataclass(frozen=True)
 class SavedFitSlot:
     """
@@ -1199,3 +1210,277 @@ def _write_mcmc_group(slot_group: h5py.Group, mcmc: dict[str, Any]) -> None:
     ci = mcmc.get("ci")
     if ci is not None:
         _encode_dataframe(mcmc_group, "ci", ci)
+
+
+#
+# --- HDF5 reader ------------------------------------------------------------
+#
+
+
+#
+def _attr_str(value: Any) -> str:
+    """Normalize an h5py attr value to ``str`` (handles bytes from vlen-str)."""
+
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return str(value)
+
+
+#
+def _to_str_value(value: Any) -> str:
+    """Coerce a single vlen-str field/element to ``str``."""
+
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return str(value)
+
+
+#
+def _decode_dataframe(ds: h5py.Dataset) -> pd.DataFrame:
+    """
+    Inverse of ``_encode_dataframe``.
+
+    Reads the schema's two DataFrame forms back into a ``pd.DataFrame``:
+
+    - **All-numeric form**: 2D ``float64`` dataset with ``columns`` attr.
+    - **Heterogeneous form**: 1D structured dataset with positional
+      ``c000000``-fields, ``columns`` attr, and ``dtypes`` attr.
+
+    Generic decoder: returns ``""`` / ``NaN`` exactly as stored. The
+    schema's ``""`` ↔ ``None`` and ``NaN`` ↔ ``None`` mappings are slot-
+    specific (e.g. long-form params ``stderr`` / ``expr``) and applied by
+    ``_read_slot``, not here, since other DataFrames (sbs ``params``,
+    ``conf_ci``, ``mcmc`` chain/ci) treat the literal values as data.
+    """
+
+    columns_attr = ds.attrs["columns"]
+    columns = [_to_str_value(c) for c in np.asarray(columns_attr).ravel()]
+
+    if ds.dtype.fields is None:
+        values = ds[...]
+        return pd.DataFrame(values, columns=columns)
+
+    arr = ds[...]
+    type_tags = [_to_str_value(t) for t in np.asarray(ds.attrs["dtypes"]).ravel()]
+    field_keys = [f"c{i:06d}" for i in range(len(columns))]
+    cols_data: dict[str, list[Any]] = {}
+    for col_label, key, tag in zip(columns, field_keys, type_tags, strict=True):
+        col = arr[key]
+        if tag == "str":
+            cols_data[col_label] = [_to_str_value(v) for v in col]
+        elif tag == "float64":
+            cols_data[col_label] = [float(v) for v in col]
+        elif tag == "bool":
+            cols_data[col_label] = [bool(v) for v in col]
+        else:
+            raise ValueError(f"unknown column dtype tag {tag!r} on {ds.name}")
+    return pd.DataFrame(cols_data, columns=columns)
+
+
+#
+def _restore_long_params_nones(params: pd.DataFrame) -> None:
+    """
+    Map ``NaN`` → ``None`` for ``stderr`` and ``""`` → ``None`` for ``expr``,
+    in place, on a long-form params DataFrame.
+
+    Mirrors the writer's encoding (``_pack_for_dtype``) so a round-trip
+    matches what ``utils/lmfit.py:par_to_df(..., col_type="min")`` produced
+    in-session: lmfit yields ``stderr=None`` when uncomputed and
+    ``expr=None`` when no expression is set.
+    """
+
+    if "stderr" in params.columns:
+        params["stderr"] = [None if pd.isna(v) else v for v in params["stderr"]]
+    if "expr" in params.columns:
+        params["expr"] = [None if v == "" else v for v in params["expr"]]
+
+
+#
+def _read_metrics_per_slice(ds: h5py.Dataset) -> dict[str, np.ndarray]:
+    """Decode the sbs ``metrics_per_slice`` structured dataset."""
+
+    arr = ds[...]
+    return {k: np.asarray(arr[k], dtype=np.float64) for k in _METRICS_KEYS}
+
+
+#
+def _read_mcmc_group(group: h5py.Group) -> dict[str, Any]:
+    """
+    Inverse of ``_write_mcmc_group``.
+
+    Returns ``{"flatchain", "ci", "lnsigma"}`` matching the writer's
+    payload. ``lnsigma`` NaN maps back to ``None``; ``ci`` is ``None`` if
+    the optional dataset was not written.
+    """
+
+    flatchain_obj = group.get("flatchain")
+    if flatchain_obj is None:
+        flatchain: pd.DataFrame | None = None
+    else:
+        flatchain = _decode_dataframe(_as_dataset(flatchain_obj))
+    ci_obj = group.get("ci")
+    ci = _decode_dataframe(_as_dataset(ci_obj)) if ci_obj is not None else None
+    lnsigma_attr = group.attrs.get("lnsigma")
+    lnsigma: float | None
+    if lnsigma_attr is None:
+        lnsigma = None
+    else:
+        v = float(np.asarray(lnsigma_attr).item())
+        lnsigma = None if np.isnan(v) else v
+    return {"flatchain": flatchain, "ci": ci, "lnsigma": lnsigma}
+
+
+#
+def _read_slot(
+    slot_group: h5py.Group,
+    *,
+    file_fingerprint: dict[str, Any],
+    file_name: str,
+) -> SavedFitSlot:
+    """Decode one slot group into a ``SavedFitSlot``."""
+
+    meta = _as_group(slot_group["metadata"])
+    a = meta.attrs
+    fit_type = cast(FitType, _attr_str(a["fit_type"]))
+    selection_json = _attr_str(a["selection_json"])
+    model_name = _attr_str(a["model_name"])
+
+    params = _decode_dataframe(_as_dataset(slot_group["params"]))
+    if fit_type != "sbs":
+        # Restore the schema's "" ↔ None / NaN ↔ None mappings for long-form
+        # params. sbs params is wide-form numeric and carries no None
+        # semantics, so this only applies to baseline / spectrum / 2d.
+        _restore_long_params_nones(params)
+    observed = np.asarray(_as_dataset(slot_group["observed"])[...])
+    fit_arr = np.asarray(_as_dataset(slot_group["fit"])[...])
+
+    metrics: dict[str, Any]
+    if fit_type == "sbs":
+        metrics = _read_metrics_per_slice(_as_dataset(slot_group["metrics_per_slice"]))
+    else:
+        metrics = {k: float(np.asarray(a[k]).item()) for k in _METRICS_KEYS}
+
+    conf_ci_obj = slot_group.get("conf_ci")
+    conf_ci = (
+        _decode_dataframe(_as_dataset(conf_ci_obj)) if conf_ci_obj is not None else None
+    )
+    mcmc_obj = slot_group.get("mcmc")
+    mcmc = _read_mcmc_group(_as_group(mcmc_obj)) if mcmc_obj is not None else None
+
+    yaml_filename = _attr_str(a["yaml_filename"]) if "yaml_filename" in a else None
+    selection = json.loads(selection_json)
+
+    # history_key is recomputed per schema; on-disk value is debug-only.
+    history_key = compute_history_key(
+        file_fingerprint=file_fingerprint,
+        model_name=model_name,
+        fit_type=fit_type,
+        selection_json=selection_json,
+    )
+    return SavedFitSlot(
+        file_fingerprint=dict(file_fingerprint),
+        file_name=file_name,
+        model_name=model_name,
+        fit_type=fit_type,
+        selection=selection,
+        selection_json=selection_json,
+        observed_sha256=_attr_str(a["observed_sha256"]),
+        history_key=history_key,
+        params=params,
+        metrics=metrics,
+        observed=observed,
+        fit=fit_arr,
+        fit_alg=_attr_str(a["fit_alg"]),
+        yaml_filename=yaml_filename,
+        timestamp=_attr_str(a["timestamp"]),
+        conf_ci=conf_ci,
+        mcmc=mcmc,
+    )
+
+
+#
+def _read_file(file_group: h5py.Group) -> SavedFile:
+    """Decode one file group into a ``SavedFile``."""
+
+    meta = _as_group(file_group["metadata"])
+    a = meta.attrs
+    name = _attr_str(a["name"])
+    original_path = _attr_str(a["original_path"])
+    dim = int(np.asarray(a["dim"]).item())
+    shape = tuple(int(x) for x in np.asarray(a["shape"]).ravel())
+    fingerprint: dict[str, Any] = {
+        "data_sha256": _attr_str(a["data_sha256"]),
+        "energy_sha256": _attr_str(a["energy_sha256"]),
+        "time_sha256": _attr_str(a["time_sha256"]),
+        "shape": shape,
+    }
+    e_lim = [int(x) for x in np.asarray(a["e_lim"]).ravel()] if "e_lim" in a else None
+    t_lim = [int(x) for x in np.asarray(a["t_lim"]).ravel()] if "t_lim" in a else None
+
+    data = np.asarray(_as_dataset(file_group["data"])[...])
+    energy = np.asarray(_as_dataset(file_group["energy"])[...])
+    time = np.asarray(_as_dataset(file_group["time"])[...])
+
+    slot_records: list[SavedFitSlot] = []
+    slots_obj = file_group.get("slots")
+    if slots_obj is not None:
+        slots_group = _as_group(slots_obj)
+        for key in sorted(slots_group.keys()):
+            sg = _as_group(slots_group[key])
+            slot_records.append(
+                _read_slot(sg, file_fingerprint=fingerprint, file_name=name)
+            )
+
+    return SavedFile(
+        name=name,
+        original_path=original_path,
+        dim=dim,
+        shape=shape,
+        fingerprint=fingerprint,
+        data=data,
+        energy=energy,
+        time=time,
+        e_lim=e_lim,
+        t_lim=t_lim,
+        slots=tuple(slot_records),
+    )
+
+
+#
+def read_archive(filepath: PathLike | str) -> SavedProject:
+    """
+    Deserialize an HDF5 fit archive into a ``SavedProject``.
+
+    Inverse of ``write_archive``. Does not touch any live ``Project``,
+    ``File``, or ``Model`` state — the returned ``SavedProject`` is a
+    standalone, immutable view of the archive's contents at read time.
+
+    Raises ``ValueError`` if ``schema_version`` does not match the
+    reader's ``SCHEMA_VERSION``.
+    """
+
+    path = Path(filepath)
+    with h5py.File(path, "r") as archive:
+        meta = _as_group(archive["metadata"])
+        ma = meta.attrs
+        schema_version = _attr_str(ma["schema_version"])
+        if schema_version != SCHEMA_VERSION:
+            raise ValueError(
+                f"Archive at {path} has schema_version {schema_version!r}; "
+                f"this reader supports {SCHEMA_VERSION!r}."
+            )
+        files_obj = archive.get("files")
+        files: list[SavedFile] = []
+        if files_obj is not None:
+            files_group = _as_group(files_obj)
+            for key in sorted(files_group.keys()):
+                files.append(_read_file(_as_group(files_group[key])))
+
+        return SavedProject(
+            name=_attr_str(ma["project_name"]),
+            trspecfit_version=_attr_str(ma["trspecfit_version"]),
+            schema_version=schema_version,
+            timestamp_created=_attr_str(ma["timestamp_created"]),
+            timestamp_updated=_attr_str(ma["timestamp_updated"]),
+            files=tuple(files),
+        )
