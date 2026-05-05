@@ -20,13 +20,24 @@ fit_type + selection_json. Name-based query inputs (``file=...``,
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from os import PathLike
 from typing import Literal
 
 from trspecfit.utils.fit_io import SavedFitSlot, read_archive
 
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
+
+
+#
+def _to_str_set(arg: str | Sequence[str] | None) -> set[str] | None:
+    """Normalize a string-or-sequence filter arg to a set; ``None`` → no filter."""
+
+    if arg is None:
+        return None
+    if isinstance(arg, str):
+        return {arg}
+    return set(arg)
 
 
 #
@@ -44,21 +55,42 @@ class FitResults:
 
     #
     @classmethod
-    def load(cls, filepath: PathLike | str) -> FitResults:
+    def load(
+        cls,
+        filepath: PathLike | str,
+        *,
+        file: str | Sequence[str] | None = None,
+        model: str | Sequence[str] | None = None,
+        fit_type: FitType | Sequence[FitType] | None = None,
+    ) -> FitResults:
         """
         Load a fit archive from disk and wrap its slots in a ``FitResults``.
 
         Calls ``utils.fit_io.read_archive`` and flattens the returned
-        ``SavedProject.files[*].slots`` into a single sequence in
-        archive (file, then slot) order. Independent of any live
-        ``Project``: the returned object is a snapshot of the archive at
-        read time.
+        ``SavedProject.files[*].slots`` into a single sequence in archive
+        (file, then slot) order. Independent of any live ``Project``: the
+        returned object is a snapshot of the archive at read time.
+
+        Optional ``file`` / ``model`` / ``fit_type`` arguments accept either
+        a single string or a list of strings; only matching slots are
+        kept. Filters are AND-combined and operate on the slot's display
+        fields (``file_name``, ``model_name``, ``fit_type``).
         """
 
         project = read_archive(filepath)
+        files_filter = _to_str_set(file)
+        models_filter = _to_str_set(model)
+        types_filter = _to_str_set(fit_type)
         slots: list[SavedFitSlot] = []
         for sf in project.files:
-            slots.extend(sf.slots)
+            if files_filter is not None and sf.name not in files_filter:
+                continue
+            for slot in sf.slots:
+                if models_filter is not None and slot.model_name not in models_filter:
+                    continue
+                if types_filter is not None and slot.fit_type not in types_filter:
+                    continue
+                slots.append(slot)
         return cls(slots=slots)
 
     #

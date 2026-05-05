@@ -34,7 +34,7 @@ demand it.
   - `model_name` — user string, stored as attr only.
   - `fit_type` — `"baseline" | "spectrum" | "sbs" | "2d"`.
   - `selection_json` — JSON-serialized dict capturing the fit-view identity (see below).
-  - **In memory**: `history_key = sha256(file_fingerprint | model_name | fit_type | selection_json)` — used by `_collapse_history_to_snapshot`, in-session dedup, comparison.
+  - **In memory**: `history_key = sha256(file_fingerprint | file_name | model_name | fit_type | selection_json)` — used by `_collapse_history_to_snapshot`, in-session dedup, comparison. `file_name` is included so two distinct `Project.files` with byte-identical raw arrays (same fingerprint, different names) don't collapse into a single slot. Project enforces unique `File.name` in-session, so name suffices to break the fingerprint tie; the archive's full identity is the `(fingerprint, name, original_path)` triple.
   - **In archive**: `archive_slot_key = sha256(file_ref | model_name | fit_type | selection_json)` — written to slot `metadata.attrs`, used for slot-scoped overwrite detection on save. Computed at save time only, after fingerprint → `file_ref` mapping.
 
   Both keys serve the same logical purpose ("uniquely identify this slot"); they just use different file-identity tokens because in-memory and on-disk identity primitives differ (fingerprint vs archive-local positional path). Two functions in `utils/fit_io.py`: `compute_history_key` and `compute_archive_slot_key`.
@@ -328,7 +328,7 @@ completion. See "Object model + I/O" below.
 - [x] Implement `Project.results` property: returns `FitResults(slots=list(self._fit_history))`. Cheap: no array copies, just a list snapshot. [trspecfit.py:239](src/trspecfit/trspecfit.py#L239)
 - [x] Finalize HDF5 schema (structured-array dtypes, attr keys, MCMC layout) and document in `docs/design/`. **All group-path components are positional zero-padded keys; user-facing names live only in attrs.** Documented at [docs/design/fit_archive_schema.md](docs/design/fit_archive_schema.md).
 - [x] Add identity-key helpers in `utils/fit_io.py`:
-  - `compute_history_key(file_fingerprint, model_name, fit_type, selection_json) -> str` — sha256, used in-memory.
+  - `compute_history_key(file_fingerprint, file_name, model_name, fit_type, selection_json) -> str` — sha256, used in-memory. `file_name` was added so two distinct `Project.files` with byte-identical raw arrays don't collapse into a single slot during snapshot save; Project enforces unique `File.name` in-session, so name suffices to break the fingerprint tie.
   - `compute_archive_slot_key(file_ref, model_name, fit_type, selection_json) -> str` — sha256, used at save time once `file_ref` is known. **Done at [utils/fit_io.py:209](src/trspecfit/utils/fit_io.py#L209).**
   - `compute_file_fingerprint(data, energy, time) -> dict[str, str]` — multi-sha (`data_sha256`, `energy_sha256`, `time_sha256`, `shape`).
   - `compute_observed_sha256(observed) -> str` — for the slot's defensive cross-check.
@@ -340,13 +340,13 @@ completion. See "Object model + I/O" below.
 
 ### Project-level API
 
-- [ ] `Project.save_fits()` — filter `_fit_history` by `(file, model, fit_type)`, collapse to snapshot via `_collapse_history_to_snapshot` (using `history_key`), then for each slot: resolve `file_fingerprint → file_ref` (look up or create the file group in the archive), compute `archive_slot_key`, check for existing slot, write or error per `overwrite=True/False`.
-- [ ] `Project.load_fits()` — thin wrapper that returns `FitResults.load(path, ...)`. Does not mutate Project state.
+- [x] `Project.save_fits()` — filter `_fit_history` by `(file, model, fit_type)`, collapse to snapshot via `_collapse_history_to_snapshot` (using `history_key`), then for each slot: resolve `file_fingerprint → file_ref` (look up or create the file group in the archive), compute `archive_slot_key`, check for existing slot, write or error per `overwrite=True/False`. **Done at [trspecfit.py:296](src/trspecfit/trspecfit.py#L296). Default path `./fit_results/<project_name>.fit.h5`. `file=` accepts `int | str | File | Sequence`; `model` / `fit_type` accept `str | Sequence`. Filter / grouping / live-file lookup all key on the **`(fingerprint, file_name)` tuple**, not fingerprint alone, so two `Project.files` with byte-identical raw arrays but distinct names are kept separate (matches the archive's `(fingerprint, name, original_path)` identity rule). Collapses via `collapse_history_to_snapshot`, then groups by `(fingerprint, file_name)` and looks up the live `Project.files[*]` via `_find_file_for_slot` (requires both name and fingerprint to match). Helpers `_resolve_save_file_filter` (returns `set[(fp_key, name)]`) and `_find_file_for_slot` live on Project; module-level `_fp_key`, `_to_str_set`, `_trspecfit_version` at [trspecfit.py:99](src/trspecfit/trspecfit.py#L99).**
+- [x] `Project.load_fits()` — thin wrapper that returns `FitResults.load(path, ...)`. Does not mutate Project state. **Done at [trspecfit.py:411](src/trspecfit/trspecfit.py#L411). Pure delegate; filter args (`file` / `model` / `fit_type`) accept `str | Sequence` and pass through to `FitResults.load`, which now supports load-time filtering on `slot.file_name` / `model_name` / `fit_type`.**
 - [ ] `Project.export_fits(format="csv")` — same filter pipeline as `save_fits`, but emits CSV+PNGs instead of HDF5. Absorbs CSV+PNG logic from current `File.save_sbs_fit` / `save_2d_fit` + baseline-CSV path in `fitlib`.
 
 ### File-level delegates + deprecation
 
-- [ ] `File.save_fit()` / `export_fit()` / `compare_models()` as 1-line delegates. `save_fit` / `export_fit` route to `self.p.save_fits` / `self.p.export_fits`; `compare_models` routes to `self.p.results.compare_models(file=self, ...)`. **Do not add `File.load_fit`** — load is path-scoped (use `FitResults.load(path)` or `Project.load_fits(path)`).
+- [~] `File.save_fit()` / `export_fit()` / `compare_models()` as 1-line delegates. `save_fit` / `export_fit` route to `self.p.save_fits` / `self.p.export_fits`; `compare_models` routes to `self.p.results.compare_models(file=self, ...)`. **Do not add `File.load_fit`** — load is path-scoped (use `FitResults.load(path)` or `Project.load_fits(path)`). **`File.save_fit` done at [trspecfit.py:2641](src/trspecfit/trspecfit.py#L2641); `export_fit` and `compare_models` deferred until their backends land (Project.export_fits / FitResults.compare_models). Existing `File.load_fit` stub at [trspecfit.py:2670](src/trspecfit/trspecfit.py#L2670) untouched (slated for removal alongside `compare_models` rewrite, separate change).**
 - [ ] Convert `File.save_sbs_fit` / `save_2d_fit` to deprecated aliases (`DeprecationWarning`); add removal-before-v1.0.0 marker in code.
 - [ ] Track v1.0.0 removal in TODO.md under "Build & release → Remove legacy/backwards-compat code."
 

@@ -164,12 +164,14 @@ class TestIdentityHelpers:
         s2 = build_selection_json("spectrum", time_point=1.5, e_lim=None)
         k1 = compute_history_key(
             file_fingerprint=fp,
+            file_name="f1",
             model_name="m",
             fit_type="spectrum",
             selection_json=s1,
         )
         k2 = compute_history_key(
             file_fingerprint=fp,
+            file_name="f1",
             model_name="m",
             fit_type="spectrum",
             selection_json=s2,
@@ -232,6 +234,7 @@ class TestBaselineSlot:
         # Recompute and verify it matches.
         k = compute_history_key(
             file_fingerprint=slot.file_fingerprint,
+            file_name=slot.file_name,
             model_name=slot.model_name,
             fit_type=slot.fit_type,
             selection_json=slot.selection_json,
@@ -516,6 +519,7 @@ def _slot_stub(*, file_name="f1", model_name="m", fit_type="baseline"):
     selection_json = build_selection_json("baseline", **selection)
     history_key = compute_history_key(
         file_fingerprint=fp,
+        file_name=file_name,
         model_name=model_name,
         fit_type=fit_type,
         selection_json=selection_json,

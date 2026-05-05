@@ -95,6 +95,41 @@ PathLike = str | pathlib.Path
 ModelRef = str | int | list[str]
 
 
+#
+def _fp_key(fingerprint: dict[str, Any]) -> tuple[Any, ...]:
+    """Hashable key for a file fingerprint (used for slot grouping/match)."""
+
+    return (
+        fingerprint["data_sha256"],
+        fingerprint["energy_sha256"],
+        fingerprint["time_sha256"],
+        tuple(int(x) for x in fingerprint["shape"]),
+    )
+
+
+#
+def _to_str_set(arg: str | Sequence[str] | None) -> set[str] | None:
+    """Normalize a string-or-sequence filter arg to a set; ``None`` → no filter."""
+
+    if arg is None:
+        return None
+    if isinstance(arg, str):
+        return {arg}
+    return set(arg)
+
+
+#
+def _trspecfit_version() -> str:
+    """Best-effort package version for archive metadata."""
+
+    import importlib.metadata as md
+
+    try:
+        return md.version("trspecfit")
+    except md.PackageNotFoundError:
+        return "unknown"
+
+
 # multi-subcycle models allow for convolution only in the "0th subcycle"
 # i.e. first model_info element which affects all times t.
 # "conv" functions in individual subcycles are currently ignored
@@ -249,6 +284,216 @@ class Project:
         """
 
         return FitResults(slots=list(self._fit_history))
+
+    #
+    def save_fits(
+        self,
+        filepath: PathLike | str | None = None,
+        *,
+        file: "int | str | File | Sequence[int | str | File] | None" = None,
+        model: str | Sequence[str] | None = None,
+        fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        overwrite: bool = False,
+        show_output: int = 1,
+    ) -> None:
+        """
+        Save filtered fit slots from ``_fit_history`` to an HDF5 archive.
+
+        Filters ``_fit_history`` by ``(file, model, fit_type)``, collapses
+        to latest-per-``history_key`` (snapshot semantics), assembles a
+        ``SavedProject``, and writes via ``utils.fit_io.write_archive``.
+
+        Parameters
+        ----------
+        filepath : path, optional
+            Archive path. Default: ``./fit_results/<project_name>.fit.h5``.
+            Append-mode: existing archives are augmented in place; pass a
+            new path to start fresh.
+        file : int | str | File | sequence, optional
+            Restrict to slots whose live ``Project.files`` entry matches.
+            ``int`` indexes into ``self.files``; ``str`` matches
+            ``File.name``; ``File`` is taken directly. Resolved to file
+            fingerprints, then matched against ``slot.file_fingerprint``.
+        model, fit_type : str | sequence, optional
+            String filters on ``slot.model_name`` / ``slot.fit_type``.
+        overwrite : bool, default False
+            Slot-scoped: a slot collision (same canonical identity already
+            in the archive) raises ``FileExistsError`` unless True.
+        show_output : int, default 1
+            ``0`` to silence the per-call summary line.
+
+        Notes
+        -----
+        v1 behavior is snapshot-only (one slot per ``history_key``).
+        ``keep_history=True`` for full-log save is deferred (PLAN.md
+        "Out of scope").
+        """
+
+        file_ids = self._resolve_save_file_filter(file)
+        models_filter = _to_str_set(model)
+        types_filter = _to_str_set(fit_type)
+
+        filtered: list[fit_io.SavedFitSlot] = []
+        for slot in self._fit_history:
+            slot_id = (_fp_key(slot.file_fingerprint), slot.file_name)
+            if file_ids is not None and slot_id not in file_ids:
+                continue
+            if models_filter is not None and slot.model_name not in models_filter:
+                continue
+            if types_filter is not None and slot.fit_type not in types_filter:
+                continue
+            filtered.append(slot)
+
+        snapshot = fit_io.collapse_history_to_snapshot(filtered)
+        if not snapshot:
+            if show_output:
+                print("No fit slots match the filter; nothing to save.")
+            return
+
+        # Group slots by source file identity (fingerprint + file_name) so
+        # two distinct Project.files with byte-identical raw arrays but
+        # different names are kept separate. Project enforces unique
+        # File.name in-session, so name disambiguates fingerprint
+        # collisions; the archive's full identity tuple is
+        # (fingerprint, name, original_path) — see fit_archive_schema.md.
+        by_id: dict[tuple[tuple[Any, ...], str], list[fit_io.SavedFitSlot]] = {}
+        for s in snapshot:
+            by_id.setdefault((_fp_key(s.file_fingerprint), s.file_name), []).append(s)
+
+        saved_files: list[fit_io.SavedFile] = []
+        for slots in by_id.values():
+            live = self._find_file_for_slot(slots[0])
+            if live is None:
+                raise ValueError(
+                    f"Slot for file {slots[0].file_name!r} has no matching "
+                    f"Project.files entry; cannot read raw arrays for save. "
+                    f"Re-attach the file or filter it out."
+                )
+            assert live.data is not None  # type guard
+            assert live.energy is not None  # type guard
+            saved_files.append(
+                fit_io.SavedFile(
+                    name=live.name,
+                    original_path=str(live.path),
+                    dim=int(live.dim),
+                    shape=tuple(int(x) for x in live.data.shape),
+                    fingerprint=slots[0].file_fingerprint,
+                    data=live.data,
+                    energy=live.energy,
+                    time=(
+                        live.time
+                        if live.time is not None
+                        else np.array([], dtype=np.float64)
+                    ),
+                    e_lim=list(live.e_lim) if live.e_lim else None,
+                    t_lim=list(live.t_lim) if live.t_lim else None,
+                    slots=tuple(slots),
+                )
+            )
+
+        if filepath is None:
+            path = pathlib.Path("fit_results") / f"{self.name}.fit.h5"
+        else:
+            path = pathlib.Path(filepath)
+
+        now = fit_io._now_iso()
+        project = fit_io.SavedProject(
+            name=self.name,
+            trspecfit_version=_trspecfit_version(),
+            schema_version=fit_io.SCHEMA_VERSION,
+            timestamp_created=now,
+            timestamp_updated=now,
+            files=tuple(saved_files),
+        )
+        fit_io.write_archive(path, project=project, overwrite=overwrite)
+        if show_output:
+            print(
+                f"Saved {len(snapshot)} slot(s) across {len(saved_files)} "
+                f"file(s) to {path}"
+            )
+
+    #
+    def load_fits(
+        self,
+        filepath: PathLike | str,
+        *,
+        file: str | Sequence[str] | None = None,
+        model: str | Sequence[str] | None = None,
+        fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        show_output: int = 1,
+    ) -> FitResults:
+        """
+        Load a fit archive and return a ``FitResults`` view.
+
+        Convenience wrapper around ``FitResults.load`` for users who
+        already have a ``Project`` in hand. Does **not** mutate Project
+        state — the returned ``FitResults`` is independent of
+        ``_fit_history`` and never merges into it.
+        """
+
+        out = FitResults.load(filepath, file=file, model=model, fit_type=fit_type)
+        if show_output:
+            print(f"Loaded {len(out)} slot(s) from {filepath}")
+        return out
+
+    #
+    def _resolve_save_file_filter(
+        self,
+        arg: "int | str | File | Sequence[int | str | File] | None",
+    ) -> set[tuple[tuple[Any, ...], str]] | None:
+        """
+        Map a ``file=...`` arg for :meth:`save_fits` to a set of slot-identity
+        keys ``(fingerprint_key, file_name)``. Both components are matched
+        against the slot to disambiguate two ``Project.files`` with
+        byte-identical raw arrays but distinct names. Returns ``None`` if
+        ``arg`` is ``None`` (no filter).
+        """
+
+        if arg is None:
+            return None
+        items: Sequence[int | str | File]
+        if isinstance(arg, int | str | File):
+            items = [arg]
+        else:
+            items = arg
+        keys: set[tuple[tuple[Any, ...], str]] = set()
+        for item in items:
+            if isinstance(item, int):
+                f = self.files[item]
+            elif isinstance(item, str):
+                f = self[item]
+            elif isinstance(item, File):
+                f = item
+            else:
+                raise TypeError(
+                    f"Unsupported file filter entry type: {type(item).__name__}"
+                )
+            keys.add((_fp_key(f.fingerprint()), f.name))
+        return keys
+
+    #
+    def _find_file_for_slot(self, slot: fit_io.SavedFitSlot) -> "File | None":
+        """
+        Look up the live ``File`` whose name and fingerprint match a slot.
+
+        Both name and fingerprint must match; either alone can produce a
+        false positive when (a) the user has two byte-identical files in
+        the project under different names, or (b) a file was renamed
+        post-fit so the slot's name no longer matches the live one. The
+        slot's recorded ``file_name`` is the authoritative in-session
+        identity (Project enforces unique names), and the fingerprint
+        cross-checks that the live arrays still match.
+        """
+
+        target_fp = _fp_key(slot.file_fingerprint)
+        for f in self.files:
+            if f.name != slot.file_name:
+                continue
+            if f.data is None or f.energy is None:
+                continue
+            if _fp_key(f.fingerprint()) == target_fp:
+                return f
+        return None
 
     #
     def __getitem__(self, key: int | str) -> "File":
@@ -2404,6 +2649,34 @@ class File:
         """
 
         self._save_1d_fit(self.model_spec, save_path)
+
+    #
+    def save_fit(
+        self,
+        filepath: PathLike | str | None = None,
+        *,
+        model: str | Sequence[str] | None = None,
+        fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        overwrite: bool = False,
+        show_output: int = 1,
+    ) -> None:
+        """
+        Save this file's fit slots to an HDF5 archive.
+
+        One-line delegate to ``self.p.save_fits(file=self, ...)``. Useful
+        when the user holds a ``File`` reference and wants to persist its
+        fits without first reaching into the parent ``Project``. See
+        :meth:`Project.save_fits` for full semantics.
+        """
+
+        self.p.save_fits(
+            filepath,
+            file=self,
+            model=model,
+            fit_type=fit_type,
+            overwrite=overwrite,
+            show_output=show_output,
+        )
 
     #
     def load_fit(self) -> None:
