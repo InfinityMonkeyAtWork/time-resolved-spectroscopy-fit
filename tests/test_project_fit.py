@@ -558,7 +558,7 @@ class TestProjectFitLifecycle:
     #
     @pytest.mark.slow
     def test_save_2d_fit_works_after_project_fit(self, tmp_path):
-        """save_2d_fit() runs without error on project-fitted files."""
+        """Legacy 2D save runs without error on project-fitted files."""
 
         project = make_project(name="project_fit")
         truth = _make_truth_file()
@@ -570,7 +570,7 @@ class TestProjectFitLifecycle:
         project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
 
         for f in project.files:
-            f.save_2d_fit(save_path=tmp_path)  # must not raise
+            f._save_2d_fit_legacy(save_path=tmp_path)  # must not raise
 
     #
     @pytest.mark.slow

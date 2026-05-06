@@ -956,7 +956,7 @@ class TestFitPreconditions:
                 return_value=[None, object(), None, None, None],
             ) as mock_fit,
             unittest.mock.patch("trspecfit.trspecfit.fitlib.plt_fit_res_1d"),
-            unittest.mock.patch.object(file, "save_sbs_fit"),
+            unittest.mock.patch.object(file, "_save_sbs_fit_legacy"),
             unittest.mock.patch("trspecfit.trspecfit.fitlib.time_display"),
         ):
             file.fit_slice_by_slice(
@@ -1050,43 +1050,65 @@ class TestFitPreconditions:
 
     #
     def test_save_sbs_fit_no_model_raises(self):
-        """save_sbs_fit raises ValueError when SbS model is missing."""
+        """Legacy SbS save raises ValueError when SbS model is missing."""
 
         file = self._make_file_with_model()
         file.model_sbs = None
         with pytest.raises(ValueError, match="incomplete"):
-            file.save_sbs_fit("/tmp/dummy")
+            file._save_sbs_fit_legacy("/tmp/dummy")
 
     #
     def test_save_sbs_fit_no_data_raises(self):
-        """save_sbs_fit raises ValueError when data is missing."""
+        """Legacy SbS save raises ValueError when data is missing."""
 
         file = self._make_file_with_model()
         file.model_sbs = file.model_active
         file.data = None
         with pytest.raises(ValueError, match="Data missing"):
-            file.save_sbs_fit("/tmp/dummy")
+            file._save_sbs_fit_legacy("/tmp/dummy")
 
     # -- save_2d_fit --
 
     #
     def test_save_2d_fit_no_model_raises(self):
-        """save_2d_fit raises ValueError when 2D model is missing."""
+        """Legacy 2D save raises ValueError when 2D model is missing."""
 
         file = self._make_file_with_model()
         file.model_2d = None
         with pytest.raises(ValueError, match="missing"):
-            file.save_2d_fit("/tmp/dummy")
+            file._save_2d_fit_legacy("/tmp/dummy")
 
     #
     def test_save_2d_fit_no_data_raises(self):
-        """save_2d_fit raises ValueError when data is missing."""
+        """Legacy 2D save raises ValueError when data is missing."""
 
         file = self._make_file_with_model()
         file.model_2d = file.model_active
         file.data = None
         with pytest.raises(ValueError, match="missing"):
-            file.save_2d_fit("/tmp/dummy")
+            file._save_2d_fit_legacy("/tmp/dummy")
+
+    # -- deprecation warnings --
+
+    #
+    def test_save_sbs_fit_emits_deprecation_warning(self):
+        """save_sbs_fit emits DeprecationWarning pointing at export_fit."""
+
+        file = self._make_file_with_model()
+        file.model_sbs = None  # short-circuit so we don't need a real fit
+        with pytest.warns(DeprecationWarning, match="export_fit"):
+            with pytest.raises(ValueError):
+                file.save_sbs_fit("/tmp/dummy")
+
+    #
+    def test_save_2d_fit_emits_deprecation_warning(self):
+        """save_2d_fit emits DeprecationWarning pointing at export_fit."""
+
+        file = self._make_file_with_model()
+        file.model_2d = None  # short-circuit so we don't need a real fit
+        with pytest.warns(DeprecationWarning, match="export_fit"):
+            with pytest.raises(ValueError):
+                file.save_2d_fit("/tmp/dummy")
 
 
 #

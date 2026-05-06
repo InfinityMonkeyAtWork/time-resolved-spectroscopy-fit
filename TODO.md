@@ -31,4 +31,6 @@ Note: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling — make
 ## Build & release
 
 - [ ] **Automate tagging and pushing**: automate `git tag v1.2.3` + `git push v1.2.3` as part of the release workflow.
-- [ ] **Remove legacy/backwards-compat code**: before v1.0.0 release, audit codebase for legacy fallbacks and backwards compatibility shims and consider removing.
+- [ ] **Remove legacy/backwards-compat code**: before v1.0.0 release, audit codebase for legacy fallbacks and backwards compatibility shims and consider removing. Known shims slated for removal:
+  - `File.save_sbs_fit` / `File.save_2d_fit` (deprecated wrappers — replace internal callers and drop the public methods plus their `_save_*_fit_legacy` impls; users should migrate to `File.export_fit(fit_type=...)`).
+  - `File.load_fit` stub (replaced by `FitResults.load(path)` / `Project.load_fits(path)`).

@@ -1383,7 +1383,7 @@ class Project:
             for f in self.files:
                 if f.model_2d is not None:
                     path_2d = f.create_model_path(model_name, fit_type="2d")
-                    f.save_2d_fit(save_path=path_2d)
+                    f._save_2d_fit_legacy(save_path=path_2d)
         finally:
             self.show_output = saved
 
@@ -2802,11 +2802,85 @@ class File:
         )
 
     #
+    def export_fit(
+        self,
+        filepath: PathLike | str | None = None,
+        *,
+        format: Literal["csv"] = "csv",
+        model: str | Sequence[str] | None = None,
+        fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        overwrite: bool = False,
+        show_output: int = 1,
+    ) -> None:
+        """
+        Export this file's fit slots as a CSV/PNG tree.
+
+        One-line delegate to ``self.p.export_fits(file=self, ...)``. See
+        :meth:`Project.export_fits` for full semantics and output layout.
+        """
+
+        self.p.export_fits(
+            filepath,
+            format=format,
+            file=self,
+            model=model,
+            fit_type=fit_type,
+            overwrite=overwrite,
+            show_output=show_output,
+        )
+
+    #
     def load_fit(self) -> None:
         """
         TODO: Do this instead of refitting to try out different models?
         Probably needed to compare fits anyway!
         """
+
+    #
+    # ------------------------------------------------------------------
+    # Deprecated aliases — scheduled for removal before v1.0.0.
+    # See TODO.md "Build & release → Remove legacy/backwards-compat code".
+    # ------------------------------------------------------------------
+
+    #
+    def save_sbs_fit(self, save_path: PathLike) -> None:
+        """
+        .. deprecated::
+            Use :meth:`File.export_fit` (``fit_type="sbs"``) instead.
+            ``save_sbs_fit`` is scheduled for removal before v1.0.0.
+
+        Behavior is preserved: this wrapper still writes the legacy
+        on-disk layout. Only the warning is new.
+        """
+
+        warnings.warn(
+            "File.save_sbs_fit is deprecated and will be removed before "
+            "v1.0.0; use File.export_fit(fit_type='sbs', filepath=...) "
+            "for the supported export pipeline.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self._save_sbs_fit_legacy(save_path)
+
+    #
+    def save_2d_fit(self, save_path: PathLike) -> None:
+        """
+        .. deprecated::
+            Use :meth:`File.export_fit` (``fit_type="2d"``) instead.
+            ``save_2d_fit`` is scheduled for removal before v1.0.0.
+
+        Behavior is preserved: this wrapper still writes the legacy
+        on-disk layout. Only the warning is new.
+        """
+
+        warnings.warn(
+            "File.save_2d_fit is deprecated and will be removed before "
+            "v1.0.0; use File.export_fit(fit_type='2d', filepath=...) "
+            "for the supported export pipeline.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self._save_2d_fit_legacy(save_path)
 
     #
     def fit_slice_by_slice(
@@ -3097,7 +3171,7 @@ class File:
             # captures pristine per-slice fit state (results_sbs and parameter
             # names taken before any post-fit cleanup).
             self._append_sbs_slot(model_name=model_name, fit_fun_str=_fun_str)
-            self.save_sbs_fit(save_path=path_sbs_results)
+            self._save_sbs_fit_legacy(save_path=path_sbs_results)
         self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
         self.model_sbs.args = _args_sbs
         if stages >= 1:
@@ -3106,17 +3180,14 @@ class File:
             )
 
     #
-    def save_sbs_fit(self, save_path: PathLike) -> None:
+    def _save_sbs_fit_legacy(self, save_path: PathLike) -> None:
         """
-        Export Slice-by-Slice fit results.
+        Legacy SbS export — preserves the original on-disk layout used by
+        the auto-export path inside :meth:`fit_slice_by_slice`.
 
-        Saves parameter evolution as CSV, plots individual parameters vs. time,
-        reconstructs 2D fit map, and creates data/fit/residual comparison plots.
-
-        Parameters
-        ----------
-        save_path : str or Path
-            Base directory for saving results
+        Internal use only. The public ``save_sbs_fit`` is a deprecated
+        wrapper that forwards to :meth:`export_fit` (different layout);
+        prefer :meth:`export_fit` for new code.
         """
 
         if self.model_sbs is None or self.time is None:
@@ -3808,24 +3879,22 @@ class File:
             self._append_2d_slot(model_name=model_name, fit_fun_str=_fun_str)
 
         if stages >= 1:
-            self.save_2d_fit(save_path=path_2d_results)
+            self._save_2d_fit_legacy(save_path=path_2d_results)
             fitlib.time_display(
                 t_start=t_2d, print_str="Time elapsed for 2D model fit: "
             )
             display(self.model_2d.result[1].params)  # display final pars below figure
 
     #
-    def save_2d_fit(self, save_path: PathLike) -> None:
+    def _save_2d_fit_legacy(self, save_path: PathLike) -> None:
         """
-        Export 2D model fit results.
+        Legacy 2D export — preserves the original on-disk layout used by
+        the auto-export path inside :meth:`fit_2d` and
+        :meth:`Project.fit_2d`.
 
-        Evaluates model at final parameters, saves the fit map as
-        ``fit_2d.csv``, and creates 2D data/fit/residual comparison plots.
-
-        Parameters
-        ----------
-        save_path : str or Path
-            Base directory for saving results
+        Internal use only. The public ``save_2d_fit`` is a deprecated
+        wrapper that forwards to :meth:`export_fit` (different layout);
+        prefer :meth:`export_fit` for new code.
         """
 
         if (
@@ -3943,16 +4012,31 @@ class File:
         )
 
     #
-    def compare_models(self) -> None:
+    def compare_models(
+        self,
+        *models: str,
+        fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        metrics: Sequence[str] | None = None,
+        sbs_aggregation: Literal["median", "mean", "sum", "long"] = "median",
+    ) -> pd.DataFrame:
         """
-        TODO: Compare fit quality across multiple models (not yet implemented).
+        Compare fit-quality metrics across this file's models.
 
-        Future implementation will compare:
-        - Residual maps and statistics (min/max/std)
-        - Reduced chi-squared values
-        - Model complexity vs. fit quality metrics
+        Sugar for ``self.p.results.compare_models(file=self, models=...)``.
+        Pass model names as positional arguments; omit them to include
+        every model fit on this file. See :meth:`FitResults.compare_models`
+        for the full kwarg semantics and the defensive
+        ``observed_sha256`` cross-check.
 
-        Notes
-        -----
-        This method is a placeholder for future development.
+        Examples
+        --------
+        >>> file.compare_models("modelA", "modelB", fit_type="baseline")
         """
+
+        return self.p.results.compare_models(
+            file=self,
+            models=list(models) if models else None,
+            fit_type=fit_type,
+            metrics=metrics,
+            sbs_aggregation=sbs_aggregation,
+        )

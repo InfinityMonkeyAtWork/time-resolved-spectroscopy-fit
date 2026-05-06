@@ -15,6 +15,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import numpy as np
+import pandas as pd
 import pytest
 from _utils import make_project, simulate_clean, simulate_noisy
 
@@ -511,12 +512,29 @@ class TestResultsSnapshot:
 
 
 #
-def _slot_stub(*, file_name="f1", model_name="m", fit_type="baseline"):
+def _slot_stub(
+    *,
+    file_name="f1",
+    model_name="m",
+    fit_type="baseline",
+    metrics=None,
+    observed_sha256="z",
+    fingerprint=None,
+    selection=None,
+):
     """Build a minimal SavedFitSlot for query-API tests (no real fit)."""
 
-    fp = {"data_sha256": "a", "energy_sha256": "b", "time_sha256": "c", "shape": (3,)}
-    selection: dict = {"base_t_ind": [0, 1], "e_lim": None}
-    selection_json = build_selection_json("baseline", **selection)
+    fp = fingerprint or {
+        "data_sha256": "a",
+        "energy_sha256": "b",
+        "time_sha256": "c",
+        "shape": (3,),
+    }
+    if selection is None:
+        selection = (
+            {"base_t_ind": [0, 1], "e_lim": None} if fit_type == "baseline" else {}
+        )
+    selection_json = build_selection_json(fit_type, **selection)
     history_key = compute_history_key(
         file_fingerprint=fp,
         file_name=file_name,
@@ -524,6 +542,8 @@ def _slot_stub(*, file_name="f1", model_name="m", fit_type="baseline"):
         fit_type=fit_type,
         selection_json=selection_json,
     )
+    if metrics is None:
+        metrics = {"chi2": 0.0, "chi2_red": 0.0, "r2": 1.0, "aic": 0.0, "bic": 0.0}
     import pandas as pd
 
     return SavedFitSlot(
@@ -533,10 +553,10 @@ def _slot_stub(*, file_name="f1", model_name="m", fit_type="baseline"):
         fit_type=fit_type,
         selection=selection,
         selection_json=selection_json,
-        observed_sha256="z",
+        observed_sha256=observed_sha256,
         history_key=history_key,
         params=pd.DataFrame(),
-        metrics={"chi2": 0.0, "chi2_red": 0.0, "r2": 1.0, "aic": 0.0, "bic": 0.0},
+        metrics=metrics,
         observed=np.zeros(3),
         fit=np.zeros(3),
         fit_alg="leastsq",
@@ -588,3 +608,469 @@ class TestFitResultsQueryAPI:
         slots = [_slot_stub(file_name=f"f{i}") for i in range(3)]
         r = FitResults(slots=slots)
         assert len(list(r)) == 3
+
+
+#
+class TestFitResultsCompareModels:
+    """Tests for FitResults.compare_models: scalar, sbs aggregation, checks."""
+
+    #
+    @staticmethod
+    def _scalar_metrics(*, chi2_red, r2, aic, bic, chi2=None):
+        """Build a metrics dict with the canonical 5 keys."""
+
+        return {
+            "chi2": float(chi2) if chi2 is not None else float(chi2_red),
+            "chi2_red": float(chi2_red),
+            "r2": float(r2),
+            "aic": float(aic),
+            "bic": float(bic),
+        }
+
+    #
+    def test_default_returns_columns_and_one_row_per_slot(self):
+        slots = [
+            _slot_stub(
+                file_name="A",
+                model_name="m1",
+                fit_type="baseline",
+                metrics=self._scalar_metrics(chi2_red=1.5, r2=0.9, aic=10.0, bic=12.0),
+            ),
+            _slot_stub(
+                file_name="A",
+                model_name="m2",
+                fit_type="baseline",
+                metrics=self._scalar_metrics(chi2_red=0.8, r2=0.95, aic=8.0, bic=10.0),
+            ),
+        ]
+        df = FitResults(slots=slots).compare_models()
+        assert list(df.columns) == [
+            "file",
+            "model",
+            "fit_type",
+            "selection_json",
+            "chi2_red",
+            "r2",
+            "aic",
+            "bic",
+        ]
+        assert len(df) == 2
+        assert set(df["model"]) == {"m1", "m2"}
+        assert df.loc[df["model"] == "m1", "aic"].iloc[0] == 10.0
+        assert df.loc[df["model"] == "m2", "aic"].iloc[0] == 8.0
+
+    #
+    def test_filters_by_file_models_and_fit_type(self):
+        slots = [
+            _slot_stub(
+                file_name="A",
+                model_name="m1",
+                fit_type="baseline",
+                metrics=self._scalar_metrics(chi2_red=1.0, r2=0.9, aic=1, bic=1),
+            ),
+            _slot_stub(
+                file_name="B",
+                model_name="m1",
+                fit_type="baseline",
+                metrics=self._scalar_metrics(chi2_red=1.0, r2=0.9, aic=1, bic=1),
+                fingerprint={
+                    "data_sha256": "B",
+                    "energy_sha256": "b",
+                    "time_sha256": "c",
+                    "shape": (3,),
+                },
+            ),
+            _slot_stub(
+                file_name="A",
+                model_name="m2",
+                fit_type="2d",
+                selection={"e_lim": None, "t_lim": None},
+                metrics=self._scalar_metrics(chi2_red=1.0, r2=0.9, aic=1, bic=1),
+            ),
+        ]
+        r = FitResults(slots=slots)
+        assert len(r.compare_models(file="A")) == 2
+        assert len(r.compare_models(file="A", models=["m1"])) == 1
+        assert len(r.compare_models(fit_type="baseline")) == 2
+        assert len(r.compare_models(fit_type=["baseline", "2d"])) == 3
+
+    #
+    def test_custom_metrics_subset(self):
+        slot = _slot_stub(
+            file_name="A",
+            model_name="m1",
+            fit_type="baseline",
+            metrics=self._scalar_metrics(
+                chi2=2.0,
+                chi2_red=0.5,
+                r2=0.99,
+                aic=5.0,
+                bic=7.0,
+            ),
+        )
+        df = FitResults(slots=[slot]).compare_models(metrics=["chi2", "r2"])
+        assert list(df.columns) == [
+            "file",
+            "model",
+            "fit_type",
+            "selection_json",
+            "chi2",
+            "r2",
+        ]
+        assert df["chi2"].iloc[0] == 2.0
+        assert df["r2"].iloc[0] == 0.99
+
+    #
+    def test_unknown_metric_raises_keyerror(self):
+        slot = _slot_stub(
+            metrics=self._scalar_metrics(chi2_red=1, r2=1, aic=1, bic=1),
+        )
+        with pytest.raises(KeyError, match="bogus"):
+            FitResults(slots=[slot]).compare_models(metrics=["bogus"])
+
+    #
+    def test_sbs_aggregation_modes(self):
+        per_slice = {
+            "chi2": np.array([1.0, 2.0, 3.0]),
+            "chi2_red": np.array([0.1, 0.2, 0.3]),
+            "r2": np.array([0.9, 0.8, 0.95]),
+            "aic": np.array([10.0, 20.0, 30.0]),
+            "bic": np.array([12.0, 22.0, 32.0]),
+        }
+        slot = _slot_stub(
+            file_name="A",
+            model_name="m_sbs",
+            fit_type="sbs",
+            selection={"e_lim": None, "t_lim": None},
+            metrics=per_slice,
+        )
+        r = FitResults(slots=[slot])
+
+        df_med = r.compare_models(sbs_aggregation="median")
+        assert df_med["chi2_red"].iloc[0] == pytest.approx(0.2)
+        assert df_med["aic"].iloc[0] == pytest.approx(20.0)
+
+        df_mean = r.compare_models(sbs_aggregation="mean")
+        assert df_mean["chi2_red"].iloc[0] == pytest.approx(0.2)
+        assert df_mean["r2"].iloc[0] == pytest.approx((0.9 + 0.8 + 0.95) / 3)
+
+        df_sum = r.compare_models(sbs_aggregation="sum")
+        assert df_sum["aic"].iloc[0] == pytest.approx(60.0)
+        assert df_sum["bic"].iloc[0] == pytest.approx(66.0)
+
+    #
+    def test_sbs_long_mode_emits_per_slice_rows(self):
+        per_slice = {
+            "chi2": np.array([1.0, 2.0]),
+            "chi2_red": np.array([0.1, 0.2]),
+            "r2": np.array([0.9, 0.8]),
+            "aic": np.array([10.0, 20.0]),
+            "bic": np.array([12.0, 22.0]),
+        }
+        sbs_slot = _slot_stub(
+            file_name="A",
+            model_name="m_sbs",
+            fit_type="sbs",
+            selection={"e_lim": None, "t_lim": None},
+            metrics=per_slice,
+        )
+        baseline_slot = _slot_stub(
+            file_name="B",
+            model_name="m_base",
+            fit_type="baseline",
+            metrics=self._scalar_metrics(chi2_red=0.5, r2=0.99, aic=5, bic=7),
+            fingerprint={
+                "data_sha256": "B",
+                "energy_sha256": "b",
+                "time_sha256": "c",
+                "shape": (3,),
+            },
+        )
+        df = FitResults(slots=[sbs_slot, baseline_slot]).compare_models(
+            sbs_aggregation="long"
+        )
+        assert "slice_index" in df.columns
+        sbs_rows = df[df["model"] == "m_sbs"]
+        assert len(sbs_rows) == 2
+        assert list(sbs_rows["slice_index"]) == [0, 1]
+        assert sbs_rows["aic"].tolist() == [10.0, 20.0]
+        baseline_rows = df[df["model"] == "m_base"]
+        assert len(baseline_rows) == 1
+        assert pd.isna(baseline_rows["slice_index"].iloc[0])
+
+    #
+    def test_observed_mismatch_raises(self):
+        """Two slots on same (file, fit_type) with different observed_sha256 → raise."""
+
+        slots = [
+            _slot_stub(
+                file_name="A",
+                model_name="m1",
+                fit_type="baseline",
+                metrics=self._scalar_metrics(chi2_red=1, r2=1, aic=1, bic=1),
+                observed_sha256="hash_A",
+            ),
+            _slot_stub(
+                file_name="A",
+                model_name="m2",
+                fit_type="baseline",
+                selection={"base_t_ind": [0, 5], "e_lim": None},
+                metrics=self._scalar_metrics(chi2_red=1, r2=1, aic=1, bic=1),
+                observed_sha256="hash_B",
+            ),
+        ]
+        r = FitResults(slots=slots)
+        with pytest.raises(ValueError, match="observed_sha256"):
+            r.compare_models(file="A", fit_type="baseline")
+
+    #
+    def test_observed_mismatch_allowed_across_different_fit_types(self):
+        """Same file, different fit_type — observed differs legitimately, no raise."""
+
+        slots = [
+            _slot_stub(
+                file_name="A",
+                model_name="m1",
+                fit_type="baseline",
+                metrics=self._scalar_metrics(chi2_red=1, r2=1, aic=1, bic=1),
+                observed_sha256="hash_A",
+            ),
+            _slot_stub(
+                file_name="A",
+                model_name="m1",
+                fit_type="2d",
+                selection={"e_lim": None, "t_lim": None},
+                metrics=self._scalar_metrics(chi2_red=2, r2=0.5, aic=5, bic=7),
+                observed_sha256="hash_B",
+            ),
+        ]
+        df = FitResults(slots=slots).compare_models(file="A")
+        assert len(df) == 2
+
+    #
+    def test_observed_mismatch_allowed_across_different_files(self):
+        """Same fit_type on different files — observed differs legitimately."""
+
+        slots = [
+            _slot_stub(
+                file_name="A",
+                model_name="m1",
+                fit_type="baseline",
+                metrics=self._scalar_metrics(chi2_red=1, r2=1, aic=1, bic=1),
+                observed_sha256="hash_A",
+            ),
+            _slot_stub(
+                file_name="B",
+                model_name="m1",
+                fit_type="baseline",
+                metrics=self._scalar_metrics(chi2_red=2, r2=0.5, aic=5, bic=7),
+                observed_sha256="hash_B",
+                fingerprint={
+                    "data_sha256": "B",
+                    "energy_sha256": "b",
+                    "time_sha256": "c",
+                    "shape": (3,),
+                },
+            ),
+        ]
+        df = FitResults(slots=slots).compare_models(fit_type="baseline")
+        assert len(df) == 2
+
+    #
+    def test_observed_mismatch_allowed_across_replicate_files(self):
+        """Two distinct files with byte-identical raw arrays but different names.
+
+        Project identity treats them as separate files (history_key folds in
+        file_name), so a fit_type-wide compare must not collapse them and
+        falsely raise on observed_sha256.
+        """
+
+        shared_fp = {
+            "data_sha256": "same",
+            "energy_sha256": "same",
+            "time_sha256": "same",
+            "shape": (3,),
+        }
+        slots = [
+            _slot_stub(
+                file_name="rep_A",
+                model_name="m1",
+                fit_type="baseline",
+                metrics=self._scalar_metrics(chi2_red=1, r2=1, aic=1, bic=1),
+                observed_sha256="hash_A",
+                fingerprint=shared_fp,
+            ),
+            _slot_stub(
+                file_name="rep_B",
+                model_name="m1",
+                fit_type="baseline",
+                metrics=self._scalar_metrics(chi2_red=2, r2=0.5, aic=5, bic=7),
+                observed_sha256="hash_B",
+                fingerprint=shared_fp,
+            ),
+        ]
+        df = FitResults(slots=slots).compare_models(fit_type="baseline")
+        assert len(df) == 2
+        assert set(df["file"]) == {"rep_A", "rep_B"}
+
+    #
+    def test_file_arg_accepts_object_with_name_attr(self):
+        slot = _slot_stub(
+            file_name="A",
+            model_name="m1",
+            metrics=self._scalar_metrics(chi2_red=1, r2=1, aic=1, bic=1),
+        )
+
+        class _Stub:
+            name = "A"
+
+        df = FitResults(slots=[slot]).compare_models(file=_Stub())
+        assert len(df) == 1
+        assert df["file"].iloc[0] == "A"
+
+    #
+    def test_file_arg_invalid_type_raises(self):
+        slot = _slot_stub()
+        with pytest.raises(TypeError, match="file must be"):
+            FitResults(slots=[slot]).compare_models(file=42)
+
+    #
+    def test_empty_match_returns_empty_dataframe(self):
+        slot = _slot_stub(file_name="A", model_name="m1")
+        df = FitResults(slots=[slot]).compare_models(file="missing")
+        assert df.empty
+        assert "model" in df.columns
+
+    #
+    def test_unknown_sbs_aggregation_raises(self):
+        per_slice = {
+            "chi2": np.array([1.0]),
+            "chi2_red": np.array([0.1]),
+            "r2": np.array([0.9]),
+            "aic": np.array([10.0]),
+            "bic": np.array([12.0]),
+        }
+        slot = _slot_stub(
+            file_name="A",
+            model_name="m_sbs",
+            fit_type="sbs",
+            selection={"e_lim": None, "t_lim": None},
+            metrics=per_slice,
+        )
+        with pytest.raises(ValueError, match="unknown sbs_aggregation"):
+            FitResults(slots=[slot]).compare_models(sbs_aggregation="bogus")  # type: ignore[arg-type]
+
+
+#
+class TestFitResultsPlotResiduals:
+    """Smoke tests for FitResults.plot_residuals — figure construction only."""
+
+    #
+    @staticmethod
+    def _slot_with_arrays(
+        *,
+        file_name="A",
+        model_name="m1",
+        fit_type="baseline",
+        observed,
+        fit,
+        selection=None,
+    ):
+        """Build a slot with custom observed/fit arrays for plotting."""
+
+        slot = _slot_stub(
+            file_name=file_name,
+            model_name=model_name,
+            fit_type=fit_type,
+            selection=selection,
+        )
+        return SavedFitSlot(
+            file_fingerprint=slot.file_fingerprint,
+            file_name=slot.file_name,
+            model_name=slot.model_name,
+            fit_type=slot.fit_type,
+            selection=slot.selection,
+            selection_json=slot.selection_json,
+            observed_sha256=slot.observed_sha256,
+            history_key=slot.history_key,
+            params=slot.params,
+            metrics=slot.metrics,
+            observed=np.asarray(observed),
+            fit=np.asarray(fit),
+            fit_alg=slot.fit_alg,
+            yaml_filename=slot.yaml_filename,
+            timestamp=slot.timestamp,
+        )
+
+    #
+    def test_1d_fit_returns_figure(self):
+        slot_a = self._slot_with_arrays(
+            model_name="m1",
+            observed=np.linspace(0, 1, 30),
+            fit=np.linspace(0, 1, 30) + 0.05,
+        )
+        slot_b = self._slot_with_arrays(
+            model_name="m2",
+            observed=np.linspace(0, 1, 30),
+            fit=np.linspace(0, 1, 30) - 0.02,
+        )
+        fig = FitResults(slots=[slot_a, slot_b]).plot_residuals(
+            file="A", show_plot=False
+        )
+        assert fig is not None
+        assert len(fig.axes) >= 4
+
+    #
+    def test_2d_fit_returns_figure(self):
+        obs = np.random.RandomState(0).randn(8, 12)
+        fit = obs + np.random.RandomState(1).randn(8, 12) * 0.1
+        slot = self._slot_with_arrays(
+            model_name="m_2d",
+            fit_type="2d",
+            selection={"e_lim": None, "t_lim": None},
+            observed=obs,
+            fit=fit,
+        )
+        fig = FitResults(slots=[slot]).plot_residuals(file="A", show_plot=False)
+        assert fig is not None
+        assert len(fig.axes) >= 1
+
+    #
+    def test_no_match_raises(self):
+        slot = self._slot_with_arrays(
+            observed=np.zeros(5),
+            fit=np.zeros(5),
+        )
+        with pytest.raises(LookupError, match="No slots match"):
+            FitResults(slots=[slot]).plot_residuals(file="missing", show_plot=False)
+
+    #
+    def test_mixed_fit_types_requires_disambiguation(self):
+        slot_b = self._slot_with_arrays(
+            model_name="m1",
+            fit_type="baseline",
+            observed=np.zeros(5),
+            fit=np.zeros(5),
+        )
+        slot_2d = self._slot_with_arrays(
+            model_name="m2",
+            fit_type="2d",
+            selection={"e_lim": None, "t_lim": None},
+            observed=np.zeros((3, 5)),
+            fit=np.zeros((3, 5)),
+        )
+        r = FitResults(slots=[slot_b, slot_2d])
+        with pytest.raises(ValueError, match="span fit_types"):
+            r.plot_residuals(file="A", show_plot=False)
+        # Disambiguating works:
+        fig = r.plot_residuals(file="A", fit_type="baseline", show_plot=False)
+        assert fig is not None
+
+    #
+    def test_missing_file_arg_raises(self):
+        slot = self._slot_with_arrays(observed=np.zeros(5), fit=np.zeros(5))
+        with pytest.raises(ValueError, match="requires file"):
+            FitResults(slots=[slot]).plot_residuals(
+                file=None,
+                show_plot=False,  # type: ignore[arg-type]
+            )

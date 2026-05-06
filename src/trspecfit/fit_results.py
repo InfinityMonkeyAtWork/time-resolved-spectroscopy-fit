@@ -22,11 +22,16 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from os import PathLike
-from typing import Literal
+from typing import Any, Literal
 
-from trspecfit.utils.fit_io import SavedFitSlot, read_archive
+import numpy as np
+import pandas as pd
+
+from trspecfit.utils.fit_io import SavedFile, SavedFitSlot, read_archive
 
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
+SbsAggregation = Literal["median", "mean", "sum", "long"]
+DEFAULT_METRICS: tuple[str, ...] = ("chi2_red", "r2", "aic", "bic")
 
 
 #
@@ -38,6 +43,43 @@ def _to_str_set(arg: str | Sequence[str] | None) -> set[str] | None:
     if isinstance(arg, str):
         return {arg}
     return set(arg)
+
+
+#
+def _fp_key(fingerprint: dict[str, Any]) -> tuple[Any, ...]:
+    """Hashable key for a file fingerprint (mirrors trspecfit._fp_key)."""
+
+    return (
+        fingerprint["data_sha256"],
+        fingerprint["energy_sha256"],
+        fingerprint["time_sha256"],
+        tuple(int(x) for x in fingerprint["shape"]),
+    )
+
+
+#
+def _resolve_file_arg(file: Any) -> str | None:
+    """
+    Normalize ``file`` filter input to a name string.
+
+    Accepts ``None`` (no filter), a string, or any object exposing ``.name``
+    (covers live ``trspecfit.File`` and ``SavedFile``). Avoids importing
+    ``trspecfit.File`` to keep this module a leaf in the import graph.
+    """
+
+    if file is None:
+        return None
+    if isinstance(file, str):
+        return file
+    if isinstance(file, SavedFile):
+        return file.name
+    name = getattr(file, "name", None)
+    if isinstance(name, str):
+        return name
+    raise TypeError(
+        f"file must be str, SavedFile, or have a .name attribute; "
+        f"got {type(file).__name__}"
+    )
 
 
 #
@@ -191,3 +233,413 @@ class FitResults:
                 f"fit_type={fit_type!r}; use find() and narrow on .selection."
             )
         return matches[0]
+
+    #
+    def compare_models(
+        self,
+        file: Any = None,
+        *,
+        models: Sequence[str] | None = None,
+        fit_type: FitType | Sequence[FitType] | None = None,
+        metrics: Sequence[str] | None = None,
+        sbs_aggregation: SbsAggregation = "median",
+    ) -> pd.DataFrame:
+        """
+        Compare fit-quality metrics across slots.
+
+        Filters slots by ``(file, models, fit_type)``, then returns a
+        ``pd.DataFrame`` with one row per slot (or per slice in ``"long"``
+        mode) and one column per metric. The default metric set is
+        ``("chi2_red", "r2", "aic", "bic")``.
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file. Accepts a name string, a ``SavedFile``,
+            or any object with a ``.name`` attribute (so the live
+            ``File.compare_models`` delegate can pass ``self``).
+        models : sequence of str, optional
+            Restrict to these model names.
+        fit_type : str or sequence, optional
+            Restrict to these fit types.
+        metrics : sequence of str, optional
+            Metric keys to include as columns. Defaults to
+            ``("chi2_red", "r2", "aic", "bic")``. Must be a subset of
+            ``slot.metrics`` keys (typically ``chi2``, ``chi2_red``,
+            ``r2``, ``aic``, ``bic``).
+        sbs_aggregation : {"median", "mean", "sum", "long"}, default "median"
+            How to collapse per-slice SbS metrics to a comparable value:
+
+            - ``"median"`` — robust scalar via ``np.nanmedian``.
+            - ``"mean"``   — scalar via ``np.nanmean``.
+            - ``"sum"``    — scalar via ``np.nansum`` (additive across
+              independent slices for chi2/aic/bic; less natural for
+              chi2_red/r2).
+            - ``"long"``   — one row per slice. Adds a ``slice_index``
+              column (NaN for non-SbS rows).
+
+        Returns
+        -------
+        pd.DataFrame
+            Columns: ``file``, ``model``, ``fit_type``, ``selection_json``,
+            optionally ``slice_index``, then one column per requested metric.
+            Empty DataFrame if no slots match the filter.
+
+        Raises
+        ------
+        ValueError
+            If two or more slots in the filtered result share
+            ``(file_fingerprint, fit_type)`` but disagree on
+            ``observed_sha256``. Same fit type on the same file must run
+            against the same observed grid for AIC/BIC comparisons to be
+            meaningful — typically this happens when the user mixes refits
+            with different ``e_lim`` / ``t_lim`` / ``base_t_ind`` /
+            ``time_point``.
+        KeyError
+            If ``metrics`` requests a key that is not present in some slot's
+            ``metrics`` dict.
+        """
+
+        file_name = _resolve_file_arg(file)
+        models_filter = _to_str_set(models)
+        types_filter = _to_str_set(fit_type)
+        metric_keys = tuple(DEFAULT_METRICS) if metrics is None else tuple(metrics)
+
+        matched: list[SavedFitSlot] = []
+        for slot in self._slots:
+            if file_name is not None and slot.file_name != file_name:
+                continue
+            if models_filter is not None and slot.model_name not in models_filter:
+                continue
+            if types_filter is not None and slot.fit_type not in types_filter:
+                continue
+            matched.append(slot)
+
+        self._check_observed_consistency(matched)
+
+        if sbs_aggregation == "long":
+            return self._compare_rows_long(matched, metric_keys)
+        return self._compare_rows_scalar(matched, metric_keys, sbs_aggregation)
+
+    #
+    @staticmethod
+    def _check_observed_consistency(slots: list[SavedFitSlot]) -> None:
+        """
+        Raise if two slots in the same ``(file_fingerprint, file_name, fit_type)``
+        group disagree on ``observed_sha256``.
+
+        Different ``observed`` arrays mean different ndata or different data
+        views — AIC/BIC/chi2 across them are not comparable. Catches
+        e_lim/t_lim/base_t_ind/time_point mismatches via the data hash even
+        when ``selection_json`` would also differ.
+
+        ``file_name`` is part of the grouping key (not just fingerprint)
+        because Project identity treats two ``Project.files`` with
+        byte-identical raw arrays but different names as distinct files
+        (matches ``history_key`` / ``archive_slot_key`` semantics, which
+        also fold ``file_name`` in). A project-wide
+        ``compare_models(fit_type=...)`` across replicate files would
+        otherwise raise a false "different data views" error.
+        """
+
+        groups: dict[tuple[Any, str, str], list[SavedFitSlot]] = {}
+        for slot in slots:
+            key = (_fp_key(slot.file_fingerprint), slot.file_name, slot.fit_type)
+            groups.setdefault(key, []).append(slot)
+        for (_fp, file_name, ft), group in groups.items():
+            shas = {s.observed_sha256 for s in group}
+            if len(shas) > 1:
+                names = sorted({s.model_name for s in group})
+                raise ValueError(
+                    f"Cannot compare fit_type={ft!r} on file="
+                    f"{file_name!r}: {len(shas)} distinct "
+                    f"observed_sha256 across {len(group)} slot(s) "
+                    f"(models={names}). Slots fit against different data "
+                    f"views — narrow the filter (or restrict on selection "
+                    f"via find()) so all compared slots share the same "
+                    f"observed grid."
+                )
+
+    #
+    @staticmethod
+    def _aggregate_sbs(values: np.ndarray, mode: SbsAggregation) -> float:
+        """
+        Collapse a per-slice metric array to a scalar using ``mode``.
+
+        ``"long"`` is handled separately by the caller and is not a valid
+        input here.
+        """
+
+        arr = np.asarray(values, dtype=float)
+        if mode == "median":
+            return float(np.nanmedian(arr))
+        if mode == "mean":
+            return float(np.nanmean(arr))
+        if mode == "sum":
+            return float(np.nansum(arr))
+        raise ValueError(f"unknown sbs_aggregation: {mode!r}")
+
+    #
+    @staticmethod
+    def _slot_metric(slot: SavedFitSlot, key: str) -> Any:
+        """Look up ``key`` in ``slot.metrics`` with a clear KeyError."""
+
+        if key not in slot.metrics:
+            raise KeyError(
+                f"metric {key!r} not present in slot "
+                f"(file={slot.file_name!r}, model={slot.model_name!r}, "
+                f"fit_type={slot.fit_type!r}); available: "
+                f"{sorted(slot.metrics.keys())}"
+            )
+        return slot.metrics[key]
+
+    #
+    def _compare_rows_scalar(
+        self,
+        slots: list[SavedFitSlot],
+        metric_keys: tuple[str, ...],
+        sbs_aggregation: SbsAggregation,
+    ) -> pd.DataFrame:
+        """One row per slot; SbS per-slice metrics collapsed via ``sbs_aggregation``."""
+
+        rows: list[dict[str, Any]] = []
+        for slot in slots:
+            row: dict[str, Any] = {
+                "file": slot.file_name,
+                "model": slot.model_name,
+                "fit_type": slot.fit_type,
+                "selection_json": slot.selection_json,
+            }
+            for key in metric_keys:
+                value = self._slot_metric(slot, key)
+                if slot.fit_type == "sbs":
+                    row[key] = self._aggregate_sbs(value, sbs_aggregation)
+                else:
+                    row[key] = float(value)
+            rows.append(row)
+        columns = ["file", "model", "fit_type", "selection_json", *metric_keys]
+        return pd.DataFrame(rows, columns=columns)
+
+    #
+    def plot_residuals(
+        self,
+        *,
+        file: Any,
+        models: Sequence[str] | None = None,
+        fit_type: FitType | None = None,
+        show_plot: bool = True,
+        figsize: tuple[float, float] | None = None,
+    ) -> Any:
+        """
+        Plot observed/fit/residual for the selected slots side-by-side.
+
+        Smoke-test-grade visualization: x-axis is array index (no energy /
+        time labels), since slots do not carry the parent file's axes.
+        Users wanting publication-quality plots should build their own from
+        ``slot.observed`` / ``slot.fit``.
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File
+            Required. Filter to a single file.
+        models : sequence of str, optional
+            Which models to compare. ``None`` plots every model that fit
+            this file.
+        fit_type : str, optional
+            Required if the matched slots span more than one fit type.
+        show_plot : bool, default True
+            Set ``False`` in tests to close the figure without displaying.
+        figsize : (w, h), optional
+            Forwarded to ``plt.subplots``. Defaults scale with the number
+            of compared models.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+
+        Raises
+        ------
+        LookupError
+            If no slots match the filter.
+        ValueError
+            If matched slots span more than one ``fit_type`` and
+            ``fit_type`` was not given.
+        """
+
+        file_name = _resolve_file_arg(file)
+        if file_name is None:
+            raise ValueError("plot_residuals requires file=...")
+
+        models_filter = _to_str_set(models)
+        matched: list[SavedFitSlot] = []
+        for slot in self._slots:
+            if slot.file_name != file_name:
+                continue
+            if models_filter is not None and slot.model_name not in models_filter:
+                continue
+            if fit_type is not None and slot.fit_type != fit_type:
+                continue
+            matched.append(slot)
+
+        if not matched:
+            raise LookupError(
+                f"No slots match file={file_name!r}, models={models}, "
+                f"fit_type={fit_type!r}."
+            )
+
+        fit_types = {s.fit_type for s in matched}
+        if len(fit_types) > 1:
+            raise ValueError(
+                f"Matched slots span fit_types={sorted(fit_types)}; "
+                f"pass fit_type=... to disambiguate."
+            )
+        ft = next(iter(fit_types))
+
+        if ft in ("baseline", "spectrum"):
+            return self._plot_residuals_1d(
+                matched, file_name, show_plot=show_plot, figsize=figsize
+            )
+        return self._plot_residuals_2d(
+            matched, file_name, show_plot=show_plot, figsize=figsize
+        )
+
+    #
+    @staticmethod
+    def _plot_residuals_1d(
+        slots: list[SavedFitSlot],
+        file_name: str,
+        *,
+        show_plot: bool,
+        figsize: tuple[float, float] | None,
+    ) -> Any:
+        """1D fits: top row = observed + fit; bottom row = residual."""
+
+        import matplotlib.pyplot as plt
+
+        n = len(slots)
+        fig, axs = plt.subplots(
+            2,
+            n,
+            figsize=figsize or (4.0 * max(n, 1), 5.0),
+            squeeze=False,
+            sharex="col",
+        )
+        for col, slot in enumerate(slots):
+            obs = np.asarray(slot.observed).ravel()
+            fit = np.asarray(slot.fit).ravel()
+            x = np.arange(obs.size)
+            axs[0, col].plot(x, obs, "k.", ms=3, label="observed")
+            axs[0, col].plot(x, fit, "-", lw=1.5, label="fit")
+            axs[0, col].set_title(f"{slot.model_name} ({slot.fit_type})")
+            axs[0, col].legend(fontsize="small")
+            axs[1, col].plot(x, obs - fit, "-", lw=1.0)
+            axs[1, col].axhline(0, color="gray", lw=0.5)
+            axs[1, col].set_xlabel("index")
+            if col == 0:
+                axs[0, col].set_ylabel("intensity")
+                axs[1, col].set_ylabel("residual")
+        fig.suptitle(f"Residuals — {file_name}")
+        fig.tight_layout()
+        if show_plot:
+            plt.show()
+        else:
+            plt.close(fig)
+        return fig
+
+    #
+    @staticmethod
+    def _plot_residuals_2d(
+        slots: list[SavedFitSlot],
+        file_name: str,
+        *,
+        show_plot: bool,
+        figsize: tuple[float, float] | None,
+    ) -> Any:
+        """SbS / 2D fits: residual heatmaps side-by-side, shared diverging scale."""
+
+        import matplotlib.pyplot as plt
+
+        residuals = [np.asarray(slot.observed) - np.asarray(slot.fit) for slot in slots]
+        global_max = 0.0
+        for res in residuals:
+            if res.size:
+                local = float(np.nanmax(np.abs(res)))
+                if local > global_max:
+                    global_max = local
+        if global_max == 0.0:
+            global_max = 1.0
+
+        n = len(slots)
+        fig, axs = plt.subplots(
+            1,
+            n,
+            figsize=figsize or (5.0 * max(n, 1), 4.0),
+            squeeze=False,
+        )
+        im = None
+        for col, (slot, res) in enumerate(zip(slots, residuals, strict=True)):
+            im = axs[0, col].imshow(
+                res,
+                aspect="auto",
+                cmap="RdBu_r",
+                vmin=-global_max,
+                vmax=global_max,
+                origin="lower",
+            )
+            axs[0, col].set_title(f"{slot.model_name} ({slot.fit_type})")
+            axs[0, col].set_xlabel("energy index")
+            if col == 0:
+                axs[0, col].set_ylabel("time / slice index")
+        if im is not None:
+            fig.colorbar(im, ax=axs[0, :].tolist(), shrink=0.85)
+        fig.suptitle(f"Residuals — {file_name}")
+        if show_plot:
+            plt.show()
+        else:
+            plt.close(fig)
+        return fig
+
+    #
+    def _compare_rows_long(
+        self,
+        slots: list[SavedFitSlot],
+        metric_keys: tuple[str, ...],
+    ) -> pd.DataFrame:
+        """
+        One row per slice for SbS slots; one row total for non-SbS slots.
+
+        Adds a ``slice_index`` column. Non-SbS rows get ``slice_index = pd.NA``;
+        SbS rows enumerate slice indices.
+        """
+
+        rows: list[dict[str, Any]] = []
+        for slot in slots:
+            base: dict[str, Any] = {
+                "file": slot.file_name,
+                "model": slot.model_name,
+                "fit_type": slot.fit_type,
+                "selection_json": slot.selection_json,
+            }
+            if slot.fit_type == "sbs":
+                first_arr = np.asarray(self._slot_metric(slot, metric_keys[0]))
+                n_slices = int(first_arr.size)
+                for i in range(n_slices):
+                    row = {**base, "slice_index": i}
+                    for key in metric_keys:
+                        arr = np.asarray(self._slot_metric(slot, key))
+                        row[key] = float(arr[i])
+                    rows.append(row)
+            else:
+                row = {**base, "slice_index": pd.NA}
+                for key in metric_keys:
+                    row[key] = float(self._slot_metric(slot, key))
+                rows.append(row)
+        columns = [
+            "file",
+            "model",
+            "fit_type",
+            "selection_json",
+            "slice_index",
+            *metric_keys,
+        ]
+        return pd.DataFrame(rows, columns=columns)
