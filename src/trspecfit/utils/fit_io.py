@@ -36,7 +36,11 @@ import h5py
 import numpy as np
 import pandas as pd
 
-from trspecfit.fitlib import compute_fit_metrics
+from trspecfit.fitlib import (
+    compute_fit_metrics,
+    plt_fit_res_2d,
+    plt_fit_res_pars,
+)
 
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
 SCHEMA_VERSION = "1"
@@ -1498,3 +1502,489 @@ def read_archive(filepath: PathLike | str) -> SavedProject:
             timestamp_updated=_attr_str(ma["timestamp_updated"]),
             files=tuple(files),
         )
+
+
+#
+# --- CSV / PNG export -------------------------------------------------------
+#
+
+
+#
+def _slot_axes(
+    slot: SavedFitSlot,
+    saved_file: SavedFile,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Return ``(energy, time)`` axes matching the slot's grid.
+
+    The slot's ``observed`` / ``fit`` are stored on the cropped fit grid
+    (``e_lim`` / ``t_lim`` applied per fit type). This rebuilds the
+    matching axes from the parent ``SavedFile`` so CSV outputs and 2D
+    plots line up with the array shapes.
+    """
+
+    energy = np.asarray(saved_file.energy)
+    time = np.asarray(saved_file.time)
+    e_lim = slot.selection.get("e_lim")
+    if e_lim:
+        energy = energy[int(e_lim[0]) : int(e_lim[1])]
+    if slot.fit_type == "2d":
+        t_lim = slot.selection.get("t_lim")
+        if t_lim:
+            time = time[int(t_lim[0]) : int(t_lim[1])]
+    return energy, time
+
+
+#
+def _slot_dir_name(slot: SavedFitSlot, suffix_with_hash: bool) -> str:
+    """
+    Output-directory name for one slot.
+
+    Default form is ``{model_name}__{fit_type}``. When the same
+    ``(file, model, fit_type)`` triple appears more than once in the
+    snapshot (different selections), all of its slots get an
+    ``__{history_key[:8]}`` suffix so each lands in a distinct directory.
+    """
+
+    base = f"{slot.model_name}__{slot.fit_type}"
+    if suffix_with_hash:
+        base = f"{base}__{slot.history_key[:8]}"
+    return base
+
+
+#
+def _resolve_export_dirs(
+    saved_files: Sequence[SavedFile],
+    root: Path,
+) -> dict[int, Path]:
+    """
+    Map ``id(slot) -> output directory`` for every slot in ``saved_files``.
+
+    Two-tier disambiguation:
+
+    1. **Across files:** when two or more ``SavedFile`` records share a
+       ``name``, every entry in the colliding group gets a positional
+       ordinal suffix (``__000``, ``__001``, ...) keyed by its position
+       within ``saved_files``. Ordinals are unique even for byte-identical
+       ``SavedFile`` records, so a content-hash suffix would not be
+       sufficient — two records with identical fingerprint *and*
+       ``original_path`` would still collide.
+    2. **Within a file:** ``(model_name, fit_type)`` collisions get the
+       slot's ``history_key[:8]`` suffix on the slot directory.
+
+    Together these guarantee every slot resolves to a unique path, so the
+    pre-check / overwrite logic can rely on path identity == slot identity.
+    """
+
+    name_indices: dict[str, list[int]] = {}
+    for i, sf in enumerate(saved_files):
+        name_indices.setdefault(sf.name, []).append(i)
+
+    file_dir_for: dict[int, Path] = {}
+    for indices in name_indices.values():
+        if len(indices) == 1:
+            i = indices[0]
+            file_dir_for[i] = root / saved_files[i].name
+        else:
+            for ordinal, i in enumerate(indices):
+                file_dir_for[i] = root / f"{saved_files[i].name}__{ordinal:03d}"
+
+    out: dict[int, Path] = {}
+    for i, sf in enumerate(saved_files):
+        file_dir = file_dir_for[i]
+        groups: dict[tuple[str, str], list[SavedFitSlot]] = {}
+        for slot in sf.slots:
+            groups.setdefault((slot.model_name, slot.fit_type), []).append(slot)
+        for slots in groups.values():
+            need_hash = len(slots) > 1
+            for slot in slots:
+                out[id(slot)] = file_dir / _slot_dir_name(slot, need_hash)
+    return out
+
+
+#
+def _precheck_export_collisions(
+    slot_dirs: dict[int, Path],
+    overwrite: bool,
+) -> None:
+    """
+    Refuse to start the export if any target directory already has content.
+
+    Mirrors the pre-check in ``write_archive``: collect every conflict
+    before mutating the filesystem so a single blocker does not leave a
+    half-written tree. Empty directories are tolerated.
+    """
+
+    if overwrite:
+        return
+    conflicts: list[Path] = []
+    for path in slot_dirs.values():
+        if path.exists() and any(path.iterdir()):
+            conflicts.append(path)
+    if conflicts:
+        joined = "\n  ".join(str(p) for p in conflicts)
+        raise FileExistsError(
+            f"export_fits: {len(conflicts)} target director"
+            f"{'y' if len(conflicts) == 1 else 'ies'} already exist and are "
+            f"non-empty. Pass overwrite=True to replace, or choose a fresh "
+            f"root path. Conflicts:\n  {joined}"
+        )
+
+
+#
+def _clear_directory(path: Path) -> None:
+    """Remove every entry under ``path`` (one level deep is sufficient)."""
+
+    if not path.exists():
+        return
+    for child in path.iterdir():
+        if child.is_dir():
+            for sub in child.rglob("*"):
+                if sub.is_file() or sub.is_symlink():
+                    sub.unlink()
+            for sub in sorted(
+                (p for p in child.rglob("*") if p.is_dir()),
+                key=lambda p: len(p.parts),
+                reverse=True,
+            ):
+                sub.rmdir()
+            child.rmdir()
+        else:
+            child.unlink()
+
+
+#
+def _write_csv_array(
+    path: Path,
+    array: np.ndarray,
+    *,
+    num_fmt: str,
+    delim: str,
+) -> None:
+    """``np.savetxt`` with the project's number format and delimiter."""
+
+    np.savetxt(path, np.asarray(array), fmt=num_fmt, delimiter=delim)
+
+
+#
+def _write_csv_dataframe(
+    path: Path,
+    df: pd.DataFrame,
+    *,
+    num_fmt: str,
+    delim: str,
+    index: bool = False,
+) -> None:
+    """``pd.DataFrame.to_csv`` with project formatting defaults."""
+
+    df.to_csv(path, index=index, float_format=num_fmt, sep=delim)
+
+
+#
+def _metrics_to_dataframe(metrics: dict[str, Any]) -> pd.DataFrame:
+    """
+    Render a slot's ``metrics`` dict to a tidy DataFrame.
+
+    Scalar metrics → single-row DataFrame with one column per metric. SbS
+    metrics (per-slice arrays) → multi-row DataFrame indexed by slice.
+    """
+
+    sample = next(iter(metrics.values()))
+    if isinstance(sample, np.ndarray):
+        n = len(sample)
+        df = pd.DataFrame({"slice": np.arange(n)})
+        for key in _METRICS_KEYS:
+            if key in metrics:
+                df[key] = np.asarray(metrics[key])
+        return df
+    return pd.DataFrame(
+        {key: [float(metrics[key])] for key in _METRICS_KEYS if key in metrics}
+    )
+
+
+#
+def _export_1d_slot(
+    slot: SavedFitSlot,
+    saved_file: SavedFile,
+    slot_dir: Path,
+    *,
+    num_fmt: str,
+    delim: str,
+) -> None:
+    """Write CSVs for a 1D slot (baseline / spectrum)."""
+
+    energy, _ = _slot_axes(slot, saved_file)
+    fit_1d = pd.DataFrame(
+        {
+            "energy": energy,
+            "observed": np.asarray(slot.observed),
+            "fit": np.asarray(slot.fit),
+            "residual": np.asarray(slot.observed) - np.asarray(slot.fit),
+        }
+    )
+    _write_csv_dataframe(slot_dir / "fit_1d.csv", fit_1d, num_fmt=num_fmt, delim=delim)
+
+
+#
+def _export_2d_slot(
+    slot: SavedFitSlot,
+    saved_file: SavedFile,
+    slot_dir: Path,
+    *,
+    num_fmt: str,
+    delim: str,
+    plot_config: Any,
+) -> None:
+    """Write CSVs and the data/fit/residual map PNG for a 2D slot."""
+
+    energy, time = _slot_axes(slot, saved_file)
+    _write_csv_array(
+        slot_dir / "fit_2d.csv", np.asarray(slot.fit), num_fmt=num_fmt, delim=delim
+    )
+    _write_csv_array(
+        slot_dir / "observed_2d.csv",
+        np.asarray(slot.observed),
+        num_fmt=num_fmt,
+        delim=delim,
+    )
+    _write_csv_array(slot_dir / "energy.csv", energy, num_fmt=num_fmt, delim=delim)
+    _write_csv_array(slot_dir / "time.csv", time, num_fmt=num_fmt, delim=delim)
+    plt_fit_res_2d(
+        data=np.asarray(slot.observed),
+        fit=np.asarray(slot.fit),
+        x=energy,
+        y=time,
+        config=plot_config,
+        save_img=-1,  # save without display; bulk export should not pop figures
+        save_path=slot_dir,
+    )
+
+
+#
+def _export_sbs_param_evolution(
+    slot: SavedFitSlot,
+    saved_file: SavedFile,
+    slot_dir: Path,
+    *,
+    num_fmt: str,
+    delim: str,
+    plot_config: Any,
+) -> None:
+    """
+    Write ``fit_pars.csv`` (per-slice param values) and per-parameter PNGs.
+
+    Mirrors ``fitlib.results_to_df``'s output shape: columns are
+    ``[index, time, par1, par2, ...]``. Per-parameter PNGs are emitted
+    only for parameters that varied at fit time (vary=True).
+    """
+
+    params_per_slice = slot.params
+    _, time = _slot_axes(slot, saved_file)
+    n_slices = len(params_per_slice)
+    fit_pars = params_per_slice.copy()
+    time_label = (
+        getattr(plot_config, "y_label", "time") if plot_config is not None else "time"
+    )
+    fit_pars.insert(0, time_label, np.asarray(time)[:n_slices])
+    fit_pars.insert(0, "index", np.arange(n_slices))
+    _write_csv_dataframe(
+        slot_dir / "fit_pars.csv", fit_pars, num_fmt=num_fmt, delim=delim
+    )
+
+    par_cols = list(params_per_slice.columns)
+    if not par_cols:
+        return
+    plt_fit_res_pars(
+        df=params_per_slice.loc[:, par_cols],
+        x=np.asarray(time)[:n_slices],
+        config=plot_config,
+        save_img=-1,
+        save_path=slot_dir,
+    )
+
+
+#
+def _export_slot(
+    slot: SavedFitSlot,
+    saved_file: SavedFile,
+    slot_dir: Path,
+    *,
+    num_fmt: str,
+    delim: str,
+    plot_config: Any,
+) -> None:
+    """Write one slot's CSV/PNG payload into ``slot_dir`` (must exist)."""
+
+    _write_csv_dataframe(
+        slot_dir / "params.csv", slot.params, num_fmt=num_fmt, delim=delim
+    )
+    metrics_df = _metrics_to_dataframe(slot.metrics)
+    metrics_filename = (
+        "metrics_per_slice.csv" if slot.fit_type == "sbs" else "metrics.csv"
+    )
+    _write_csv_dataframe(
+        slot_dir / metrics_filename, metrics_df, num_fmt=num_fmt, delim=delim
+    )
+    if slot.conf_ci is not None and not slot.conf_ci.empty:
+        _write_csv_dataframe(
+            slot_dir / "conf_ci.csv", slot.conf_ci, num_fmt=num_fmt, delim=delim
+        )
+    if slot.mcmc is not None:
+        mcmc_dir = slot_dir / "mcmc"
+        mcmc_dir.mkdir(parents=True, exist_ok=True)
+        flatchain = slot.mcmc.get("flatchain")
+        if isinstance(flatchain, pd.DataFrame) and not flatchain.empty:
+            _write_csv_dataframe(
+                mcmc_dir / "flatchain.csv", flatchain, num_fmt=num_fmt, delim=delim
+            )
+        ci = slot.mcmc.get("ci")
+        if isinstance(ci, pd.DataFrame) and not ci.empty:
+            _write_csv_dataframe(mcmc_dir / "ci.csv", ci, num_fmt=num_fmt, delim=delim)
+
+    if slot.fit_type in ("baseline", "spectrum"):
+        _export_1d_slot(slot, saved_file, slot_dir, num_fmt=num_fmt, delim=delim)
+    elif slot.fit_type == "2d":
+        _export_2d_slot(
+            slot,
+            saved_file,
+            slot_dir,
+            num_fmt=num_fmt,
+            delim=delim,
+            plot_config=plot_config,
+        )
+    elif slot.fit_type == "sbs":
+        _export_2d_slot(
+            slot,
+            saved_file,
+            slot_dir,
+            num_fmt=num_fmt,
+            delim=delim,
+            plot_config=plot_config,
+        )
+        _export_sbs_param_evolution(
+            slot,
+            saved_file,
+            slot_dir,
+            num_fmt=num_fmt,
+            delim=delim,
+            plot_config=plot_config,
+        )
+    else:
+        raise ValueError(f"unsupported fit_type for export: {slot.fit_type!r}")
+
+
+#
+def _resolve_plot_config(
+    plot_config: Any,
+    file_name: str,
+) -> Any:
+    """
+    Pick the ``PlotConfig`` for a single ``SavedFile``.
+
+    Accepts a ``PlotConfig`` (used for every file), a ``dict`` keyed by
+    ``SavedFile.name`` (per-file lookup with default fallback for missing
+    keys), or ``None`` (default ``PlotConfig`` for everything).
+    """
+
+    if isinstance(plot_config, dict):
+        cfg = plot_config.get(file_name)
+        if cfg is not None:
+            return cfg
+        plot_config = None
+    if plot_config is None:
+        from trspecfit.config.plot import PlotConfig
+
+        return PlotConfig()
+    return plot_config
+
+
+#
+def write_csv_export(
+    root: PathLike | str,
+    *,
+    project: SavedProject,
+    num_fmt: str = "%.6e",
+    delim: str = ",",
+    plot_config: Any = None,
+    overwrite: bool = False,
+) -> int:
+    """
+    Serialize a ``SavedProject`` to a CSV/PNG export tree.
+
+    Layout: ``<root>/<file_name>/<model_name>__<fit_type>[__<hash>]/``.
+    The ``__<hash>`` suffix appears only when more than one slot shares
+    the ``(file, model, fit_type)`` triple (i.e. multiple selections in
+    the snapshot); the suffix is the first 8 chars of ``history_key``.
+    When two ``SavedFile`` records share a ``name``, every entry in the
+    colliding group gets a positional ordinal suffix (``__000``,
+    ``__001``, ...) so byte-identical records (same fingerprint *and*
+    ``original_path``) still resolve to distinct directories.
+
+    Parameters
+    ----------
+    root : path
+        Output directory; created if missing.
+    project : SavedProject
+        Already filtered + collapsed by the caller (see
+        ``Project.export_fits``).
+    num_fmt, delim : str
+        Number format and delimiter for ``np.savetxt`` /
+        ``DataFrame.to_csv``.
+    plot_config : PlotConfig | dict[str, PlotConfig] | None
+        Drives PNG styling.
+
+        - ``PlotConfig`` — applied to every file.
+        - ``dict[file_name, PlotConfig]`` — per-file lookup; missing keys
+          fall back to a default ``PlotConfig``.
+        - ``None`` — default ``PlotConfig`` for all files.
+
+        ``Project.export_fits`` builds the dict form by reading each live
+        ``File.plot_config``, so per-file styling is preserved.
+    overwrite : bool, default False
+        Per-slot directory: a non-empty target dir raises
+        ``FileExistsError`` unless True. Pre-checked across all slots
+        before any writes.
+
+    Returns
+    -------
+    int
+        Number of slot directories written.
+    """
+
+    root_path = Path(root)
+    root_path.mkdir(parents=True, exist_ok=True)
+
+    slot_dirs = _resolve_export_dirs(project.files, root_path)
+    _precheck_export_collisions(slot_dirs, overwrite=overwrite)
+
+    written_paths: set[Path] = set()
+    n_written = 0
+    for sf in project.files:
+        sf_plot_config = _resolve_plot_config(plot_config, sf.name)
+        for slot in sf.slots:
+            slot_dir = slot_dirs[id(slot)]
+            if slot_dir in written_paths:
+                # _resolve_export_dirs is supposed to return a unique path
+                # per slot; this asserts the invariant rather than silently
+                # overwriting earlier slots' output (the bug fixed by the
+                # SavedFile-name disambiguation above).
+                raise RuntimeError(
+                    f"export_fits internal error: two slots resolved to the "
+                    f"same output directory {slot_dir!s}. Please report."
+                )
+            written_paths.add(slot_dir)
+            if slot_dir.exists() and any(slot_dir.iterdir()):
+                # overwrite=True path; pre-check has already ruled out the
+                # overwrite=False case.
+                _clear_directory(slot_dir)
+            slot_dir.mkdir(parents=True, exist_ok=True)
+            _export_slot(
+                slot,
+                sf,
+                slot_dir,
+                num_fmt=num_fmt,
+                delim=delim,
+                plot_config=sf_plot_config,
+            )
+            n_written += 1
+    return n_written

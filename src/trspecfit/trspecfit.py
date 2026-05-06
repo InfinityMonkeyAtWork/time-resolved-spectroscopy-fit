@@ -329,6 +329,142 @@ class Project:
         "Out of scope").
         """
 
+        project = self._build_saved_project_from_history(
+            file=file, model=model, fit_type=fit_type
+        )
+        if project is None:
+            if show_output:
+                print("No fit slots match the filter; nothing to save.")
+            return
+
+        if filepath is None:
+            path = pathlib.Path("fit_results") / f"{self.name}.fit.h5"
+        else:
+            path = pathlib.Path(filepath)
+
+        fit_io.write_archive(path, project=project, overwrite=overwrite)
+        if show_output:
+            n_slots = sum(len(sf.slots) for sf in project.files)
+            print(
+                f"Saved {n_slots} slot(s) across {len(project.files)} file(s) to {path}"
+            )
+
+    #
+    def export_fits(
+        self,
+        filepath: PathLike | str | None = None,
+        *,
+        format: Literal["csv"] = "csv",
+        file: "int | str | File | Sequence[int | str | File] | None" = None,
+        model: str | Sequence[str] | None = None,
+        fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        overwrite: bool = False,
+        show_output: int = 1,
+    ) -> None:
+        """
+        Export filtered fit slots from ``_fit_history`` as a CSV/PNG tree.
+
+        Same filter + snapshot-collapse pipeline as :meth:`save_fits`, but
+        the output is a directory of human-readable artifacts rather than
+        an HDF5 archive. One-way export — there is no ``load`` counterpart;
+        round-tripping fits to disk is HDF5's job (use ``save_fits`` /
+        ``load_fits`` for that).
+
+        Parameters
+        ----------
+        filepath : path, optional
+            Output directory. Default: ``./fit_results/<project_name>``.
+            Created if missing.
+        format : {"csv"}, default ``"csv"``
+            Reserved kwarg; only CSV is implemented in v1.
+        file, model, fit_type :
+            Filters; same semantics as :meth:`save_fits`.
+        overwrite : bool, default False
+            Per-slot directory: a non-empty target dir raises
+            ``FileExistsError`` unless True. Pre-checked across all slots
+            before any writes (single conflict aborts the entire export).
+        show_output : int, default 1
+            ``0`` to silence the per-call summary line.
+
+        Output layout
+        -------------
+        ``<filepath>/<file_name>/<model_name>__<fit_type>[__<hash>]/``
+        with ``params.csv``, ``metrics.csv`` (or
+        ``metrics_per_slice.csv`` for SbS), ``conf_ci.csv`` /
+        ``mcmc/flatchain.csv`` when present, plus per-fit-type artifacts:
+
+        - **baseline / spectrum**: ``fit_1d.csv`` (energy, observed, fit,
+          residual).
+        - **2d / sbs**: ``fit_2d.csv``, ``observed_2d.csv``,
+          ``energy.csv``, ``time.csv``, ``2D_data_fit_res.png``.
+        - **sbs only**: ``fit_pars.csv`` (per-slice param values) and one
+          PNG per parameter from ``plt_fit_res_pars``.
+
+        The ``__<hash>`` directory suffix appears only when more than one
+        slot in the snapshot shares ``(file, model, fit_type)`` (i.e.
+        different selections); the hash is the first 8 chars of
+        ``history_key``.
+        """
+
+        if format != "csv":
+            raise ValueError(
+                f"Unsupported export format: {format!r}. Only 'csv' is "
+                f"implemented in v1."
+            )
+
+        project = self._build_saved_project_from_history(
+            file=file, model=model, fit_type=fit_type
+        )
+        if project is None:
+            if show_output:
+                print("No fit slots match the filter; nothing to export.")
+            return
+
+        if filepath is None:
+            root = pathlib.Path("fit_results") / self.name
+        else:
+            root = pathlib.Path(filepath)
+
+        # Per-file plot_config preserves File.plot_config customizations
+        # (axis labels, colormaps, etc.) — File.save_sbs_fit / save_2d_fit
+        # used self.plot_config for plotting, and we keep that contract.
+        plot_configs: dict[str, Any] = {}
+        for sf in project.files:
+            live = self._find_file_for_slot(sf.slots[0])
+            if live is not None and live.plot_config is not None:
+                plot_configs[sf.name] = live.plot_config
+        n_written = fit_io.write_csv_export(
+            root,
+            project=project,
+            num_fmt=self.num_fmt,
+            delim=self.delim,
+            plot_config=plot_configs,
+            overwrite=overwrite,
+        )
+        if show_output:
+            print(
+                f"Exported {n_written} slot(s) across {len(project.files)} "
+                f"file(s) to {root}"
+            )
+
+    #
+    def _build_saved_project_from_history(
+        self,
+        *,
+        file: "int | str | File | Sequence[int | str | File] | None",
+        model: str | Sequence[str] | None,
+        fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None,
+    ) -> fit_io.SavedProject | None:
+        """
+        Apply the standard filter + collapse pipeline to ``_fit_history``
+        and return a fully-populated ``SavedProject``.
+
+        Returns ``None`` when no slots survive the filter so callers can
+        emit a "nothing to do" message and short-circuit. Used by
+        :meth:`save_fits` and :meth:`export_fits` so both go through the
+        identical filter / collapse / file-grouping logic.
+        """
+
         file_ids = self._resolve_save_file_filter(file)
         models_filter = _to_str_set(model)
         types_filter = _to_str_set(fit_type)
@@ -346,9 +482,7 @@ class Project:
 
         snapshot = fit_io.collapse_history_to_snapshot(filtered)
         if not snapshot:
-            if show_output:
-                print("No fit slots match the filter; nothing to save.")
-            return
+            return None
 
         # Group slots by source file identity (fingerprint + file_name) so
         # two distinct Project.files with byte-identical raw arrays but
@@ -366,7 +500,7 @@ class Project:
             if live is None:
                 raise ValueError(
                     f"Slot for file {slots[0].file_name!r} has no matching "
-                    f"Project.files entry; cannot read raw arrays for save. "
+                    f"Project.files entry; cannot read raw arrays. "
                     f"Re-attach the file or filter it out."
                 )
             assert live.data is not None  # type guard
@@ -391,13 +525,8 @@ class Project:
                 )
             )
 
-        if filepath is None:
-            path = pathlib.Path("fit_results") / f"{self.name}.fit.h5"
-        else:
-            path = pathlib.Path(filepath)
-
         now = fit_io._now_iso()
-        project = fit_io.SavedProject(
+        return fit_io.SavedProject(
             name=self.name,
             trspecfit_version=_trspecfit_version(),
             schema_version=fit_io.SCHEMA_VERSION,
@@ -405,12 +534,6 @@ class Project:
             timestamp_updated=now,
             files=tuple(saved_files),
         )
-        fit_io.write_archive(path, project=project, overwrite=overwrite)
-        if show_output:
-            print(
-                f"Saved {len(snapshot)} slot(s) across {len(saved_files)} "
-                f"file(s) to {path}"
-            )
 
     #
     def load_fits(
