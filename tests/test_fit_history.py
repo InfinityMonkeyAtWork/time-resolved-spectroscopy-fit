@@ -1074,3 +1074,291 @@ class TestFitResultsPlotResiduals:
                 file=None,
                 show_plot=False,  # type: ignore[arg-type]
             )
+
+
+#
+# --- multi-fit history accumulation + snapshot-collapse on save -------------
+#
+
+
+#
+class TestHistoryAccumulationAndSnapshot:
+    """Multi-fit history accumulation, in-session multi-version visibility,
+    and snapshot-collapse-on-save.
+
+    PLAN ask: fit modelA-baseline, fit modelB-baseline, refit modelA-baseline.
+    History has *all three* slots; ``Project.results`` exposes them.
+    ``save_fits`` (snapshot mode) collapses to two — one per ``history_key``,
+    latest wins.
+    """
+
+    #
+    @staticmethod
+    def _two_model_fit_file(project):
+        """Build a fit file with two distinct energy models registered.
+
+        Both ``single_glp`` and ``two_glp_expr_amplitude`` fit cleanly on
+        the [82, 92] axis; quality-of-fit is irrelevant here — what matters
+        is that both ``model_name`` strings produce valid baseline slots
+        with distinct ``history_key`` values.
+        """
+
+        truth_project = make_project(name="truth_two_model")
+        truth = File(
+            parent_project=truth_project,
+            name="truth",
+            energy=np.linspace(82, 92, 30),
+            time=np.linspace(-2, 10, 24),
+        )
+        truth.dim = 2
+        truth.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+        data = simulate_noisy(truth.model_active, noise_level=0.01)
+
+        file = File(
+            parent_project=project,
+            name="fit_two_model",
+            data=data,
+            energy=truth.energy.copy(),
+            time=truth.time.copy(),
+        )
+        file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+        file.load_model(
+            model_yaml="models/file_energy.yaml",
+            model_info="two_glp_expr_amplitude",
+        )
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+        return file
+
+    #
+    def test_history_holds_all_completed_fits(self):
+        """fit modelA → fit modelB → refit modelA accumulates 3 slots."""
+
+        project = make_project(name="acc")
+        file = self._two_model_fit_file(project)
+
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        file.fit_baseline(model_name="two_glp_expr_amplitude", stages=1, try_ci=0)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+
+        assert len(project._fit_history) == 3
+        names_in_order = [s.model_name for s in project._fit_history]
+        assert names_in_order == [
+            "single_glp",
+            "two_glp_expr_amplitude",
+            "single_glp",
+        ]
+
+    #
+    def test_results_exposes_all_history_entries(self):
+        """``Project.results`` mirrors ``_fit_history`` slot-for-slot."""
+
+        project = make_project(name="acc_results")
+        file = self._two_model_fit_file(project)
+
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        file.fit_baseline(model_name="two_glp_expr_amplitude", stages=1, try_ci=0)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+
+        results = project.results
+        assert len(results) == 3
+        # find() exposes both refits when narrowed to modelA.
+        single_glp_slots = results.find(
+            file=file.name, model="single_glp", fit_type="baseline"
+        )
+        assert len(single_glp_slots) == 2
+        # The two refits share a history_key (same fit_view, same model).
+        assert single_glp_slots[0].history_key == single_glp_slots[1].history_key
+        # The cross-model slot has a distinct history_key.
+        cross = results.find(
+            file=file.name,
+            model="two_glp_expr_amplitude",
+            fit_type="baseline",
+        )
+        assert len(cross) == 1
+        assert cross[0].history_key != single_glp_slots[0].history_key
+
+    #
+    def test_save_fits_collapses_refits_to_latest_per_key(self, tmp_path):
+        """Snapshot save keeps one slot per ``history_key`` (latest wins)."""
+
+        project = make_project(name="acc_save")
+        file = self._two_model_fit_file(project)
+
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        file.fit_baseline(model_name="two_glp_expr_amplitude", stages=1, try_ci=0)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        # _fit_history has 3; the two single_glp slots share a history_key.
+        assert len(project._fit_history) == 3
+
+        # Stamp the duplicate-key slots with deterministic sentinels so the
+        # latest-wins assertion does not depend on second-resolution wall
+        # clocks. ``_now_iso()`` is per-second, so two fits inside the same
+        # second would silently weaken the assertion (both "earlier" and
+        # "later" timestamps would compare equal). ``dataclasses.replace``
+        # works on the frozen SavedFitSlot.
+        from dataclasses import replace
+
+        project._fit_history[0] = replace(
+            project._fit_history[0], timestamp="2026-01-01T00:00:00+00:00"
+        )
+        project._fit_history[2] = replace(
+            project._fit_history[2], timestamp="2026-01-01T00:00:01+00:00"
+        )
+
+        archive_path = tmp_path / "snapshot.fit.h5"
+        project.save_fits(archive_path, show_output=0)
+        loaded = FitResults.load(archive_path)
+        # Snapshot collapses the duplicate-key pair → 2 distinct slots.
+        assert len(loaded) == 2
+        keys_in_archive = {s.history_key for s in loaded}
+        assert keys_in_archive == {
+            project._fit_history[0].history_key,
+            project._fit_history[1].history_key,
+        }
+
+        # Latest-wins: collapse must keep the third fit (slot[2]), not the
+        # first (slot[0]) — proved by the sentinel timestamp regardless of
+        # clock resolution.
+        loaded_single = next(s for s in loaded if s.model_name == "single_glp")
+        assert loaded_single.timestamp == "2026-01-01T00:00:01+00:00"
+
+
+#
+# --- selection-identity: refits with different views → distinct slots --------
+#
+
+
+#
+class TestSelectionIdentity:
+    """Refits with different fit-view selections must produce distinct
+    ``history_key`` values and survive snapshot save as separate slots.
+
+    Covers each fit_type's selection-identity field:
+
+    - baseline: ``base_t_ind`` (time window averaged for ``data_base``)
+    - sbs:      ``e_lim`` / ``t_lim``
+    - 2d:       ``e_lim`` / ``t_lim``
+    - spectrum: ``time_point`` is already covered in ``TestSpectrumSlot``
+    """
+
+    #
+    @staticmethod
+    def _basic_2d_fit_file(project):
+        """1D-fittable 2D file with single_glp and a wide enough baseline."""
+
+        truth_project = make_project(name="truth_sel")
+        truth = _make_truth_file(truth_project)
+        data = simulate_noisy(truth.model_active, noise_level=0.01)
+
+        file = _make_fit_file(project, data, truth.energy, truth.time)
+        return file
+
+    #
+    def test_baseline_refit_with_different_base_t_ind_distinct(self, tmp_path):
+        """Different ``base_t_ind`` → distinct ``history_key``; snapshot keeps both."""
+
+        project = make_project(name="sel_base")
+        file = self._basic_2d_fit_file(project)
+
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        first_key = project._fit_history[0].history_key
+
+        file.define_baseline(
+            time_start=0, time_stop=2, time_type="ind", show_plot=False
+        )
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+
+        keys = [s.history_key for s in project._fit_history]
+        assert keys[0] != keys[1]
+        assert keys[0] == first_key
+        # selection captures the inclusive→exclusive index slice.
+        assert project._fit_history[0].selection["base_t_ind"] == [0, 4]
+        assert project._fit_history[1].selection["base_t_ind"] == [0, 3]
+
+        # Snapshot save preserves both — no collapse since keys differ.
+        archive_path = tmp_path / "base_t_ind.fit.h5"
+        project.save_fits(archive_path, show_output=0)
+        loaded = FitResults.load(archive_path)
+        assert len(loaded) == 2
+        assert {s.history_key for s in loaded} == set(keys)
+
+    #
+    def test_sbs_refit_with_different_e_lim_distinct(self, tmp_path):
+        """SbS refit with a different ``e_lim`` → distinct slots."""
+
+        project = make_project(name="sel_sbs")
+        project.spec_fun_str = "fit_model_mcp"
+        file = self._basic_2d_fit_file(project)
+
+        file.fit_slice_by_slice(
+            "single_glp",
+            n_workers=1,
+            seed_source="model",
+            seed_adapt=None,
+            try_ci=0,
+        )
+        # Refit with a tighter e_lim. Set both index and absolute parallels.
+        file.e_lim = [5, 25]
+        file.e_lim_abs = [float(file.energy[5]), float(file.energy[24])]
+        file.fit_slice_by_slice(
+            "single_glp",
+            n_workers=1,
+            seed_source="model",
+            seed_adapt=None,
+            try_ci=0,
+        )
+
+        keys = [s.history_key for s in project._fit_history]
+        assert len(keys) == 2
+        assert keys[0] != keys[1]
+        # File constructor pre-fills e_lim with the full range via
+        # set_fit_limits, so the first fit's selection is not None.
+        assert project._fit_history[0].selection["e_lim"] == [0, len(file.energy)]
+        assert project._fit_history[1].selection["e_lim"] == [5, 25]
+
+        archive_path = tmp_path / "sbs_e_lim.fit.h5"
+        project.save_fits(archive_path, show_output=0)
+        loaded = FitResults.load(archive_path)
+        assert len(loaded) == 2
+
+    #
+    def test_2d_refit_with_different_t_lim_distinct(self, tmp_path):
+        """2D refit with a different ``t_lim`` → distinct slots."""
+
+        project = make_project(name="sel_2d")
+        file = self._basic_2d_fit_file(project)
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        # Add dynamics so fit_2d is valid.
+        file.add_time_dependence(
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml="models/file_time.yaml",
+            dynamics_model=["MonoExpPos"],
+        )
+        file.fit_2d("single_glp", stages=1, try_ci=0)
+        # Refit with a tighter t_lim covering the post-trigger half.
+        file.t_lim = [4, 24]
+        file.t_lim_abs = [float(file.time[4]), float(file.time[23])]
+        file.fit_2d("single_glp", stages=1, try_ci=0)
+
+        twod_slots = [s for s in project._fit_history if s.fit_type == "2d"]
+        assert len(twod_slots) == 2
+        assert twod_slots[0].history_key != twod_slots[1].history_key
+        # File constructor pre-fills t_lim with the full range; the second
+        # fit narrows it. The two distinct t_lim values must produce two
+        # distinct history_keys.
+        assert twod_slots[0].selection["t_lim"] == [0, len(file.time)]
+        assert twod_slots[1].selection["t_lim"] == [4, 24]
+
+        archive_path = tmp_path / "2d_t_lim.fit.h5"
+        project.save_fits(archive_path, fit_type="2d", show_output=0)
+        loaded = FitResults.load(archive_path)
+        assert len(loaded) == 2

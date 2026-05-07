@@ -104,6 +104,73 @@ integration for ML training-data generation, and HDF5 export. Use here
 for testing, fit-pipeline validation, identifiability studies, and
 training-data synthesis.
 
+### `fit_results.py` — completed-fit inspection / comparison
+
+User-facing `FitResults` class — the immutable view over a list of
+`SavedFitSlot`. Two construction paths: `FitResults.load(path)` for
+loaded archives and the `Project.results` property for in-session work.
+A `FitResults` is frozen at construction (the underlying slot list is
+copied), so `r1 = p.results; <run another fit>; r2 = p.results` gives
+two distinct snapshots — `r1` does not see the new slot. Query API:
+`find` / `get` / `files` / `models` / iteration. Comparison:
+`compare_models` (returns a metrics DataFrame; refuses to compare
+slots whose `observed_sha256` differs on the same `(file, fit_type)`)
+and `plot_residuals` (smoke-test-grade panels, no energy/time labels —
+slots don't carry parent-file axes). The save/export side lives in
+`utils/fit_io.py`; this module is read-only on top of those slots.
+
+## Fit results: save / export / load architecture
+
+The fit-output persistence layer is **slot-driven**, not model-walking.
+Once a fit completes, the result is captured eagerly into a
+`SavedFitSlot` (one per `(file, model, fit_type, selection)`); everything
+downstream — save, export, in-session comparison, archive load — reads
+slots, never live `Model.result`.
+
+```
+fit_baseline / fit_spectrum /                ┌──────────────────────────┐
+fit_slice_by_slice / fit_2d  ────► result ───►  _slot_from_<fit_type>   │
+                                              │   (eager extraction in  │
+                                              │    utils/fit_io.py)     │
+                                              └────────────┬────────────┘
+                                                           │
+                                                           ▼
+                                            Project._fit_history (append-only log)
+                                                           │
+                                       ┌───────────────────┼──────────────────────┐
+                                       ▼                   ▼                      ▼
+                       Project.results (wrapper)  Project.save_fits        Project.export_fits
+                                                  (filter + snapshot       (filter + CSV/PNG
+                                                   collapse → HDF5)         tree)
+
+HDF5 archive ────► reader ────► FitResults (FitResults.load / Project.load_fits)
+                                Independent of _fit_history; never merged in.
+```
+
+**Two different I/O directions, two different surfaces:**
+
+- **Save / load** (round-trippable): `Project.save_fits(path)` →
+  HDF5 archive; `FitResults.load(path)` (or the equivalent
+  `Project.load_fits(path)` convenience) deserializes back. Schema in
+  [fit_archive_schema.md](fit_archive_schema.md). Append-mode by default;
+  slot-scoped overwrite.
+- **Export** (one-way): `Project.export_fits(path, format="csv")` →
+  directory of human-readable CSVs and PNGs. No `load` counterpart —
+  round-tripping fits is HDF5's job.
+
+`File.save_fit` / `File.export_fit` / `File.compare_models` are
+one-line delegates to the corresponding `Project.*` / `FitResults.*`
+methods. There is no `File.load_fit`: load is path-scoped, not file-scoped.
+
+The legacy `File.save_sbs_fit` / `File.save_2d_fit` are deprecated
+aliases that emit `DeprecationWarning` and forward to the new
+`File.export_fit`. The legacy on-disk layout is preserved internally
+by `_save_sbs_fit_legacy` / `_save_2d_fit_legacy`, which are still
+called from inside `fit_slice_by_slice` / `fit_2d` / `Project.fit_2d`
+on every fit (the auto-export side effect — opt-out is deferred per
+PLAN). Both are scheduled for removal before v1.0.0; new code should
+use `Project.export_fits` / `File.export_fit`.
+
 ## `config/` — runtime configuration
 
 ### `config/functions.py`
@@ -175,6 +242,24 @@ Typed HDF5 helpers. `require_group`, `require_dataset`, `json_loads_attr`.
 All HDF5 I/O in the repo should go through these rather than raw
 `h5py` calls — they normalize attribute types across numpy/bytes/str.
 
+### `utils/fit_io.py`
+
+Fit-results persistence. Owns the `SavedProject` / `SavedFile` /
+`SavedFitSlot` dataclasses (the on-disk data model), the four
+per-fit-type slot extractors (`_slot_from_baseline`,
+`_slot_from_spectrum`, `_slot_from_sbs`, `_slot_from_2d` — all called
+once at fit completion with copied snapshot args, never live `Model`
+references), the identity helpers (`compute_file_fingerprint`,
+`compute_history_key`, `compute_archive_slot_key`,
+`build_selection_json`, `compute_observed_sha256`), the
+snapshot-collapse helper (`collapse_history_to_snapshot`), and the
+HDF5 reader/writer (`read_archive`, `write_archive`) plus the CSV/PNG
+exporter (`write_csv_export`). The `SavedFitSlot` is the **single
+source of truth for completed-fit state** — neither `Model` nor `File`
+carries observed/fit/metrics. New persistence work lands here, not in
+`fitlib` or `trspecfit.py`. See `docs/design/fit_archive_schema.md`
+for the on-disk schema.
+
 ### `utils/lmfit.py`
 
 lmfit-parameter plumbing. Parameter construction, extraction, conversion
@@ -218,7 +303,12 @@ For a 2D fit via `File.fit_2d`:
 4. `evaluate_2d` produces the model spectrum using only the plan arrays
    and the parameter vector — no mcp objects touched in the hot path.
 5. After the fit: confidence intervals / MCMC / plotting run in
-   `fitlib`, and results are exported via `Project` paths.
+   `fitlib`. The completed result is then captured eagerly into a
+   `SavedFitSlot` via `utils/fit_io.py` and appended to
+   `Project._fit_history`; that slot is what `Project.results`,
+   `Project.save_fits`, and `Project.export_fits` operate on. Live
+   `Model.result` is never re-read by these paths — see
+   "Fit results: save / export / load architecture" above.
 
 Models outside the current compiled support set (see
 [supported_models.md](supported_models.md)) fall back to the mcp reference
@@ -231,7 +321,8 @@ evaluator. New features are generally prototyped on that slow path first.
 - **New user-facing method on a file** → `File` in `trspecfit.py`.
 - **New model composition rule** → mcp first; update `supported_models.md`; lower into `graph_ir` once stable.
 - **New plot style / axis logic** → `utils/plot.py`, driven by `PlotConfig`.
-- **New fit-result post-processing (CI, exports, plots)** → `fitlib.py`.
+- **New fit-result post-processing (CI, MCMC, in-fit plots)** → `fitlib.py`.
+- **New fit-archive field, exporter format, or comparison metric** → `utils/fit_io.py` (data model + writer/reader + CSV exporter) and `fit_results.py` (query / `compare_models`). Slot extraction stays in `utils/fit_io.py`; the four `_append_<fit_type>_slot` call sites in `trspecfit.py` should not be replicated elsewhere.
 - **New simulator feature / sampling strategy** → `simulator.py` / `utils/sweep.py`.
 - **New HDF5 I/O** → go through `utils/hdf5.py` helpers.
 - **Performance optimization of an existing feature** → lower into `graph_ir` / `eval_*`. Do **not** optimize mcp.

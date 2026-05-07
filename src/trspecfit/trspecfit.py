@@ -2830,13 +2830,6 @@ class File:
         )
 
     #
-    def load_fit(self) -> None:
-        """
-        TODO: Do this instead of refitting to try out different models?
-        Probably needed to compare fits anyway!
-        """
-
-    #
     # ------------------------------------------------------------------
     # Deprecated aliases — scheduled for removal before v1.0.0.
     # See TODO.md "Build & release → Remove legacy/backwards-compat code".

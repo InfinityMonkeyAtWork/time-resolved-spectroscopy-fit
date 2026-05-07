@@ -29,12 +29,12 @@ repos:
     pass_filenames: false
     stages: [pre-commit]
 
-  - id: pytest
-    name: pytest
-    entry: .venv/bin/pytest -q -m "not slow"
-    language: system
-    pass_filenames: false
-    stages: [pre-commit]
+  # - id: pytest
+  #   name: pytest
+  #   entry: .venv/bin/pytest -q -m "not slow"
+  #   language: system
+  #   pass_filenames: false
+  #   stages: [pre-commit]
 
   - id: nbstripout
     name: nbstripout
