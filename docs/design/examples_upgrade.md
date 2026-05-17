@@ -1,0 +1,369 @@
+# Examples Upgrade Plan
+
+Design note for a future branch that reorganizes the example notebooks around
+the way users actually approach the package. This is deliberately separate from
+the fit-results save/load branch: the current branch should finish the archive
+feature with minimal examples/docs coverage, then merge. The broader examples
+upgrade is a teaching and UX project with enough file movement and narrative
+work to deserve its own branch.
+
+## Decisions (locked)
+
+- Track-based navigation replaces the linear "walk forward" path. The
+  quickstart still recommends `01_basic_fitting` as the first notebook, but
+  does not imply that every user should walk every example in order.
+- Top-level directories for this examples-upgrade pass: `fitting_workflows/`
+  (existing name kept) and `synthetic_data/` (renamed from
+  `data_generation/`). No `data_preparation/` track in this pass.
+- Inside `fitting_workflows/`, layout is flat with three numeric blocks:
+  **01–04** = fitting skills on a single file; **10** = post-fit comparison;
+  **20+** = multi-file workflows. `fitting_workflows/README.md` documents the
+  legend.
+- Casual user's mental model = `File`. `file.save_fit()` saves a snapshot of
+  completed fits for this file, keeping the latest slot per model / fit type /
+  selection (snapshot semantics inherited from `Project.save_fits`). It is the
+  casual user's "save all current fits for this file" API.
+- Model comparison (`FitResults.load` + `compare_models`) is its own notebook
+  (`10_model_comparison`), **not** part of `01_basic_fitting` — comparison
+  requires fitting two models, which doubles the cognitive load of the basic
+  notebook.
+- Export terminology: **export** = one-way CSV/PNG for humans + tools like
+  Origin; **save/load** = HDF5 round-trip via the `FitResults` archive.
+- A `Project(auto_export=...)` opt-in toggle (default `ON`, backward
+  compatible) is planned. Implementation tracked alongside the examples-upgrade
+  work; the basic notebook documents the side-effect and shows the opt-out.
+
+## Motivation
+
+The fit-results work introduces a clearer split between:
+
+- `File` as the natural surface for fitting and exporting one dataset.
+- `Project` as configuration, workspace, multi-file coordination, and archive
+  ownership.
+- `FitResults` as the inspection/comparison object for completed fits.
+
+The examples should reinforce that split. Users who are thinking "fit file 1,
+export the fit, load it into Origin" should not feel that they need to
+understand the full `Project` model. Power users should still have a clear path
+to multi-file fitting, project-level shared fits, archives, and model
+comparison.
+
+## Current State
+
+The examples are currently organized as:
+
+```text
+examples/
+  data_generation/
+    simulator/
+    ml_training/
+  fitting_workflows/
+    01_basic_fitting/
+    02_dependent_parameters/
+    03_multi_cycle/
+    04_par_profiles/
+    05_project_level_fitting/
+```
+
+This is already close in one respect: simulation and ML training data are
+separate from fitting. The weakness is that all fitting notebooks live in one
+linear sequence, even though they represent different user mindsets:
+
+- Single-file fitting skills (`01` through `04`).
+- Post-fit comparison (currently absent).
+- Multi-file / project-level fitting (`05`, with no bridge between the
+  single-file basics and full project-level shared fits).
+
+The current quickstart also tells users to start at `01` and work forward. That
+is useful for a tutorial path, but less useful once examples cover multiple
+tracks.
+
+## User Workflows
+
+### Single-file / Origin-style user
+
+This user has one processed dataset and wants to fit it, export tables/plots,
+and keep working in external tools.
+
+Primary API:
+
+```python
+file.fit_baseline(...)
+file.fit_2d(...)
+file.export_fit()                       # CSV + PNG, Origin-friendly
+file.save_fit()                         # HDF5 archive snapshot for this file
+file.get_fit_results(fit_type="2d")
+```
+
+The `Project` should appear as setup/context, not as the main conceptual object.
+For this user, `Project` is mostly where config, paths, plotting defaults, and
+model files live.
+
+### Multi-file individual fitting user
+
+This user has several files but wants to fit each file separately. They want a
+shared loop, consistent settings, per-file exports, and a summary view.
+
+Primary API:
+
+```python
+project = trspecfit.Project(...)
+files = [...]
+
+for file in files:
+    file.fit_baseline(...)
+    file.fit_2d(...)
+
+project.export_fits()                              # one coherent tree across files
+project.save_fits()                                # one portable HDF5 for the batch
+project.results.compare_models(file=files[0], ...)
+```
+
+This is the bridge workflow: `Project` is useful as a collection and session
+workspace, but each fit remains file-scoped.
+
+### Project-level / shared-fit user
+
+This user intentionally wants shared parameters across multiple files and is
+ready for `Project` to be an active fitting object.
+
+Primary API:
+
+```python
+project.fit_2d(...)
+project.save_fits(...)
+project.results.compare_models(...)
+```
+
+This workflow is more complex and should come after multi-file individual
+fitting, not immediately after single-file basics.
+
+### Synthetic-data / ML user
+
+This user is working with forward simulation, validation, or training data.
+They are not preparing experimental data and not primarily fitting an existing
+file. The current simulator and ML training notebooks belong together.
+
+## Proposed Directory Layout
+
+```text
+examples/
+  fitting_workflows/                              # existing name kept
+    01_basic_fitting/                             # block 0x: fitting skills (single-file)
+    02_dependent_parameters/
+    03_multi_cycle_dynamics/                      # renamed from 03_multi_cycle
+    04_parameter_profiles/                        # renamed from 04_par_profiles
+    10_model_comparison/                          # block 1x: comparison (NEW)
+    20_fit_each_separately/                       # block 2x: multi-file (NEW, bridge)
+    21_project_level_shared_fit/                  # was 05_project_level_fitting
+  synthetic_data/                                 # renamed from data_generation
+    01_simulator/
+    02_ml_training_data/
+```
+
+Numbering convention documented in `fitting_workflows/README.md`:
+
+- **0x** — fitting skills on a single file.
+- **1x** — post-fit comparison.
+- **2x** — multi-file workflows.
+
+The flat layout with three numeric blocks keeps alphabetical sort intact while
+making the category structure visible without an extra directory level.
+Numbering restarts at the next block boundary as new notebooks are added
+within a category.
+
+## Notebook Content Targets
+
+### `fitting_workflows/01_basic_fitting`
+
+Core "one file" story:
+
+- Load processed `data`, `energy`, and `time`.
+- Fit baseline, optional slice-by-slice, and 2D model.
+- Show `file.get_fit_results(...)`.
+- Show `file.export_fit()` as the Origin-friendly CSV/PNG workflow.
+- Show `file.save_fit()` as the archive-snapshot persistence (keeps the latest
+  slot per model / fit type / selection for this file).
+- **Callout**: `fit_*` methods currently auto-write CSVs/PNGs to
+  `project.path_results` on completion. The notebook explains this and notes
+  that a `Project(auto_export=False)` opt-out is planned; usage of both
+  defaults and the opt-out should be visible.
+- **Out of scope here**: `FitResults.load` and `compare_models` — those move
+  to `10_model_comparison` so this notebook stays focused on the casual user's
+  single-file path.
+
+### `fitting_workflows/10_model_comparison`
+
+Post-fit comparison story (NEW):
+
+- Two models, one file. Compress the fitting cells — readers have seen the
+  fit API in 01–04, so this notebook glosses over fitting and focuses on
+  comparison.
+- In-session comparison via `project.results.compare_models(...)` and the
+  sugar delegate `file.compare_models(modelA, modelB)`.
+- Round-trip: fit both models first, then write one archive snapshot with
+  `file.save_fit("comparison.fit.h5")` → reload via `FitResults.load(path)` →
+  repeat comparison without a live `Project`. Avoid teaching repeated writes to
+  the same default archive until overwrite/filtering behavior is the topic.
+- Briefly show `compare_models` aggregation modes (default `median` vs `long`
+  for per-slice rows).
+
+### `fitting_workflows/20_fit_each_separately`
+
+Bridge story (NEW):
+
+- One model definition and one set of fit limits applied across N files
+  (avoids the duplicated setup code a bare `for file in files: ...` loop
+  would require without `Project`).
+- `project.export_fits()` produces a single coherent directory tree
+  (`<root>/<file_name>/<model>__<fit_type>/...`) — easier to diff or zip than
+  N separate per-file dumps.
+- `project.results.compare_models(file=...)` works across the full batch,
+  including replicates of the same physical sample.
+- `project.save_fits(path)` packages the whole batch into one portable HDF5.
+- Concrete contrast: mention what is lost when running the loop without
+  `Project` (the four points above) — makes the value prop explicit rather
+  than implicit.
+
+This notebook makes the distinction clear: multi-file workspace does not
+necessarily mean shared/project-level fitting.
+
+### `fitting_workflows/21_project_level_shared_fit`
+
+Power-user story:
+
+- Load multiple related datasets.
+- Define shared and per-file parameters.
+- Run `project.fit_2d(...)`.
+- Save/archive results with `project.save_fits(...)`.
+- Compare/inspect via `project.results` or loaded `FitResults`.
+
+This is where `Project` becomes the main object. The notebook should note that
+the joint multi-file residual is currently in MVP state: it is not yet lowered
+to GIR (see `TODO.md`), which is the source of the slowness — not a permanent
+characterization.
+
+### `synthetic_data`
+
+Forward-model story:
+
+- `01_simulator`: generate known-truth spectra for validation and demos.
+- `02_ml_training_data`: sweep parameter space and save training datasets.
+
+These examples can keep using `Project`/`File` internally because the simulator
+needs a model, but the section is described as synthetic data generation, not
+as a fitting tutorial.
+
+## Docs Navigation
+
+The examples documentation moves from a single linear path to a "choose your
+track" entry point:
+
+- New user with one processed file: start at
+  `fitting_workflows/01_basic_fitting`.
+- Comparing two fits on one file: start at
+  `fitting_workflows/10_model_comparison`.
+- Many files, separate fits: start at
+  `fitting_workflows/20_fit_each_separately`.
+- Shared/global fit: start at
+  `fitting_workflows/21_project_level_shared_fit`.
+- Simulation or ML training data: start at `synthetic_data`.
+
+The quickstart can still recommend the basic fitting notebook as the first
+notebook, but it should not imply that every user should walk every example in
+numerical order.
+
+## Save/Export/Load Presentation
+
+The examples should be careful about language:
+
+- Use **export** for one-way CSV/PNG output intended for humans and tools like
+  Origin: `file.export_fit()` / `project.export_fits()`.
+- Use **save/load** for round-trippable HDF5 fit-result archives:
+  `file.save_fit()`, `project.save_fits()`, `FitResults.load(...)`,
+  `project.load_fits(...)`.
+- Keep individual export visibly supported. The deprecated methods are the old
+  method names and legacy implementations, not the single-file export workflow.
+- Present `FitResults` as the result browser/comparison object, not as
+  something casual single-file users must understand before exporting.
+
+**Auto-export side effect.** `fit_*` methods currently write CSVs/PNGs to
+`project.path_results` automatically on completion. Explicit
+`file.export_fit()` / `project.export_fits()` calls are the re-runnable,
+slot-filtered version of that same content. A planned `Project(auto_export=...)`
+toggle (default `ON`, opt-in `False`) will make the explicit path the only one
+that writes — useful for parameter sweeps, ML training-data generation, and
+the long-term real-time fitting goal. Notebooks should describe both the
+default and the opt-out, so users are not surprised by files appearing on
+disk before they "exported."
+
+## Migration Plan
+
+1. Finish the current fit-results save/load branch with minimal notebook/docs
+   coverage:
+   - Extend `01_basic_fitting/example.ipynb` with a final section demonstrating
+     `file.save_fit()` + `file.export_fit()` (no `compare_models` / `load` —
+     those belong in `10_model_comparison`, written in the follow-up branch).
+   - Make sure `file.export_fit()` is presented as the Origin-style path.
+   - Run tests and merge.
+
+2. Start a new branch for the examples upgrade.
+
+3. Move current notebooks into the new structure:
+   - `fitting_workflows/01_basic_fitting` → unchanged
+   - `fitting_workflows/02_dependent_parameters` → unchanged
+   - `fitting_workflows/03_multi_cycle` →
+     `fitting_workflows/03_multi_cycle_dynamics`
+   - `fitting_workflows/04_par_profiles` →
+     `fitting_workflows/04_parameter_profiles`
+   - `fitting_workflows/05_project_level_fitting` →
+     `fitting_workflows/21_project_level_shared_fit`
+   - `data_generation/simulator` → `synthetic_data/01_simulator`
+   - `data_generation/ml_training` → `synthetic_data/02_ml_training_data`
+
+4. Add new notebooks:
+   - `fitting_workflows/10_model_comparison/`
+   - `fitting_workflows/20_fit_each_separately/`
+
+5. Add `fitting_workflows/README.md` documenting the 0x / 1x / 2x numeric-block
+   legend.
+
+6. Update `examples/README.md`, `docs/examples/index.rst`, and
+   `docs/quickstart.md` to use the track-based navigation. Grep for hardcoded
+   old paths first.
+
+7. Run notebook smoke checks or at least path/import checks after the moves.
+
+## Non-goals For The Save/Load Branch
+
+- Do not reorganize the full `examples/` tree in the save/load branch.
+- Do not rewrite every existing notebook to the new teaching architecture
+  before merging the archive work.
+
+The save/load branch should only make the new feature discoverable enough that
+users are not stranded. The full teaching architecture belongs in the follow-up
+examples branch.
+
+**Data-preparation workflows.** Dark subtraction, detector calibration, and
+pixel-to-energy mapping are upstream preprocessing — out of scope for this
+examples-upgrade pass. Dark subtraction and detector calibration may be too
+instrument-specific for this repo's core example tree. Energy-axis calibration
+by fitting reference spectra is closer to `trspecfit`'s value proposition, so
+it can be revisited later if we have a compact, shareable Au 4f / valence-band
+style dataset and a workflow that teaches calibration without turning into an
+instrument-control tutorial.
+
+## Open Questions
+
+- Should moved notebooks preserve old numeric prefixes exactly, or use the new
+  block scheme? **Resolved**: use the new 0x / 1x / 2x block scheme; document
+  the legend in `fitting_workflows/README.md`.
+- Should the examples upgrade include a compatibility note for old paths, or
+  is this acceptable as a clean pre-1.0 examples reorganization? **Resolve via
+  grep** of `docs/`, `README.md`, `examples/README.md`, and any reference in
+  the docstrings before the rename branch starts — the answer follows the
+  number of hits.
+- Implementation of `Project(auto_export=...)`: track in `PLAN.md` (as a
+  precursor to the examples branch, or as part of it) or `TODO.md`. The
+  examples branch should not block on it, but the basic notebook's auto-export
+  callout assumes the toggle will exist by the time that notebook ships.
