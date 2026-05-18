@@ -26,6 +26,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 from _utils import make_project, simulate_noisy
 
 from trspecfit import File
@@ -93,6 +94,7 @@ def _make_parity_fit_file(*, name: str, tmp_path: Path, spec_fun_str: str):
 
 
 #
+@pytest.mark.slow
 def test_sbs_export_parity(tmp_path):
     """SbS exports: fit_pars.csv / fit_2d.csv / energy.csv / time.csv match.
 
@@ -182,6 +184,7 @@ def test_sbs_export_parity(tmp_path):
 
 
 #
+@pytest.mark.slow
 def test_2d_export_parity(tmp_path):
     """2D exports: fit_2d.csv / energy.csv / time.csv shapes match.
 
@@ -232,6 +235,7 @@ def test_2d_export_parity(tmp_path):
 
 
 #
+@pytest.mark.slow
 def test_2d_export_includes_new_artifacts(tmp_path):
     """Sanity-check the additive payload the new export emits over legacy.
 

@@ -253,6 +253,7 @@ def test_spectrum_roundtrip(family_id: str, tmp_path) -> None:
 
 
 #
+@pytest.mark.slow
 @pytest.mark.parametrize("family_id", ["F1", "F6"])
 def test_sbs_roundtrip(family_id: str, tmp_path) -> None:
     """basic / profile × slice-by-slice (per-slice metrics, wide-form params)."""
@@ -355,6 +356,7 @@ def test_project_load_fits_matches_fitresults_load(tmp_path) -> None:
 
 
 #
+@pytest.mark.slow
 def test_multi_slot_roundtrip(tmp_path) -> None:
     """Archive with multiple slots from one file (baseline + spectrum + sbs).
 

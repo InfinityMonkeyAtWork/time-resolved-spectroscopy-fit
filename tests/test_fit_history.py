@@ -312,6 +312,7 @@ class TestSpectrumSlot:
 #
 class TestSbSSlot:
     #
+    @pytest.mark.slow
     def test_sbs_slot_per_slice_metrics(self):
         truth_project = make_project(name="truth")
         truth = _make_truth_file(truth_project)
@@ -341,6 +342,7 @@ class TestSbSSlot:
             assert slot.metrics[k].shape == (len(file.time),)
 
     #
+    @pytest.mark.slow
     def test_sbs_slot_survives_seed_template_restoration(self):
         """
         SbS ends with model_sbs.update_value(seed_template, par_select='all'),
@@ -1288,6 +1290,7 @@ class TestSelectionIdentity:
         assert {s.history_key for s in loaded} == set(keys)
 
     #
+    @pytest.mark.slow
     def test_sbs_refit_with_different_e_lim_distinct(self, tmp_path):
         """SbS refit with a different ``e_lim`` → distinct slots."""
 
@@ -1327,6 +1330,7 @@ class TestSelectionIdentity:
         assert len(loaded) == 2
 
     #
+    @pytest.mark.slow
     def test_2d_refit_with_different_t_lim_distinct(self, tmp_path):
         """2D refit with a different ``t_lim`` → distinct slots."""
 
