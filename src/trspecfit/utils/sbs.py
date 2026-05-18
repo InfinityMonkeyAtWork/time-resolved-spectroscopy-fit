@@ -145,6 +145,7 @@ def sbs_fit_one_slice(
     path_slice: pathlib.Path,
     plot_config: PlotConfig,
     fit_wrapper_kwargs: dict[str, Any],
+    auto_export: bool = True,
 ) -> tuple[int, list[Any]]:
     """Fit one energy slice in a worker process.
 
@@ -193,24 +194,25 @@ def sbs_fit_one_slice(
         par=model.lmfit_pars,
         stages=stages,
         show_output=0,
-        save_output=1,
+        save_output=1 if auto_export else 0,
         save_path=path_slice,
         **fit_wrapper_kwargs,
     )
 
-    fitlib.plt_fit_res_1d(
-        x=const[0],
-        y=const[1],
-        fit_fun_str=fit_fun_str,
-        par_init=initial_guess,
-        par_fin=result_sbs[1],
-        args=args,
-        plot_sum=False,
-        show_init=True,
-        fit_lim=e_lim,
-        config=plot_config,
-        save_img=-1,
-        save_path=path_slice.with_suffix(".png"),
-    )
+    if auto_export:
+        fitlib.plt_fit_res_1d(
+            x=const[0],
+            y=const[1],
+            fit_fun_str=fit_fun_str,
+            par_init=initial_guess,
+            par_fin=result_sbs[1],
+            args=args,
+            plot_sum=False,
+            show_init=True,
+            fit_lim=e_lim,
+            config=plot_config,
+            save_img=-1,
+            save_path=path_slice.with_suffix(".png"),
+        )
 
     return s_i, result_sbs

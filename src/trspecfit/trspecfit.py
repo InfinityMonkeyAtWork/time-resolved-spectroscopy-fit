@@ -225,6 +225,10 @@ class Project:
         """Set default project configuration."""
 
         self.show_output = 1
+        # When False, fit_* methods skip the automatic CSV/PNG side effects
+        # (fit_wrapper(save_output=1) and the legacy save_*_fit calls).
+        # Explicit File.export_fit / Project.export_fits still write.
+        self.auto_export = True
         # Plot settings
         self.e_label = "Energy"
         self.t_label = "Time"
@@ -1377,15 +1381,16 @@ class Project:
                 f._append_2d_slot(model_name=model_name, fit_fun_str="fit_model_mcp")
 
         # Save per-file 2D fit results (silently)
-        saved = self.show_output
-        self.show_output = 0
-        try:
-            for f in self.files:
-                if f.model_2d is not None:
-                    path_2d = f.create_model_path(model_name, fit_type="2d")
-                    f._save_2d_fit_legacy(save_path=path_2d)
-        finally:
-            self.show_output = saved
+        if self.auto_export:
+            saved = self.show_output
+            self.show_output = 0
+            try:
+                for f in self.files:
+                    if f.model_2d is not None:
+                        path_2d = f.create_model_path(model_name, fit_type="2d")
+                        f._save_2d_fit_legacy(save_path=path_2d)
+            finally:
+                self.show_output = saved
 
         if self.show_output >= 1:
             fitlib.time_display(
@@ -2473,7 +2478,7 @@ class File:
             par=self.model_base.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
-            save_output=1,
+            save_output=1 if self.p.auto_export else 0,
             save_path=path_base_results / model_name,
             **lmfit_wrapper_kwargs,
         )
@@ -2488,7 +2493,8 @@ class File:
                 )
             )
             self._append_baseline_slot(model_name=model_name, fit_fun_str=_fun_str)
-            self.save_baseline_fit(save_path=path_base_results)
+            if self.p.auto_export:
+                self.save_baseline_fit(save_path=path_base_results)
 
         # display/plot and save baseline fit summary
         title_base = (
@@ -2496,22 +2502,25 @@ class File:
             f'Model: "{model_name}" (from "{self.model_base.yaml_f_name}.yaml")'
         )
 
-        fitlib.plt_fit_res_1d(
-            x=self.energy,
-            y=self.data_base,
-            fit_fun_str=self.p.spec_fun_str,
-            par_init=initial_guess,
-            par_fin=self.model_base.result[1],
-            args=self.model_base.args,
-            plot_sum=False,
-            show_init=True,
-            title=title_base,
-            fit_lim=self.e_lim,
-            config=self.plot_config,
-            legend=[comp.name for comp in self.model_base.components],
-            save_img=-1 if self.p.show_output < 1 else 1,
-            save_path=path_base_results / "base_fit.png",
-        )
+        save_plot = self.p.auto_export
+        show_plot = self.p.show_output >= 1
+        if save_plot or show_plot:
+            fitlib.plt_fit_res_1d(
+                x=self.energy,
+                y=self.data_base,
+                fit_fun_str=self.p.spec_fun_str,
+                par_init=initial_guess,
+                par_fin=self.model_base.result[1],
+                args=self.model_base.args,
+                plot_sum=False,
+                show_init=True,
+                title=title_base,
+                fit_lim=self.e_lim,
+                config=self.plot_config,
+                legend=[comp.name for comp in self.model_base.components],
+                save_img=uplt._save_img_flag(save=save_plot, show=show_plot),
+                save_path=path_base_results / "base_fit.png",
+            )
 
         if stages >= 1 and self.p.show_output >= 1:
             fitlib.time_display(
@@ -2701,7 +2710,7 @@ class File:
             par=self.model_spec.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
-            save_output=1,
+            save_output=1 if self.p.auto_export else 0,
             save_path=path_spec_results / model_name,
             **lmfit_wrapper_kwargs,
         )
@@ -2720,7 +2729,8 @@ class File:
                 time_range=list(time_range) if time_range is not None else None,
                 time_type=time_type,
             )
-            self.save_spectrum_fit(save_path=path_spec_results)
+            if self.p.auto_export:
+                self.save_spectrum_fit(save_path=path_spec_results)
 
         # display/plot and save spectrum fit summary
         time_label = (
@@ -2734,22 +2744,25 @@ class File:
             f'(from "{self.model_spec.yaml_f_name}.yaml")'
         )
 
-        fitlib.plt_fit_res_1d(
-            x=self.energy,
-            y=self.data_spec,
-            fit_fun_str=self.p.spec_fun_str,
-            par_init=initial_guess,
-            par_fin=self.model_spec.result[1],
-            args=self.model_spec.args,
-            plot_sum=False,
-            show_init=True,
-            title=title_spec,
-            fit_lim=self.e_lim,
-            config=self.plot_config,
-            legend=[comp.name for comp in self.model_spec.components],
-            save_img=-1 if not show_plot or self.p.show_output < 1 else 1,
-            save_path=path_spec_results / "spec_fit.png",
-        )
+        save_fig = self.p.auto_export
+        show_fig = show_plot and self.p.show_output >= 1
+        if save_fig or show_fig:
+            fitlib.plt_fit_res_1d(
+                x=self.energy,
+                y=self.data_spec,
+                fit_fun_str=self.p.spec_fun_str,
+                par_init=initial_guess,
+                par_fin=self.model_spec.result[1],
+                args=self.model_spec.args,
+                plot_sum=False,
+                show_init=True,
+                title=title_spec,
+                fit_lim=self.e_lim,
+                config=self.plot_config,
+                legend=[comp.name for comp in self.model_spec.components],
+                save_img=uplt._save_img_flag(save=save_fig, show=show_fig),
+                save_path=path_spec_results / "spec_fit.png",
+            )
 
         if stages >= 1 and self.p.show_output >= 1:
             fitlib.time_display(
@@ -3083,26 +3096,27 @@ class File:
                     par=self.model_sbs.lmfit_pars,
                     stages=stages,
                     show_output=0,
-                    save_output=1,
+                    save_output=1 if self.p.auto_export else 0,
                     save_path=path_slice,
                     **fit_wrapper_kwargs,
                 )
                 self.results_sbs.append(result_sbs)
 
-                fitlib.plt_fit_res_1d(
-                    x=const[0],
-                    y=const[1],
-                    fit_fun_str=self.p.spec_fun_str,
-                    par_init=initial_guess,
-                    par_fin=result_sbs[1],
-                    args=args,
-                    plot_sum=False,
-                    show_init=True,
-                    fit_lim=self.e_lim,
-                    config=self.plot_config,
-                    save_img=-1,
-                    save_path=path_slice.with_suffix(".png"),
-                )
+                if self.p.auto_export:
+                    fitlib.plt_fit_res_1d(
+                        x=const[0],
+                        y=const[1],
+                        fit_fun_str=self.p.spec_fun_str,
+                        par_init=initial_guess,
+                        par_fin=result_sbs[1],
+                        args=args,
+                        plot_sum=False,
+                        show_init=True,
+                        fit_lim=self.e_lim,
+                        config=self.plot_config,
+                        save_img=-1,
+                        save_path=path_slice.with_suffix(".png"),
+                    )
         else:
             # parallel path: spawn pool, install model once per worker.
             ctx = multiprocessing.get_context("spawn")
@@ -3129,6 +3143,7 @@ class File:
                         path_slice=_slice_path(s_i),
                         plot_config=self.plot_config,
                         fit_wrapper_kwargs=fit_wrapper_kwargs,
+                        auto_export=self.p.auto_export,
                     ): s_i
                     for s_i in range(n_slices)
                 }
@@ -3164,7 +3179,8 @@ class File:
             # captures pristine per-slice fit state (results_sbs and parameter
             # names taken before any post-fit cleanup).
             self._append_sbs_slot(model_name=model_name, fit_fun_str=_fun_str)
-            self._save_sbs_fit_legacy(save_path=path_sbs_results)
+            if self.p.auto_export:
+                self._save_sbs_fit_legacy(save_path=path_sbs_results)
         self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
         self.model_sbs.args = _args_sbs
         if stages >= 1:
@@ -3857,7 +3873,7 @@ class File:
             par=self.model_2d.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
-            save_output=1,
+            save_output=1 if self.p.auto_export else 0,
             save_path=path_2d_results / model_name,
             **fit_wrapper_kwargs,
         )
@@ -3872,7 +3888,8 @@ class File:
             self._append_2d_slot(model_name=model_name, fit_fun_str=_fun_str)
 
         if stages >= 1:
-            self._save_2d_fit_legacy(save_path=path_2d_results)
+            if self.p.auto_export:
+                self._save_2d_fit_legacy(save_path=path_2d_results)
             fitlib.time_display(
                 t_start=t_2d, print_str="Time elapsed for 2D model fit: "
             )

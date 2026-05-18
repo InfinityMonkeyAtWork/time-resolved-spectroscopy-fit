@@ -809,6 +809,22 @@ def _apply_axis_settings(
 
 
 #
+def _save_img_flag(*, save: bool, show: bool) -> int:
+    """Map already-decided ``save`` / ``show`` booleans onto the legacy
+    ``save_img`` int used by :func:`_finalize_plot`.
+
+    +1 = save+show, -1 = save+close, 0 = show only. Callers are expected
+    to skip the plot helper entirely when both flags are False, so this
+    function never returns -2.
+    """
+
+    if save and show:
+        return 1
+    if save:
+        return -1
+    return 0
+
+
 def _finalize_plot(
     save_img: int, save_path: PathLike = "", dpi_save: int = 300
 ) -> None:

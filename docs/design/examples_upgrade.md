@@ -29,9 +29,9 @@ work to deserve its own branch.
   notebook.
 - Export terminology: **export** = one-way CSV/PNG for humans + tools like
   Origin; **save/load** = HDF5 round-trip via the `FitResults` archive.
-- A `Project(auto_export=...)` opt-in toggle (default `ON`, backward
-  compatible) is planned. Implementation tracked alongside the examples-upgrade
-  work; the basic notebook documents the side-effect and shows the opt-out.
+- `Project.auto_export` (default `True`, configurable via `project.yaml` or
+  post-init mutation) gates the fit-completion CSV/PNG side effects. The basic
+  notebook documents the default behavior and shows the opt-out.
 
 ## Motivation
 
@@ -184,10 +184,9 @@ Core "one file" story:
 - Show `file.export_fit()` as the Origin-friendly CSV/PNG workflow.
 - Show `file.save_fit()` as the archive-snapshot persistence (keeps the latest
   slot per model / fit type / selection for this file).
-- **Callout**: `fit_*` methods currently auto-write CSVs/PNGs to
-  `project.path_results` on completion. The notebook explains this and notes
-  that a `Project(auto_export=False)` opt-out is planned; usage of both
-  defaults and the opt-out should be visible.
+- **Callout**: `fit_*` methods auto-write CSVs/PNGs to `project.path_results`
+  on completion by default. The notebook shows both the default and the
+  `project.auto_export = False` opt-out (also settable via `project.yaml`).
 - **Out of scope here**: `FitResults.load` and `compare_models` — those move
   to `10_model_comparison` so this notebook stays focused on the casual user's
   single-file path.
@@ -287,15 +286,15 @@ The examples should be careful about language:
 - Present `FitResults` as the result browser/comparison object, not as
   something casual single-file users must understand before exporting.
 
-**Auto-export side effect.** `fit_*` methods currently write CSVs/PNGs to
-`project.path_results` automatically on completion. Explicit
+**Auto-export side effect.** `fit_*` methods write CSVs/PNGs to
+`project.path_results` automatically on completion by default. Explicit
 `file.export_fit()` / `project.export_fits()` calls are the re-runnable,
-slot-filtered version of that same content. A planned `Project(auto_export=...)`
-toggle (default `ON`, opt-in `False`) will make the explicit path the only one
-that writes — useful for parameter sweeps, ML training-data generation, and
-the long-term real-time fitting goal. Notebooks should describe both the
-default and the opt-out, so users are not surprised by files appearing on
-disk before they "exported."
+slot-filtered version of that same content. `project.auto_export = False`
+(also settable via `auto_export: false` in `project.yaml`) makes the explicit
+path the only one that writes — useful for parameter sweeps, ML training-data
+generation, and the long-term real-time fitting goal. Notebooks should
+describe both the default and the opt-out, so users are not surprised by
+files appearing on disk before they "exported."
 
 ## Migration Plan
 
@@ -363,7 +362,3 @@ instrument-control tutorial.
   grep** of `docs/`, `README.md`, `examples/README.md`, and any reference in
   the docstrings before the rename branch starts — the answer follows the
   number of hits.
-- Implementation of `Project(auto_export=...)`: track in `PLAN.md` (as a
-  precursor to the examples branch, or as part of it) or `TODO.md`. The
-  examples branch should not block on it, but the basic notebook's auto-export
-  callout assumes the toggle will exist by the time that notebook ships.
