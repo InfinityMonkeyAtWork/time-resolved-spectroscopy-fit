@@ -7,6 +7,11 @@
 
 Note: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling — make configurable via `mc_settings` if users need it.
 
+## Noise and simulation
+
+- [ ] **Simulator noise-language cleanup**: align simulator docs/metadata with the fit-results noise schema. Keep simulator `noise_type` meaning "noise distribution / random generator" (`gaussian`, `poisson`, `none`), not sigma shape. Fix the stale `Simulator.set_noise_type()` docstring that mentions `uniform`; clarify `detection` vs. `noise_type` vs. `noise_level`; and, for analog Gaussian simulations, consider saving the derived `sigma_data = noise_level * max(abs(clean_data))` alongside existing metadata. For parameter sweeps, store derived `sigma_data` per configuration when it depends on each clean dataset.
+- [ ] **Future `sigma_type` expansion**: after the first constant, user-supplied sigma schema lands, extend uncertainty handling beyond scalar `sigma_data`. Keep `noise_type` for the statistical assumption/distribution and use `sigma_type` for sigma shape: initially `constant`, later `per_spectrum` and `per_point`. Add HDF5 storage, validation, baseline/SBS/2D alignment, `compare_models()` behavior, and tests for vector/matrix sigma. Defer automatic Poisson-derived sigma until residual-space variance propagation is explicit.
+
 ## Performance & architecture
 
 - [ ] **Project-level fit backend**: `Project.fit_2d()` already supports `Project`/`File`/`Static` vary levels, but it currently evaluates through `fit_project_mcp()` and `Model.create_value_2d()` rather than the GIR scheduler/evaluator path. Decide whether to lower the multi-file residual to GIR or explicitly prefer project-managed per-file loops when we want maximum graph-IR speedups.

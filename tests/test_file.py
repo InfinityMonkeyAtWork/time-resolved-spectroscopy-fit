@@ -1410,5 +1410,128 @@ class TestDescribeWaterfall:
         assert "waterfall" not in kwargs
 
 
+#
+#
+class TestSetSigma:
+    """``File.set_sigma`` + the underlying ``normalize_sigma_data`` validation.
+
+    Covers the persistent-σ entry point: round-tripping a positive scalar,
+    unset semantics for ``None`` / ``NaN`` (NaN-as-unset is what lets the
+    Project default sigma_data round-trip through ``_load_config`` without
+    erroring on a no-op coercion), the previous-value contract, and
+    validation rejections for inputs that aren't a positive finite number.
+    """
+
+    #
+    @staticmethod
+    def _file_with_data():
+        from trspecfit.utils.fit_io import (
+            NOISE_TYPE_GAUSSIAN,
+            NOISE_TYPE_UNKNOWN,
+            SIGMA_SOURCE_USER,
+            SIGMA_TYPE_CONSTANT,
+        )
+
+        project = make_project()
+        file = File(
+            parent_project=project,
+            data=np.ones((10, 20)),
+            energy=np.linspace(0, 1, 20),
+            time=np.linspace(0, 1, 10),
+        )
+        # Sanity-check the inherited defaults so the test cases below
+        # actually start from "unset". If the inheritance ever drifts the
+        # rest of the class will report misleading failures.
+        assert file.noise_type == NOISE_TYPE_UNKNOWN
+        assert file.sigma_source == SIGMA_SOURCE_USER
+        assert file.sigma_type == SIGMA_TYPE_CONSTANT
+        assert np.isnan(file.sigma_data)
+        # Return the gaussian constant so callers can reference it without
+        # re-importing the module-level string.
+        return file, NOISE_TYPE_GAUSSIAN
+
+    #
+    def test_positive_sigma_sets_gaussian_default(self):
+        file, gaussian = self._file_with_data()
+        prev = file.set_sigma(0.5)
+        assert prev is None  # was unset before
+        assert file.sigma_data == pytest.approx(0.5)
+        assert file.noise_type == gaussian
+
+    #
+    def test_set_sigma_returns_previous_value(self):
+        file, _ = self._file_with_data()
+        file.set_sigma(0.5)
+        prev = file.set_sigma(0.25)
+        assert prev == pytest.approx(0.5)
+        assert file.sigma_data == pytest.approx(0.25)
+        # Restore-via-prev round-trips exactly.
+        file.set_sigma(prev)
+        assert file.sigma_data == pytest.approx(0.5)
+
+    #
+    def test_set_sigma_none_clears_to_unknown(self):
+        from trspecfit.utils.fit_io import NOISE_TYPE_UNKNOWN
+
+        file, _ = self._file_with_data()
+        file.set_sigma(0.5)
+        prev = file.set_sigma(None)
+        assert prev == pytest.approx(0.5)
+        assert np.isnan(file.sigma_data)
+        assert file.noise_type == NOISE_TYPE_UNKNOWN
+
+    #
+    def test_set_sigma_nan_is_same_as_none(self):
+        """``set_sigma(NaN)`` is a synonym for ``set_sigma(None)`` (unset).
+
+        This is what lets ``Project._load_config`` re-validate its default
+        ``sigma_data = NaN`` without erroring when the YAML omits the key.
+        """
+
+        from trspecfit.utils.fit_io import NOISE_TYPE_UNKNOWN
+
+        file, _ = self._file_with_data()
+        file.set_sigma(0.5)
+        file.set_sigma(float("nan"))
+        assert np.isnan(file.sigma_data)
+        assert file.noise_type == NOISE_TYPE_UNKNOWN
+
+    #
+    @pytest.mark.parametrize(
+        "bad_sigma",
+        [0.0, -1.0, float("inf"), float("-inf"), "abc", [0.5], object()],
+    )
+    def test_set_sigma_rejects_invalid(self, bad_sigma):
+        """Validation: anything that isn't ``None`` / NaN / positive finite raises."""
+
+        file, _ = self._file_with_data()
+        with pytest.raises(ValueError, match="finite positive number"):
+            file.set_sigma(bad_sigma)
+
+    #
+    def test_project_yaml_default_nan_roundtrips(self, tmp_path):
+        """A project.yaml that omits ``sigma_data`` loads cleanly.
+
+        Regression: before normalize_sigma_data tolerated NaN, the default
+        ``Project.sigma_data = NaN`` failed re-validation on every YAML
+        load that didn't override it, which printed "Error loading config"
+        and silently dropped *all* config overrides.
+        """
+
+        from trspecfit import Project
+        from trspecfit.utils.fit_io import NOISE_TYPE_UNKNOWN
+
+        config = tmp_path / "project.yaml"
+        # No sigma_data key on purpose. Use a config value we can verify
+        # made it through to assert the YAML load wasn't aborted.
+        config.write_text("show_output: 0\n")
+        project = Project(path=tmp_path, config_file="project.yaml")
+        assert np.isnan(project.sigma_data)
+        assert project.noise_type == NOISE_TYPE_UNKNOWN
+        # Proves _load_config didn't bail early — show_output overrides
+        # the default of 1.
+        assert project.show_output == 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

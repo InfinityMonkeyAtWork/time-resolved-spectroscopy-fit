@@ -43,7 +43,102 @@ from trspecfit.fitlib import (
 )
 
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
+
+# Default noise metadata used when no σ has been set on the File. Mirrors the
+# project.yaml defaults defined in ``Project._set_defaults``; if you change one,
+# change the other.
+NOISE_TYPE_UNKNOWN = "unknown"
+NOISE_TYPE_GAUSSIAN = "gaussian"
+SIGMA_SOURCE_USER = "user_supplied"
+SIGMA_TYPE_CONSTANT = "constant"
+
+
+#
+def normalize_sigma_data(value: Any) -> float:
+    """
+    Coerce a user-provided ``sigma_data`` to a storage float.
+
+    Accepts ``None`` or ``NaN`` (both returned as ``NaN`` — the "unset"
+    marker) or a finite positive number; otherwise raises a clear
+    ``ValueError``. NaN-tolerance lets the same function validate both
+    raw user input (where ``None`` arrives from YAML ``null``) and the
+    in-memory representation (where ``NaN`` already means unset), so
+    re-coercing a default value is a safe no-op. Centralizes the
+    validation used by ``Project`` YAML loading and ``File.set_sigma``.
+    """
+
+    if value is None:
+        return float("nan")
+    try:
+        v = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"sigma_data must be None or a finite positive number; got {value!r}"
+        ) from exc
+    if np.isnan(v):
+        return float("nan")
+    if not (np.isfinite(v) and v > 0):
+        raise ValueError(
+            f"sigma_data must be None or a finite positive number; got {value!r}"
+        )
+    return v
+
+
+#
+def validate_noise_metadata(
+    *,
+    noise_type: str,
+    sigma_source: str,
+    sigma_type: str,
+) -> None:
+    """
+    Validate the noise-schema discriminator fields against v1's strict subset.
+
+    v1 supports ``noise_type ∈ {"gaussian", "unknown"}``, ``sigma_source ==
+    "user_supplied"``, and ``sigma_type == "constant"``. Future passes will
+    relax these (Poisson-derived σ, per-spectrum σ, etc.), but every value
+    on disk now must round-trip cleanly through this check.
+    """
+
+    if noise_type not in (NOISE_TYPE_GAUSSIAN, NOISE_TYPE_UNKNOWN):
+        raise ValueError(
+            f"noise_type must be 'gaussian' or 'unknown'; got {noise_type!r}"
+        )
+    if sigma_source != SIGMA_SOURCE_USER:
+        raise ValueError(
+            f"sigma_source must be 'user_supplied' (v1); got {sigma_source!r}"
+        )
+    if sigma_type != SIGMA_TYPE_CONSTANT:
+        raise ValueError(f"sigma_type must be 'constant' (v1); got {sigma_type!r}")
+
+
+#
+def _compute_sigma_eff(
+    fit_type: FitType,
+    selection: dict[str, Any],
+    sigma_data: float,
+) -> float:
+    """
+    Effective σ on a slot's fit data view, given the File's per-pixel σ.
+
+    Baseline fits average ``base_t_ind[1] - base_t_ind[0]`` time slices, so
+    the per-row noise on ``data_base`` is ``σ_data / √N_avg``. SbS, 2D, and
+    spectrum fits operate on per-pixel data → no scaling. ``time_range``
+    averaging in ``spectrum`` is *not* auto-corrected in v1 (users
+    averaging a spectrum must pre-scale the σ they pass to
+    ``File.set_sigma()``).
+    """
+
+    if not np.isfinite(sigma_data) or sigma_data <= 0:
+        return float("nan")
+    if fit_type == "baseline":
+        base_t_ind = selection.get("base_t_ind")
+        if base_t_ind is not None and len(base_t_ind) == 2:
+            n_avg = int(base_t_ind[1]) - int(base_t_ind[0])
+            if n_avg > 1:
+                return float(sigma_data / np.sqrt(n_avg))
+    return float(sigma_data)
 
 
 #
@@ -114,9 +209,13 @@ class SavedFitSlot:
         ``[name, value, init_value, stderr, min, max, vary, expr]``. For SbS,
         a per-slice DataFrame (one row per slice, columns are param values).
     metrics : dict
-        ``{"chi2", "chi2_red", "r2", "aic", "bic"}``. Scalar floats for
-        baseline/spectrum/2d. For SbS, each value is a 1D ``np.ndarray`` of
-        length ``n_slices``.
+        ``{"chi2_raw", "chi2_red_raw", "chi2", "chi2_red", "r2", "aic",
+        "bic"}``. Scalar floats for baseline/spectrum/2d. For SbS, each
+        value is a 1D ``np.ndarray`` of length ``n_slices``. ``chi2_raw``
+        and ``chi2_red_raw`` are the unweighted lmfit-convention diagnostics
+        (always populated). ``chi2`` and ``chi2_red`` are the σ-calibrated
+        versions (``≈ 1`` for a fit at the noise floor) and are ``NaN``
+        when no sigma was supplied at fit time.
     observed : np.ndarray
         Data view that was fit against (cropped to ``e_lim`` / ``t_lim`` where
         applicable). ``observed.shape == fit.shape`` always.
@@ -129,6 +228,25 @@ class SavedFitSlot:
         YAML file stem for human reference. Not promised to round-trip.
     timestamp : str
         ISO 8601 UTC timestamp of slot construction.
+    noise_type : str
+        Statistical noise assumption captured from the File at fit time —
+        ``"gaussian"`` or ``"unknown"``. v1 only supports those two values;
+        ``"unknown"`` records "no σ was supplied" without claiming a
+        distribution.
+    sigma_source : str
+        How ``sigma_data`` was obtained. v1 supports ``"user_supplied"``
+        only; future passes will add ``"estimated_from_data"`` etc.
+    sigma_type : str
+        Shape/layout of ``sigma_data``. v1 supports ``"constant"`` only;
+        ``"per_spectrum"`` / ``"per_point"`` are reserved for future work.
+    sigma_data : float
+        File-level per-pixel noise σ at fit time. ``NaN`` when no sigma
+        was set on the File (``noise_type == "unknown"``).
+    sigma_eff : float
+        Effective σ on this slot's fit data view. Equals ``sigma_data``
+        for SbS / 2D / spectrum; equals ``sigma_data / √N_avg`` for
+        baseline (``N_avg`` = number of time slices averaged into
+        ``data_base``). ``NaN`` when ``sigma_data`` is ``NaN``.
     conf_ci : pd.DataFrame | None
     mcmc : dict | None
         ``{"flatchain", "ci", "lnsigma"}`` if MCMC ran, else ``None``.
@@ -149,6 +267,11 @@ class SavedFitSlot:
     fit_alg: str
     yaml_filename: str | None
     timestamp: str
+    noise_type: str
+    sigma_source: str
+    sigma_type: str
+    sigma_data: float
+    sigma_eff: float
     conf_ci: pd.DataFrame | None = None
     mcmc: dict[str, Any] | None = None
 
@@ -407,6 +530,10 @@ def _slot_from_baseline(
     base_t_ind: list[int],
     e_lim: list[int] | None,
     n_free_pars: int,
+    noise_type: str,
+    sigma_source: str,
+    sigma_type: str,
+    sigma_data: float,
     conf_ci: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
 ) -> SavedFitSlot:
@@ -414,7 +541,9 @@ def _slot_from_baseline(
     Build a SavedFitSlot for a completed baseline fit.
 
     Caller passes already-copied snapshot args (no live Model references) so
-    the helper is invariant to post-fit cleanup.
+    the helper is invariant to post-fit cleanup. The noise metadata is also
+    a snapshot of the File's σ state at fit completion — subsequent calls
+    to ``File.set_sigma`` do not retroactively rewrite the slot.
     """
 
     selection = {
@@ -435,6 +564,10 @@ def _slot_from_baseline(
         yaml_filename=yaml_filename,
         conf_ci=conf_ci,
         mcmc=mcmc,
+        noise_type=noise_type,
+        sigma_source=sigma_source,
+        sigma_type=sigma_type,
+        sigma_data=sigma_data,
     )
 
 
@@ -454,10 +587,19 @@ def _slot_from_spectrum(
     time_type: str,
     e_lim: list[int] | None,
     n_free_pars: int,
+    noise_type: str,
+    sigma_source: str,
+    sigma_type: str,
+    sigma_data: float,
     conf_ci: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
 ) -> SavedFitSlot:
-    """Build a SavedFitSlot for a completed spectrum fit."""
+    """Build a SavedFitSlot for a completed spectrum fit.
+
+    v1 does not auto-correct σ for ``time_range`` averaging — users fitting
+    an averaged spectrum should pre-scale the σ they pass to
+    ``File.set_sigma()``.
+    """
 
     selection = {
         "time_point": time_point,
@@ -479,6 +621,10 @@ def _slot_from_spectrum(
         yaml_filename=yaml_filename,
         conf_ci=conf_ci,
         mcmc=mcmc,
+        noise_type=noise_type,
+        sigma_source=sigma_source,
+        sigma_type=sigma_type,
+        sigma_data=sigma_data,
     )
 
 
@@ -496,6 +642,10 @@ def _slot_from_sbs(
     e_lim: list[int] | None,
     t_lim: list[int] | None,
     n_free_pars: int,
+    noise_type: str,
+    sigma_source: str,
+    sigma_type: str,
+    sigma_data: float,
     conf_ci: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
 ) -> SavedFitSlot:
@@ -511,7 +661,13 @@ def _slot_from_sbs(
         "e_lim": list(e_lim) if e_lim else None,
         "t_lim": list(t_lim) if t_lim else None,
     }
-    metrics = _per_slice_metrics(observed=observed, fit=fit, n_free_pars=n_free_pars)
+    sigma_eff = _compute_sigma_eff("sbs", selection, sigma_data)
+    metrics = _per_slice_metrics(
+        observed=observed,
+        fit=fit,
+        n_free_pars=n_free_pars,
+        sigma_eff=sigma_eff if np.isfinite(sigma_eff) else None,
+    )
     selection_json = build_selection_json("sbs", **selection)
     history_key = compute_history_key(
         file_fingerprint=file_fingerprint,
@@ -536,6 +692,11 @@ def _slot_from_sbs(
         fit_alg=fit_alg,
         yaml_filename=yaml_filename,
         timestamp=_now_iso(),
+        noise_type=noise_type,
+        sigma_source=sigma_source,
+        sigma_type=sigma_type,
+        sigma_data=float(sigma_data),
+        sigma_eff=float(sigma_eff),
         conf_ci=conf_ci,
         mcmc=mcmc,
     )
@@ -555,6 +716,10 @@ def _slot_from_2d(
     e_lim: list[int] | None,
     t_lim: list[int] | None,
     n_free_pars: int,
+    noise_type: str,
+    sigma_source: str,
+    sigma_type: str,
+    sigma_data: float,
     conf_ci: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
 ) -> SavedFitSlot:
@@ -578,6 +743,10 @@ def _slot_from_2d(
         yaml_filename=yaml_filename,
         conf_ci=conf_ci,
         mcmc=mcmc,
+        noise_type=noise_type,
+        sigma_source=sigma_source,
+        sigma_type=sigma_type,
+        sigma_data=sigma_data,
     )
 
 
@@ -602,10 +771,20 @@ def _build_slot(
     yaml_filename: str | None,
     conf_ci: pd.DataFrame | None,
     mcmc: dict[str, Any] | None,
+    noise_type: str,
+    sigma_source: str,
+    sigma_type: str,
+    sigma_data: float,
 ) -> SavedFitSlot:
     """Shared scalar-metric path for baseline / spectrum / 2d."""
 
-    metrics = compute_fit_metrics(observed=observed, fit=fit, n_free_pars=n_free_pars)
+    sigma_eff = _compute_sigma_eff(fit_type, selection, sigma_data)
+    metrics = compute_fit_metrics(
+        observed=observed,
+        fit=fit,
+        n_free_pars=n_free_pars,
+        sigma_eff=sigma_eff if np.isfinite(sigma_eff) else None,
+    )
     selection_json = build_selection_json(fit_type, **selection)
     history_key = compute_history_key(
         file_fingerprint=file_fingerprint,
@@ -630,6 +809,11 @@ def _build_slot(
         fit_alg=fit_alg,
         yaml_filename=yaml_filename,
         timestamp=_now_iso(),
+        noise_type=noise_type,
+        sigma_source=sigma_source,
+        sigma_type=sigma_type,
+        sigma_data=float(sigma_data),
+        sigma_eff=float(sigma_eff),
         conf_ci=conf_ci,
         mcmc=mcmc,
     )
@@ -641,6 +825,7 @@ def _per_slice_metrics(
     observed: np.ndarray,
     fit: np.ndarray,
     n_free_pars: int,
+    sigma_eff: float | None = None,
 ) -> dict[str, np.ndarray]:
     """Compute per-slice metrics for SbS (one row per time slice)."""
 
@@ -652,16 +837,13 @@ def _per_slice_metrics(
             f"got observed{obs.shape}, fit{fit_arr.shape}"
         )
     n_slices = obs.shape[0]
-    out: dict[str, list[float]] = {
-        "chi2": [],
-        "chi2_red": [],
-        "r2": [],
-        "aic": [],
-        "bic": [],
-    }
+    out: dict[str, list[float]] = {k: [] for k in _METRICS_KEYS}
     for i in range(n_slices):
         m = compute_fit_metrics(
-            observed=obs[i], fit=fit_arr[i], n_free_pars=n_free_pars
+            observed=obs[i],
+            fit=fit_arr[i],
+            n_free_pars=n_free_pars,
+            sigma_eff=sigma_eff,
         )
         for k in out:
             out[k].append(m[k])
@@ -907,7 +1089,15 @@ _PARAMS_LONG_TYPE_TAGS: list[TypeTag] = [
     "bool",  # vary
     "str",  # expr
 ]
-_METRICS_KEYS = ("chi2", "chi2_red", "r2", "aic", "bic")
+_METRICS_KEYS = (
+    "chi2_raw",
+    "chi2_red_raw",
+    "chi2",
+    "chi2_red",
+    "r2",
+    "aic",
+    "bic",
+)
 
 
 #
@@ -1160,6 +1350,12 @@ def _write_slot_metadata(
     if slot.yaml_filename is not None:
         meta.attrs["yaml_filename"] = slot.yaml_filename
     meta.attrs["timestamp"] = slot.timestamp
+    # Noise metadata snapshot at fit time — see SavedFitSlot docstring.
+    meta.attrs["noise_type"] = slot.noise_type
+    meta.attrs["sigma_source"] = slot.sigma_source
+    meta.attrs["sigma_type"] = slot.sigma_type
+    meta.attrs["sigma_data"] = float(slot.sigma_data)
+    meta.attrs["sigma_eff"] = float(slot.sigma_eff)
     if slot.fit_type != "sbs":
         for k in _METRICS_KEYS:
             meta.attrs[k] = float(slot.metrics[k])
@@ -1411,6 +1607,11 @@ def _read_slot(
         fit_alg=_attr_str(a["fit_alg"]),
         yaml_filename=yaml_filename,
         timestamp=_attr_str(a["timestamp"]),
+        noise_type=_attr_str(a["noise_type"]),
+        sigma_source=_attr_str(a["sigma_source"]),
+        sigma_type=_attr_str(a["sigma_type"]),
+        sigma_data=float(np.asarray(a["sigma_data"]).item()),
+        sigma_eff=float(np.asarray(a["sigma_eff"]).item()),
         conf_ci=conf_ci,
         mcmc=mcmc,
     )

@@ -69,14 +69,19 @@ def compute_fit_metrics(
     observed: np.ndarray,
     fit: np.ndarray,
     n_free_pars: int,
+    sigma_eff: float | None = None,
 ) -> dict[str, float]:
     """
     Compute fit-quality metrics from observed and fitted arrays.
 
-    Uses unweighted residuals (``observed - fit``); replicates the formulas
-    lmfit uses internally so the values match
-    ``MinimizerResult.chisqr / .redchi / .aic / .bic`` for unweighted fits.
-    R^2 is computed locally (lmfit does not expose it).
+    Always emits the raw (unweighted) diagnostics ``chi2_raw`` and
+    ``chi2_red_raw`` — these match lmfit's ``MinimizerResult.chisqr / .redchi``
+    for unweighted fits. When ``sigma_eff`` is provided, also emits the
+    σ-calibrated ``chi2`` and ``chi2_red`` (``≈ 1`` for a fit at the noise
+    floor); without ``sigma_eff`` both calibrated values are ``NaN``.
+    ``r2``, ``aic``, ``bic`` are unaffected by σ (R² is dimensionless;
+    AIC/BIC depend on raw χ² but their *differences* are invariant under
+    constant rescaling).
 
     Parameters
     ----------
@@ -87,36 +92,55 @@ def compute_fit_metrics(
         Model evaluated at final parameters. Must broadcast to ``observed``.
     n_free_pars : int
         Number of varying (non-fixed, non-expression) parameters in the fit.
-        Used as ``nvarys`` in the AIC/BIC and reduced-chi^2 formulas.
+        Used as ``nvarys`` in the AIC/BIC and reduced-χ² formulas.
+    sigma_eff : float, optional
+        Effective noise σ on the fit's data view (per-pixel for SbS/2D,
+        ``σ_pixel / √N_avg`` for baseline). When ``None`` / ``NaN`` /
+        non-positive, the calibrated ``chi2``/``chi2_red`` fields are
+        ``NaN``. Caller is responsible for any view-specific scaling.
 
     Returns
     -------
     dict
-        ``{"chi2", "chi2_red", "r2", "aic", "bic"}``. ``chi2_red``, ``aic``,
-        and ``bic`` are ``float("nan")`` when ``ndata <= n_free_pars`` or
-        ``chi2 == 0`` (degenerate fits).
+        ``{"chi2_raw", "chi2_red_raw", "chi2", "chi2_red", "r2", "aic",
+        "bic"}``. ``chi2_red_raw``, ``aic``, ``bic`` are ``NaN`` when
+        ``ndata <= n_free_pars`` or ``chi2_raw == 0`` (degenerate fits);
+        ``chi2`` / ``chi2_red`` are additionally ``NaN`` when ``sigma_eff``
+        is missing or invalid.
     """
 
     residual = np.asarray(observed) - np.asarray(fit)
     ndata = residual.size
-    chi2 = float(np.sum(residual**2))
+    chi2_raw = float(np.sum(residual**2))
 
     obs_flat = np.asarray(observed).ravel()
     ss_tot = float(np.sum((obs_flat - obs_flat.mean()) ** 2))
-    r2 = float("nan") if ss_tot == 0.0 else 1.0 - chi2 / ss_tot
+    r2 = float("nan") if ss_tot == 0.0 else 1.0 - chi2_raw / ss_tot
 
     dof = ndata - n_free_pars
-    chi2_red = chi2 / dof if dof > 0 else float("nan")
+    chi2_red_raw = chi2_raw / dof if dof > 0 else float("nan")
 
-    if chi2 > 0 and ndata > 0:
-        log_chi2_per_n = math.log(chi2 / ndata)
+    if chi2_raw > 0 and ndata > 0:
+        log_chi2_per_n = math.log(chi2_raw / ndata)
         aic = ndata * log_chi2_per_n + 2 * n_free_pars
         bic = ndata * log_chi2_per_n + math.log(ndata) * n_free_pars
     else:
         aic = float("nan")
         bic = float("nan")
 
+    if sigma_eff is None or not np.isfinite(sigma_eff) or sigma_eff <= 0:
+        chi2 = float("nan")
+        chi2_red = float("nan")
+    else:
+        sigma_sq = float(sigma_eff) ** 2
+        chi2 = chi2_raw / sigma_sq
+        chi2_red = (
+            chi2_red_raw / sigma_sq if np.isfinite(chi2_red_raw) else float("nan")
+        )
+
     return {
+        "chi2_raw": chi2_raw,
+        "chi2_red_raw": chi2_red_raw,
         "chi2": chi2,
         "chi2_red": chi2_red,
         "r2": r2,

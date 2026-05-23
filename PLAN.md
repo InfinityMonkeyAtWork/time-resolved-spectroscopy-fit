@@ -52,7 +52,8 @@ demand it.
   - **Within an archive** (e.g. a slot pointing at its file): use the archive-local positional path `files/000000` — unambiguous and stable for the lifetime of that archive file.
   - **Across archive ↔ live Project** (matching a loaded `Project.files[*]` to an archive file on `load_fits`, or aligning two archives): use **content fingerprints**, not positional index. File matching uses `(data_sha256, energy_sha256, time_sha256, shape)` with `name` / `original_path` as tie-break metadata. Multiple shas + shape avoid the "identical replicate files share `data_sha256`" ambiguity that bare-data-hash matching would have.
 - **Fit types covered (4):** `baseline`, `spectrum`, `sbs`, `2d`. `Project.fit_2d()` participates in v1 as ordinary per-file `fit_type="2d"` slots (one per file). **What's deferred is a project-scoped joint-result slot** that would own the shared parameter values without per-file duplication — the underlying joint pipeline is flagged as architecturally unfinished (TODO line 12), so locking in archive schema for that construct now is premature. Adding a joint slot later is a strict additive change. Add `spectrum` to `File.get_fit_results(fit_type=...)` while we're here (currently missing — [trspecfit.py:3022](src/trspecfit/trspecfit.py#L3022)).
-- **Fit-quality metrics computed and stored:** `chi2`, `chi2_red`, `r2`, `aic`, `bic`. Per-slice for SbS; single value for baseline / spectrum / 2d. Small helper in `fitlib`: `(observed, fit, n_free_pars) → dict` — takes the observed data view actually fit against, not raw `file.data`.
+- **Stable chi-square / sigma semantics.** Raw objective diagnostics are always named `chi2_raw` / `chi2_red_raw`; σ-calibrated values are always named `chi2` / `chi2_red` and are `NaN` when no sigma was set. Sigma is file state (`File.set_sigma(...)`), inherited from flat project-YAML defaults when present, and materialized into each `SavedFitSlot` at fit completion as `noise_type`, `sigma_source`, `sigma_type`, `sigma_data`, and fit-view-specific `sigma_eff`. `File.set_sigma()` is forward-looking and does not rewrite existing `_fit_history` slots or archives. `compare_models()` has no `sigma=` kwarg; it only reads slot state. If calibrated metrics are explicitly requested when no matched slot has sigma, it raises with a pointer to `file.set_sigma(...)` / the raw metric name.
+- **Fit-quality metrics computed and stored:** `chi2_raw`, `chi2_red_raw`, `chi2`, `chi2_red`, `r2`, `aic`, `bic`. Per-slice for SbS; single value for baseline / spectrum / 2d. Small helper in `fitlib`: `(observed, fit, n_free_pars, sigma_eff=None) → dict` — takes the observed data view actually fit against, not raw `file.data`.
 
 ## Object model
 
@@ -74,7 +75,9 @@ SavedProject
         │                  + observed_sha256                              (defensive cross-check)
         ├── provenance:  fit_alg, yaml_filename (human breadcrumb only), timestamp
         ├── params:      DataFrame[name, value, init_value, stderr, min, max, vary, expr]
-        ├── metrics:     {chi2, chi2_red, r2, aic, bic}     # per-slice arrays for sbs
+        ├── metrics:     {chi2_raw, chi2_red_raw, chi2, chi2_red, r2, aic, bic}
+        │                  # per-slice arrays for sbs; calibrated fields NaN when no sigma
+        ├── noise:       noise_type, sigma_source, sigma_type, sigma_data, sigma_eff
         ├── observed:    ndarray  (the data view that was actually fit — data_base / data_spec / cropped data)
         ├── fit:         ndarray  (model evaluated at final params; same shape as `observed`)
         ├── conf_ci:     DataFrame | None
@@ -151,7 +154,7 @@ FitResults.compare_models(
     *,
     models: list[str] | None = None,
     fit_type: ... | None = None,
-    metrics: list[str] | None = None,        # default: ["chi2_red", "r2", "aic", "bic"]
+    metrics: list[str] | None = None,        # dynamic default; see below
     sbs_aggregation: Literal["median", "mean", "sum", "long"] = "median",
     plot_residuals: bool = False,
 ) -> pd.DataFrame
@@ -159,9 +162,13 @@ FitResults.compare_models(
 # before being placed in the comparison DataFrame.
 #   "median"  — robust; default. One row per slot, value = np.median(per_slice).
 #   "mean"    — average across slices.
-#   "sum"     — sum across slices (statistically meaningful for chi2/aic/bic if
-#               slices are independent; less natural for chi2_red/r2).
+#   "sum"     — sum for additive metrics (chi2_raw/chi2/aic/bic);
+#               chi2_red_raw and chi2_red aggregate as Σnumerator / ΣDoF.
 #   "long"    — return per-slice rows; comparison DataFrame gets a slice_index column.
+# Default columns:
+#   no sigma:   ["chi2_red_raw", "r2", "aic", "bic"]
+#   with sigma: ["chi2_red_raw", "sigma_eff", "chi2_red", "r2", "aic", "bic"]
+# There is intentionally no compare_models(sigma=...) view; sigma enters via File.set_sigma().
 # Refuses to compare slots whose observed_sha256 differs when both are same
 # (file, fit_type) — silent grid drift would invalidate the comparison.
 
@@ -176,6 +183,8 @@ for slot in fit_results: ...
 
 File.save_fit(**kw)              # → self.p.save_fits(file=self, **kw)
 File.export_fit(**kw)            # → self.p.export_fits(file=self, **kw)
+File.set_sigma(sigma, *, noise_type=None, sigma_source="user_supplied", sigma_type="constant")
+# Sets per-file sigma for future fits only. Existing slots keep their materialized sigma snapshot.
 File.compare_models(*models, **kw)
 # → self.p.results.compare_models(file=self, models=list(models) or None, **kw)
 # Sugar; implementation lives in FitResults.compare_models.
@@ -270,12 +279,16 @@ The `_slot_from_<fit_type>` extractors live in `utils/fit_io.py` and are called 
 │   │       │   │                             #   archive_slot_key, observed_sha256
 │   │       │   │                             # provenance attrs:
 │   │       │   │                             #   fit_alg, yaml_filename, timestamp
+│   │       │   │                             # noise attrs:
+│   │       │   │                             #   noise_type, sigma_source, sigma_type,
+│   │       │   │                             #   sigma_data, sigma_eff
 │   │       │   │                             # metrics attrs:
-│   │       │   │                             #   chi2, chi2_red, r2, aic, bic
+│   │       │   │                             #   chi2_raw, chi2_red_raw, chi2,
+│   │       │   │                             #   chi2_red, r2, aic, bic
 │   │       │   ├── params                    # dataset: structured (name, value, init_value, stderr, min, max, vary, expr)
 │   │       │   ├── observed                  # dataset: data view that was fit (data_base / data_spec / cropped); same shape as `fit`
 │   │       │   ├── fit                       # dataset: model evaluated at final params (1D or 2D)
-│   │       │   ├── metrics_per_slice         # dataset: 2D (slices × {chi2, chi2_red, r2, ...}) — sbs only
+│   │       │   ├── metrics_per_slice         # dataset: 2D (slices × {chi2_raw, chi2_red_raw, chi2, chi2_red, r2, ...}) — sbs only
 │   │       │   ├── conf_ci                   # dataset (optional)
 │   │       │   └── mcmc/                     # group (optional): flatchain, ci, lnsigma
 │   │       └── 000001/...
@@ -295,7 +308,7 @@ Notes:
 
 - [x] Confirm scope + answers to open questions.
 - [x] Add `spectrum` to `File.get_fit_results(fit_type=...)`.
-- [x] Add `fitlib.compute_fit_metrics(observed, fit, n_free_pars) -> dict` returning `{chi2, chi2_red, r2, aic, bic}`. Takes **`observed`** (the actual data view fit against), not raw `file.data`. Use lmfit's `MinimizerResult.chisqr` / `.redchi` / `.aic` / `.bic` where available; compute R² locally.
+- [x] Add `fitlib.compute_fit_metrics(observed, fit, n_free_pars, sigma_eff=None) -> dict` returning `{chi2_raw, chi2_red_raw, chi2, chi2_red, r2, aic, bic}`. Takes **`observed`** (the actual data view fit against), not raw `file.data`. Raw fields match the unweighted objective diagnostics; calibrated fields are populated only when `sigma_eff` is finite.
 
 **Note on the observed/fit/metrics capture:** the original precursor wording
 ("wire metric computation … so the values exist on `Model.result`") is
@@ -311,13 +324,13 @@ completion. See "Object model + I/O" below.
 - [x] Define `SavedProject` / `SavedFile` / `SavedFitSlot` dataclasses (probably in `utils/fit_io.py`). **All three done; `SavedFitSlot` at [utils/fit_io.py:42](src/trspecfit/utils/fit_io.py#L42), `SavedFile` and `SavedProject` at [utils/fit_io.py:120-200](src/trspecfit/utils/fit_io.py#L120-L200) (frozen dataclasses; tuple-of-slots / tuple-of-files for immutability).**
 - [x] Define `FitResults` class in new module `trspecfit/fit_results.py`, exported as `trspecfit.FitResults`. Includes `load` classmethod, `find` / `get` / `files` / `models` / `__iter__` query API, and `compare_models` / `plot_residuals`. Internal key is `(file_fingerprint, model_name, fit_type, selection_json)`; name-based queries resolve to fingerprint internally. Constructor accepts a list of `SavedFitSlot` (used by both `load` and the `Project.results` wrapper path). **Done. Skeleton + query API + `load` at [fit_results.py:46](src/trspecfit/fit_results.py#L46). `compare_models` at [fit_results.py:212](src/trspecfit/fit_results.py#L212) — filters on `(file, models, fit_type)`, defends against silent grid drift via the `observed_sha256` cross-check (raises if two slots in the same `(file_fingerprint, fit_type)` group disagree), and aggregates SbS per-slice metrics with `sbs_aggregation` ∈ `{"median", "mean", "sum", "long"}`; `"long"` emits one row per slice. `file=` accepts `str | SavedFile | trspecfit.File` (anything with `.name`). `plot_residuals` at [fit_results.py:330](src/trspecfit/fit_results.py#L330) — smoke-test-grade side-by-side panels for 1D fits and residual heatmaps for SbS / 2D; uses index axes since slots do not carry parent-file energy/time arrays. Both methods covered by tests in `tests/test_fit_history.py::TestFitResultsCompareModels` (13 cases) and `TestFitResultsPlotResiduals` (5 cases).**
 - [x] Add `Project._fit_history: list[SavedFitSlot]` attr (initialized to `[]` in `Project.__init__`). [trspecfit.py:179](src/trspecfit/trspecfit.py#L179)
-- [x] Implement per-fit-type extraction helpers in `utils/fit_io.py`. **Each helper takes already-copied snapshot args** (not live `File.model_*` references) so call-site ordering is irrelevant — the helper cannot be broken by post-fit cleanup like the seed-template restoration at [trspecfit.py:2551](src/trspecfit/trspecfit.py#L2551). Signatures:
-  - `_slot_from_baseline(*, file_fingerprint, fit_alg, yaml_filename, params_df, observed, fit, base_t_ind, e_lim, n_free_pars) -> SavedFitSlot`
-  - `_slot_from_spectrum(*, file_fingerprint, fit_alg, yaml_filename, params_df, observed, fit, time_point, time_range, time_type, e_lim, n_free_pars) -> SavedFitSlot`
-  - `_slot_from_sbs(*, file_fingerprint, fit_alg, yaml_filename, parameter_names, params_per_slice, observed, fit, e_lim, t_lim, n_free_pars) -> SavedFitSlot` — caller passes already-extracted per-slice params (from a copy of `results_sbs`) plus the parameter_names captured from `model_sbs` *before any restoration*.
-  - `_slot_from_2d(*, file_fingerprint, fit_alg, yaml_filename, params_df, observed, fit, e_lim, t_lim, n_free_pars) -> SavedFitSlot`
+- [x] Implement per-fit-type extraction helpers in `utils/fit_io.py`. **Each helper takes already-copied snapshot args** (not live `File.model_*` references) so call-site ordering is irrelevant — the helper cannot be broken by post-fit cleanup like the seed-template restoration at [trspecfit.py:2551](src/trspecfit/trspecfit.py#L2551). Signatures (omit `conf_ci` / `mcmc` kwargs and identity args `file_name` / `model_name` for brevity; all four take them):
+  - `_slot_from_baseline(*, file_fingerprint, ..., params_df, observed, fit, base_t_ind, e_lim, n_free_pars, noise_type, sigma_source, sigma_type, sigma_data) -> SavedFitSlot`
+  - `_slot_from_spectrum(*, file_fingerprint, ..., params_df, observed, fit, time_point, time_range, time_type, e_lim, n_free_pars, noise_type, sigma_source, sigma_type, sigma_data) -> SavedFitSlot`
+  - `_slot_from_sbs(*, file_fingerprint, ..., params_df, observed, fit, e_lim, t_lim, n_free_pars, noise_type, sigma_source, sigma_type, sigma_data) -> SavedFitSlot` — caller passes the already-built per-slice DataFrame (from a copy of `results_sbs`) before any seed-template restoration.
+  - `_slot_from_2d(*, file_fingerprint, ..., params_df, observed, fit, e_lim, t_lim, n_free_pars, noise_type, sigma_source, sigma_type, sigma_data) -> SavedFitSlot`
 
-  Each helper computes `metrics` (via `compute_fit_metrics`), `observed_sha256`, `selection_json`, and `history_key`. The bare `File._project_fit_result` 5-tuple from a joint `Project.fit_2d()` is not separately extracted in v1; the per-file slots produced inside `Project.fit_2d` go through `_slot_from_2d` like any other 2d fit. **Done at [utils/fit_io.py:247-431](src/trspecfit/utils/fit_io.py#L247-L431).**
+  Each helper computes `metrics` (via `compute_fit_metrics`, threading `sigma_eff` derived from `sigma_data` + selection — `σ / √N_avg` for baseline, σ verbatim elsewhere), `observed_sha256`, `selection_json`, `history_key`, and materializes the 5 noise fields onto the slot. The bare `File._project_fit_result` 5-tuple from a joint `Project.fit_2d()` is not separately extracted in v1; the per-file slots produced inside `Project.fit_2d` go through `_slot_from_2d` like any other 2d fit. **Done at [utils/fit_io.py:247-431](src/trspecfit/utils/fit_io.py#L247-L431).**
 - [x] Wire eager extraction into the four fit code paths. Call site is responsible for capturing snapshot args **at the moment results are valid**:
   - `fit_baseline`: extract immediately after fit completes, before any further mutation.
   - `fit_spectrum`: same; capture `time_point` / `time_range` / `time_type` from fit args.
@@ -359,9 +372,10 @@ completion. See "Object model + I/O" below.
 - [x] **SbS extraction-timing test**: simulate the seed-template restoration at [trspecfit.py:2551](src/trspecfit/trspecfit.py#L2551); verify the extracted slot still has correct `params_per_slice` / `parameter_names` / metrics (helper used copied snapshot args, not live state). **Already covered at [tests/test_fit_history.py::TestSbSSlot::test_sbs_slot_survives_seed_template_restoration](tests/test_fit_history.py) — runs a real `fit_slice_by_slice` (which ends with `model_sbs.update_value(seed_template)`) and asserts the captured slot still has finite per-slice metrics and a params row per time slice.**
 - [x] **`observed_sha256` cross-check test**: construct two slots with same canonical key but mutated observed array; `compare_models` raises (or warns clearly) on grid mismatch. **Already covered at [tests/test_fit_history.py::TestFitResultsCompareModels::test_observed_mismatch_raises](tests/test_fit_history.py) (and three companion tests verifying the cross-check is *not* triggered across different fit_types, different files, or replicate-but-distinct files).**
 - [x] `compare_models` tests: two models on same file, returns expected metrics ordering; residual plot smoke test. Multi-version compare on same canonical key (multiple takes on modelA-baseline) — verify default behavior picks latest, `find` exposes all. SbS aggregation: test all four `sbs_aggregation` modes on a multi-slice fit. **Already covered at [tests/test_fit_history.py::TestFitResultsCompareModels](tests/test_fit_history.py) (13 cases incl. `test_sbs_aggregation_modes` for median/mean/sum and `test_sbs_long_mode_emits_per_slice_rows` for "long") and [tests/test_fit_history.py::TestFitResultsPlotResiduals](tests/test_fit_history.py) (5 cases). Multi-version `find()` exposure is now also verified at `TestHistoryAccumulationAndSnapshot::test_results_exposes_all_history_entries`.**
-- [x] `export_fits` parity tests: same column shapes as old `save_sbs_fit` / `save_2d_fit` outputs. **Done at [tests/test_export_fits_parity.py](tests/test_export_fits_parity.py) — 3 tests (`test_sbs_export_parity`, `test_2d_export_parity`, `test_2d_export_includes_new_artifacts`). The fit-side project's `path_results` is rerouted into `tmp_path/legacy/` so the auto-export path inside `fit_slice_by_slice` / `fit_2d` lands in the test sandbox; `project.export_fits` writes into a sibling `tmp_path/new/` tree. Parity is asserted on `fit_pars.csv` (legacy emits a redundant pandas auto-index — stripped before comparison; meaningful columns + per-slice values match exactly), `fit_2d.csv` (shape **and values** via `assert_allclose(rtol=0, atol=0)` — both SbS and 2D paths, since asserting shape alone would let a right-sized wrong-matrix bug slip through), `energy.csv`, `time.csv`, and the per-parameter PNG set. The new-artifacts test documents the additive payload (`observed_2d.csv`, `params.csv`, `metrics.csv` with the canonical 5-column schema) so a future regression that drops one fails loudly.**
+- [x] `export_fits` parity tests: same column shapes as old `save_sbs_fit` / `save_2d_fit` outputs. **Done at [tests/test_export_fits_parity.py](tests/test_export_fits_parity.py) — 3 tests (`test_sbs_export_parity`, `test_2d_export_parity`, `test_2d_export_includes_new_artifacts`). The fit-side project's `path_results` is rerouted into `tmp_path/legacy/` so the auto-export path inside `fit_slice_by_slice` / `fit_2d` lands in the test sandbox; `project.export_fits` writes into a sibling `tmp_path/new/` tree. Parity is asserted on `fit_pars.csv` (legacy emits a redundant pandas auto-index — stripped before comparison; meaningful columns + per-slice values match exactly), `fit_2d.csv` (shape **and values** via `assert_allclose(rtol=0, atol=0)` — both SbS and 2D paths, since asserting shape alone would let a right-sized wrong-matrix bug slip through), `energy.csv`, `time.csv`, and the per-parameter PNG set. The new-artifacts test documents the additive payload (`observed_2d.csv`, `params.csv`, `metrics.csv` with the stable raw/calibrated metric schema) so a future regression that drops one fails loudly.**
 - [x] DeprecationWarning tests for the old aliases. **Already covered at [tests/test_file.py::TestFitPreconditions::test_save_sbs_fit_emits_deprecation_warning](tests/test_file.py) and `test_save_2d_fit_emits_deprecation_warning` — both `pytest.warns(DeprecationWarning, match="export_fit")`.**
-- [ ] Update example notebooks to demo `Project.save_fits` / `Project.load_fits` / `Project.export_fits` / `compare_models`.
+- [x] **Noise-schema test coverage**: the σ work has dedicated test classes so a future reader can see it was tested intentionally, not by accident. `File.set_sigma` + `normalize_sigma_data` validation (incl. NaN-as-unset and the YAML-omits-`sigma_data` regression) at [tests/test_file.py::TestSetSigma](tests/test_file.py) (12 cases); stable raw/calibrated `compare_models` column set, missing-σ `KeyError`, and SbS sum-mode aggregate-reduced χ² at [tests/test_fit_history.py::TestFitResultsCompareModelsSigmaColumns](tests/test_fit_history.py) (8 cases); slot-side noise-field + 7-key-metric round-trip with NaN-aware comparisons in `_assert_slot_round_tripped`, exercised by every case in [tests/test_fit_archive_roundtrip.py](tests/test_fit_archive_roundtrip.py).
+- [x] Update example notebooks to demo `Project.save_fits` / `Project.load_fits` / `Project.export_fits` / `compare_models`. **Done at [examples/fitting_workflows/10_model_comparison/](examples/fitting_workflows/10_model_comparison/) — a self-contained notebook that generates synthetic data inline (kicked-decay pump-probe with a Gaussian IRF and strongly-Lorentzian peak), fits two competing models at three levels (baseline / SbS / 2D), calls `file.compare_models(...)` on each, persists via `file.save_fit("comparison.fit.h5")`, reloads through `FitResults.load(...)`, and exercises `sbs_aggregation="long"` for per-slice inspection. Also documents the stable σ-calibrated column schema (`chi2_red_raw` / `sigma_eff` / `chi2_red`), shows the `file.set_sigma(NOISE_SIGMA)` one-shot setup, and demonstrates the pandas one-liner for what-if recalibration of loaded archives. Re-executes end-to-end without auto-export side effects (`auto_export: False` in `project.yaml`).**
 - [x] Update `docs/design/repo_architecture.md` with the new `utils/fit_io.py` module and the save/export split. **Done. Added a `fit_results.py` entry under top-level modules, a `utils/fit_io.py` entry under utils, a new "Fit results: save / export / load architecture" section with the slot-driven pipeline diagram (eager extraction → `_fit_history` → save/export/results, plus the load → `FitResults` arm), the deprecated-alias status, the save-vs-export distinction, and updated the "Typical execution flow" + "Where to put new code" guides. Also removed the dead `File.load_fit` TODO stub from `trspecfit.py` (no callers in src/tests/docs/examples) and dropped its entry from TODO.md so the doc claim "load is path-scoped" matches the codebase.**
 
 ## Out of scope (deferred to v2 if users demand it)

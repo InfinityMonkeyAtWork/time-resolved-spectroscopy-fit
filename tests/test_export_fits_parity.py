@@ -269,7 +269,17 @@ def test_2d_export_includes_new_artifacts(tmp_path):
     obs_2d = np.loadtxt(new_dir / "observed_2d.csv", delimiter=project.delim)
     assert fit_2d.shape == obs_2d.shape
 
-    # metrics.csv: one row, the canonical 5 metrics as columns.
+    # metrics.csv: one row, the canonical 7-key stable schema as columns
+    # (raw + σ-calibrated chi² flavors, plus dimensionless r2/aic/bic).
+    # Calibrated chi2 / chi2_red are NaN here since the file has no σ set.
     metrics_df = pd.read_csv(new_dir / "metrics.csv")
-    assert list(metrics_df.columns) == ["chi2", "chi2_red", "r2", "aic", "bic"]
+    assert list(metrics_df.columns) == [
+        "chi2_raw",
+        "chi2_red_raw",
+        "chi2",
+        "chi2_red",
+        "r2",
+        "aic",
+        "bic",
+    ]
     assert len(metrics_df) == 1

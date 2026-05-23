@@ -114,14 +114,34 @@ def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> 
 
     # --- metrics -------------------------------------------------------
     assert set(loaded.metrics.keys()) == set(original.metrics.keys())
+    metric_keys = ("chi2_raw", "chi2_red_raw", "chi2", "chi2_red", "r2", "aic", "bic")
     if original.fit_type == "sbs":
-        for k in ("chi2", "chi2_red", "r2", "aic", "bic"):
+        for k in metric_keys:
+            # equal_nan=True so NaN-valued calibrated metrics (when no σ was
+            # set on the file at fit time) round-trip as exact NaN matches.
             np.testing.assert_allclose(
-                loaded.metrics[k], original.metrics[k], rtol=0, atol=0
+                loaded.metrics[k], original.metrics[k], rtol=0, atol=0, equal_nan=True
             )
     else:
-        for k in ("chi2", "chi2_red", "r2", "aic", "bic"):
-            assert loaded.metrics[k] == pytest.approx(original.metrics[k], rel=0, abs=0)
+        for k in metric_keys:
+            orig_v = original.metrics[k]
+            loaded_v = loaded.metrics[k]
+            if isinstance(orig_v, float) and np.isnan(orig_v):
+                assert np.isnan(loaded_v)
+            else:
+                assert loaded_v == pytest.approx(orig_v, rel=0, abs=0)
+
+    # --- noise metadata -----------------------------------------------
+    assert loaded.noise_type == original.noise_type
+    assert loaded.sigma_source == original.sigma_source
+    assert loaded.sigma_type == original.sigma_type
+    for name in ("sigma_data", "sigma_eff"):
+        orig_v = getattr(original, name)
+        loaded_v = getattr(loaded, name)
+        if np.isnan(orig_v):
+            assert np.isnan(loaded_v), f"{name} NaN round-trip failed"
+        else:
+            assert loaded_v == pytest.approx(orig_v, rel=0, abs=0)
 
     # --- params --------------------------------------------------------
     _assert_params_equal(loaded.params, original.params, fit_type=original.fit_type)
@@ -132,18 +152,19 @@ def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> 
     assert loaded.timestamp == original.timestamp
 
     # --- residual reconstruction (PLAN invariant) ----------------------
+    # chi2_raw is the lmfit-unweighted SSE diagnostic; chi2 is σ-calibrated
+    # and NaN when no σ was set on the file, so we cross-check against the raw
+    # column (always populated and grid-derived).
     residual = loaded.observed - loaded.fit
     assert residual.shape == loaded.observed.shape
     if loaded.fit_type == "sbs":
-        # Per-slice chi2 = sum(residual_slice ** 2). Verifies metrics + arrays
-        # are mutually consistent on the loaded slot — no recipe replay needed.
         assert residual.ndim == 2
         for i in range(residual.shape[0]):
-            assert loaded.metrics["chi2"][i] == pytest.approx(
+            assert loaded.metrics["chi2_raw"][i] == pytest.approx(
                 float(np.sum(residual[i] ** 2))
             )
     else:
-        assert loaded.metrics["chi2"] == pytest.approx(float(np.sum(residual**2)))
+        assert loaded.metrics["chi2_raw"] == pytest.approx(float(np.sum(residual**2)))
 
 
 #

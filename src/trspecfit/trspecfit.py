@@ -269,6 +269,13 @@ class Project:
         self.da_slices_fmt = "%06d"
         # Advanced settings
         self.spec_fun_str = "fit_model_gir"
+        # Noise / sigma defaults — applied to every File at construction time.
+        # Files inherit these values at __init__ and may override them via
+        # File.set_sigma(...). See docs/design/temp_plan.md.
+        self.noise_type: str = fit_io.NOISE_TYPE_UNKNOWN
+        self.sigma_source: str = fit_io.SIGMA_SOURCE_USER
+        self.sigma_type: str = fit_io.SIGMA_TYPE_CONSTANT
+        self.sigma_data: float = float("nan")
 
     #
     def __repr__(self) -> str:
@@ -790,6 +797,16 @@ class Project:
                 else:
                     if self.show_output >= 1:
                         print(f"Warning: Unknown config key '{key}' ignored")
+
+            # Coerce + validate noise metadata. YAML "null" arrives as None
+            # for sigma_data; normalize to NaN so downstream code can treat
+            # the "unset" case as a finite-check, not a None-check.
+            self.sigma_data = fit_io.normalize_sigma_data(self.sigma_data)
+            fit_io.validate_noise_metadata(
+                noise_type=self.noise_type,
+                sigma_source=self.sigma_source,
+                sigma_type=self.sigma_type,
+            )
 
             self._config_file = config_path
 
@@ -1597,6 +1614,15 @@ class File:
         self.data_spec: np.ndarray | None = None  # extracted 1D spectrum
         self.spec_t_abs: list[float] = []  # time bounds (absolute)
         self.spec_t_ind: list[int] = []  # time bounds (indices)
+        # Noise metadata — inherited from parent Project at construction; users
+        # override per file via File.set_sigma(). Materialized into each saved
+        # slot at fit completion (immutable slot invariant).
+        self.noise_type: str = getattr(self.p, "noise_type", fit_io.NOISE_TYPE_UNKNOWN)
+        self.sigma_source: str = getattr(
+            self.p, "sigma_source", fit_io.SIGMA_SOURCE_USER
+        )
+        self.sigma_type: str = getattr(self.p, "sigma_type", fit_io.SIGMA_TYPE_CONSTANT)
+        self.sigma_data: float = float(getattr(self.p, "sigma_data", float("nan")))
         # default fit limits to entire dataset (energy is None only for bare File())
         if self.energy is not None:
             self.set_fit_limits(energy_limits=None, show_plot=False)
@@ -2411,6 +2437,84 @@ class File:
                     vlines=self.e_lim_abs,
                     hlines=self.t_lim_abs,
                 )
+
+    #
+    def set_sigma(
+        self,
+        sigma: float | None,
+        *,
+        noise_type: str | None = None,
+        sigma_source: str = fit_io.SIGMA_SOURCE_USER,
+        sigma_type: str = fit_io.SIGMA_TYPE_CONSTANT,
+    ) -> float | None:
+        """
+        Set the per-pixel noise σ for this file.
+
+        Subsequent fits on this file will materialize the σ into their saved
+        slots (chi2 / chi2_red calibrated from chi2_raw / chi2_red_raw). The
+        change is stateful but does **not** retroactively rewrite slots
+        already in ``Project._fit_history`` — the immutable-slot invariant
+        from ``PLAN.md`` is preserved.
+
+        Parameters
+        ----------
+        sigma : float or None
+            Per-pixel σ in data units. Pass ``None`` to clear (slots fit
+            afterwards will record ``noise_type='unknown'`` and ``NaN``
+            σ fields, so calibrated metrics resolve to ``NaN``). Must be
+            a finite positive number when not ``None``.
+        noise_type : str, optional
+            ``"gaussian"`` or ``"unknown"``. Defaults to ``"gaussian"``
+            when ``sigma`` is set, ``"unknown"`` when ``sigma`` is ``None``.
+        sigma_source : str, default ``"user_supplied"``
+            v1 only supports ``"user_supplied"``.
+        sigma_type : str, default ``"constant"``
+            v1 only supports ``"constant"``.
+
+        Returns
+        -------
+        float or None
+            The previous ``sigma_data`` value (``None`` if unset). Stash
+            this if you intend to run additional fits under a different
+            σ and restore the file's prior σ state afterwards.
+
+        Notes
+        -----
+        ``set_sigma`` only affects **future** fits on this file. Slots
+        already in ``Project._fit_history`` keep the σ snapshot that was
+        materialized at their fit completion (immutable-slot invariant
+        from ``PLAN.md``); ``compare_models()`` reads those snapshots and
+        is therefore unaffected by σ changes made after the fit. For an
+        alternative calibration of *existing* results, divide the
+        always-present ``chi2_red_raw`` column by ``alt_sigma**2``
+        directly on the returned DataFrame — no API needed.
+
+        Raises
+        ------
+        ValueError
+            If ``sigma`` is not ``None`` and not a finite positive number,
+            or if any of the discriminator fields is outside v1's supported
+            subset.
+        """
+
+        new_sigma_data = fit_io.normalize_sigma_data(sigma)
+        is_unset = not np.isfinite(new_sigma_data)
+        new_noise_type = noise_type
+        if new_noise_type is None:
+            new_noise_type = (
+                fit_io.NOISE_TYPE_UNKNOWN if is_unset else fit_io.NOISE_TYPE_GAUSSIAN
+            )
+        fit_io.validate_noise_metadata(
+            noise_type=new_noise_type,
+            sigma_source=sigma_source,
+            sigma_type=sigma_type,
+        )
+        previous = None if not np.isfinite(self.sigma_data) else float(self.sigma_data)
+        self.sigma_data = new_sigma_data
+        self.noise_type = new_noise_type
+        self.sigma_source = sigma_source
+        self.sigma_type = sigma_type
+        return previous
 
     #
     def fit_baseline(
@@ -3324,6 +3428,10 @@ class File:
             base_t_ind=list(self.base_t_ind),
             e_lim=e_lim,
             n_free_pars=int(getattr(result_fin, "nvarys", 0)),
+            noise_type=self.noise_type,
+            sigma_source=self.sigma_source,
+            sigma_type=self.sigma_type,
+            sigma_data=self.sigma_data,
             conf_ci=conf_ci if not conf_ci.empty else None,
             mcmc=mcmc,
         )
@@ -3388,6 +3496,10 @@ class File:
             time_type=time_type,
             e_lim=e_lim,
             n_free_pars=int(getattr(result_fin, "nvarys", 0)),
+            noise_type=self.noise_type,
+            sigma_source=self.sigma_source,
+            sigma_type=self.sigma_type,
+            sigma_data=self.sigma_data,
             conf_ci=conf_ci if not conf_ci.empty else None,
             mcmc=mcmc,
         )
@@ -3462,6 +3574,10 @@ class File:
             e_lim=e_lim,
             t_lim=None,
             n_free_pars=int(getattr(slice0_result, "nvarys", 0)),
+            noise_type=self.noise_type,
+            sigma_source=self.sigma_source,
+            sigma_type=self.sigma_type,
+            sigma_data=self.sigma_data,
             conf_ci=slice0_conf_ci if not slice0_conf_ci.empty else None,
             mcmc=slice0_mcmc,
         )
@@ -3523,6 +3639,10 @@ class File:
             e_lim=e_lim,
             t_lim=t_lim,
             n_free_pars=int(getattr(result_fin, "nvarys", 0)),
+            noise_type=self.noise_type,
+            sigma_source=self.sigma_source,
+            sigma_type=self.sigma_type,
+            sigma_data=self.sigma_data,
             conf_ci=conf_ci if not conf_ci.empty else None,
             mcmc=mcmc,
         )
@@ -4035,11 +4155,13 @@ class File:
         Sugar for ``self.p.results.compare_models(file=self, models=...)``.
         Pass model names as positional arguments; omit them to include
         every model fit on this file. See :meth:`FitResults.compare_models`
-        for the full kwarg semantics and the defensive
-        ``observed_sha256`` cross-check.
+        for the full kwarg semantics, the defensive ``observed_sha256``
+        cross-check, and the dynamic column set driven by whether a sigma
+        was set via :meth:`File.set_sigma`.
 
         Examples
         --------
+        >>> file.set_sigma(0.23)
         >>> file.compare_models("modelA", "modelB", fit_type="baseline")
         """
 

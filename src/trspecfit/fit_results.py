@@ -31,7 +31,26 @@ from trspecfit.utils.fit_io import SavedFile, SavedFitSlot, read_archive
 
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
 SbsAggregation = Literal["median", "mean", "sum", "long"]
-DEFAULT_METRICS: tuple[str, ...] = ("chi2_red", "r2", "aic", "bic")
+
+# Default columns. Dynamic: which set is used depends on whether any matched
+# slot carries a finite ``sigma_data``. ``chi2_red_raw`` is the lmfit-unweighted
+# diagnostic (always populated); ``chi2_red`` is the σ-calibrated value
+# (≈ 1 for a fit at the noise floor) and is only meaningful when a sigma was
+# set on the File at fit time.
+DEFAULT_METRICS_NO_SIGMA: tuple[str, ...] = ("chi2_red_raw", "r2", "aic", "bic")
+DEFAULT_METRICS_WITH_SIGMA: tuple[str, ...] = (
+    "chi2_red_raw",
+    "sigma_eff",
+    "chi2_red",
+    "r2",
+    "aic",
+    "bic",
+)
+# Calibrated columns are only available when a sigma was supplied at fit time.
+# Explicit requests for these in ``metrics=[...]`` raise a clear KeyError when
+# the matched slot set has no sigma, pointing the user at the raw alternative.
+_CALIBRATED_KEYS: frozenset[str] = frozenset({"chi2", "chi2_red"})
+_CALIBRATED_TO_RAW: dict[str, str] = {"chi2": "chi2_raw", "chi2_red": "chi2_red_raw"}
 
 
 #
@@ -80,6 +99,46 @@ def _resolve_file_arg(file: Any) -> str | None:
         f"file must be str, SavedFile, or have a .name attribute; "
         f"got {type(file).__name__}"
     )
+
+
+#
+def _has_any_sigma(slots: Sequence[SavedFitSlot]) -> bool:
+    """True if at least one slot carries a finite ``sigma_data``."""
+
+    return any(np.isfinite(s.sigma_data) for s in slots)
+
+
+#
+def _resolve_metric_keys(
+    metrics: Sequence[str] | None, slots: list[SavedFitSlot]
+) -> tuple[str, ...]:
+    """
+    Pick the metric columns for a ``compare_models()`` call.
+
+    ``metrics=None`` → dynamic defaults: ``DEFAULT_METRICS_WITH_SIGMA`` when at
+    least one matched slot has a sigma, ``DEFAULT_METRICS_NO_SIGMA`` otherwise.
+
+    ``metrics=[...]`` → explicit. If the request includes a calibrated metric
+    (``chi2`` / ``chi2_red``) and no matched slot has a sigma, raise a clear
+    ``KeyError`` pointing the user at ``file.set_sigma()`` or the raw
+    alternative — neither silently-NaN columns nor renamed-raw columns.
+    """
+
+    has_sigma = _has_any_sigma(slots)
+    if metrics is None:
+        return DEFAULT_METRICS_WITH_SIGMA if has_sigma else DEFAULT_METRICS_NO_SIGMA
+    metric_keys = tuple(metrics)
+    if not has_sigma:
+        bad = next((k for k in metric_keys if k in _CALIBRATED_KEYS), None)
+        if bad is not None:
+            raise KeyError(
+                f"Metric {bad!r} requires sigma_data, but none of the matched "
+                f"slots carry a sigma. Call file.set_sigma(...) on the live "
+                f"file and re-run the fit, or request "
+                f"{_CALIBRATED_TO_RAW[bad]!r} for the raw (uncalibrated) "
+                f"value."
+            )
+    return metric_keys
 
 
 #
@@ -249,8 +308,20 @@ class FitResults:
 
         Filters slots by ``(file, models, fit_type)``, then returns a
         ``pd.DataFrame`` with one row per slot (or per slice in ``"long"``
-        mode) and one column per metric. The default metric set is
-        ``("chi2_red", "r2", "aic", "bic")``.
+        mode) and one column per metric.
+
+        Default column set is **dynamic** based on whether any matched
+        slot carries a sigma (set via ``File.set_sigma()`` before the fit):
+
+        - no sigma:  ``chi2_red_raw, r2, aic, bic``
+        - with sigma: ``chi2_red_raw, sigma_eff, chi2_red, r2, aic, bic``
+
+        ``chi2_red_raw`` is always present (the lmfit-unweighted diagnostic);
+        ``chi2_red`` is the σ-calibrated value (≈ 1 for a fit at the noise
+        floor). Names are stable — the same column always carries the same
+        kind of value across calls, sessions, and loaded archives. There is
+        no per-call ``sigma=`` kwarg by design; persistent state on the File
+        is the only sigma source.
 
         Parameters
         ----------
@@ -263,27 +334,34 @@ class FitResults:
         fit_type : str or sequence, optional
             Restrict to these fit types.
         metrics : sequence of str, optional
-            Metric keys to include as columns. Defaults to
-            ``("chi2_red", "r2", "aic", "bic")``. Must be a subset of
-            ``slot.metrics`` keys (typically ``chi2``, ``chi2_red``,
-            ``r2``, ``aic``, ``bic``).
+            Metric keys to include as columns. Defaults to the dynamic set
+            above. Valid keys: ``chi2_raw``, ``chi2_red_raw``, ``chi2``,
+            ``chi2_red``, ``r2``, ``aic``, ``bic``, ``sigma_eff``. Requesting
+            ``chi2`` or ``chi2_red`` when no matched slot has a sigma raises
+            ``KeyError`` with a pointer to ``File.set_sigma()`` or the raw
+            alternative.
         sbs_aggregation : {"median", "mean", "sum", "long"}, default "median"
             How to collapse per-slice SbS metrics to a comparable value:
 
             - ``"median"`` — robust scalar via ``np.nanmedian``.
             - ``"mean"``   — scalar via ``np.nanmean``.
-            - ``"sum"``    — scalar via ``np.nansum`` (additive across
-              independent slices for chi2/aic/bic; less natural for
-              chi2_red/r2).
+            - ``"sum"``    — ``np.nansum`` for additive metrics (``chi2``,
+              ``chi2_raw``, ``aic``, ``bic``). ``chi2_red`` and
+              ``chi2_red_raw`` instead aggregate as ``Σnumerator / ΣDoF``
+              (per-slice DoF recovered from ``chi2_raw / chi2_red_raw``)
+              so the canonical "≈ 1 for a good fit" reading is preserved.
+              ``r2`` is still nansum'd; treat it as informational in sum
+              mode (no per-slice SST is stored to compute an aggregate r²).
             - ``"long"``   — one row per slice. Adds a ``slice_index``
-              column (NaN for non-SbS rows).
+              column (NaN for non-SbS rows). ``sigma_eff`` is broadcast
+              from the slot's scalar to every slice row.
 
         Returns
         -------
         pd.DataFrame
             Columns: ``file``, ``model``, ``fit_type``, ``selection_json``,
-            optionally ``slice_index``, then one column per requested metric.
-            Empty DataFrame if no slots match the filter.
+            optionally ``slice_index``, then one column per requested
+            metric. Empty DataFrame if no slots match the filter.
 
         Raises
         ------
@@ -296,14 +374,14 @@ class FitResults:
             with different ``e_lim`` / ``t_lim`` / ``base_t_ind`` /
             ``time_point``.
         KeyError
-            If ``metrics`` requests a key that is not present in some slot's
-            ``metrics`` dict.
+            If ``metrics`` requests ``chi2`` / ``chi2_red`` when no matched
+            slot has a sigma, or any other unknown metric key for at least
+            one slot.
         """
 
         file_name = _resolve_file_arg(file)
         models_filter = _to_str_set(models)
         types_filter = _to_str_set(fit_type)
-        metric_keys = tuple(DEFAULT_METRICS) if metrics is None else tuple(metrics)
 
         matched: list[SavedFitSlot] = []
         for slot in self._slots:
@@ -316,6 +394,7 @@ class FitResults:
             matched.append(slot)
 
         self._check_observed_consistency(matched)
+        metric_keys = _resolve_metric_keys(metrics, matched)
 
         if sbs_aggregation == "long":
             return self._compare_rows_long(matched, metric_keys)
@@ -381,15 +460,62 @@ class FitResults:
 
     #
     @staticmethod
-    def _slot_metric(slot: SavedFitSlot, key: str) -> Any:
-        """Look up ``key`` in ``slot.metrics`` with a clear KeyError."""
+    def _aggregate_sbs_reduced_sum(slot: SavedFitSlot, key: str) -> float:
+        """
+        Aggregate reduced χ² for sum-mode SbS — handles both raw and σ-calibrated.
 
+        For ``key="chi2_red_raw"``: returns ``Σ chi2_raw / Σ DoF``.
+        For ``key="chi2_red"``:     returns ``Σ chi2 / Σ DoF`` (NaN when σ
+        was unset, since per-slice ``chi2`` is then NaN).
+
+        Per-slice DoF is recovered from the always-populated raw columns
+        (``DoF = chi2_raw / chi2_red_raw``). Treating the SbS result as
+        one composite fit with total DoF = Σ DoF_per_slice preserves the
+        canonical "good fit ≈ 1" reading. The naive ``np.nansum`` of
+        per-slice reduced χ² would otherwise grow linearly with the number
+        of slices and break the comparison.
+
+        Returns ``NaN`` if total DoF is non-positive (degenerate fit) or
+        the numerator is non-finite.
+        """
+
+        chi2_raw_arr = np.asarray(slot.metrics["chi2_raw"], dtype=float)
+        chi2_red_raw_arr = np.asarray(slot.metrics["chi2_red_raw"], dtype=float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            dof_arr = np.where(
+                chi2_red_raw_arr != 0,
+                chi2_raw_arr / chi2_red_raw_arr,
+                np.nan,
+            )
+        total_dof = float(np.nansum(dof_arr))
+        if not (total_dof > 0):
+            return float("nan")
+        numerator_key = "chi2_raw" if key == "chi2_red_raw" else "chi2"
+        numerator_arr = np.asarray(slot.metrics[numerator_key], dtype=float)
+        total_num = float(np.nansum(numerator_arr))
+        if not np.isfinite(total_num):
+            return float("nan")
+        return total_num / total_dof
+
+    #
+    @staticmethod
+    def _slot_metric(slot: SavedFitSlot, key: str) -> Any:
+        """Look up ``key`` on the slot, with sigma_eff handled as a special case.
+
+        ``sigma_eff`` lives as a top-level field on ``SavedFitSlot`` (not in
+        the metrics dict) because it's noise metadata, not a fit-quality
+        metric. Every other key reads from ``slot.metrics`` with a clear
+        ``KeyError`` if absent.
+        """
+
+        if key == "sigma_eff":
+            return float(slot.sigma_eff)
         if key not in slot.metrics:
             raise KeyError(
                 f"metric {key!r} not present in slot "
                 f"(file={slot.file_name!r}, model={slot.model_name!r}, "
                 f"fit_type={slot.fit_type!r}); available: "
-                f"{sorted(slot.metrics.keys())}"
+                f"{sorted(slot.metrics.keys())} (plus 'sigma_eff')"
             )
         return slot.metrics[key]
 
@@ -411,9 +537,23 @@ class FitResults:
                 "selection_json": slot.selection_json,
             }
             for key in metric_keys:
+                if key == "sigma_eff":
+                    # Per-slot scalar; SbS doesn't aggregate it (one σ per fit).
+                    row[key] = float(slot.sigma_eff)
+                    continue
                 value = self._slot_metric(slot, key)
                 if slot.fit_type == "sbs":
-                    row[key] = self._aggregate_sbs(value, sbs_aggregation)
+                    if sbs_aggregation == "sum" and key in (
+                        "chi2_red",
+                        "chi2_red_raw",
+                    ):
+                        # Treat the SbS fit as one composite fit: aggregate
+                        # reduced chi-square = Σnumerator / ΣDoF. The naive
+                        # nansum of per-slice reduced χ² would grow linearly
+                        # with N_slices and lose the "≈ 1" reading.
+                        row[key] = self._aggregate_sbs_reduced_sum(slot, key)
+                    else:
+                        row[key] = self._aggregate_sbs(value, sbs_aggregation)
                 else:
                     row[key] = float(value)
             rows.append(row)
@@ -609,7 +749,8 @@ class FitResults:
         One row per slice for SbS slots; one row total for non-SbS slots.
 
         Adds a ``slice_index`` column. Non-SbS rows get ``slice_index = pd.NA``;
-        SbS rows enumerate slice indices.
+        SbS rows enumerate slice indices. ``sigma_eff`` is a per-fit scalar
+        and is broadcast to every slice row of an SbS slot.
         """
 
         rows: list[dict[str, Any]] = []
@@ -621,17 +762,33 @@ class FitResults:
                 "selection_json": slot.selection_json,
             }
             if slot.fit_type == "sbs":
-                first_arr = np.asarray(self._slot_metric(slot, metric_keys[0]))
-                n_slices = int(first_arr.size)
+                # Use any non-sigma_eff key to determine n_slices (sigma_eff
+                # is a scalar). Fall back to the first array metric stored.
+                size_probe = next(
+                    (k for k in metric_keys if k != "sigma_eff" and k in slot.metrics),
+                    None,
+                )
+                if size_probe is None:
+                    # All requested keys are sigma_eff or missing; treat the
+                    # SbS slot as a single row using slot.fit's row count.
+                    n_slices = int(np.asarray(slot.fit).shape[0])
+                else:
+                    n_slices = int(np.asarray(slot.metrics[size_probe]).size)
                 for i in range(n_slices):
                     row = {**base, "slice_index": i}
                     for key in metric_keys:
+                        if key == "sigma_eff":
+                            row[key] = float(slot.sigma_eff)
+                            continue
                         arr = np.asarray(self._slot_metric(slot, key))
                         row[key] = float(arr[i])
                     rows.append(row)
             else:
                 row = {**base, "slice_index": pd.NA}
                 for key in metric_keys:
+                    if key == "sigma_eff":
+                        row[key] = float(slot.sigma_eff)
+                        continue
                     row[key] = float(self._slot_metric(slot, key))
                 rows.append(row)
         columns = [

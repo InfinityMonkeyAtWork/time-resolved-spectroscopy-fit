@@ -22,6 +22,7 @@ from _utils import make_project, simulate_clean, simulate_noisy
 from trspecfit import File, FitResults
 from trspecfit.utils.fit_io import (
     SavedFitSlot,
+    _compute_sigma_eff,
     build_selection_json,
     compute_file_fingerprint,
     compute_history_key,
@@ -210,15 +211,29 @@ class TestBaselineSlot:
         project, _ = _setup_baseline_fit()
         slot = project._fit_history[0]
         residual = slot.observed - slot.fit
-        # chi2 in metrics should match sum of squared residuals.
-        assert slot.metrics["chi2"] == pytest.approx(float(np.sum(residual**2)))
+        # chi2_raw in metrics should match sum of squared residuals (the
+        # lmfit-unweighted SSE diagnostic; chi2 is the σ-calibrated form).
+        assert slot.metrics["chi2_raw"] == pytest.approx(float(np.sum(residual**2)))
 
     #
     def test_metrics_keys_present(self):
         project, _ = _setup_baseline_fit()
         slot = project._fit_history[0]
-        assert set(slot.metrics.keys()) == {"chi2", "chi2_red", "r2", "aic", "bic"}
-        assert all(np.isfinite(v) for v in slot.metrics.values())
+        assert set(slot.metrics.keys()) == {
+            "chi2_raw",
+            "chi2_red_raw",
+            "chi2",
+            "chi2_red",
+            "r2",
+            "aic",
+            "bic",
+        }
+        # Raw + dimensionless metrics are always finite for a successful fit.
+        for k in ("chi2_raw", "chi2_red_raw", "r2", "aic", "bic"):
+            assert np.isfinite(slot.metrics[k])
+        # Calibrated metrics are NaN when no sigma was set on the file.
+        assert np.isnan(slot.metrics["chi2"])
+        assert np.isnan(slot.metrics["chi2_red"])
 
     #
     def test_selection_captures_base_t_ind(self):
@@ -369,7 +384,7 @@ class TestSbSSlot:
         # already run. The slot must still hold valid, finite per-slice metrics
         # (built before the restoration via copied snapshot args).
         slot = project._fit_history[0]
-        assert np.all(np.isfinite(slot.metrics["chi2"]))
+        assert np.all(np.isfinite(slot.metrics["chi2_raw"]))
         assert slot.params.shape[0] == len(file.time)
 
 
@@ -411,7 +426,7 @@ class TestTwoDSlot:
         assert slot.observed.shape == slot.fit.shape
         # Residual reconstruction.
         residual = slot.observed - slot.fit
-        assert slot.metrics["chi2"] == pytest.approx(float(np.sum(residual**2)))
+        assert slot.metrics["chi2_raw"] == pytest.approx(float(np.sum(residual**2)))
 
 
 #
@@ -523,8 +538,18 @@ def _slot_stub(
     observed_sha256="z",
     fingerprint=None,
     selection=None,
+    sigma_data=float("nan"),
+    noise_type=None,
+    sigma_source="user_supplied",
+    sigma_type="constant",
 ):
-    """Build a minimal SavedFitSlot for query-API tests (no real fit)."""
+    """Build a minimal SavedFitSlot for query-API tests (no real fit).
+
+    ``sigma_data`` defaults to ``NaN`` (file had no sigma set); pass a
+    positive number to exercise the σ-calibrated code paths. ``noise_type``
+    follows from ``sigma_data`` when omitted (``"gaussian"`` if finite,
+    ``"unknown"`` otherwise).
+    """
 
     fp = fingerprint or {
         "data_sha256": "a",
@@ -544,8 +569,25 @@ def _slot_stub(
         fit_type=fit_type,
         selection_json=selection_json,
     )
+    sigma_data_f = float(sigma_data)
+    is_unset = not np.isfinite(sigma_data_f)
+    sigma_eff = (
+        float("nan")
+        if is_unset
+        else _compute_sigma_eff(fit_type, selection, sigma_data_f)
+    )
+    if noise_type is None:
+        noise_type = "unknown" if is_unset else "gaussian"
     if metrics is None:
-        metrics = {"chi2": 0.0, "chi2_red": 0.0, "r2": 1.0, "aic": 0.0, "bic": 0.0}
+        metrics = {
+            "chi2_raw": 0.0,
+            "chi2_red_raw": 0.0,
+            "chi2": float("nan") if is_unset else 0.0,
+            "chi2_red": float("nan") if is_unset else 0.0,
+            "r2": 1.0,
+            "aic": 0.0,
+            "bic": 0.0,
+        }
     import pandas as pd
 
     return SavedFitSlot(
@@ -564,6 +606,11 @@ def _slot_stub(
         fit_alg="leastsq",
         yaml_filename=None,
         timestamp="2026-04-30T00:00:00+00:00",
+        noise_type=noise_type,
+        sigma_source=sigma_source,
+        sigma_type=sigma_type,
+        sigma_data=sigma_data_f,
+        sigma_eff=sigma_eff,
     )
 
 
@@ -618,12 +665,21 @@ class TestFitResultsCompareModels:
 
     #
     @staticmethod
-    def _scalar_metrics(*, chi2_red, r2, aic, bic, chi2=None):
-        """Build a metrics dict with the canonical 5 keys."""
+    def _scalar_metrics(*, chi2_red_raw, r2, aic, bic, chi2_raw=None):
+        """Build a metrics dict with the 7-key schema.
 
+        Calibrated ``chi2`` / ``chi2_red`` are populated as NaN — slots
+        built via this helper represent the "no σ set on file" case.
+        Tests that need calibrated values should pass ``sigma_data`` to
+        ``_slot_stub`` and build the per-key dict by hand.
+        """
+
+        chi2_raw_v = float(chi2_raw) if chi2_raw is not None else float(chi2_red_raw)
         return {
-            "chi2": float(chi2) if chi2 is not None else float(chi2_red),
-            "chi2_red": float(chi2_red),
+            "chi2_raw": chi2_raw_v,
+            "chi2_red_raw": float(chi2_red_raw),
+            "chi2": float("nan"),
+            "chi2_red": float("nan"),
             "r2": float(r2),
             "aic": float(aic),
             "bic": float(bic),
@@ -636,13 +692,17 @@ class TestFitResultsCompareModels:
                 file_name="A",
                 model_name="m1",
                 fit_type="baseline",
-                metrics=self._scalar_metrics(chi2_red=1.5, r2=0.9, aic=10.0, bic=12.0),
+                metrics=self._scalar_metrics(
+                    chi2_red_raw=1.5, r2=0.9, aic=10.0, bic=12.0
+                ),
             ),
             _slot_stub(
                 file_name="A",
                 model_name="m2",
                 fit_type="baseline",
-                metrics=self._scalar_metrics(chi2_red=0.8, r2=0.95, aic=8.0, bic=10.0),
+                metrics=self._scalar_metrics(
+                    chi2_red_raw=0.8, r2=0.95, aic=8.0, bic=10.0
+                ),
             ),
         ]
         df = FitResults(slots=slots).compare_models()
@@ -651,7 +711,7 @@ class TestFitResultsCompareModels:
             "model",
             "fit_type",
             "selection_json",
-            "chi2_red",
+            "chi2_red_raw",
             "r2",
             "aic",
             "bic",
@@ -668,13 +728,13 @@ class TestFitResultsCompareModels:
                 file_name="A",
                 model_name="m1",
                 fit_type="baseline",
-                metrics=self._scalar_metrics(chi2_red=1.0, r2=0.9, aic=1, bic=1),
+                metrics=self._scalar_metrics(chi2_red_raw=1.0, r2=0.9, aic=1, bic=1),
             ),
             _slot_stub(
                 file_name="B",
                 model_name="m1",
                 fit_type="baseline",
-                metrics=self._scalar_metrics(chi2_red=1.0, r2=0.9, aic=1, bic=1),
+                metrics=self._scalar_metrics(chi2_red_raw=1.0, r2=0.9, aic=1, bic=1),
                 fingerprint={
                     "data_sha256": "B",
                     "energy_sha256": "b",
@@ -687,7 +747,7 @@ class TestFitResultsCompareModels:
                 model_name="m2",
                 fit_type="2d",
                 selection={"e_lim": None, "t_lim": None},
-                metrics=self._scalar_metrics(chi2_red=1.0, r2=0.9, aic=1, bic=1),
+                metrics=self._scalar_metrics(chi2_red_raw=1.0, r2=0.9, aic=1, bic=1),
             ),
         ]
         r = FitResults(slots=slots)
@@ -703,38 +763,43 @@ class TestFitResultsCompareModels:
             model_name="m1",
             fit_type="baseline",
             metrics=self._scalar_metrics(
-                chi2=2.0,
-                chi2_red=0.5,
+                chi2_raw=2.0,
+                chi2_red_raw=0.5,
                 r2=0.99,
                 aic=5.0,
                 bic=7.0,
             ),
         )
-        df = FitResults(slots=[slot]).compare_models(metrics=["chi2", "r2"])
+        df = FitResults(slots=[slot]).compare_models(metrics=["chi2_raw", "r2"])
         assert list(df.columns) == [
             "file",
             "model",
             "fit_type",
             "selection_json",
-            "chi2",
+            "chi2_raw",
             "r2",
         ]
-        assert df["chi2"].iloc[0] == 2.0
+        assert df["chi2_raw"].iloc[0] == 2.0
         assert df["r2"].iloc[0] == 0.99
 
     #
     def test_unknown_metric_raises_keyerror(self):
         slot = _slot_stub(
-            metrics=self._scalar_metrics(chi2_red=1, r2=1, aic=1, bic=1),
+            metrics=self._scalar_metrics(chi2_red_raw=1, r2=1, aic=1, bic=1),
         )
         with pytest.raises(KeyError, match="bogus"):
             FitResults(slots=[slot]).compare_models(metrics=["bogus"])
 
     #
     def test_sbs_aggregation_modes(self):
+        # No σ → calibrated columns are absent from the default; assertions
+        # target the raw column. (See TestFitResultsCompareModelsSigmaColumns
+        # for the σ-calibrated equivalents.)
         per_slice = {
-            "chi2": np.array([1.0, 2.0, 3.0]),
-            "chi2_red": np.array([0.1, 0.2, 0.3]),
+            "chi2_raw": np.array([1.0, 2.0, 3.0]),
+            "chi2_red_raw": np.array([0.1, 0.2, 0.3]),
+            "chi2": np.array([float("nan")] * 3),
+            "chi2_red": np.array([float("nan")] * 3),
             "r2": np.array([0.9, 0.8, 0.95]),
             "aic": np.array([10.0, 20.0, 30.0]),
             "bic": np.array([12.0, 22.0, 32.0]),
@@ -749,22 +814,28 @@ class TestFitResultsCompareModels:
         r = FitResults(slots=[slot])
 
         df_med = r.compare_models(sbs_aggregation="median")
-        assert df_med["chi2_red"].iloc[0] == pytest.approx(0.2)
+        assert df_med["chi2_red_raw"].iloc[0] == pytest.approx(0.2)
         assert df_med["aic"].iloc[0] == pytest.approx(20.0)
 
         df_mean = r.compare_models(sbs_aggregation="mean")
-        assert df_mean["chi2_red"].iloc[0] == pytest.approx(0.2)
+        assert df_mean["chi2_red_raw"].iloc[0] == pytest.approx(0.2)
         assert df_mean["r2"].iloc[0] == pytest.approx((0.9 + 0.8 + 0.95) / 3)
 
         df_sum = r.compare_models(sbs_aggregation="sum")
         assert df_sum["aic"].iloc[0] == pytest.approx(60.0)
         assert df_sum["bic"].iloc[0] == pytest.approx(66.0)
+        # chi2_red_raw in sum mode is aggregate-reduced-chi-square:
+        # Σchi2_raw / ΣDoF with DoF_i = chi2_raw_i / chi2_red_raw_i = [10, 10, 10],
+        # so aggregate = 6 / 30 = 0.2 (not Σ chi2_red_raw = 0.6).
+        assert df_sum["chi2_red_raw"].iloc[0] == pytest.approx(0.2)
 
     #
     def test_sbs_long_mode_emits_per_slice_rows(self):
         per_slice = {
-            "chi2": np.array([1.0, 2.0]),
-            "chi2_red": np.array([0.1, 0.2]),
+            "chi2_raw": np.array([1.0, 2.0]),
+            "chi2_red_raw": np.array([0.1, 0.2]),
+            "chi2": np.array([float("nan"), float("nan")]),
+            "chi2_red": np.array([float("nan"), float("nan")]),
             "r2": np.array([0.9, 0.8]),
             "aic": np.array([10.0, 20.0]),
             "bic": np.array([12.0, 22.0]),
@@ -780,7 +851,7 @@ class TestFitResultsCompareModels:
             file_name="B",
             model_name="m_base",
             fit_type="baseline",
-            metrics=self._scalar_metrics(chi2_red=0.5, r2=0.99, aic=5, bic=7),
+            metrics=self._scalar_metrics(chi2_red_raw=0.5, r2=0.99, aic=5, bic=7),
             fingerprint={
                 "data_sha256": "B",
                 "energy_sha256": "b",
@@ -809,7 +880,7 @@ class TestFitResultsCompareModels:
                 file_name="A",
                 model_name="m1",
                 fit_type="baseline",
-                metrics=self._scalar_metrics(chi2_red=1, r2=1, aic=1, bic=1),
+                metrics=self._scalar_metrics(chi2_red_raw=1, r2=1, aic=1, bic=1),
                 observed_sha256="hash_A",
             ),
             _slot_stub(
@@ -817,7 +888,7 @@ class TestFitResultsCompareModels:
                 model_name="m2",
                 fit_type="baseline",
                 selection={"base_t_ind": [0, 5], "e_lim": None},
-                metrics=self._scalar_metrics(chi2_red=1, r2=1, aic=1, bic=1),
+                metrics=self._scalar_metrics(chi2_red_raw=1, r2=1, aic=1, bic=1),
                 observed_sha256="hash_B",
             ),
         ]
@@ -834,7 +905,7 @@ class TestFitResultsCompareModels:
                 file_name="A",
                 model_name="m1",
                 fit_type="baseline",
-                metrics=self._scalar_metrics(chi2_red=1, r2=1, aic=1, bic=1),
+                metrics=self._scalar_metrics(chi2_red_raw=1, r2=1, aic=1, bic=1),
                 observed_sha256="hash_A",
             ),
             _slot_stub(
@@ -842,7 +913,7 @@ class TestFitResultsCompareModels:
                 model_name="m1",
                 fit_type="2d",
                 selection={"e_lim": None, "t_lim": None},
-                metrics=self._scalar_metrics(chi2_red=2, r2=0.5, aic=5, bic=7),
+                metrics=self._scalar_metrics(chi2_red_raw=2, r2=0.5, aic=5, bic=7),
                 observed_sha256="hash_B",
             ),
         ]
@@ -858,14 +929,14 @@ class TestFitResultsCompareModels:
                 file_name="A",
                 model_name="m1",
                 fit_type="baseline",
-                metrics=self._scalar_metrics(chi2_red=1, r2=1, aic=1, bic=1),
+                metrics=self._scalar_metrics(chi2_red_raw=1, r2=1, aic=1, bic=1),
                 observed_sha256="hash_A",
             ),
             _slot_stub(
                 file_name="B",
                 model_name="m1",
                 fit_type="baseline",
-                metrics=self._scalar_metrics(chi2_red=2, r2=0.5, aic=5, bic=7),
+                metrics=self._scalar_metrics(chi2_red_raw=2, r2=0.5, aic=5, bic=7),
                 observed_sha256="hash_B",
                 fingerprint={
                     "data_sha256": "B",
@@ -898,7 +969,7 @@ class TestFitResultsCompareModels:
                 file_name="rep_A",
                 model_name="m1",
                 fit_type="baseline",
-                metrics=self._scalar_metrics(chi2_red=1, r2=1, aic=1, bic=1),
+                metrics=self._scalar_metrics(chi2_red_raw=1, r2=1, aic=1, bic=1),
                 observed_sha256="hash_A",
                 fingerprint=shared_fp,
             ),
@@ -906,7 +977,7 @@ class TestFitResultsCompareModels:
                 file_name="rep_B",
                 model_name="m1",
                 fit_type="baseline",
-                metrics=self._scalar_metrics(chi2_red=2, r2=0.5, aic=5, bic=7),
+                metrics=self._scalar_metrics(chi2_red_raw=2, r2=0.5, aic=5, bic=7),
                 observed_sha256="hash_B",
                 fingerprint=shared_fp,
             ),
@@ -920,7 +991,7 @@ class TestFitResultsCompareModels:
         slot = _slot_stub(
             file_name="A",
             model_name="m1",
-            metrics=self._scalar_metrics(chi2_red=1, r2=1, aic=1, bic=1),
+            metrics=self._scalar_metrics(chi2_red_raw=1, r2=1, aic=1, bic=1),
         )
 
         class _Stub:
@@ -946,8 +1017,10 @@ class TestFitResultsCompareModels:
     #
     def test_unknown_sbs_aggregation_raises(self):
         per_slice = {
-            "chi2": np.array([1.0]),
-            "chi2_red": np.array([0.1]),
+            "chi2_raw": np.array([1.0]),
+            "chi2_red_raw": np.array([0.1]),
+            "chi2": np.array([float("nan")]),
+            "chi2_red": np.array([float("nan")]),
             "r2": np.array([0.9]),
             "aic": np.array([10.0]),
             "bic": np.array([12.0]),
@@ -961,6 +1034,244 @@ class TestFitResultsCompareModels:
         )
         with pytest.raises(ValueError, match="unknown sbs_aggregation"):
             FitResults(slots=[slot]).compare_models(sbs_aggregation="bogus")  # type: ignore[arg-type]
+
+
+#
+class TestFitResultsCompareModelsSigmaColumns:
+    """Stable column semantics around the file's persistent σ.
+
+    Covers:
+
+    - Default column set switches dynamically: 4 cols without σ, 6 cols
+      with (``chi2_red_raw`` is always present; ``sigma_eff`` + ``chi2_red``
+      appear only when at least one matched slot carries a finite σ).
+    - Explicit request for ``chi2`` / ``chi2_red`` with no σ raises a clear
+      ``KeyError`` pointing at ``file.set_sigma(...)`` / the raw column.
+    - Sum-mode aggregation of ``chi2_red_raw`` and ``chi2_red`` uses
+      ``Σnumerator / ΣDoF`` (not ``np.nansum`` of per-slice values) for the
+      "≈ 1 for a good fit" reading.
+    - The 4 sigma fields on the slot dataclass round-trip through both
+      scalar and long output modes.
+    """
+
+    #
+    @staticmethod
+    def _scalar_metrics(*, chi2_red_raw, r2=0.9, aic=10.0, bic=12.0, sigma_eff=None):
+        """Build a 7-key metrics dict.
+
+        ``chi2_raw = chi2_red_raw`` for stub purposes (DoF=1 by construction);
+        calibrated fields are computed from ``sigma_eff`` when given.
+        """
+
+        chi2_raw = float(chi2_red_raw)
+        if sigma_eff is None or not np.isfinite(sigma_eff):
+            chi2 = float("nan")
+            chi2_red = float("nan")
+        else:
+            chi2 = chi2_raw / sigma_eff**2
+            chi2_red = float(chi2_red_raw) / sigma_eff**2
+        return {
+            "chi2_raw": chi2_raw,
+            "chi2_red_raw": float(chi2_red_raw),
+            "chi2": chi2,
+            "chi2_red": chi2_red,
+            "r2": float(r2),
+            "aic": float(aic),
+            "bic": float(bic),
+        }
+
+    #
+    def test_default_columns_without_sigma(self):
+        """No σ on any slot → calibrated columns are absent from the default."""
+
+        slot = _slot_stub(
+            file_name="A",
+            model_name="m",
+            fit_type="2d",
+            selection={"e_lim": None, "t_lim": None},
+            metrics=self._scalar_metrics(chi2_red_raw=0.05),
+        )
+        df = FitResults(slots=[slot]).compare_models()
+        assert list(df.columns) == [
+            "file",
+            "model",
+            "fit_type",
+            "selection_json",
+            "chi2_red_raw",
+            "r2",
+            "aic",
+            "bic",
+        ]
+        assert "chi2_red" not in df.columns
+        assert "sigma_eff" not in df.columns
+        assert "chi2" not in df.columns
+
+    #
+    def test_default_columns_with_sigma(self):
+        """σ on the slot → default set adds sigma_eff + chi2_red."""
+
+        slot = _slot_stub(
+            file_name="A",
+            model_name="m",
+            fit_type="2d",
+            selection={"e_lim": None, "t_lim": None},
+            sigma_data=0.2,
+            metrics=self._scalar_metrics(chi2_red_raw=0.04, sigma_eff=0.2),
+        )
+        df = FitResults(slots=[slot]).compare_models()
+        assert list(df.columns) == [
+            "file",
+            "model",
+            "fit_type",
+            "selection_json",
+            "chi2_red_raw",
+            "sigma_eff",
+            "chi2_red",
+            "r2",
+            "aic",
+            "bic",
+        ]
+        assert df["sigma_eff"].iloc[0] == pytest.approx(0.2)
+        assert df["chi2_red"].iloc[0] == pytest.approx(0.04 / 0.2**2)
+        assert df["chi2_red_raw"].iloc[0] == pytest.approx(0.04)
+
+    #
+    def test_baseline_sigma_eff_uses_n_avg_correction(self):
+        """Slot stub mirrors the live ``_compute_sigma_eff`` correction."""
+
+        slot = _slot_stub(
+            file_name="A",
+            model_name="m",
+            fit_type="baseline",
+            selection={"base_t_ind": [0, 5], "e_lim": None},
+            sigma_data=0.2,
+        )
+        # _slot_stub computed sigma_eff = 0.2 / sqrt(5) at construction.
+        expected = 0.2 / np.sqrt(5)
+        assert slot.sigma_eff == pytest.approx(expected)
+        df = FitResults(slots=[slot]).compare_models()
+        assert df["sigma_eff"].iloc[0] == pytest.approx(expected)
+
+    #
+    def test_explicit_calibrated_request_without_sigma_raises(self):
+        """``metrics=['chi2_red']`` with no σ → KeyError pointing at set_sigma."""
+
+        slot = _slot_stub(
+            file_name="A",
+            model_name="m",
+            fit_type="2d",
+            selection={"e_lim": None, "t_lim": None},
+            metrics=self._scalar_metrics(chi2_red_raw=0.05),
+        )
+        with pytest.raises(KeyError, match="file.set_sigma"):
+            FitResults(slots=[slot]).compare_models(metrics=["chi2_red"])
+        with pytest.raises(KeyError, match="file.set_sigma"):
+            FitResults(slots=[slot]).compare_models(metrics=["chi2"])
+
+    #
+    def test_explicit_raw_request_works_without_sigma(self):
+        """``metrics=['chi2_red_raw']`` always works — raw is always populated."""
+
+        slot = _slot_stub(
+            file_name="A",
+            model_name="m",
+            fit_type="2d",
+            selection={"e_lim": None, "t_lim": None},
+            metrics=self._scalar_metrics(chi2_red_raw=0.05),
+        )
+        df = FitResults(slots=[slot]).compare_models(metrics=["chi2_red_raw"])
+        assert df["chi2_red_raw"].iloc[0] == pytest.approx(0.05)
+
+    #
+    def test_sigma_eff_broadcast_in_long_mode(self):
+        """SbS in ``long`` mode: every slice row gets the slot's σ_eff."""
+
+        per_slice = {
+            "chi2_raw": np.array([1.0, 2.0, 3.0]),
+            "chi2_red_raw": np.array([0.04, 0.05, 0.06]),
+            "chi2": np.array([1.0 / 0.04, 2.0 / 0.04, 3.0 / 0.04]),
+            "chi2_red": np.array([1.0, 1.25, 1.5]),
+            "r2": np.array([0.9, 0.8, 0.85]),
+            "aic": np.array([10.0, 20.0, 30.0]),
+            "bic": np.array([12.0, 22.0, 32.0]),
+        }
+        slot = _slot_stub(
+            file_name="A",
+            model_name="m_sbs",
+            fit_type="sbs",
+            selection={"e_lim": None, "t_lim": None},
+            metrics=per_slice,
+            sigma_data=0.2,
+        )
+        df = FitResults(slots=[slot]).compare_models(sbs_aggregation="long")
+        assert len(df) == 3
+        # Per-slot scalar broadcast to every slice row.
+        assert df["sigma_eff"].tolist() == [pytest.approx(0.2)] * 3
+
+    #
+    def test_sbs_sum_chi2_red_raw_aggregates_via_dof(self):
+        """sum-mode ``chi2_red_raw`` = Σ chi2_raw / Σ DoF (not nansum)."""
+
+        # DoF_i = chi2_raw_i / chi2_red_raw_i = [10, 15] → ΣDoF = 25, Σchi2_raw = 40.
+        per_slice = {
+            "chi2_raw": np.array([10.0, 30.0]),
+            "chi2_red_raw": np.array([1.0, 2.0]),
+            "chi2": np.array([float("nan"), float("nan")]),
+            "chi2_red": np.array([float("nan"), float("nan")]),
+            "r2": np.array([0.9, 0.8]),
+            "aic": np.array([10.0, 20.0]),
+            "bic": np.array([12.0, 22.0]),
+        }
+        slot = _slot_stub(
+            file_name="A",
+            model_name="m_sbs",
+            fit_type="sbs",
+            selection={"e_lim": None, "t_lim": None},
+            metrics=per_slice,
+        )
+        df = FitResults(slots=[slot]).compare_models(
+            sbs_aggregation="sum",
+            metrics=["chi2_raw", "chi2_red_raw", "aic", "bic"],
+        )
+        assert df["chi2_red_raw"].iloc[0] == pytest.approx(40.0 / 25.0)
+        # chi2_raw / aic / bic still nansum'd.
+        assert df["chi2_raw"].iloc[0] == pytest.approx(40.0)
+        assert df["aic"].iloc[0] == pytest.approx(30.0)
+        assert df["bic"].iloc[0] == pytest.approx(34.0)
+
+    #
+    def test_sbs_sum_chi2_red_uses_calibrated_numerator(self):
+        """sum-mode ``chi2_red`` = Σ chi2 / Σ DoF; equals chi2_red_raw / σ²."""
+
+        sigma = 0.5
+        per_slice_raw = 0.04
+        n_slices = 4
+        chi2_raw = np.full(n_slices, per_slice_raw * 100.0)  # DoF = 100 each
+        chi2_red_raw = np.full(n_slices, per_slice_raw)
+        chi2 = chi2_raw / sigma**2
+        chi2_red = chi2_red_raw / sigma**2
+        per_slice = {
+            "chi2_raw": chi2_raw,
+            "chi2_red_raw": chi2_red_raw,
+            "chi2": chi2,
+            "chi2_red": chi2_red,
+            "r2": np.full(n_slices, 0.99),
+            "aic": np.full(n_slices, -10.0),
+            "bic": np.full(n_slices, -8.0),
+        }
+        slot = _slot_stub(
+            file_name="A",
+            model_name="m",
+            fit_type="sbs",
+            selection={"e_lim": None, "t_lim": None},
+            metrics=per_slice,
+            sigma_data=sigma,
+        )
+        df = FitResults(slots=[slot]).compare_models(sbs_aggregation="sum")
+        # aggregate raw = per_slice_raw (constant per slice)
+        assert df["chi2_red_raw"].iloc[0] == pytest.approx(per_slice_raw)
+        # aggregate calibrated = per_slice_raw / σ²
+        assert df["chi2_red"].iloc[0] == pytest.approx(per_slice_raw / sigma**2)
 
 
 #
@@ -1002,6 +1313,11 @@ class TestFitResultsPlotResiduals:
             fit_alg=slot.fit_alg,
             yaml_filename=slot.yaml_filename,
             timestamp=slot.timestamp,
+            noise_type=slot.noise_type,
+            sigma_source=slot.sigma_source,
+            sigma_type=slot.sigma_type,
+            sigma_data=slot.sigma_data,
+            sigma_eff=slot.sigma_eff,
         )
 
     #
