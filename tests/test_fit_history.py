@@ -1404,7 +1404,7 @@ class TestHistoryAccumulationAndSnapshot:
     """Multi-fit history accumulation, in-session multi-version visibility,
     and snapshot-collapse-on-save.
 
-    PLAN ask: fit modelA-baseline, fit modelB-baseline, refit modelA-baseline.
+    Scenario: fit modelA-baseline, fit modelB-baseline, refit modelA-baseline.
     History has *all three* slots; ``Project.results`` exposes them.
     ``save_fits`` (snapshot mode) collapses to two — one per ``history_key``,
     latest wins.

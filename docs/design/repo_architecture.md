@@ -165,11 +165,12 @@ methods. There is no `File.load_fit`: load is path-scoped, not file-scoped.
 The legacy `File.save_sbs_fit` / `File.save_2d_fit` are deprecated
 aliases that emit `DeprecationWarning` and forward to the new
 `File.export_fit`. The legacy on-disk layout is preserved internally
-by `_save_sbs_fit_legacy` / `_save_2d_fit_legacy`, which are still
-called from inside `fit_slice_by_slice` / `fit_2d` / `Project.fit_2d`
-on every fit (the auto-export side effect — opt-out is deferred per
-PLAN). Both are scheduled for removal before v1.0.0; new code should
-use `Project.export_fits` / `File.export_fit`.
+by `_save_sbs_fit_legacy` / `_save_2d_fit_legacy`, which are called
+from inside `fit_slice_by_slice` / `fit_2d` / `Project.fit_2d` on every
+fit unless the auto-export side effect is disabled via
+`Project.auto_export = False` (default `True`). Both are scheduled for
+removal before v1.0.0; new code should use `Project.export_fits` /
+`File.export_fit`.
 
 ## `config/` — runtime configuration
 

@@ -1,4 +1,4 @@
-# Fit-archive HDF5 schema (v1)
+# Fit-archive HDF5 schema (schema_version 2)
 
 On-disk layout for the fit-results archive written by `Project.save_fits()`
 and read by `FitResults.load()` / `Project.load_fits()`. The object model
@@ -7,8 +7,9 @@ truth; this document specifies the 1:1 mapping to HDF5 so the writer and
 reader agree on dtypes, attr keys, and None-handling.
 
 For the design rationale (why per-slot `observed`, why two identity keys,
-why HDF5 instead of pickle, etc.), see [PLAN.md](../../PLAN.md). This file
-is the wire format.
+why HDF5 instead of pickle, etc.), see the archived design plan,
+[Fit Results Save/Load](archive/fit_results_save_load_plan.md).
+This file is the wire format.
 
 ## Conventions
 
@@ -86,7 +87,7 @@ dtypes.
 │     project_name       : str              # Project.name; set on first write
 │     timestamp_created  : str              # ISO 8601 UTC, first write
 │     timestamp_updated  : str              # ISO 8601 UTC, most recent write
-│     schema_version     : str              # "1"; bump on incompatible change
+│     schema_version     : str              # "2"; bump on incompatible change
 └── files/                                  # group; one subgroup per file
     ├── 000000/                             # SavedFile (see "File group")
     └── 000001/...
@@ -100,10 +101,14 @@ must not recreate the archive on subsequent saves unless the caller
 explicitly asks for that; the canonical way to start fresh is to choose
 a new path.
 
-`schema_version` exists so v2 (e.g. project-scoped joint-result slots,
-full-log save with `keep_history=True`) can declare itself compatible or
-not. The reader rejects archives with `schema_version` it does not
-recognize.
+`schema_version` is currently `"2"`. It was bumped from `"1"` before this
+branch shipped, when the σ-calibrated chi-square columns and per-slot sigma
+metadata changed the stored fields — a clean break, so archives written by
+the older schema can no longer be read. Future incompatible changes (e.g.
+project-scoped joint-result slots or `keep_history=True` full-log save —
+both deferred, see "What's *not* in v1") bump it again. The reader rejects
+archives with a `schema_version` it does not recognize. (This wire-format
+number is independent of the feature-scope "v1" used elsewhere in this doc.)
 
 ## File group
 
@@ -131,7 +136,7 @@ files/000000/
 Notes:
 
 - The full data + axes are duplicated into the archive deliberately
-  (decision in PLAN.md — "Self-contained archive"). On load, the reader
+  (decision in the archived design plan — "Self-contained archive"). On load, the reader
   hands these back via `SavedFile`; the live `Project` is not mutated.
 - `data_sha256`, `energy_sha256`, `time_sha256` together with `shape`
   form the `file_fingerprint` used to match an archive's file to a
@@ -393,7 +398,8 @@ The archive does not distinguish them from slots produced by
   There is no archive construct for a single "joint" slot that owns the
   shared parameter values without per-file duplication. The pipeline
   that would justify one is flagged as architecturally unfinished
-  ([TODO.md](../../TODO.md) — "Project-level fit backend"). Adding a
+  ([TODO.md](https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/blob/main/TODO.md)
+  — "Project-level fit backend"). Adding a
   joint slot later is a strict additive change: a new top-level group
   (e.g. `project_slots/`) and a schema-version bump; existing per-file
   2d slots stay untouched.
@@ -404,7 +410,7 @@ The archive does not distinguish them from slots produced by
   promise to deserialize a `Model` from the archive.
 - **MCMC trace metadata** (acceptance fraction, autocorrelation times,
   etc.) — only `flatchain` / `ci` / `lnsigma` are persisted. If the
-  decoupled-MCMC follow-on (PLAN.md "Out of scope") lands, that work owns
+  decoupled-MCMC follow-on (the archived design plan, "Out of scope") lands, that work owns
   the schema extension.
 
 ## Cross-references

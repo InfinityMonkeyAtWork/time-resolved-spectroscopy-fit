@@ -18,8 +18,7 @@ Signature: funcCONV(t, par1, par2, ...)
 - t: Time axis centered at zero (from create_t_kernel)
 - par1, par2, ...: Kernel parameters
 - Returns: Normalized kernel function
-- Must have companion function: funcCONV_kernel_width(...) returning a
-  support multiplier; helpers may inspect the kernel parameters when needed
+- Must have a companion funcCONV_kernel_width(...) helper for support width
 
 **Time Zero Convention:**
 All dynamics functions are zero before t0 and activate at t >= t0.

@@ -271,7 +271,7 @@ class Project:
         self.spec_fun_str = "fit_model_gir"
         # Noise / sigma defaults — applied to every File at construction time.
         # Files inherit these values at __init__ and may override them via
-        # File.set_sigma(...). See docs/design/temp_plan.md.
+        # File.set_sigma(...).
         self.noise_type: str = fit_io.NOISE_TYPE_UNKNOWN
         self.sigma_source: str = fit_io.SIGMA_SOURCE_USER
         self.sigma_type: str = fit_io.SIGMA_TYPE_CONSTANT
@@ -325,8 +325,10 @@ class Project:
             ``int`` indexes into ``self.files``; ``str`` matches
             ``File.name``; ``File`` is taken directly. Resolved to file
             fingerprints, then matched against ``slot.file_fingerprint``.
-        model, fit_type : str | sequence, optional
-            String filters on ``slot.model_name`` / ``slot.fit_type``.
+        model : str | sequence, optional
+            String filter on ``slot.model_name``.
+        fit_type : str | sequence, optional
+            String filter on ``slot.fit_type``.
         overwrite : bool, default False
             Slot-scoped: a slot collision (same canonical identity already
             in the archive) raises ``FileExistsError`` unless True.
@@ -336,8 +338,7 @@ class Project:
         Notes
         -----
         v1 behavior is snapshot-only (one slot per ``history_key``).
-        ``keep_history=True`` for full-log save is deferred (PLAN.md
-        "Out of scope").
+        ``keep_history=True`` for full-log save is deferred.
         """
 
         project = self._build_saved_project_from_history(
@@ -388,8 +389,13 @@ class Project:
             Created if missing.
         format : {"csv"}, default ``"csv"``
             Reserved kwarg; only CSV is implemented in v1.
-        file, model, fit_type :
-            Filters; same semantics as :meth:`save_fits`.
+        file : int | str | File | sequence, optional
+            Restrict to slots whose live ``Project.files`` entry matches;
+            same semantics as :meth:`save_fits`.
+        model : str | sequence, optional
+            String filter on ``slot.model_name``.
+        fit_type : str | sequence, optional
+            String filter on ``slot.fit_type``.
         overwrite : bool, default False
             Per-slot directory: a non-empty target dir raises
             ``FileExistsError`` unless True. Pre-checked across all slots
@@ -399,22 +405,25 @@ class Project:
 
         Output layout
         -------------
-        ``<filepath>/<file_name>/<model_name>__<fit_type>[__<hash>]/``
-        with ``params.csv``, ``metrics.csv`` (or
-        ``metrics_per_slice.csv`` for SbS), ``conf_ci.csv`` /
-        ``mcmc/flatchain.csv`` when present, plus per-fit-type artifacts:
+        Exports are grouped by output directory, file name, model name, and
+        fit type. The model and fit-type parts are joined with two underscores;
+        when multiple slots share the same file, model, and fit type, an
+        additional two-underscore hash suffix is appended.
 
-        - **baseline / spectrum**: ``fit_1d.csv`` (energy, observed, fit,
-          residual).
-        - **2d / sbs**: ``fit_2d.csv``, ``observed_2d.csv``,
-          ``energy.csv``, ``time.csv``, ``2D_data_fit_res.png``.
-        - **sbs only**: ``fit_pars.csv`` (per-slice param values) and one
-          PNG per parameter from ``plt_fit_res_pars``.
+        Each slot contains params.csv, metrics.csv (or metrics_per_slice.csv
+        for SbS), conf_ci.csv / mcmc/flatchain.csv when present, plus
+        per-fit-type artifacts:
 
-        The ``__<hash>`` directory suffix appears only when more than one
-        slot in the snapshot shares ``(file, model, fit_type)`` (i.e.
-        different selections); the hash is the first 8 chars of
-        ``history_key``.
+        - baseline / spectrum: fit_1d.csv (energy, observed, fit, residual).
+        - 2d / sbs: fit_2d.csv, observed_2d.csv, energy.csv, time.csv,
+          2D_data_fit_res.png.
+        - sbs only: fit_pars.csv (per-slice param values) and one PNG per
+          parameter from plt_fit_res_pars.
+
+        The optional hash directory suffix appears only when more than one
+        slot in the snapshot shares the same file, model, and fit type (i.e.
+        different selections); the hash is the first 8 chars of the history
+        key.
         """
 
         if format != "csv":
@@ -1614,9 +1623,9 @@ class File:
         self.data_spec: np.ndarray | None = None  # extracted 1D spectrum
         self.spec_t_abs: list[float] = []  # time bounds (absolute)
         self.spec_t_ind: list[int] = []  # time bounds (indices)
-        # Noise metadata — inherited from parent Project at construction; users
-        # override per file via File.set_sigma(). Materialized into each saved
-        # slot at fit completion (immutable slot invariant).
+        # Noise metadata — inherited from parent Project at construction
+        #                  users override per file via File.set_sigma()
+        #                  materialized into each saved slot at fit completion
         self.noise_type: str = getattr(self.p, "noise_type", fit_io.NOISE_TYPE_UNKNOWN)
         self.sigma_source: str = getattr(
             self.p, "sigma_source", fit_io.SIGMA_SOURCE_USER
@@ -2452,9 +2461,7 @@ class File:
 
         Subsequent fits on this file will materialize the σ into their saved
         slots (chi2 / chi2_red calibrated from chi2_raw / chi2_red_raw). The
-        change is stateful but does **not** retroactively rewrite slots
-        already in ``Project._fit_history`` — the immutable-slot invariant
-        from ``PLAN.md`` is preserved.
+        change is stateful but does **not** retroactively rewrite existing slots.
 
         Parameters
         ----------
@@ -2482,11 +2489,10 @@ class File:
         -----
         ``set_sigma`` only affects **future** fits on this file. Slots
         already in ``Project._fit_history`` keep the σ snapshot that was
-        materialized at their fit completion (immutable-slot invariant
-        from ``PLAN.md``); ``compare_models()`` reads those snapshots and
-        is therefore unaffected by σ changes made after the fit. For an
-        alternative calibration of *existing* results, divide the
-        always-present ``chi2_red_raw`` column by ``alt_sigma**2``
+        materialized at their fit completion; ``compare_models()`` reads
+        those snapshots and is therefore unaffected by σ changes made after
+        the fit. For an alternative calibration of *existing* results, divide
+        the always-present ``chi2_red_raw`` column by ``alt_sigma**2``
         directly on the returned DataFrame — no API needed.
 
         Raises

@@ -2,7 +2,7 @@
 ``Project.export_fits`` parity vs the legacy ``_save_sbs_fit_legacy`` /
 ``_save_2d_fit_legacy`` paths.
 
-PLAN ask: same column shapes as the old ``save_sbs_fit`` / ``save_2d_fit``
+Goal: same column shapes as the old ``save_sbs_fit`` / ``save_2d_fit``
 outputs. The new export tree is slot-driven and richer (observed_2d.csv,
 metrics.csv, params.csv land alongside the legacy files), but for the
 artifacts that *do* overlap — ``fit_pars.csv``, ``fit_2d.csv``,

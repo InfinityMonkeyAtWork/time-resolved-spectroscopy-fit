@@ -4,7 +4,7 @@ Round-trip tests for the fit archive: save → load → field equality.
 For each (model family, fit type), run the fit, write the archive via
 ``Project.save_fits``, read it back via ``FitResults.load`` (and via
 ``Project.load_fits``), and verify every user-visible slot field is
-reconstructed exactly. Also exercises the PLAN invariant that
+reconstructed exactly. Also exercises the design invariant that
 ``observed - fit`` reproduces residuals for any fit_type without reading
 ``file.data``.
 
@@ -15,8 +15,8 @@ Coverage matrix
 - F6  (profile-only):       baseline, spectrum, sbs
 - F8  (profile + dynamics): baseline, 2d
 
-The matrix follows PLAN.md "Tests + docs" — basic / profile /
-profile+dynamics × applicable fit types — and aligns with
+The matrix covers basic / profile / profile+dynamics × applicable fit
+types — and aligns with
 ``tests/roundtrip/matrix.py`` for B/Sp/SbS on F1/F6 (the families that
 support 1D fits). F6 has no top-level dynamics so its 2d slot would
 have nothing extra to assert vs F3; F8 covers the full "profile + 2d
@@ -89,7 +89,7 @@ def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> 
     """Assert every persisted SavedFitSlot field round-trips exactly.
 
     Covers identity (fingerprint, hashes, selection), arrays, metrics,
-    params, and provenance. Also verifies the PLAN invariant that
+    params, and provenance. Also verifies the design invariant that
     ``observed - fit`` reproduces residuals on the loaded slot alone (no
     ``file.data`` lookup) — both via direct subtraction and against the
     stored chi2.
@@ -151,7 +151,7 @@ def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> 
     assert loaded.yaml_filename == original.yaml_filename
     assert loaded.timestamp == original.timestamp
 
-    # --- residual reconstruction (PLAN invariant) ----------------------
+    # --- residual reconstruction (design invariant) --------------------
     # chi2_raw is the lmfit-unweighted SSE diagnostic; chi2 is σ-calibrated
     # and NaN when no σ was set on the file, so we cross-check against the raw
     # column (always populated and grid-derived).

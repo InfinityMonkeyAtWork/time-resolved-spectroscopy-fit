@@ -2,7 +2,6 @@
 
 ## Fitting
 
-- [ ] **Fit results save/load** `[ACTIVE]`: HDF5 archive of fit results via `Project.save_fits()`; new `FitResults` class for inspection/comparison (`FitResults.load(path)` standalone, `Project.load_fits(path)` convenience, `Project.results` property for in-memory view). `File.compare_models()` kept as a delegate sugar. Project-level / global-fit save deferred from v1. See [PLAN.md](PLAN.md).
 - [ ] **Mismatched initial guesses**: round-trip tests — one each for basic, profile, profile+dynamics.
 
 Note: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling — make configurable via `mc_settings` if users need it.
@@ -10,7 +9,7 @@ Note: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling — make
 ## Noise and simulation
 
 - [ ] **Simulator noise-language cleanup**: align simulator docs/metadata with the fit-results noise schema. Keep simulator `noise_type` meaning "noise distribution / random generator" (`gaussian`, `poisson`, `none`), not sigma shape. Fix the stale `Simulator.set_noise_type()` docstring that mentions `uniform`; clarify `detection` vs. `noise_type` vs. `noise_level`; and, for analog Gaussian simulations, consider saving the derived `sigma_data = noise_level * max(abs(clean_data))` alongside existing metadata. For parameter sweeps, store derived `sigma_data` per configuration when it depends on each clean dataset.
-- [ ] **Future `sigma_type` expansion**: after the first constant, user-supplied sigma schema lands, extend uncertainty handling beyond scalar `sigma_data`. Keep `noise_type` for the statistical assumption/distribution and use `sigma_type` for sigma shape: initially `constant`, later `per_spectrum` and `per_point`. Add HDF5 storage, validation, baseline/SBS/2D alignment, `compare_models()` behavior, and tests for vector/matrix sigma. Defer automatic Poisson-derived sigma until residual-space variance propagation is explicit.
+- [ ] **Future `sigma_type` expansion in FitResults**: after the first constant, user-supplied sigma schema lands, extend uncertainty handling beyond scalar `sigma_data`. Keep `noise_type` for the statistical assumption/distribution and use `sigma_type` for sigma shape: initially `constant`, later `per_spectrum` and `per_point`. Add HDF5 storage, validation, baseline/SBS/2D alignment, `compare_models()` behavior, and tests for vector/matrix sigma. Defer automatic Poisson-derived sigma until residual-space variance propagation is explicit.
 
 ## Performance & architecture
 
