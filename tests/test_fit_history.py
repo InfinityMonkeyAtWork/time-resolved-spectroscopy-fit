@@ -872,6 +872,41 @@ class TestFitResultsCompareModels:
         assert pd.isna(baseline_rows["slice_index"].iloc[0])
 
     #
+    def test_sbs_long_mode_is_slice_major(self):
+        """Long-form interleaves models by slice so head() compares them."""
+
+        per_slice = {
+            "chi2_raw": np.array([1.0, 2.0, 3.0]),
+            "chi2_red_raw": np.array([0.1, 0.2, 0.3]),
+            "chi2": np.array([float("nan")] * 3),
+            "chi2_red": np.array([float("nan")] * 3),
+            "r2": np.array([0.9, 0.8, 0.7]),
+            "aic": np.array([10.0, 20.0, 30.0]),
+            "bic": np.array([12.0, 22.0, 32.0]),
+        }
+        slot_A = _slot_stub(
+            file_name="F",
+            model_name="sbsA",
+            fit_type="sbs",
+            selection={"e_lim": None, "t_lim": None},
+            metrics=per_slice,
+        )
+        slot_B = _slot_stub(
+            file_name="F",
+            model_name="sbsB",
+            fit_type="sbs",
+            selection={"e_lim": None, "t_lim": None},
+            metrics=per_slice,
+        )
+        # Slot order is A, B; slice-major output groups both models per slice.
+        df = FitResults(slots=[slot_A, slot_B]).compare_models(
+            fit_type="sbs", sbs_aggregation="long"
+        )
+        assert list(df["slice_index"]) == [0, 0, 1, 1, 2, 2]
+        # Stable sort preserves slot order (A before B) within each slice.
+        assert list(df["model"]) == ["sbsA", "sbsB"] * 3
+
+    #
     def test_observed_mismatch_raises(self):
         """Two slots on same (file, fit_type) with different observed_sha256 → raise."""
 

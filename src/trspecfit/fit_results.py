@@ -353,8 +353,11 @@ class FitResults:
               ``r2`` is still nansum'd; treat it as informational in sum
               mode (no per-slice SST is stored to compute an aggregate r²).
             - ``"long"``   — one row per slice. Adds a ``slice_index``
-              column (NaN for non-SbS rows). ``sigma_eff`` is broadcast
-              from the slot's scalar to every slice row.
+              column (NaN for non-SbS rows). Rows are emitted slice-major
+              (ascending ``slice_index`` with competing models adjacent at
+              each slice; non-SbS rows last) so ``head()`` compares models
+              at the same slice. ``sigma_eff`` is broadcast from the slot's
+              scalar to every slice row.
 
         Returns
         -------
@@ -751,6 +754,12 @@ class FitResults:
         Adds a ``slice_index`` column. Non-SbS rows get ``slice_index = pd.NA``;
         SbS rows enumerate slice indices. ``sigma_eff`` is a per-fit scalar
         and is broadcast to every slice row of an SbS slot.
+
+        Rows are emitted **slice-major**: ascending ``slice_index`` with all
+        competing models at a given slice adjacent, so ``head()`` compares
+        models at the same slice instead of scrolling through one model's
+        full time series first. The sort is stable, so models keep their
+        original (slot) order within a slice; non-SbS rows sort to the end.
         """
 
         rows: list[dict[str, Any]] = []
@@ -799,4 +808,17 @@ class FitResults:
             "slice_index",
             *metric_keys,
         ]
-        return pd.DataFrame(rows, columns=columns)
+        df = pd.DataFrame(rows, columns=columns)
+        # Slice-major ordering so head()/eyeballing compares competing models
+        # at the same slice. Coerce slice_index to a numeric key (NA -> NaN)
+        # rather than sorting the mixed int/NA column directly, which can trip
+        # pandas' "boolean value of NA is ambiguous". Stable sort preserves the
+        # original model order within a slice; na_position pushes non-SbS rows
+        # to the end.
+        sort_key = pd.to_numeric(df["slice_index"], errors="coerce")
+        return (
+            df.assign(_sort_key=sort_key)
+            .sort_values("_sort_key", kind="stable", na_position="last")
+            .drop(columns="_sort_key")
+            .reset_index(drop=True)
+        )

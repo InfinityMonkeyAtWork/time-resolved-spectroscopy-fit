@@ -16,9 +16,29 @@ work to deserve its own branch.
   (existing name kept) and `synthetic_data/` (renamed from
   `data_generation/`). No `data_preparation/` track in this pass.
 - Inside `fitting_workflows/`, layout is flat with three numeric blocks:
-  **01–04** = fitting skills on a single file; **10** = post-fit comparison;
-  **20+** = multi-file workflows. `fitting_workflows/README.md` documents the
-  legend.
+  **01–04** = fitting skills on a single file; **10–11** = post-fit work
+  (comparison, persistence, export); **20+** = multi-file workflows.
+  `fitting_workflows/README.md` documents the legend.
+- `10_model_comparison` is strictly about model comparison. The
+  persistence / inspection / export side (save/load h5, browse loaded
+  archives, ship single slots, the two-channels framing) moves to a
+  sibling notebook `11_save_load_export`. Each notebook has one job, and
+  notebook 11 gets a discoverable filesystem location that can be linked
+  from `save_fit` / `export_fit` docstrings, the README, and the CHANGELOG.
+- Notebook 11 uses notebook 10's full pipeline as its preamble via the
+  IPython `%run` magic (`%run ../10_model_comparison/example.ipynb`),
+  preceded by a one-line markdown pointer ("see `10_model_comparison`
+  for the fitting/comparison details; this notebook focuses on what to
+  do with the results"). Output suppression rides on the existing
+  `project.yaml` knobs already used by `10_model_comparison`
+  (`show_output: 0`, `auto_export: false`); `%%capture` is the fallback,
+  not the default mechanism. Expected preamble runtime ~30–40 s
+  (baseline fits <1 s each, SbS ~10 s each, 2D fits a few seconds each)
+  — acceptable for a notebook a reader opens deliberately. Single
+  source of truth: notebook 10 owns the fit pipeline; notebook 11
+  inherits any future updates automatically and ends up with rich state
+  (baseline + SbS + 2D slots, σ snapshot, conf_ci) available for the
+  persistence demos.
 - Casual user's mental model = `File`. `file.save_fit()` saves a snapshot of
   completed fits for this file, keeping the latest slot per model / fit type /
   selection (snapshot semantics inherited from `Project.save_fits`). It is the
@@ -153,7 +173,8 @@ examples/
     02_dependent_parameters/
     03_multi_cycle_dynamics/                      # renamed from 03_multi_cycle
     04_parameter_profiles/                        # renamed from 04_par_profiles
-    10_model_comparison/                          # block 1x: comparison (NEW)
+    10_model_comparison/                          # block 1x: post-fit work
+    11_save_load_export/                          # block 1x: post-fit work (NEW)
     20_fit_each_separately/                       # block 2x: multi-file (NEW, bridge)
     21_project_level_shared_fit/                  # was 05_project_level_fitting
   synthetic_data/                                 # renamed from data_generation
@@ -164,7 +185,7 @@ examples/
 Numbering convention documented in `fitting_workflows/README.md`:
 
 - **0x** — fitting skills on a single file.
-- **1x** — post-fit comparison.
+- **1x** — post-fit work (comparison, persistence, export).
 - **2x** — multi-file workflows.
 
 The flat layout with three numeric blocks keeps alphabetical sort intact while
@@ -193,19 +214,86 @@ Core "one file" story:
 
 ### `fitting_workflows/10_model_comparison`
 
-Post-fit comparison story (NEW):
+Post-fit comparison story (NEW). Strictly model selection — persistence,
+inspection, and export move to the sibling notebook `11_save_load_export`
+so each notebook has one job.
 
-- Two models, one file. Compress the fitting cells — readers have seen the
-  fit API in 01–04, so this notebook glosses over fitting and focuses on
-  comparison.
-- In-session comparison via `project.results.compare_models(...)` and the
-  sugar delegate `file.compare_models(modelA, modelB)`.
-- Round-trip: fit both models first, then write one archive snapshot with
-  `file.save_fit("comparison.fit.h5")` → reload via `FitResults.load(path)` →
-  repeat comparison without a live `Project`. Avoid teaching repeated writes to
-  the same default archive until overwrite/filtering behavior is the topic.
-- Briefly show `compare_models` aggregation modes (default `median` vs `long`
-  for per-slice rows).
+- Two models, one file. Compress the fitting cells — readers have seen
+  the fit API in 01–04, so this notebook glosses over fitting and
+  focuses on comparison.
+- Three comparison stories, each isolating one structural choice:
+  baseline (line shape), SbS (parsimony), 2D (instrument response).
+- In-session comparison via `project.results.compare_models(...)` and
+  the sugar delegate `file.compare_models(...)`.
+- `compare_models` aggregation modes: default `median`, `sum`, and
+  `long` for per-slice rows. Close §6 with a "two practical questions"
+  payoff — "which model fits spectrum #4 best?" (long form + slice
+  filter) and "which model fits best across the board?" (sum-aggregated,
+  sorted by AIC). This motivates `long` form for the batch-of-spectra
+  use case (SbS as N independent 1D fits, not necessarily time).
+- `plot_residuals` at both ends: 1D obs+fit+residual for baseline,
+  shared-scale residual heatmaps for 2D (where the IRF residual band is
+  the decisive visual).
+
+Persistence content (`save_fit` / `FitResults.load` / `compare_models`
+on loaded archives / slot anatomy / filtered single-slot ship / two
+channels / overwrite semantics / σ-snapshot recalibration) does **not**
+live here. See `11_save_load_export`.
+
+### `fitting_workflows/11_save_load_export`
+
+Save / load / export story (NEW). The canonical reference for the
+`FitResults` archive API, used after a reader has seen fitting and
+comparison.
+
+**Preamble pattern** (first two cells):
+
+1. Markdown pointer to `10_model_comparison` ("see that notebook for the
+   fits' details; this one focuses on what to do with the results").
+2. A single code cell that runs notebook 10's content with suppressed
+   output:
+
+   ```python
+   %run ../10_model_comparison/example.ipynb
+   ```
+
+   IPython `%run` executes the target notebook in the current kernel,
+   so all of notebook 10's variables (`file`, `project`, fitted models)
+   are in scope below. Output suppression rides on the existing
+   `project.yaml` knobs (`show_output: 0`, `auto_export: false`).
+   `%%capture` is the fallback if any output leaks past the YAML knobs.
+   Runtime ~30–40 s.
+
+After the preamble, the actual content:
+
+- `file.save_fit("comparison.fit.h5")` and `FitResults.load(path)` —
+  the canonical round-trip with no live `Project` on the reload side.
+- `loaded.compare_models(...)` showing the same comparison API works
+  identically against an on-disk archive (sanity check, not the primary
+  point).
+- Filtered single-slot save (`save_fit(path, model=..., fit_type=...)`)
+  and the parallel `export_fit` with the same filters. "Ship the
+  winners" as the natural next step once a reader has a verdict.
+- The two channels framed by audience: HDF5 (structured, lossless,
+  σ-snapshot included, round-trips back into trspecfit — for *future
+  you* and other trspecfit users) vs CSV/PNG tree (one-way — for
+  Origin, MATLAB, paper plots, non-trspecfit colleagues).
+- `FitResults` query API: `files()`, `models()`, `find()`, `get()`,
+  and slot anatomy via `dataclasses.fields(slot)` rendering shapes for
+  arrays/frames and keys for dicts (every constituent part is
+  discoverable without opening the `.h5`).
+- Overwrite / slot-collision semantics on `save_fit` (append-by-default,
+  `FileExistsError` on slot collision unless `overwrite=True`).
+- σ-snapshot semantics — calibrated columns survive load without
+  re-`set_sigma()`; what-if recalibration via `chi2_red_raw`.
+
+The preamble pattern is preferred over an inline stripped-down setup
+because (a) single source of truth — notebook 10 owns the fit pipeline,
+notebook 11 inherits future updates automatically — and (b) rich state:
+all slot types (baseline + SbS + 2D, with conf_ci on baseline) are
+available for the persistence demos, not just a minimum quorum. The
+~30–40 s runtime cost is acceptable for a notebook a reader opens
+deliberately.
 
 ### `fitting_workflows/20_fit_each_separately`
 
@@ -262,6 +350,8 @@ track" entry point:
   `fitting_workflows/01_basic_fitting`.
 - Comparing two fits on one file: start at
   `fitting_workflows/10_model_comparison`.
+- Saving, loading, or exporting fit results (HDF5 archive or CSV/PNG
+  tree): start at `fitting_workflows/11_save_load_export`.
 - Many files, separate fits: start at
   `fitting_workflows/20_fit_each_separately`.
 - Shared/global fit: start at
@@ -320,9 +410,19 @@ files appearing on disk before they "exported."
    - `data_generation/simulator` → `synthetic_data/01_simulator`
    - `data_generation/ml_training` → `synthetic_data/02_ml_training_data`
 
-4. Add new notebooks:
-   - `fitting_workflows/10_model_comparison/`
-   - `fitting_workflows/20_fit_each_separately/`
+4. Split and add notebooks:
+   - `fitting_workflows/10_model_comparison/` — already exists post
+     fit-saving merge. Trim to comparison-only: lift §8 (Save → Load →
+     Compare Across Sessions), §9 (Browse the Loaded Archive), the
+     "Ship just the winning fits" subsection, and the persistence
+     bullets/tips into `11_save_load_export`. Update its intro
+     table-of-contents (drop bullets about save/load/export) and the
+     Tips block accordingly.
+   - `fitting_workflows/11_save_load_export/` — NEW. Two-cell preamble
+     (markdown pointer + `%run ../10_model_comparison/example.ipynb`),
+     then the content lifted from the pre-split notebook 10. See the
+     content target above for the full scope.
+   - `fitting_workflows/20_fit_each_separately/` — NEW.
 
 5. Add `fitting_workflows/README.md` documenting the 0x / 1x / 2x numeric-block
    legend.
