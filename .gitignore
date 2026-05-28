@@ -214,6 +214,11 @@ examples/simulatorBL931/
 
 # Generated fit results (created by trspecfit)
 *_fits/
+# Fit archives — Project.save_fits / File.save_fit default sink is
+# ./fit_results/<project>.fit.h5 (notebooks may also pass a bare filename).
+*.fit.h5
+/fit_results/
+examples/**/fit_results/
 
 # Generated simulated data (from simulator and ML training examples)
 /simulated_data/

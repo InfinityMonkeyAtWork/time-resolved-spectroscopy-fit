@@ -2,10 +2,14 @@
 
 ## Fitting
 
-- [ ] **Fit results save/load**: HDF5 output for fit results, `File.load_fit()` to restore, `File.compare_models()` for model comparison. Keep project/global-fit outputs separate from true file-level fits so users do not assume identical per-file fields/statistics.
 - [ ] **Mismatched initial guesses**: round-trip tests — one each for basic, profile, profile+dynamics.
 
 Note: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling — make configurable via `mc_settings` if users need it.
+
+## Noise and simulation
+
+- [ ] **Simulator noise-language cleanup**: align simulator docs/metadata with the fit-results noise schema. Keep simulator `noise_type` meaning "noise distribution / random generator" (`gaussian`, `poisson`, `none`), not sigma shape. Fix the stale `Simulator.set_noise_type()` docstring that mentions `uniform`; clarify `detection` vs. `noise_type` vs. `noise_level`; and, for analog Gaussian simulations, consider saving the derived `sigma_data = noise_level * max(abs(clean_data))` alongside existing metadata. For parameter sweeps, store derived `sigma_data` per configuration when it depends on each clean dataset.
+- [ ] **Future `sigma_type` expansion in FitResults**: after the first constant, user-supplied sigma schema lands, extend uncertainty handling beyond scalar `sigma_data`. Keep `noise_type` for the statistical assumption/distribution and use `sigma_type` for sigma shape: initially `constant`, later `per_spectrum` and `per_point`. Add HDF5 storage, validation, baseline/SBS/2D alignment, `compare_models()` behavior, and tests for vector/matrix sigma. Defer automatic Poisson-derived sigma until residual-space variance propagation is explicit.
 
 ## Performance & architecture
 
@@ -23,6 +27,7 @@ Note: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling — make
 - [ ] **Document API tiers**: add a short guide that separates stable user API (`Project`, `File`, `Simulator`, `PlotConfig`), advanced public API (`mcp.Model`, `Component`, `Par`, `ParameterSweep`, `MC`), and internal implementation modules (`graph_ir`, `eval_1d`, `eval_2d`, low-level parsing/HDF5 helpers). Use this as the source of truth for docs, tests, examples, and AI-agent guidance.
 - [ ] **Add tool-neutral agent orientation**: add `AGENTS.md` or `docs/ai/agent-orientation.md` pointing agents to `CLAUDE.md`, `TODO.md`, `PLAN.md`, `docs/design/repo_architecture.md`, supported-model docs, common commands, and API-change guardrails. Keep it concise so any LLM can quickly find the intended workflow and repo boundaries.
 - [ ] **Add more AI-friendly task recipes**: extend `docs/ai/` with checklists for common repo changes, such as adding YAML syntax, adding plotting options, changing fitting workflows, modifying GIR/evaluator behavior, extending save/load fields, and preparing a release.
+- [ ] **Upgrade example organization**: reorganize notebooks around user workflow tracks (data preparation, single-file fitting, multi-file fitting, synthetic data) and update the docs navigation accordingly. See [docs/design/examples_upgrade.md](docs/design/examples_upgrade.md).
 - [ ] **Add minimal runnable workflow examples**: supplement notebooks with small script-like examples or docs snippets for the canonical public workflows: load data, load a model, set limits, fit baseline, fit 2D, inspect results, simulate data, and run a parameter sweep.
 - [ ] **Improve public validation errors**: make user-facing errors state what failed, where it failed (file/model/component/parameter when applicable), and what the user or agent should change next. Prioritize YAML parsing, model loading, fit setup, and unsupported-model fallback paths.
 - [ ] **Tighten public type hints and aliases**: reduce ambiguous `Any` on public APIs, document key aliases such as `ModelRef`, and keep return types crisp for IDEs, Pyright, generated docs, and LLM code navigation.
@@ -31,4 +36,5 @@ Note: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling — make
 ## Build & release
 
 - [ ] **Automate tagging and pushing**: automate `git tag v1.2.3` + `git push v1.2.3` as part of the release workflow.
-- [ ] **Remove legacy/backwards-compat code**: before v1.0.0 release, audit codebase for legacy fallbacks and backwards compatibility shims and consider removing.
+- [ ] **Remove legacy/backwards-compat code**: before v1.0.0 release, audit codebase for legacy fallbacks and backwards compatibility shims and consider removing. Known shims slated for removal:
+  - `File.save_sbs_fit` / `File.save_2d_fit` (deprecated wrappers — replace internal callers and drop the public methods plus their `_save_*_fit_legacy` impls; users should migrate to `File.export_fit(fit_type=...)`).

@@ -79,11 +79,13 @@ from trspecfit import fitlib, mcp
 
 # standardized plotting configuration
 from trspecfit.config.plot import PlotConfig
+from trspecfit.fit_results import FitResults
 
 # function library for energy, time, and profile components
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import profile as fcts_profile
 from trspecfit.functions import time as fcts_time
+from trspecfit.utils import fit_io
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import parsing as uparsing
 from trspecfit.utils import plot as uplt
@@ -91,6 +93,41 @@ from trspecfit.utils import sbs as usbs
 
 PathLike = str | pathlib.Path
 ModelRef = str | int | list[str]
+
+
+#
+def _fp_key(fingerprint: dict[str, Any]) -> tuple[Any, ...]:
+    """Hashable key for a file fingerprint (used for slot grouping/match)."""
+
+    return (
+        fingerprint["data_sha256"],
+        fingerprint["energy_sha256"],
+        fingerprint["time_sha256"],
+        tuple(int(x) for x in fingerprint["shape"]),
+    )
+
+
+#
+def _to_str_set(arg: str | Sequence[str] | None) -> set[str] | None:
+    """Normalize a string-or-sequence filter arg to a set; ``None`` → no filter."""
+
+    if arg is None:
+        return None
+    if isinstance(arg, str):
+        return {arg}
+    return set(arg)
+
+
+#
+def _trspecfit_version() -> str:
+    """Best-effort package version for archive metadata."""
+
+    import importlib.metadata as md
+
+    try:
+        return md.version("trspecfit")
+    except md.PackageNotFoundError:
+        return "unknown"
 
 
 # multi-subcycle models allow for convolution only in the "0th subcycle"
@@ -126,8 +163,6 @@ class Project:
         Base project directory containing data and configuration
     path_results : Path
         Results directory (path + '_fits' suffix)
-    path_run : Path
-        Directory for this specific run (path_results / name)
     name : str
         Name for this analysis run
     files : list of File
@@ -155,7 +190,7 @@ class Project:
     Only specified settings need to be included; others use defaults.
 
     **File I/O Settings:**
-    Attributes ext, fmt, delim, da_fmt, and da_slices_fmt control file
+    Attributes ext, num_fmt, delim, da_fmt, and da_slices_fmt control file
     export formats and can be customized per project via YAML or direct
     attribute assignment.
     """
@@ -170,11 +205,13 @@ class Project:
         self.path = pathlib.Path(path) if path is not None else pathlib.Path("test")
         self.path_results = pathlib.Path(f"{path}_fits")
         self.name = name
-        self.path_run = self.path_results / name
 
         self._config_file: PathLike | None = None
         self.files: list[File] = []
         self._project_fit_result: list[Any] | None = None
+        # Append-only log of completed fit slots, populated eagerly at fit
+        # completion by the _slot_from_<fit_type> helpers in utils/fit_io.py.
+        self._fit_history: list[fit_io.SavedFitSlot] = []
 
         # Set defaults first
         self._set_defaults()
@@ -188,6 +225,10 @@ class Project:
         """Set default project configuration."""
 
         self.show_output = 1
+        # When False, fit_* methods skip the automatic CSV/PNG side effects
+        # (fit_wrapper(save_output=1) and the legacy save_*_fit calls).
+        # Explicit File.export_fit / Project.export_fits still write.
+        self.auto_export = True
         # Plot settings
         self.e_label = "Energy"
         self.t_label = "Time"
@@ -222,16 +263,380 @@ class Project:
         self.y_scale = None
         # File I/O settings
         self.ext = ".dat"
-        self.fmt = "%.6e"
+        self.num_fmt = "%.6e"
         self.delim = ","
         self.da_fmt = "%04d"
         self.da_slices_fmt = "%06d"
         # Advanced settings
         self.spec_fun_str = "fit_model_gir"
+        # Noise / sigma defaults — applied to every File at construction time.
+        # Files inherit these values at __init__ and may override them via
+        # File.set_sigma(...).
+        self.noise_type: str = fit_io.NOISE_TYPE_UNKNOWN
+        self.sigma_source: str = fit_io.SIGMA_SOURCE_USER
+        self.sigma_type: str = fit_io.SIGMA_TYPE_CONSTANT
+        self.sigma_data: float = float("nan")
 
     #
     def __repr__(self) -> str:
         return f"Project(path='{self.path}', name='{self.name}')"
+
+    #
+    @property
+    def results(self) -> FitResults:
+        """
+        Snapshot view over the in-session fit history.
+
+        Returns a fresh ``FitResults`` wrapping a copy of ``_fit_history``;
+        subsequent fits append to the log and do not affect previously
+        returned ``FitResults``. Object identity is unstable
+        (``p.results is p.results`` is False); the contents at a given access
+        are fixed.
+        """
+
+        return FitResults(slots=list(self._fit_history))
+
+    #
+    def save_fits(
+        self,
+        filepath: PathLike | str | None = None,
+        *,
+        file: "int | str | File | Sequence[int | str | File] | None" = None,
+        model: str | Sequence[str] | None = None,
+        fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        overwrite: bool = False,
+        show_output: int = 1,
+    ) -> None:
+        """
+        Save filtered fit slots from ``_fit_history`` to an HDF5 archive.
+
+        Filters ``_fit_history`` by ``(file, model, fit_type)``, collapses
+        to latest-per-``history_key`` (snapshot semantics), assembles a
+        ``SavedProject``, and writes via ``utils.fit_io.write_archive``.
+
+        Parameters
+        ----------
+        filepath : path, optional
+            Archive path. Default: ``./fit_results/<project_name>.fit.h5``.
+            Append-mode: existing archives are augmented in place; pass a
+            new path to start fresh.
+        file : int | str | File | sequence, optional
+            Restrict to slots whose live ``Project.files`` entry matches.
+            ``int`` indexes into ``self.files``; ``str`` matches
+            ``File.name``; ``File`` is taken directly. Resolved to file
+            fingerprints, then matched against ``slot.file_fingerprint``.
+        model : str | sequence, optional
+            String filter on ``slot.model_name``.
+        fit_type : str | sequence, optional
+            String filter on ``slot.fit_type``.
+        overwrite : bool, default False
+            Slot-scoped: a slot collision (same canonical identity already
+            in the archive) raises ``FileExistsError`` unless True.
+        show_output : int, default 1
+            ``0`` to silence the per-call summary line.
+
+        Notes
+        -----
+        v1 behavior is snapshot-only (one slot per ``history_key``).
+        ``keep_history=True`` for full-log save is deferred.
+        """
+
+        project = self._build_saved_project_from_history(
+            file=file, model=model, fit_type=fit_type
+        )
+        if project is None:
+            if show_output:
+                print("No fit slots match the filter; nothing to save.")
+            return
+
+        if filepath is None:
+            path = pathlib.Path("fit_results") / f"{self.name}.fit.h5"
+        else:
+            path = pathlib.Path(filepath)
+
+        fit_io.write_archive(path, project=project, overwrite=overwrite)
+        if show_output:
+            n_slots = sum(len(sf.slots) for sf in project.files)
+            print(
+                f"Saved {n_slots} slot(s) across {len(project.files)} file(s) to {path}"
+            )
+
+    #
+    def export_fits(
+        self,
+        filepath: PathLike | str | None = None,
+        *,
+        format: Literal["csv"] = "csv",
+        file: "int | str | File | Sequence[int | str | File] | None" = None,
+        model: str | Sequence[str] | None = None,
+        fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        overwrite: bool = False,
+        show_output: int = 1,
+    ) -> None:
+        """
+        Export filtered fit slots from ``_fit_history`` as a CSV/PNG tree.
+
+        Same filter + snapshot-collapse pipeline as :meth:`save_fits`, but
+        the output is a directory of human-readable artifacts rather than
+        an HDF5 archive. One-way export — there is no ``load`` counterpart;
+        round-tripping fits to disk is HDF5's job (use ``save_fits`` /
+        ``load_fits`` for that).
+
+        Parameters
+        ----------
+        filepath : path, optional
+            Output directory. Default: ``./fit_results/<project_name>``.
+            Created if missing.
+        format : {"csv"}, default ``"csv"``
+            Reserved kwarg; only CSV is implemented in v1.
+        file : int | str | File | sequence, optional
+            Restrict to slots whose live ``Project.files`` entry matches;
+            same semantics as :meth:`save_fits`.
+        model : str | sequence, optional
+            String filter on ``slot.model_name``.
+        fit_type : str | sequence, optional
+            String filter on ``slot.fit_type``.
+        overwrite : bool, default False
+            Per-slot directory: a non-empty target dir raises
+            ``FileExistsError`` unless True. Pre-checked across all slots
+            before any writes (single conflict aborts the entire export).
+        show_output : int, default 1
+            ``0`` to silence the per-call summary line.
+
+        Output layout
+        -------------
+        Exports are grouped by output directory, file name, model name, and
+        fit type. The model and fit-type parts are joined with two underscores;
+        when multiple slots share the same file, model, and fit type, an
+        additional two-underscore hash suffix is appended.
+
+        Each slot contains params.csv, metrics.csv (or metrics_per_slice.csv
+        for SbS), conf_ci.csv / mcmc/flatchain.csv when present, plus
+        per-fit-type artifacts:
+
+        - baseline / spectrum: fit_1d.csv (energy, observed, fit, residual).
+        - 2d / sbs: fit_2d.csv, observed_2d.csv, energy.csv, time.csv,
+          2D_data_fit_res.png.
+        - sbs only: fit_pars.csv (per-slice param values) and one PNG per
+          parameter from plt_fit_res_pars.
+
+        The optional hash directory suffix appears only when more than one
+        slot in the snapshot shares the same file, model, and fit type (i.e.
+        different selections); the hash is the first 8 chars of the history
+        key.
+        """
+
+        if format != "csv":
+            raise ValueError(
+                f"Unsupported export format: {format!r}. Only 'csv' is "
+                f"implemented in v1."
+            )
+
+        project = self._build_saved_project_from_history(
+            file=file, model=model, fit_type=fit_type
+        )
+        if project is None:
+            if show_output:
+                print("No fit slots match the filter; nothing to export.")
+            return
+
+        if filepath is None:
+            root = pathlib.Path("fit_results") / self.name
+        else:
+            root = pathlib.Path(filepath)
+
+        # Per-file plot_config preserves File.plot_config customizations
+        # (axis labels, colormaps, etc.) — File.save_sbs_fit / save_2d_fit
+        # used self.plot_config for plotting, and we keep that contract.
+        plot_configs: dict[str, Any] = {}
+        for sf in project.files:
+            live = self._find_file_for_slot(sf.slots[0])
+            if live is not None and live.plot_config is not None:
+                plot_configs[sf.name] = live.plot_config
+        n_written = fit_io.write_csv_export(
+            root,
+            project=project,
+            num_fmt=self.num_fmt,
+            delim=self.delim,
+            plot_config=plot_configs,
+            overwrite=overwrite,
+        )
+        if show_output:
+            print(
+                f"Exported {n_written} slot(s) across {len(project.files)} "
+                f"file(s) to {root}"
+            )
+
+    #
+    def _build_saved_project_from_history(
+        self,
+        *,
+        file: "int | str | File | Sequence[int | str | File] | None",
+        model: str | Sequence[str] | None,
+        fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None,
+    ) -> fit_io.SavedProject | None:
+        """
+        Apply the standard filter + collapse pipeline to ``_fit_history``
+        and return a fully-populated ``SavedProject``.
+
+        Returns ``None`` when no slots survive the filter so callers can
+        emit a "nothing to do" message and short-circuit. Used by
+        :meth:`save_fits` and :meth:`export_fits` so both go through the
+        identical filter / collapse / file-grouping logic.
+        """
+
+        file_ids = self._resolve_save_file_filter(file)
+        models_filter = _to_str_set(model)
+        types_filter = _to_str_set(fit_type)
+
+        filtered: list[fit_io.SavedFitSlot] = []
+        for slot in self._fit_history:
+            slot_id = (_fp_key(slot.file_fingerprint), slot.file_name)
+            if file_ids is not None and slot_id not in file_ids:
+                continue
+            if models_filter is not None and slot.model_name not in models_filter:
+                continue
+            if types_filter is not None and slot.fit_type not in types_filter:
+                continue
+            filtered.append(slot)
+
+        snapshot = fit_io.collapse_history_to_snapshot(filtered)
+        if not snapshot:
+            return None
+
+        # Group slots by source file identity (fingerprint + file_name) so
+        # two distinct Project.files with byte-identical raw arrays but
+        # different names are kept separate. Project enforces unique
+        # File.name in-session, so name disambiguates fingerprint
+        # collisions; the archive's full identity tuple is
+        # (fingerprint, name, original_path) — see fit_archive_schema.md.
+        by_id: dict[tuple[tuple[Any, ...], str], list[fit_io.SavedFitSlot]] = {}
+        for s in snapshot:
+            by_id.setdefault((_fp_key(s.file_fingerprint), s.file_name), []).append(s)
+
+        saved_files: list[fit_io.SavedFile] = []
+        for slots in by_id.values():
+            live = self._find_file_for_slot(slots[0])
+            if live is None:
+                raise ValueError(
+                    f"Slot for file {slots[0].file_name!r} has no matching "
+                    f"Project.files entry; cannot read raw arrays. "
+                    f"Re-attach the file or filter it out."
+                )
+            assert live.data is not None  # type guard
+            assert live.energy is not None  # type guard
+            saved_files.append(
+                fit_io.SavedFile(
+                    name=live.name,
+                    original_path=str(live.path),
+                    dim=int(live.dim),
+                    shape=tuple(int(x) for x in live.data.shape),
+                    fingerprint=slots[0].file_fingerprint,
+                    data=live.data,
+                    energy=live.energy,
+                    time=(
+                        live.time
+                        if live.time is not None
+                        else np.array([], dtype=np.float64)
+                    ),
+                    e_lim=list(live.e_lim) if live.e_lim else None,
+                    t_lim=list(live.t_lim) if live.t_lim else None,
+                    slots=tuple(slots),
+                )
+            )
+
+        now = fit_io._now_iso()
+        return fit_io.SavedProject(
+            name=self.name,
+            trspecfit_version=_trspecfit_version(),
+            schema_version=fit_io.SCHEMA_VERSION,
+            timestamp_created=now,
+            timestamp_updated=now,
+            files=tuple(saved_files),
+        )
+
+    #
+    def load_fits(
+        self,
+        filepath: PathLike | str,
+        *,
+        file: str | Sequence[str] | None = None,
+        model: str | Sequence[str] | None = None,
+        fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        show_output: int = 1,
+    ) -> FitResults:
+        """
+        Load a fit archive and return a ``FitResults`` view.
+
+        Convenience wrapper around ``FitResults.load`` for users who
+        already have a ``Project`` in hand. Does **not** mutate Project
+        state — the returned ``FitResults`` is independent of
+        ``_fit_history`` and never merges into it.
+        """
+
+        out = FitResults.load(filepath, file=file, model=model, fit_type=fit_type)
+        if show_output:
+            print(f"Loaded {len(out)} slot(s) from {filepath}")
+        return out
+
+    #
+    def _resolve_save_file_filter(
+        self,
+        arg: "int | str | File | Sequence[int | str | File] | None",
+    ) -> set[tuple[tuple[Any, ...], str]] | None:
+        """
+        Map a ``file=...`` arg for :meth:`save_fits` to a set of slot-identity
+        keys ``(fingerprint_key, file_name)``. Both components are matched
+        against the slot to disambiguate two ``Project.files`` with
+        byte-identical raw arrays but distinct names. Returns ``None`` if
+        ``arg`` is ``None`` (no filter).
+        """
+
+        if arg is None:
+            return None
+        items: Sequence[int | str | File]
+        if isinstance(arg, int | str | File):
+            items = [arg]
+        else:
+            items = arg
+        keys: set[tuple[tuple[Any, ...], str]] = set()
+        for item in items:
+            if isinstance(item, int):
+                f = self.files[item]
+            elif isinstance(item, str):
+                f = self[item]
+            elif isinstance(item, File):
+                f = item
+            else:
+                raise TypeError(
+                    f"Unsupported file filter entry type: {type(item).__name__}"
+                )
+            keys.add((_fp_key(f.fingerprint()), f.name))
+        return keys
+
+    #
+    def _find_file_for_slot(self, slot: fit_io.SavedFitSlot) -> "File | None":
+        """
+        Look up the live ``File`` whose name and fingerprint match a slot.
+
+        Both name and fingerprint must match; either alone can produce a
+        false positive when (a) the user has two byte-identical files in
+        the project under different names, or (b) a file was renamed
+        post-fit so the slot's name no longer matches the live one. The
+        slot's recorded ``file_name`` is the authoritative in-session
+        identity (Project enforces unique names), and the fingerprint
+        cross-checks that the live arrays still match.
+        """
+
+        target_fp = _fp_key(slot.file_fingerprint)
+        for f in self.files:
+            if f.name != slot.file_name:
+                continue
+            if f.data is None or f.energy is None:
+                continue
+            if _fp_key(f.fingerprint()) == target_fp:
+                return f
+        return None
 
     #
     def __getitem__(self, key: int | str) -> "File":
@@ -357,7 +762,7 @@ class Project:
             print(f"    res_mult:   {self.res_mult}")
             print("\n  File I/O settings:")
             print(f"    ext:        {self.ext}")
-            print(f"    fmt:        {self.fmt}")
+            print(f"    num_fmt:    {self.num_fmt}")
             print(f"    delim:      {repr(self.delim)}")
             print(f"    da_fmt:     {self.da_fmt}")
             print(f"    DA_slices:  {self.da_slices_fmt}")
@@ -401,6 +806,16 @@ class Project:
                 else:
                     if self.show_output >= 1:
                         print(f"Warning: Unknown config key '{key}' ignored")
+
+            # Coerce + validate noise metadata. YAML "null" arrives as None
+            # for sigma_data; normalize to NaN so downstream code can treat
+            # the "unset" case as a finite-check, not a None-check.
+            self.sigma_data = fit_io.normalize_sigma_data(self.sigma_data)
+            fit_io.validate_noise_metadata(
+                noise_type=self.noise_type,
+                sigma_source=self.sigma_source,
+                sigma_type=self.sigma_type,
+            )
 
             self._config_file = config_path
 
@@ -651,7 +1066,10 @@ class Project:
 
             images = []
             for f in self.files:
-                img_path = f.create_model_path(model_name) / "base_fit.png"
+                img_path = (
+                    f.create_model_path(model_name, fit_type="baseline")
+                    / "base_fit.png"
+                )
                 if img_path.exists():
                     images.append(mpimg.imread(str(img_path)))
             if images:
@@ -938,34 +1356,67 @@ class Project:
         # get_fit_results("2d") work on project-fitted files.
         mapping = project_fit_info["mapping"]
         models = project_fit_info["models"]
-        if result[1]:
-            final_pars = result[1].params
+        joint_result = result[1] if result[1] else None
+        if joint_result:
+            final_pars = joint_result.params
             for proj_name, file_idx, local_name in mapping:
                 if proj_name in final_pars:
                     models[file_idx].lmfit_pars[local_name].value = final_pars[
                         proj_name
                     ].value
 
-        for _file_idx, (f, model) in enumerate(zip(self.files, models, strict=True)):
+        # method/nvarys come from the joint optimizer; per-file stderr/CI are
+        # absent by design (joint covariance does not decompose cleanly per
+        # file). conf_ci is an empty DataFrame so _append_2d_slot's
+        # `result[2].empty` check works without branching.
+        joint_method = (
+            getattr(joint_result, "method", "unknown") if joint_result else "unknown"
+        )
+        joint_nvarys = int(getattr(joint_result, "nvarys", 0)) if joint_result else 0
+        for f, model in zip(self.files, models, strict=True):
             f.model_2d = model
             assert model is not None  # type guard
-            # Synthetic result satisfying result[1].params used by
-            # get_fit_results("2d"). Project fits do not produce per-file
-            # stderr/CI — those fields are absent by design.
-            model.result = [None, types.SimpleNamespace(params=model.lmfit_pars)]
+            assert f.energy is not None and f.data is not None  # type guard
+            # Length-5 list mirrors fit_wrapper's [par_ini, par_fin, conf_ci,
+            # emcee_fin, emcee_ci]. Project fits do not run per-file MCMC, so
+            # emcee slots are inert (None / empty DataFrame).
+            model.result = [
+                None,
+                types.SimpleNamespace(
+                    params=model.lmfit_pars,
+                    method=joint_method,
+                    nvarys=joint_nvarys,
+                ),
+                pd.DataFrame(),
+                None,
+                pd.DataFrame(),
+            ]
+            # const/args mirror File.fit_2d so _append_2d_slot can evaluate
+            # the per-file fit grid via fitlib.residual_fun. Project fits
+            # always go through the MCP path.
+            model.const = (f.energy, f.data, "fit_model_mcp", 0, f.e_lim, f.t_lim)
+            model.args = (model, 2)
 
         self._project_fit_result = result
 
-        # Save per-file 2D fit results (silently)
-        saved = self.show_output
-        self.show_output = 0
-        try:
+        # Append a per-file 2D slot to Project._fit_history so the joint fit
+        # is discoverable via Project.results, matching the File.fit_2d()
+        # entry point.
+        if joint_result:
             for f in self.files:
-                if f.model_2d is not None:
-                    path_2d = f.create_model_path(model_name)
-                    f.save_2d_fit(save_path=path_2d)
-        finally:
-            self.show_output = saved
+                f._append_2d_slot(model_name=model_name, fit_fun_str="fit_model_mcp")
+
+        # Save per-file 2D fit results (silently)
+        if self.auto_export:
+            saved = self.show_output
+            self.show_output = 0
+            try:
+                for f in self.files:
+                    if f.model_2d is not None:
+                        path_2d = f.create_model_path(model_name, fit_type="2d")
+                        f._save_2d_fit_legacy(save_path=path_2d)
+            finally:
+                self.show_output = saved
 
         if self.show_output >= 1:
             fitlib.time_display(
@@ -977,7 +1428,10 @@ class Project:
 
             images = []
             for f in self.files:
-                img_path = f.create_model_path(model_name) / "2D_data_fit_res.png"
+                img_path = (
+                    f.create_model_path(model_name, fit_type="2d")
+                    / "2D_data_fit_res.png"
+                )
                 if img_path.exists():
                     images.append(mpimg.imread(str(img_path)))
             if images:
@@ -1028,8 +1482,6 @@ class File:
         Parent project providing configuration
     path : str or Path
         File identifier
-    path_da : Path
-        Directory path for saving this file's fit results
     data : ndarray
         Spectroscopy data (1D or 2D), with dark subtraction and sensitivity
         calibration applied (if any)
@@ -1122,7 +1574,6 @@ class File:
                 f'(e.g. name="{self.name}_2").'
             )
         self.p.files.append(self)  # register with parent project
-        self.path_da = self.p.path_run / path  # path to save fit results to
         self._plot_config: PlotConfig | None = None  # create plot config from project
         self.data = data  # (time-[optional] and) energy-dependent data to fit
         self.data_raw: np.ndarray | None = data.copy() if data is not None else None
@@ -1172,6 +1623,15 @@ class File:
         self.data_spec: np.ndarray | None = None  # extracted 1D spectrum
         self.spec_t_abs: list[float] = []  # time bounds (absolute)
         self.spec_t_ind: list[int] = []  # time bounds (indices)
+        # Noise metadata — inherited from parent Project at construction
+        #                  users override per file via File.set_sigma()
+        #                  materialized into each saved slot at fit completion
+        self.noise_type: str = getattr(self.p, "noise_type", fit_io.NOISE_TYPE_UNKNOWN)
+        self.sigma_source: str = getattr(
+            self.p, "sigma_source", fit_io.SIGMA_SOURCE_USER
+        )
+        self.sigma_type: str = getattr(self.p, "sigma_type", fit_io.SIGMA_TYPE_CONSTANT)
+        self.sigma_data: float = float(getattr(self.p, "sigma_data", float("nan")))
         # default fit limits to entire dataset (energy is None only for bare File())
         if self.energy is not None:
             self.set_fit_limits(energy_limits=None, show_plot=False)
@@ -1656,19 +2116,43 @@ class File:
         self.models = []
 
     #
+    def fingerprint(self) -> dict[str, Any]:
+        """
+        Multi-sha content fingerprint of this file.
+
+        Recomputed on every call so corrections that mutate ``self.data``
+        (subtract_dark, calibrate_data, reset_corrections) propagate into
+        slot identity. Sha256 over typical data is sub-ms; the cost is
+        negligible compared to a fit, and a stale cache silently collapses
+        pre- and post-correction slots into the same ``history_key``.
+        """
+
+        if self.data is None or self.energy is None:
+            raise ValueError("Cannot fingerprint a File without data and energy axis.")
+        return fit_io.compute_file_fingerprint(
+            data=self.data, energy=self.energy, time=self.time
+        )
+
+    #
     def create_model_path(
-        self, model_name: str, subfolders: list[str] | None = None
+        self,
+        model_name: str,
+        *,
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"],
+        subfolders: list[str] | None = None,
     ) -> pathlib.Path:
         """
         Create directory structure for saving model fit results.
 
-        Constructs path based on file path, YAML file name, and model name.
+        Layout: ``{Project.path_results}/{File.name}/{fit_type}/{model_name}/``.
         Creates directories if they don't exist.
 
         Parameters
         ----------
         model_name : str
             Name of model (must exist in self.models)
+        fit_type : {"baseline", "spectrum", "sbs", "2d"}
+            Fit type segment in the output path.
         subfolders : list of str, default=[]
             Additional subdirs to create (e.g., ['slices'] for Slice-by-Slice fits)
 
@@ -1678,18 +2162,7 @@ class File:
             Path to model results directory
         """
 
-        mod = self.select_model(model_name)  # get model
-        if mod is None:
-            warnings.warn(
-                f"Model '{model_name}' not found; using fallback output path.",
-                stacklevel=2,
-            )
-            path_model = self.path_da / "model_unknown" / model_name
-        else:
-            yaml_name = (
-                mod.yaml_f_name if mod.yaml_f_name is not None else "model_unknown"
-            )
-            path_model = self.path_da / yaml_name / model_name
+        path_model = self.p.path_results / self.name / fit_type / model_name
         path_model.mkdir(parents=True, exist_ok=True)
         if subfolders is None:
             subfolders = []
@@ -1975,6 +2448,81 @@ class File:
                 )
 
     #
+    def set_sigma(
+        self,
+        sigma: float | None,
+        *,
+        noise_type: str | None = None,
+        sigma_source: str = fit_io.SIGMA_SOURCE_USER,
+        sigma_type: str = fit_io.SIGMA_TYPE_CONSTANT,
+    ) -> float | None:
+        """
+        Set the per-pixel noise σ for this file.
+
+        Subsequent fits on this file will materialize the σ into their saved
+        slots (chi2 / chi2_red calibrated from chi2_raw / chi2_red_raw). The
+        change is stateful but does **not** retroactively rewrite existing slots.
+
+        Parameters
+        ----------
+        sigma : float or None
+            Per-pixel σ in data units. Pass ``None`` to clear (slots fit
+            afterwards will record ``noise_type='unknown'`` and ``NaN``
+            σ fields, so calibrated metrics resolve to ``NaN``). Must be
+            a finite positive number when not ``None``.
+        noise_type : str, optional
+            ``"gaussian"`` or ``"unknown"``. Defaults to ``"gaussian"``
+            when ``sigma`` is set, ``"unknown"`` when ``sigma`` is ``None``.
+        sigma_source : str, default ``"user_supplied"``
+            v1 only supports ``"user_supplied"``.
+        sigma_type : str, default ``"constant"``
+            v1 only supports ``"constant"``.
+
+        Returns
+        -------
+        float or None
+            The previous ``sigma_data`` value (``None`` if unset). Stash
+            this if you intend to run additional fits under a different
+            σ and restore the file's prior σ state afterwards.
+
+        Notes
+        -----
+        ``set_sigma`` only affects **future** fits on this file. Slots
+        already in ``Project._fit_history`` keep the σ snapshot that was
+        materialized at their fit completion; ``compare_models()`` reads
+        those snapshots and is therefore unaffected by σ changes made after
+        the fit. For an alternative calibration of *existing* results, divide
+        the always-present ``chi2_red_raw`` column by ``alt_sigma**2``
+        directly on the returned DataFrame — no API needed.
+
+        Raises
+        ------
+        ValueError
+            If ``sigma`` is not ``None`` and not a finite positive number,
+            or if any of the discriminator fields is outside v1's supported
+            subset.
+        """
+
+        new_sigma_data = fit_io.normalize_sigma_data(sigma)
+        is_unset = not np.isfinite(new_sigma_data)
+        new_noise_type = noise_type
+        if new_noise_type is None:
+            new_noise_type = (
+                fit_io.NOISE_TYPE_UNKNOWN if is_unset else fit_io.NOISE_TYPE_GAUSSIAN
+            )
+        fit_io.validate_noise_metadata(
+            noise_type=new_noise_type,
+            sigma_source=sigma_source,
+            sigma_type=sigma_type,
+        )
+        previous = None if not np.isfinite(self.sigma_data) else float(self.sigma_data)
+        self.sigma_data = new_sigma_data
+        self.noise_type = new_noise_type
+        self.sigma_source = sigma_source
+        self.sigma_type = sigma_type
+        return previous
+
+    #
     def fit_baseline(
         self, model_name: str, stages: int = 1, **lmfit_wrapper_kwargs
     ) -> None:
@@ -2014,7 +2562,7 @@ class File:
             self.model_base.lmfit_pars, return_type="list"
         )
         # define (and create) path where basline fit results will be saved to
-        path_base_results = self.create_model_path(model_name)
+        path_base_results = self.create_model_path(model_name, fit_type="baseline")
 
         # const = (x, data, package, fnctn string, unpack, energy limits, time limits)
         _fun_str = self.p.spec_fun_str
@@ -2029,6 +2577,9 @@ class File:
         # --- dispatch: GIR fast path vs interpreter ---
         _args = self._build_1d_dispatch_args(self.model_base, _fun_str)
         self.model_base.args = _args
+        # CSV format/delimiter: project defaults unless caller overrides
+        lmfit_wrapper_kwargs.setdefault("num_fmt", self.p.num_fmt)
+        lmfit_wrapper_kwargs.setdefault("delim", self.p.delim)
         # fit (optionally) with confidence intervals
         self.model_base.result = fitlib.fit_wrapper(
             const=self.model_base.const,
@@ -2037,7 +2588,7 @@ class File:
             par=self.model_base.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
-            save_output=1,
+            save_output=1 if self.p.auto_export else 0,
             save_path=path_base_results / model_name,
             **lmfit_wrapper_kwargs,
         )
@@ -2051,6 +2602,9 @@ class File:
                     self.model_base.result[1], return_type="list"
                 )
             )
+            self._append_baseline_slot(model_name=model_name, fit_fun_str=_fun_str)
+            if self.p.auto_export:
+                self.save_baseline_fit(save_path=path_base_results)
 
         # display/plot and save baseline fit summary
         title_base = (
@@ -2058,28 +2612,78 @@ class File:
             f'Model: "{model_name}" (from "{self.model_base.yaml_f_name}.yaml")'
         )
 
-        fitlib.plt_fit_res_1d(
-            x=self.energy,
-            y=self.data_base,
-            fit_fun_str=self.p.spec_fun_str,
-            par_init=initial_guess,
-            par_fin=self.model_base.result[1],
-            args=self.model_base.args,
-            plot_sum=False,
-            show_init=True,
-            title=title_base,
-            fit_lim=self.e_lim,
-            config=self.plot_config,
-            legend=[comp.name for comp in self.model_base.components],
-            save_img=-1 if self.p.show_output < 1 else 1,
-            save_path=path_base_results / "base_fit.png",
-        )
+        save_plot = self.p.auto_export
+        show_plot = self.p.show_output >= 1
+        if save_plot or show_plot:
+            fitlib.plt_fit_res_1d(
+                x=self.energy,
+                y=self.data_base,
+                fit_fun_str=self.p.spec_fun_str,
+                par_init=initial_guess,
+                par_fin=self.model_base.result[1],
+                args=self.model_base.args,
+                plot_sum=False,
+                show_init=True,
+                title=title_base,
+                fit_lim=self.e_lim,
+                config=self.plot_config,
+                legend=[comp.name for comp in self.model_base.components],
+                save_img=uplt._save_img_flag(save=save_plot, show=show_plot),
+                save_path=path_base_results / "base_fit.png",
+            )
 
         if stages >= 1 and self.p.show_output >= 1:
             fitlib.time_display(
                 t_start=t_base, print_str="Time elapsed for baseline fit: "
             )
             display(self.model_base.result[1].params)  # display final pars below figure
+
+    #
+    def _save_1d_fit(self, model: mcp.Model | None, save_path: PathLike) -> None:
+        """
+        Internal helper: write ``fit_1d.csv`` for a 1D fitted model.
+
+        Columns: ``energy``, ``sum``, then one column per component
+        (named after ``component.name``).
+        """
+
+        if model is None or self.energy is None:
+            raise ValueError("Model/energy missing; nothing to save.")
+        if not model.result or not getattr(model.result[1], "params", None):
+            return  # mocked / placeholder; nothing to dump
+        model.create_value_1d(store_1d=1)
+        if model.value_1d is None:
+            raise ValueError(
+                "Model evaluation did not produce value_1d; nothing to save."
+            )
+        columns: dict[str, np.ndarray] = {
+            "energy": np.asarray(self.energy),
+            "sum": np.asarray(model.value_1d),
+        }
+        for comp, arr in zip(model.components, model.component_spectra, strict=True):
+            columns[comp.name] = np.asarray(arr)
+        pd.DataFrame(columns).to_csv(
+            pathlib.Path(save_path) / "fit_1d.csv",
+            index=False,
+            float_format=self.p.num_fmt,
+            sep=self.p.delim,
+        )
+
+    #
+    def save_baseline_fit(self, save_path: PathLike) -> None:
+        """
+        Export baseline fit as ``fit_1d.csv``.
+
+        Evaluates the baseline model at final parameters and writes a CSV
+        with columns ``energy``, ``sum``, and one column per component.
+
+        Parameters
+        ----------
+        save_path : str or Path
+            Directory path for saving (file: ``save_path/fit_1d.csv``).
+        """
+
+        self._save_1d_fit(self.model_base, save_path)
 
     #
     def fit_spectrum(
@@ -2190,7 +2794,7 @@ class File:
             self.model_spec.lmfit_pars, return_type="list"
         )
         # define (and create) path where spectrum fit results will be saved to
-        path_spec_results = self.create_model_path(model_name)
+        path_spec_results = self.create_model_path(model_name, fit_type="spectrum")
 
         # const = (x, data, fnctn string, unpack, energy limits, time limits)
         _fun_str = self.p.spec_fun_str
@@ -2205,6 +2809,9 @@ class File:
         # --- dispatch: GIR fast path vs interpreter ---
         _args = self._build_1d_dispatch_args(self.model_spec, _fun_str)
         self.model_spec.args = _args
+        # CSV format/delimiter: project defaults unless caller overrides
+        lmfit_wrapper_kwargs.setdefault("num_fmt", self.p.num_fmt)
+        lmfit_wrapper_kwargs.setdefault("delim", self.p.delim)
         # fit
         self.model_spec.result = fitlib.fit_wrapper(
             const=self.model_spec.const,
@@ -2213,7 +2820,7 @@ class File:
             par=self.model_spec.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
-            save_output=1,
+            save_output=1 if self.p.auto_export else 0,
             save_path=path_spec_results / model_name,
             **lmfit_wrapper_kwargs,
         )
@@ -2225,6 +2832,15 @@ class File:
                     self.model_spec.result[1], return_type="list"
                 )
             )
+            self._append_spectrum_slot(
+                model_name=model_name,
+                fit_fun_str=_fun_str,
+                time_point=time_point,
+                time_range=list(time_range) if time_range is not None else None,
+                time_type=time_type,
+            )
+            if self.p.auto_export:
+                self.save_spectrum_fit(save_path=path_spec_results)
 
         # display/plot and save spectrum fit summary
         time_label = (
@@ -2238,22 +2854,25 @@ class File:
             f'(from "{self.model_spec.yaml_f_name}.yaml")'
         )
 
-        fitlib.plt_fit_res_1d(
-            x=self.energy,
-            y=self.data_spec,
-            fit_fun_str=self.p.spec_fun_str,
-            par_init=initial_guess,
-            par_fin=self.model_spec.result[1],
-            args=self.model_spec.args,
-            plot_sum=False,
-            show_init=True,
-            title=title_spec,
-            fit_lim=self.e_lim,
-            config=self.plot_config,
-            legend=[comp.name for comp in self.model_spec.components],
-            save_img=-1 if not show_plot or self.p.show_output < 1 else 1,
-            save_path=path_spec_results / "spec_fit.png",
-        )
+        save_fig = self.p.auto_export
+        show_fig = show_plot and self.p.show_output >= 1
+        if save_fig or show_fig:
+            fitlib.plt_fit_res_1d(
+                x=self.energy,
+                y=self.data_spec,
+                fit_fun_str=self.p.spec_fun_str,
+                par_init=initial_guess,
+                par_fin=self.model_spec.result[1],
+                args=self.model_spec.args,
+                plot_sum=False,
+                show_init=True,
+                title=title_spec,
+                fit_lim=self.e_lim,
+                config=self.plot_config,
+                legend=[comp.name for comp in self.model_spec.components],
+                save_img=uplt._save_img_flag(save=save_fig, show=show_fig),
+                save_path=path_spec_results / "spec_fit.png",
+            )
 
         if stages >= 1 and self.p.show_output >= 1:
             fitlib.time_display(
@@ -2262,11 +2881,122 @@ class File:
             display(self.model_spec.result[1].params)
 
     #
-    def load_fit(self) -> None:
+    def save_spectrum_fit(self, save_path: PathLike) -> None:
         """
-        TODO: Do this instead of refitting to try out different models?
-        Probably needed to compare fits anyway!
+        Export single-spectrum fit as ``fit_1d.csv``.
+
+        Evaluates the spectrum model at final parameters and writes a CSV
+        with columns ``energy``, ``sum``, and one column per component.
+
+        Parameters
+        ----------
+        save_path : str or Path
+            Directory path for saving (file: ``save_path/fit_1d.csv``).
         """
+
+        self._save_1d_fit(self.model_spec, save_path)
+
+    #
+    def save_fit(
+        self,
+        filepath: PathLike | str | None = None,
+        *,
+        model: str | Sequence[str] | None = None,
+        fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        overwrite: bool = False,
+        show_output: int = 1,
+    ) -> None:
+        """
+        Save this file's fit slots to an HDF5 archive.
+
+        One-line delegate to ``self.p.save_fits(file=self, ...)``. Useful
+        when the user holds a ``File`` reference and wants to persist its
+        fits without first reaching into the parent ``Project``. See
+        :meth:`Project.save_fits` for full semantics.
+        """
+
+        self.p.save_fits(
+            filepath,
+            file=self,
+            model=model,
+            fit_type=fit_type,
+            overwrite=overwrite,
+            show_output=show_output,
+        )
+
+    #
+    def export_fit(
+        self,
+        filepath: PathLike | str | None = None,
+        *,
+        format: Literal["csv"] = "csv",
+        model: str | Sequence[str] | None = None,
+        fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        overwrite: bool = False,
+        show_output: int = 1,
+    ) -> None:
+        """
+        Export this file's fit slots as a CSV/PNG tree.
+
+        One-line delegate to ``self.p.export_fits(file=self, ...)``. See
+        :meth:`Project.export_fits` for full semantics and output layout.
+        """
+
+        self.p.export_fits(
+            filepath,
+            format=format,
+            file=self,
+            model=model,
+            fit_type=fit_type,
+            overwrite=overwrite,
+            show_output=show_output,
+        )
+
+    #
+    # ------------------------------------------------------------------
+    # Deprecated aliases — scheduled for removal before v1.0.0.
+    # See TODO.md "Build & release → Remove legacy/backwards-compat code".
+    # ------------------------------------------------------------------
+
+    #
+    def save_sbs_fit(self, save_path: PathLike) -> None:
+        """
+        .. deprecated::
+            Use :meth:`File.export_fit` (``fit_type="sbs"``) instead.
+            ``save_sbs_fit`` is scheduled for removal before v1.0.0.
+
+        Behavior is preserved: this wrapper still writes the legacy
+        on-disk layout. Only the warning is new.
+        """
+
+        warnings.warn(
+            "File.save_sbs_fit is deprecated and will be removed before "
+            "v1.0.0; use File.export_fit(fit_type='sbs', filepath=...) "
+            "for the supported export pipeline.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self._save_sbs_fit_legacy(save_path)
+
+    #
+    def save_2d_fit(self, save_path: PathLike) -> None:
+        """
+        .. deprecated::
+            Use :meth:`File.export_fit` (``fit_type="2d"``) instead.
+            ``save_2d_fit`` is scheduled for removal before v1.0.0.
+
+        Behavior is preserved: this wrapper still writes the legacy
+        on-disk layout. Only the warning is new.
+        """
+
+        warnings.warn(
+            "File.save_2d_fit is deprecated and will be removed before "
+            "v1.0.0; use File.export_fit(fit_type='2d', filepath=...) "
+            "for the supported export pipeline.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self._save_2d_fit_legacy(save_path)
 
     #
     def fit_slice_by_slice(
@@ -2382,6 +3112,7 @@ class File:
         # define (and create) path where SbS fit results will be saved to
         path_sbs_results = self.create_model_path(
             model_name,
+            fit_type="sbs",
             subfolders=[
                 "slices",
             ],
@@ -2438,6 +3169,11 @@ class File:
         # No point spawning more workers than slices.
         n_workers = max(1, min(n_workers, n_slices))
 
+        # CSV format/delimiter: project defaults unless caller overrides
+        # (forwarded into both the serial and parallel SbS dispatch paths)
+        fit_wrapper_kwargs.setdefault("num_fmt", self.p.num_fmt)
+        fit_wrapper_kwargs.setdefault("delim", self.p.delim)
+
         if n_workers == 1:
             # serial path (debug escape hatch).
             self.results_sbs = []
@@ -2470,26 +3206,27 @@ class File:
                     par=self.model_sbs.lmfit_pars,
                     stages=stages,
                     show_output=0,
-                    save_output=1,
+                    save_output=1 if self.p.auto_export else 0,
                     save_path=path_slice,
                     **fit_wrapper_kwargs,
                 )
                 self.results_sbs.append(result_sbs)
 
-                fitlib.plt_fit_res_1d(
-                    x=const[0],
-                    y=const[1],
-                    fit_fun_str=self.p.spec_fun_str,
-                    par_init=initial_guess,
-                    par_fin=result_sbs[1],
-                    args=args,
-                    plot_sum=False,
-                    show_init=True,
-                    fit_lim=self.e_lim,
-                    config=self.plot_config,
-                    save_img=-1,
-                    save_path=path_slice.with_suffix(".png"),
-                )
+                if self.p.auto_export:
+                    fitlib.plt_fit_res_1d(
+                        x=const[0],
+                        y=const[1],
+                        fit_fun_str=self.p.spec_fun_str,
+                        par_init=initial_guess,
+                        par_fin=result_sbs[1],
+                        args=args,
+                        plot_sum=False,
+                        show_init=True,
+                        fit_lim=self.e_lim,
+                        config=self.plot_config,
+                        save_img=-1,
+                        save_path=path_slice.with_suffix(".png"),
+                    )
         else:
             # parallel path: spawn pool, install model once per worker.
             ctx = multiprocessing.get_context("spawn")
@@ -2516,6 +3253,7 @@ class File:
                         path_slice=_slice_path(s_i),
                         plot_config=self.plot_config,
                         fit_wrapper_kwargs=fit_wrapper_kwargs,
+                        auto_export=self.p.auto_export,
                     ): s_i
                     for s_i in range(n_slices)
                 }
@@ -2547,7 +3285,12 @@ class File:
             self.model_sbs.args = _args_sbs
 
         if stages >= 1:
-            self.save_sbs_fit(save_path=path_sbs_results)
+            # Extract slot BEFORE save_sbs_fit / seed restoration so the slot
+            # captures pristine per-slice fit state (results_sbs and parameter
+            # names taken before any post-fit cleanup).
+            self._append_sbs_slot(model_name=model_name, fit_fun_str=_fun_str)
+            if self.p.auto_export:
+                self._save_sbs_fit_legacy(save_path=path_sbs_results)
         self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
         self.model_sbs.args = _args_sbs
         if stages >= 1:
@@ -2556,17 +3299,14 @@ class File:
             )
 
     #
-    def save_sbs_fit(self, save_path: PathLike) -> None:
+    def _save_sbs_fit_legacy(self, save_path: PathLike) -> None:
         """
-        Export Slice-by-Slice fit results.
+        Legacy SbS export — preserves the original on-disk layout used by
+        the auto-export path inside :meth:`fit_slice_by_slice`.
 
-        Saves parameter evolution as CSV, plots individual parameters vs. time,
-        reconstructs 2D fit map, and creates data/fit/residual comparison plots.
-
-        Parameters
-        ----------
-        save_path : str or Path
-            Base directory for saving results
+        Internal use only. The public ``save_sbs_fit`` is a deprecated
+        wrapper that forwards to :meth:`export_fit` (different layout);
+        prefer :meth:`export_fit` for new code.
         """
 
         if self.model_sbs is None or self.time is None:
@@ -2575,10 +3315,25 @@ class File:
             )
         if self.data is None:
             raise ValueError("Data missing; cannot save Slice-by-Slice fit.")
+        if self.energy is None:
+            raise ValueError("Energy axis missing; cannot save Slice-by-Slice fit.")
         if self.model_sbs.const is None or self.model_sbs.args is None:
             raise ValueError(
                 "Slice-by-Slice model const/args missing; cannot reconstruct 2D fit."
             )
+        # axis sidecars (one value per row); paired with fit_2d.csv
+        np.savetxt(
+            pathlib.Path(save_path) / "energy.csv",
+            np.asarray(self.energy),
+            fmt=self.p.num_fmt,
+            delimiter=self.p.delim,
+        )
+        np.savetxt(
+            pathlib.Path(save_path) / "time.csv",
+            np.asarray(self.time),
+            fmt=self.p.num_fmt,
+            delimiter=self.p.delim,
+        )
         # convert results, specifically par_fin to dataframe and save
         # this also plots all parameters as a function of time
         df_sbs = fitlib.results_to_df(
@@ -2588,6 +3343,8 @@ class File:
             config=self.plot_config,
             save_df=-1 if self.p.show_output == 0 else 1,
             save_path=save_path,
+            num_fmt=self.p.num_fmt,
+            delim=self.p.delim,
         )
 
         # get slice-by-slice fit spectra as a 2D map
@@ -2596,6 +3353,8 @@ class File:
             results=df_sbs_pars,
             const=self.model_sbs.const,
             args=self.model_sbs.args,
+            num_fmt=self.p.num_fmt,
+            delim=self.p.delim,
             save_2d=-1 if self.p.show_output == 0 else 1,
             save_path=save_path,
         )
@@ -2612,6 +3371,288 @@ class File:
             save_img=-1 if self.p.show_output == 0 else 1,
             save_path=save_path,
         )
+
+    #
+    # ------------------------------------------------------------------
+    # Slot capture (eager extraction into Project._fit_history)
+    # ------------------------------------------------------------------
+
+    #
+    def _append_baseline_slot(self, *, model_name: str, fit_fun_str: str) -> None:
+        """
+        Build a SavedFitSlot from the just-completed baseline fit and append
+        it to ``self.p._fit_history``. Uses copied snapshot args so the slot
+        is invariant to subsequent state changes on ``self.model_base``.
+        """
+
+        assert self.model_base is not None  # type guard
+        assert self.data_base is not None  # type guard
+        assert self.energy is not None  # type guard
+        if self.data is None:
+            return  # data_base-only fixture / no source File data to fingerprint
+        result_fin = self.model_base.result[1]
+        if not hasattr(result_fin, "params"):
+            return  # mocked / placeholder result; nothing to record
+        # Evaluate model on the same grid as data_base, then crop to e_lim
+        # so observed.shape == fit.shape and matches the residual grid.
+        fit_full = np.asarray(
+            fitlib.residual_fun(
+                par=result_fin.params,
+                x=self.energy,
+                data=self.data_base,
+                fit_fun_str=fit_fun_str,
+                args=self.model_base.args,
+                res_type="fit",
+            )
+        )
+        e_lim = list(self.e_lim) if self.e_lim else None
+        if e_lim:
+            observed = self.data_base[e_lim[0] : e_lim[1]].copy()
+            fit_arr = fit_full[e_lim[0] : e_lim[1]].copy()
+        else:
+            observed = self.data_base.copy()
+            fit_arr = fit_full.copy()
+        params_df = ulmfit.par_to_df(
+            result_fin.params,
+            col_type="min",
+            par_names=self.model_base.parameter_names,
+        )
+        conf_ci = self.model_base.result[2]
+        mcmc = fit_io._mcmc_payload(
+            self.model_base.result[3],
+            self.model_base.result[4],
+        )
+        slot = fit_io._slot_from_baseline(
+            file_fingerprint=self.fingerprint(),
+            file_name=self.name,
+            model_name=model_name,
+            fit_alg=str(getattr(result_fin, "method", "unknown")),
+            yaml_filename=self.model_base.yaml_f_name,
+            params_df=params_df,
+            observed=observed,
+            fit=fit_arr,
+            base_t_ind=list(self.base_t_ind),
+            e_lim=e_lim,
+            n_free_pars=int(getattr(result_fin, "nvarys", 0)),
+            noise_type=self.noise_type,
+            sigma_source=self.sigma_source,
+            sigma_type=self.sigma_type,
+            sigma_data=self.sigma_data,
+            conf_ci=conf_ci if not conf_ci.empty else None,
+            mcmc=mcmc,
+        )
+        self.p._fit_history.append(slot)
+
+    #
+    def _append_spectrum_slot(
+        self,
+        *,
+        model_name: str,
+        fit_fun_str: str,
+        time_point: float | None,
+        time_range: list[float] | None,
+        time_type: str,
+    ) -> None:
+        """Build and append a SavedFitSlot for a completed spectrum fit."""
+
+        assert self.model_spec is not None  # type guard
+        assert self.data_spec is not None  # type guard
+        assert self.energy is not None  # type guard
+        result_fin = self.model_spec.result[1]
+        if not hasattr(result_fin, "params"):
+            return  # mocked / placeholder result; nothing to record
+        fit_full = np.asarray(
+            fitlib.residual_fun(
+                par=result_fin.params,
+                x=self.energy,
+                data=self.data_spec,
+                fit_fun_str=fit_fun_str,
+                args=self.model_spec.args,
+                res_type="fit",
+            )
+        )
+        e_lim = list(self.e_lim) if self.e_lim else None
+        if e_lim:
+            observed = self.data_spec[e_lim[0] : e_lim[1]].copy()
+            fit_arr = fit_full[e_lim[0] : e_lim[1]].copy()
+        else:
+            observed = self.data_spec.copy()
+            fit_arr = fit_full.copy()
+        params_df = ulmfit.par_to_df(
+            result_fin.params,
+            col_type="min",
+            par_names=self.model_spec.parameter_names,
+        )
+        conf_ci = self.model_spec.result[2]
+        mcmc = fit_io._mcmc_payload(
+            self.model_spec.result[3],
+            self.model_spec.result[4],
+        )
+        slot = fit_io._slot_from_spectrum(
+            file_fingerprint=self.fingerprint(),
+            file_name=self.name,
+            model_name=model_name,
+            fit_alg=str(getattr(result_fin, "method", "unknown")),
+            yaml_filename=self.model_spec.yaml_f_name,
+            params_df=params_df,
+            observed=observed,
+            fit=fit_arr,
+            time_point=time_point,
+            time_range=time_range,
+            time_type=time_type,
+            e_lim=e_lim,
+            n_free_pars=int(getattr(result_fin, "nvarys", 0)),
+            noise_type=self.noise_type,
+            sigma_source=self.sigma_source,
+            sigma_type=self.sigma_type,
+            sigma_data=self.sigma_data,
+            conf_ci=conf_ci if not conf_ci.empty else None,
+            mcmc=mcmc,
+        )
+        self.p._fit_history.append(slot)
+
+    #
+    def _append_sbs_slot(self, *, model_name: str, fit_fun_str: str) -> None:
+        """
+        Build and append a SavedFitSlot for a completed slice-by-slice fit.
+
+        Must be called BEFORE the seed-template restoration that runs at the
+        end of ``fit_slice_by_slice`` — the helper takes copied snapshot args
+        and is invariant to subsequent state changes, but the per-slice
+        ``residual_fun`` evaluation here uses the still-correct
+        ``self.model_sbs.const/args``.
+        """
+
+        assert self.model_sbs is not None  # type guard
+        assert self.data is not None  # type guard
+        assert self.energy is not None  # type guard
+        if not self.results_sbs or not hasattr(self.results_sbs[0][1], "params"):
+            return  # mocked / placeholder results; nothing to record
+        n_slices = len(self.data)
+        e_lim = list(self.e_lim) if self.e_lim else None
+        # Per-slice observed view + per-slice model evaluation. residual_fun
+        # is called once per slice with that slice's final params.
+        observed_rows = []
+        fit_rows = []
+        for s_i in range(n_slices):
+            slice_data = self.data[s_i]
+            slice_par = self.results_sbs[s_i][1].params
+            fit_full = np.asarray(
+                fitlib.residual_fun(
+                    par=slice_par,
+                    x=self.energy,
+                    data=slice_data,
+                    fit_fun_str=fit_fun_str,
+                    args=self.model_sbs.args,
+                    res_type="fit",
+                )
+            )
+            if e_lim:
+                observed_rows.append(slice_data[e_lim[0] : e_lim[1]].copy())
+                fit_rows.append(fit_full[e_lim[0] : e_lim[1]].copy())
+            else:
+                observed_rows.append(slice_data.copy())
+                fit_rows.append(fit_full.copy())
+        observed = np.stack(observed_rows, axis=0)
+        fit_arr = np.stack(fit_rows, axis=0)
+        # Per-slice DataFrame (one row per slice, columns = parameter values).
+        params_df = ulmfit.list_of_par_to_df(self.results_sbs)
+        # n_free_pars + fit_alg captured from slice 0 (consistent across slices
+        # because the same model_sbs is used for every slice).
+        slice0_result = self.results_sbs[0][1]
+        slice0_conf_ci = self.results_sbs[0][2]
+        # MCMC payload — captured from slice 0, mirroring fit_alg / nvarys.
+        # Per-slice MCMC chains are not stored; aggregate analysis uses
+        # slice 0 as the representative.
+        slice0_mcmc = fit_io._mcmc_payload(
+            self.results_sbs[0][3],
+            self.results_sbs[0][4],
+        )
+        slot = fit_io._slot_from_sbs(
+            file_fingerprint=self.fingerprint(),
+            file_name=self.name,
+            model_name=model_name,
+            fit_alg=str(getattr(slice0_result, "method", "unknown")),
+            yaml_filename=self.model_sbs.yaml_f_name,
+            params_df=params_df,
+            observed=observed,
+            fit=fit_arr,
+            e_lim=e_lim,
+            t_lim=None,
+            n_free_pars=int(getattr(slice0_result, "nvarys", 0)),
+            noise_type=self.noise_type,
+            sigma_source=self.sigma_source,
+            sigma_type=self.sigma_type,
+            sigma_data=self.sigma_data,
+            conf_ci=slice0_conf_ci if not slice0_conf_ci.empty else None,
+            mcmc=slice0_mcmc,
+        )
+        self.p._fit_history.append(slot)
+
+    #
+    def _append_2d_slot(self, *, model_name: str, fit_fun_str: str) -> None:
+        """Build and append a SavedFitSlot for a completed 2D global fit."""
+
+        assert self.model_2d is not None  # type guard
+        assert self.data is not None  # type guard
+        assert self.energy is not None  # type guard
+        result_fin = self.model_2d.result[1]
+        if not hasattr(result_fin, "params"):
+            return  # mocked / placeholder result; nothing to record
+        # Evaluate the 2D model on the full grid; crop to (t_lim, e_lim) so
+        # observed.shape == fit.shape and matches the residual grid.
+        fit_full = np.asarray(
+            fitlib.residual_fun(
+                par=result_fin.params,
+                x=self.energy,
+                data=self.data,
+                fit_fun_str=fit_fun_str,
+                args=self.model_2d.args,
+                res_type="fit",
+            )
+        )
+        e_lim = list(self.e_lim) if self.e_lim else None
+        t_lim = list(self.t_lim) if self.t_lim else None
+        observed = self.data
+        fit_arr = fit_full
+        if t_lim:
+            observed = observed[t_lim[0] : t_lim[1], :]
+            fit_arr = fit_arr[t_lim[0] : t_lim[1], :]
+        if e_lim:
+            observed = observed[:, e_lim[0] : e_lim[1]]
+            fit_arr = fit_arr[:, e_lim[0] : e_lim[1]]
+        observed = observed.copy()
+        fit_arr = fit_arr.copy()
+        params_df = ulmfit.par_to_df(
+            result_fin.params,
+            col_type="min",
+            par_names=self.model_2d.parameter_names,
+        )
+        conf_ci = self.model_2d.result[2]
+        mcmc = fit_io._mcmc_payload(
+            self.model_2d.result[3],
+            self.model_2d.result[4],
+        )
+        slot = fit_io._slot_from_2d(
+            file_fingerprint=self.fingerprint(),
+            file_name=self.name,
+            model_name=model_name,
+            fit_alg=str(getattr(result_fin, "method", "unknown")),
+            yaml_filename=self.model_2d.yaml_f_name,
+            params_df=params_df,
+            observed=observed,
+            fit=fit_arr,
+            e_lim=e_lim,
+            t_lim=t_lim,
+            n_free_pars=int(getattr(result_fin, "nvarys", 0)),
+            noise_type=self.noise_type,
+            sigma_source=self.sigma_source,
+            sigma_type=self.sigma_type,
+            sigma_data=self.sigma_data,
+            conf_ci=conf_ci if not conf_ci.empty else None,
+            mcmc=mcmc,
+        )
+        self.p._fit_history.append(slot)
 
     #
     def _resolve_model(self, model_name: str | None) -> mcp.Model:
@@ -2901,7 +3942,7 @@ class File:
             raise ValueError("Data/axes missing; cannot run 2D fit.")
 
         # define (and create) path where 2D fit results will be saved to
-        path_2d_results = self.create_model_path(model_name)
+        path_2d_results = self.create_model_path(model_name, fit_type="2d")
 
         # set all fixed 2D fit parameters equal to baseline model results
         base_df = ulmfit.par_to_df(self.model_base.lmfit_pars, col_type="min")
@@ -2947,6 +3988,9 @@ class File:
         )
         self.model_2d.args = _args
 
+        # CSV format/delimiter: project defaults unless caller overrides
+        fit_wrapper_kwargs.setdefault("num_fmt", self.p.num_fmt)
+        fit_wrapper_kwargs.setdefault("delim", self.p.delim)
         # fit (with confidence intervals)
         self.model_2d.result = fitlib.fit_wrapper(
             const=self.model_2d.const,
@@ -2955,7 +3999,7 @@ class File:
             par=self.model_2d.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
-            save_output=1,
+            save_output=1 if self.p.auto_export else 0,
             save_path=path_2d_results / model_name,
             **fit_wrapper_kwargs,
         )
@@ -2967,26 +4011,26 @@ class File:
             for name in self.model_2d.parameter_names:
                 if name in final_params:
                     self.model_2d.lmfit_pars[name].value = final_params[name].value
+            self._append_2d_slot(model_name=model_name, fit_fun_str=_fun_str)
 
         if stages >= 1:
-            self.save_2d_fit(save_path=path_2d_results)
+            if self.p.auto_export:
+                self._save_2d_fit_legacy(save_path=path_2d_results)
             fitlib.time_display(
                 t_start=t_2d, print_str="Time elapsed for 2D model fit: "
             )
             display(self.model_2d.result[1].params)  # display final pars below figure
 
     #
-    def save_2d_fit(self, save_path: PathLike) -> None:
+    def _save_2d_fit_legacy(self, save_path: PathLike) -> None:
         """
-        Export 2D model fit results.
+        Legacy 2D export — preserves the original on-disk layout used by
+        the auto-export path inside :meth:`fit_2d` and
+        :meth:`Project.fit_2d`.
 
-        Evaluates model at final parameters, creates 2D data/fit/residual
-        comparison plots, and saves to specified directory.
-
-        Parameters
-        ----------
-        save_path : str or Path
-            Base directory for saving results
+        Internal use only. The public ``save_2d_fit`` is a deprecated
+        wrapper that forwards to :meth:`export_fit` (different layout);
+        prefer :meth:`export_fit` for new code.
         """
 
         if (
@@ -3001,6 +4045,26 @@ class File:
             raise ValueError(
                 "2D model evaluation did not produce value_2d; nothing to save."
             )
+        # save 2D fit map as CSV (rows=time, cols=energy), mirroring save_sbs_fit
+        np.savetxt(
+            pathlib.Path(save_path) / "fit_2d.csv",
+            self.model_2d.value_2d,
+            fmt=self.p.num_fmt,
+            delimiter=self.p.delim,
+        )
+        # axis sidecars (one value per row); paired with fit_2d.csv
+        np.savetxt(
+            pathlib.Path(save_path) / "energy.csv",
+            np.asarray(self.energy),
+            fmt=self.p.num_fmt,
+            delimiter=self.p.delim,
+        )
+        np.savetxt(
+            pathlib.Path(save_path) / "time.csv",
+            np.asarray(self.time),
+            fmt=self.p.num_fmt,
+            delimiter=self.p.delim,
+        )
         # plot data, fit, and residual 2D maps
         fitlib.plt_fit_res_2d(
             data=self.data,
@@ -3019,25 +4083,26 @@ class File:
     def get_fit_results(
         self,
         *,
-        fit_type: Literal["baseline", "sbs", "2d"] = "baseline",
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] = "baseline",
     ) -> pd.DataFrame:
         """
         Return fit results as a DataFrame for programmatic access.
 
         Parameters
         ----------
-        fit_type : {'baseline', 'sbs', '2d'}, default='baseline'
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
             Which fit results to return:
 
             - 'baseline': Baseline/ground-state fit (from ``fit_baseline``)
+            - 'spectrum': Single-spectrum fit (from ``fit_spectrum``)
             - 'sbs': Slice-by-Slice fit (from ``fit_slice_by_slice``)
             - '2d': 2D global fit (from ``fit_2d``)
 
         Returns
         -------
         pd.DataFrame
-            For 'baseline' and '2d': one row per parameter with columns
-            ``['name', 'value', 'stderr', 'init_value', 'min', 'max',
+            For 'baseline', 'spectrum', and '2d': one row per parameter with
+            columns ``['name', 'value', 'stderr', 'init_value', 'min', 'max',
             'vary', 'expr']``.
             For 'sbs': one row per time slice with columns = parameter names.
 
@@ -3055,6 +4120,14 @@ class File:
                 col_type="min",
                 par_names=self.model_base.parameter_names,
             )
+        if fit_type == "spectrum":
+            if self.model_spec is None or not self.model_spec.result:
+                raise ValueError("No spectrum fit results. Run fit_spectrum() first.")
+            return ulmfit.par_to_df(
+                self.model_spec.result[1].params,
+                col_type="min",
+                par_names=self.model_spec.parameter_names,
+            )
         if fit_type == "sbs":
             if not self.results_sbs:
                 raise ValueError(
@@ -3070,20 +4143,38 @@ class File:
                 par_names=self.model_2d.parameter_names,
             )
         raise ValueError(
-            f"Unknown fit_type={fit_type!r}; use 'baseline', 'sbs', or '2d'."
+            f"Unknown fit_type={fit_type!r}; "
+            "use 'baseline', 'spectrum', 'sbs', or '2d'."
         )
 
     #
-    def compare_models(self) -> None:
+    def compare_models(
+        self,
+        *models: str,
+        fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        metrics: Sequence[str] | None = None,
+        sbs_aggregation: Literal["median", "mean", "sum", "long"] = "median",
+    ) -> pd.DataFrame:
         """
-        TODO: Compare fit quality across multiple models (not yet implemented).
+        Compare fit-quality metrics across this file's models.
 
-        Future implementation will compare:
-        - Residual maps and statistics (min/max/std)
-        - Reduced chi-squared values
-        - Model complexity vs. fit quality metrics
+        Sugar for ``self.p.results.compare_models(file=self, models=...)``.
+        Pass model names as positional arguments; omit them to include
+        every model fit on this file. See :meth:`FitResults.compare_models`
+        for the full kwarg semantics, the defensive ``observed_sha256``
+        cross-check, and the dynamic column set driven by whether a sigma
+        was set via :meth:`File.set_sigma`.
 
-        Notes
-        -----
-        This method is a placeholder for future development.
+        Examples
+        --------
+        >>> file.set_sigma(0.23)
+        >>> file.compare_models("modelA", "modelB", fit_type="baseline")
         """
+
+        return self.p.results.compare_models(
+            file=self,
+            models=list(models) if models else None,
+            fit_type=fit_type,
+            metrics=metrics,
+            sbs_aggregation=sbs_aggregation,
+        )

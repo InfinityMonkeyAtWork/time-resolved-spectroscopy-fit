@@ -558,7 +558,7 @@ class TestProjectFitLifecycle:
     #
     @pytest.mark.slow
     def test_save_2d_fit_works_after_project_fit(self, tmp_path):
-        """save_2d_fit() runs without error on project-fitted files."""
+        """Legacy 2D save runs without error on project-fitted files."""
 
         project = make_project(name="project_fit")
         truth = _make_truth_file()
@@ -570,4 +570,65 @@ class TestProjectFitLifecycle:
         project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
 
         for f in project.files:
-            f.save_2d_fit(save_path=tmp_path)  # must not raise
+            f._save_2d_fit_legacy(save_path=tmp_path)  # must not raise
+
+    #
+    @pytest.mark.slow
+    def test_fit_history_populated_after_project_fit(self):
+        """Project.fit_2d() appends a 2D slot per file to _fit_history."""
+
+        project = make_project(name="project_fit")
+        truth = _make_truth_file()
+        clean = simulate_clean(truth.model_active)
+
+        for i in range(2):
+            _make_fit_file(project, clean, truth.energy, truth.time, name=f"file_{i}")
+
+        project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
+
+        twod_slots = [s for s in project._fit_history if s.fit_type == "2d"]
+        assert len(twod_slots) == len(project.files)
+        # Slots are tagged with each file's name, observed/fit grids align,
+        # and conf_ci is absent (joint covariance does not decompose per file).
+        slot_files = {s.file_name for s in twod_slots}
+        assert slot_files == {f.name for f in project.files}
+        for slot in twod_slots:
+            assert slot.observed.ndim == 2
+            assert slot.observed.shape == slot.fit.shape
+            assert slot.conf_ci is None
+
+    #
+    @pytest.mark.slow
+    def test_num_fmt_and_delim_propagate_to_csv_outputs(self):
+        """Custom num_fmt/delim on the Project flow into fit-CSV writes.
+
+        Covers two pandas ``to_csv`` paths exercised by fit_baseline:
+        - fit_wrapper -> ``{model}_par_fin.csv``
+        - save_baseline_fit -> ``fit_1d.csv``
+        """
+
+        project = make_project(name="num_fmt_test")
+        project.num_fmt = "%.3f"
+        project.delim = ";"
+
+        truth = _make_truth_file()
+        clean = simulate_clean(truth.model_active)
+        _make_fit_file(project, clean, truth.energy, truth.time, name="file_fmt")
+
+        f = project.files[0]
+        base_dir = project.path_results / f.name / "baseline" / "project_glp_base"
+
+        # fit_wrapper writes <model>_par_fin.csv via pandas to_csv
+        par_fin_lines = (
+            (base_dir / "project_glp_base_par_fin.csv").read_text().splitlines()
+        )
+        assert ";" in par_fin_lines[0]  # custom delimiter on header
+        value_field = par_fin_lines[1].split(";")[1]
+        # %.3f -> fixed-point; %.6e fallback would contain 'e'
+        assert "." in value_field and "e" not in value_field.lower(), value_field
+
+        # save_baseline_fit writes fit_1d.csv via pandas to_csv
+        fit_1d_lines = (base_dir / "fit_1d.csv").read_text().splitlines()
+        assert fit_1d_lines[0].startswith("energy;sum;")
+        energy_field = fit_1d_lines[1].split(";")[0]
+        assert "." in energy_field and "e" not in energy_field.lower(), energy_field
