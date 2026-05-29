@@ -1,61 +1,55 @@
 # Examples
 
-This directory contains examples demonstrating how to use `trspecfit` for time-resolved spectroscopy analysis.
+Hands-on walkthroughs for using `trspecfit`. The notebooks are organized
+by **what you're trying to do**, not in a linear "walk forward" order — pick
+the track that matches your task.
 
-## Fitting Workflows
+## Tracks
 
-Tutorials showing typical analysis workflows:
+### [Fitting Workflows](fitting_workflows/)
 
-### [01_basic_fitting](fitting_workflows/01_basic_fitting/)
-Basic workflow:
-- Load spectroscopy data
-- Define a simple energy-resolved model
-- Add time-dependence to a fit parameter
-- Fit and visualize results
+Loading data, building models, fitting, comparing, and exporting results.
+See [`fitting_workflows/README.md`](fitting_workflows/README.md) for the full
+notebook list and the 0x / 1x / 2x numeric-block legend.
 
-### [02_dependent_parameters](fitting_workflows/02_dependent_parameters/)
-Parameters that depend on each other:
-- Link parameters across components
-- Use expressions to define parameter relationships
-- Constrain fits using physical relationships
+| Notebook | What you learn |
+|----------|----------------|
+| [01_basic_fitting](fitting_workflows/01_basic_fitting/)             | Load data, define a model, fit baseline + 2D, visualize, save/export. |
+| [02_dependent_parameters](fitting_workflows/02_dependent_parameters/) | Link parameters with expressions and physical constraints. |
+| [03_multi_cycle_dynamics](fitting_workflows/03_multi_cycle_dynamics/) | Multi-cycle dynamics with subcycles and frequency. |
+| [04_parameter_profiles](fitting_workflows/04_parameter_profiles/)   | Depth-dependent parameters via profile functions (with optional time-dependence). |
+| [10_model_comparison](fitting_workflows/10_model_comparison/)       | Compare two models on the same file (baseline / SbS / 2D). |
+| [11_save_load_export](fitting_workflows/11_save_load_export/)       | `FitResults` HDF5 round-trip, CSV/PNG export, "ship just the winners". |
+| [20_fit_each_separately](fitting_workflows/20_fit_each_separately/) | Multi-file workspace, per-file independent fits (bridge to 2x). |
+| [21_project_level_shared_fit](fitting_workflows/21_project_level_shared_fit/) | Multi-file workspace, shared-parameter fits across files. |
 
-### [03_multi_cycle](fitting_workflows/03_multi_cycle/)
-Multi-cycle time-dependent models:
-- Model dynamics with multiple subcycles
-- Parameters can have separate dynamics in different subcycles
-- Models allow for global time-dependent behavior (e.g. IRF) across all subcycles
+### [Synthetic Data](synthetic_data/)
 
-### [04_par_profiles](fitting_workflows/04_par_profiles/)
-Profile-aware fitting:
-- Attach profile functions to model parameters along an auxiliary axis
-- Combine profiles with time-dependence for full 2D models
+Forward simulation and ML training data. These are not fitting tutorials —
+they cover how to generate datasets from a known model.
 
-### [05_project_level_fitting](fitting_workflows/05_project_level_fitting/)
-Project-level fitting across multiple files:
-- Load shared models across files in a single project
-- Fit with shared parameters and per-file results
+| Notebook | What you learn |
+|----------|----------------|
+| [01_simulator](synthetic_data/01_simulator/)            | Generate synthetic noisy data from a known ground truth. |
+| [02_ml_training_data](synthetic_data/02_ml_training_data/) | Sweep parameter space for ML training datasets. |
 
-## Data Generation
+## Choose your starting point
 
-Tools for generating synthetic data and machine learning training sets. These examples are primarily for:
-- Testing and validation
-- Developing ML models
-- Understanding the forward model
+- **One processed file, want to fit it:** [`fitting_workflows/01_basic_fitting`](fitting_workflows/01_basic_fitting/).
+- **Compare two candidate models on one file:** [`fitting_workflows/10_model_comparison`](fitting_workflows/10_model_comparison/).
+- **Save, load, or export fit results:** [`fitting_workflows/11_save_load_export`](fitting_workflows/11_save_load_export/).
+- **Many files, fit each independently:** [`fitting_workflows/20_fit_each_separately`](fitting_workflows/20_fit_each_separately/).
+- **Many files, shared-parameter fit:** [`fitting_workflows/21_project_level_shared_fit`](fitting_workflows/21_project_level_shared_fit/).
+- **Generate synthetic / ML training data:** [`synthetic_data/`](synthetic_data/).
 
-### [simulator](data_generation/simulator/)
-Generate synthetic, noisy spectroscopy data with known ground truth for testing and validation.
-
-### [ml_training](data_generation/ml_training/)
-Generate large training datasets for machine learning applications (parameter space exploration).
-
-## Running Examples
+## Running examples
 
 Each example is self-contained with:
-- `example.ipynb` - Jupyter notebook with step-by-step workflow
-- `data/` - Example data files (if applicable)
-- `models_energy.yaml` - Energy-resolved model definitions
-- `models_time.yaml` - Time-resolved model definitions
-- `project.yaml` - Project configuration
+
+- `example.ipynb` — Jupyter notebook with step-by-step walkthrough.
+- `data/` — input data files (where applicable; some notebooks generate data inline).
+- `models_energy.yaml` / `models_time.yaml` / `models_profile.yaml` — model definitions.
+- `project.yaml` — project configuration.
 
 Install the notebook dependencies first:
 
@@ -63,7 +57,7 @@ Install the notebook dependencies first:
 python -m pip install "trspecfit[lab]"
 ```
 
-To run an example:
+Open a notebook:
 
 ```bash
 cd examples/fitting_workflows/01_basic_fitting

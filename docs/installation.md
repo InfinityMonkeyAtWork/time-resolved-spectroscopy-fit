@@ -56,7 +56,7 @@ pip install ".[lab]"
 ```
 You should see `(.venv)` at the start of your prompt once activated.
 
-**8. Open an example notebook.** Press `Cmd+Shift+E` to open the file explorer sidebar. Expand `examples/fitting_workflows/`, pick the first notebook (`01_basic_fitting`), and open it. When VS Code asks which kernel to use, select the `.venv` interpreter.
+**8. Open an example notebook.** Press `Cmd+Shift+E` to open the file explorer sidebar. Expand `examples/fitting_workflows/`, pick `01_basic_fitting/example.ipynb`, and open it. When VS Code asks which kernel to use, select the `.venv` interpreter.
 
 ## Step-by-step for Windows
 
@@ -90,4 +90,4 @@ pip install ".[lab]"
 ```
 You should see `(.venv)` at the start of your prompt once activated. If PowerShell blocks the activation script with an execution-policy error, run `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` once and try again.
 
-**8. Open an example notebook.** Press `Ctrl+Shift+E` to open the file explorer sidebar. Expand `examples/fitting_workflows/`, pick the first notebook (`01_basic_fitting`), and open it. When VS Code asks which kernel to use, select the `.venv` interpreter.
+**8. Open an example notebook.** Press `Ctrl+Shift+E` to open the file explorer sidebar. Expand `examples/fitting_workflows/`, pick `01_basic_fitting/example.ipynb`, and open it. When VS Code asks which kernel to use, select the `.venv` interpreter.

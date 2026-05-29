@@ -1,0 +1,20 @@
+# Project configuration for project-level fitting example
+
+# Display settings
+show_output: 1
+
+# Axis labels
+e_label: 'Energy (arb. units)'
+t_label: 'Time (arb. units)'
+z_label: 'Intensity (arb. units)'
+
+# Plot settings
+x_dir: 'def'
+x_type: 'lin'
+y_dir: 'def'
+y_type: 'lin'
+z_colormap: 'viridis'
+z_type: 'lin'
+dpi_plt: 100
+dpi_save: 300
+res_mult: 5

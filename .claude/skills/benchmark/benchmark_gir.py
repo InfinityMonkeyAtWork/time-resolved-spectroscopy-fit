@@ -564,7 +564,7 @@ if __name__ == "__main__":
     elif args.nfev:
         if args.example == 0:
             totals: dict[int, int | str] = {}
-            for n in range(1, 6):
+            for n in range(1, 5):
                 print()
                 print("=" * 60)
                 print(f"NFEV CAPTURE -- example {n:02d}")
@@ -589,7 +589,7 @@ if __name__ == "__main__":
     elif args.plan_time:
         if args.example == 0:
             ratios: dict[int, str] = {}
-            for n in range(1, 6):
+            for n in range(1, 5):
                 print()
                 print("=" * 60)
                 print(f"PLAN-TIME CAPTURE -- example {n:02d}")

@@ -9,7 +9,7 @@ on an example fitting workflow.
 ## Available examples
 
 ```bash
-ls -d examples/fitting_workflows/0[0-9]_*/ 2>/dev/null | \
+ls -d examples/fitting_workflows/[0-9][0-9]_*/ 2>/dev/null | \
   grep -v _fits | \
   while read -r d; do printf '  %s\n' "$(basename "$d")"; done
 ```
@@ -22,14 +22,17 @@ different GIR paths:
 
 | # | example | GIR path exercised |
 |---|-----------------------------|--------------------|
-| 1 | `01_basic_fitting`          | convolution (`MonoExpPosIRF` -> `*CONV` kernel) |
-| 2 | `02_dependent_parameters`   | plain dynamics, no conv/subcycle/profile (default) |
-| 3 | `03_multi_cycle`            | subcycle dynamics |
-| 4 | `04_par_profiles`           | profile models |
-| 5 | `05_project_level_fitting`  | not currently supported by the benchmark harness |
+| 1 | `01_basic_fitting`            | convolution (`MonoExpPosIRF` -> `*CONV` kernel) |
+| 2 | `02_dependent_parameters`     | plain dynamics, no conv/subcycle/profile (default) |
+| 3 | `03_multi_cycle_dynamics`     | subcycle dynamics |
+| 4 | `04_parameter_profiles`       | profile models |
+| — | `10_model_comparison`, `11_save_load_export` | not benchmark fixtures (model-comparison / persistence demos) |
+| — | `20_fit_each_separately`, `21_project_level_shared_fit` | not currently supported by the benchmark harness |
 
 Example 02 is the default because it is the cleanest baseline comparison
-(pure dynamics, no side paths).
+(pure dynamics, no side paths). The harness discovers example folders by
+their `NN_` numeric prefix, so example numbers in `--example N` map to the
+folder names above.
 
 ## Task
 

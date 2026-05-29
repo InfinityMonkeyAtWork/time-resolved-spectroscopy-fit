@@ -1,0 +1,48 @@
+# Fitting Workflows
+
+Track-based, not linear. Pick the notebook that matches what you're trying to
+do; each one is self-contained.
+
+## Numeric-block legend
+
+- **0x — single-file fitting skills.** One file at a time. Start here if you
+  have one processed dataset.
+- **1x — post-fit work.** Model comparison, archive save/load, CSV/PNG export.
+  Use after you have a few fits to compare or ship.
+- **2x — multi-file workflows.** Several files in one project, with or without
+  shared parameters.
+
+The numbering restarts at the next block boundary as new notebooks are added.
+
+## Notebooks
+
+| Notebook | What you learn |
+|----------|----------------|
+| [`01_basic_fitting`](01_basic_fitting/)                       | Load data, define a model, fit baseline + 2D, visualize results, save/export. |
+| [`02_dependent_parameters`](02_dependent_parameters/)         | Link parameters with expressions (e.g. spin-orbit doublets). |
+| [`03_multi_cycle_dynamics`](03_multi_cycle_dynamics/)         | Multi-cycle dynamics with subcycles and frequency. |
+| [`04_parameter_profiles`](04_parameter_profiles/)             | Depth-dependent parameters with profile functions (single or combined with time-dependence). |
+| [`10_model_comparison`](10_model_comparison/)                 | Compare two models on the same file (baseline, slice-by-slice, 2D). |
+| [`11_save_load_export`](11_save_load_export/)                 | `FitResults` HDF5 round-trip, CSV/PNG export, "ship just the winners". |
+| [`20_fit_each_separately`](20_fit_each_separately/)           | Multi-file workspace, **per-file independent** fits (bridge to 2x). |
+| [`21_project_level_shared_fit`](21_project_level_shared_fit/) | Multi-file workspace, **shared-parameter** fits across files. |
+
+## Choose your track
+
+- **Single processed file → fit + export:** `01_basic_fitting`.
+- **Compare two models on one file:** `10_model_comparison`.
+- **Save / load / export fit results (HDF5 or CSV/PNG):** `11_save_load_export`.
+- **Many files, fit each independently:** `20_fit_each_separately`.
+- **Many files, shared parameters across them:** `21_project_level_shared_fit`.
+- **Synthetic / ML training data:** see [`../synthetic_data/`](../synthetic_data/).
+
+## Notebook layout
+
+Each notebook directory contains:
+
+- `example.ipynb` — the walkthrough.
+- `data/` — input CSVs (where applicable; some notebooks generate data inline).
+- `models_energy.yaml` / `models_time.yaml` / `models_profile.yaml` — model
+  definitions.
+- `project.yaml` — project-level configuration (display, axis labels, plotting,
+  `auto_export`, etc.).
