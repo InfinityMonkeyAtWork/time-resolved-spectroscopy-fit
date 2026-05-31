@@ -1,7 +1,7 @@
 # ground truth time model for data generation
 # adds an exponential, IRF-convolved shift to the peak position
 
-MonoExpPosIRF:
+MonoExpIRF:
     gaussCONV:
         SD: [3, True]
     expFun:

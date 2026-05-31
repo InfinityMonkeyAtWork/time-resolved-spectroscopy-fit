@@ -1,7 +1,7 @@
 # Use these models to add time-dependence to a parameter in a 2D model
 # For available functions see: /src/trspecfit/functions/time.py
 
-MonoExpPosIRF:
+MonoExpIRF:
     gaussCONV:
         SD: [5, True, 0, 10]
     expFun:
