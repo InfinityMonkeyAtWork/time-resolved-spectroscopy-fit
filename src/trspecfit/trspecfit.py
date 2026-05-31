@@ -3175,10 +3175,20 @@ class File:
         fit_wrapper_kwargs.setdefault("delim", self.p.delim)
 
         if n_workers == 1:
-            # serial path (debug escape hatch).
+            # serial path (debug escape hatch). tqdm (not a raw print with
+            # "\r") keeps the per-slice progress notebook-friendly: it renders
+            # as a single updating bar in Jupyter and throttles its stderr
+            # output under nbconvert instead of flooding it with one message
+            # per slice. Use plain tqdm (matching the parallel path below and
+            # lmfit.emcee's progress bar), NOT tqdm.auto: tqdm.auto selects the
+            # ipywidgets-based tqdm.notebook inside a kernel, and ipywidgets is
+            # not a dependency -- it would emit "IProgress not found" warnings.
             self.results_sbs = []
-            for s_i, s in enumerate(self.data):
-                print(f"Analyzing slice number {s_i + 1}/{len(self.time)}", end="\r")
+            for s_i, s in tqdm(
+                enumerate(self.data),
+                total=n_slices,
+                desc="SbS fit (serial)",
+            ):
                 path_slice = _slice_path(s_i)
 
                 initial_guess = usbs.prepare_sbs_model_for_slice(
@@ -3289,8 +3299,12 @@ class File:
             # captures pristine per-slice fit state (results_sbs and parameter
             # names taken before any post-fit cleanup).
             self._append_sbs_slot(model_name=model_name, fit_fun_str=_fun_str)
-            if self.p.auto_export:
-                self._save_sbs_fit_legacy(save_path=path_sbs_results)
+            # Display the data/fit/residual maps (and varied-parameter plots)
+            # when interactive (show_output); save only when auto_export.
+            if self.p.auto_export or self.p.show_output >= 1:
+                self._save_sbs_fit_legacy(
+                    save_path=path_sbs_results, save_files=self.p.auto_export
+                )
         self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
         self.model_sbs.args = _args_sbs
         if stages >= 1:
@@ -3299,7 +3313,9 @@ class File:
             )
 
     #
-    def _save_sbs_fit_legacy(self, save_path: PathLike) -> None:
+    def _save_sbs_fit_legacy(
+        self, save_path: PathLike, *, save_files: bool = True
+    ) -> None:
         """
         Legacy SbS export — preserves the original on-disk layout used by
         the auto-export path inside :meth:`fit_slice_by_slice`.
@@ -3307,6 +3323,13 @@ class File:
         Internal use only. The public ``save_sbs_fit`` is a deprecated
         wrapper that forwards to :meth:`export_fit` (different layout);
         prefer :meth:`export_fit` for new code.
+
+        Parameters
+        ----------
+        save_files : bool, default True
+            When ``True`` (auto-export), write the CSVs and save the figures.
+            When ``False`` (interactive display only), skip the CSVs and just
+            show the varied-parameter and data/fit/residual plots inline.
         """
 
         if self.model_sbs is None or self.time is None:
@@ -3321,33 +3344,36 @@ class File:
             raise ValueError(
                 "Slice-by-Slice model const/args missing; cannot reconstruct 2D fit."
             )
-        # axis sidecars (one value per row); paired with fit_2d.csv
-        np.savetxt(
-            pathlib.Path(save_path) / "energy.csv",
-            np.asarray(self.energy),
-            fmt=self.p.num_fmt,
-            delimiter=self.p.delim,
-        )
-        np.savetxt(
-            pathlib.Path(save_path) / "time.csv",
-            np.asarray(self.time),
-            fmt=self.p.num_fmt,
-            delimiter=self.p.delim,
-        )
-        # convert results, specifically par_fin to dataframe and save
-        # this also plots all parameters as a function of time
+        if save_files:
+            # axis sidecars (one value per row); paired with fit_2d.csv
+            np.savetxt(
+                pathlib.Path(save_path) / "energy.csv",
+                np.asarray(self.energy),
+                fmt=self.p.num_fmt,
+                delimiter=self.p.delim,
+            )
+            np.savetxt(
+                pathlib.Path(save_path) / "time.csv",
+                np.asarray(self.time),
+                fmt=self.p.num_fmt,
+                delimiter=self.p.delim,
+            )
+        # convert results, specifically par_fin to dataframe; this also plots
+        # the varied parameters as a function of time. save_df follows the
+        # standard convention: save+show / save-only when writing files, else
+        # show-only (save_df=0) so the varied-parameter curves appear inline.
         df_sbs = fitlib.results_to_df(
             results=self.results_sbs,
             x=self.time,
             index=np.arange(0, len(self.time)),
             config=self.plot_config,
-            save_df=-1 if self.p.show_output == 0 else 1,
+            save_df=(-1 if self.p.show_output == 0 else 1) if save_files else 0,
             save_path=save_path,
             num_fmt=self.p.num_fmt,
             delim=self.p.delim,
         )
 
-        # get slice-by-slice fit spectra as a 2D map
+        # get slice-by-slice fit spectra as a 2D map (write CSV only when saving)
         df_sbs_pars = df_sbs.loc[:, self.model_sbs.parameter_names]
         fit_2d_sbs = fitlib.results_to_fit_2d(
             results=df_sbs_pars,
@@ -3355,11 +3381,11 @@ class File:
             args=self.model_sbs.args,
             num_fmt=self.p.num_fmt,
             delim=self.p.delim,
-            save_2d=-1 if self.p.show_output == 0 else 1,
+            save_2d=(-1 if self.p.show_output == 0 else 1) if save_files else 0,
             save_path=save_path,
         )
 
-        # plot data, fit, and residual 2D maps
+        # plot data, fit, and residual 2D maps (save only when writing files)
         fitlib.plt_fit_res_2d(
             data=self.data,
             fit=fit_2d_sbs,
@@ -3368,7 +3394,7 @@ class File:
             config=self.plot_config,
             x_lim=self.e_lim,
             y_lim=self.t_lim,
-            save_img=-1 if self.p.show_output == 0 else 1,
+            save_img=(-1 if self.p.show_output == 0 else 1) if save_files else 0,
             save_path=save_path,
         )
 
@@ -4014,15 +4040,21 @@ class File:
             self._append_2d_slot(model_name=model_name, fit_fun_str=_fun_str)
 
         if stages >= 1:
-            if self.p.auto_export:
-                self._save_2d_fit_legacy(save_path=path_2d_results)
+            # Display the data/fit/residual maps when interactive (show_output),
+            # save them only when auto_export — mirroring fit_baseline.
+            if self.p.auto_export or self.p.show_output >= 1:
+                self._save_2d_fit_legacy(
+                    save_path=path_2d_results, save_files=self.p.auto_export
+                )
             fitlib.time_display(
                 t_start=t_2d, print_str="Time elapsed for 2D model fit: "
             )
             display(self.model_2d.result[1].params)  # display final pars below figure
 
     #
-    def _save_2d_fit_legacy(self, save_path: PathLike) -> None:
+    def _save_2d_fit_legacy(
+        self, save_path: PathLike, *, save_files: bool = True
+    ) -> None:
         """
         Legacy 2D export — preserves the original on-disk layout used by
         the auto-export path inside :meth:`fit_2d` and
@@ -4031,6 +4063,13 @@ class File:
         Internal use only. The public ``save_2d_fit`` is a deprecated
         wrapper that forwards to :meth:`export_fit` (different layout);
         prefer :meth:`export_fit` for new code.
+
+        Parameters
+        ----------
+        save_files : bool, default True
+            When ``True`` (auto-export), write the CSVs and save the figure.
+            When ``False`` (interactive display only), skip the CSVs and just
+            show the data/fit/residual maps inline.
         """
 
         if (
@@ -4045,27 +4084,28 @@ class File:
             raise ValueError(
                 "2D model evaluation did not produce value_2d; nothing to save."
             )
-        # save 2D fit map as CSV (rows=time, cols=energy), mirroring save_sbs_fit
-        np.savetxt(
-            pathlib.Path(save_path) / "fit_2d.csv",
-            self.model_2d.value_2d,
-            fmt=self.p.num_fmt,
-            delimiter=self.p.delim,
-        )
-        # axis sidecars (one value per row); paired with fit_2d.csv
-        np.savetxt(
-            pathlib.Path(save_path) / "energy.csv",
-            np.asarray(self.energy),
-            fmt=self.p.num_fmt,
-            delimiter=self.p.delim,
-        )
-        np.savetxt(
-            pathlib.Path(save_path) / "time.csv",
-            np.asarray(self.time),
-            fmt=self.p.num_fmt,
-            delimiter=self.p.delim,
-        )
-        # plot data, fit, and residual 2D maps
+        if save_files:
+            # save 2D fit map as CSV (rows=time, cols=energy), mirroring save_sbs_fit
+            np.savetxt(
+                pathlib.Path(save_path) / "fit_2d.csv",
+                self.model_2d.value_2d,
+                fmt=self.p.num_fmt,
+                delimiter=self.p.delim,
+            )
+            # axis sidecars (one value per row); paired with fit_2d.csv
+            np.savetxt(
+                pathlib.Path(save_path) / "energy.csv",
+                np.asarray(self.energy),
+                fmt=self.p.num_fmt,
+                delimiter=self.p.delim,
+            )
+            np.savetxt(
+                pathlib.Path(save_path) / "time.csv",
+                np.asarray(self.time),
+                fmt=self.p.num_fmt,
+                delimiter=self.p.delim,
+            )
+        # plot data, fit, and residual 2D maps (save only when writing files)
         fitlib.plt_fit_res_2d(
             data=self.data,
             fit=self.model_2d.value_2d,
@@ -4074,7 +4114,7 @@ class File:
             config=self.plot_config,
             x_lim=self.e_lim,
             y_lim=self.t_lim,
-            save_img=-1 if self.p.show_output == 0 else 1,
+            save_img=(-1 if self.p.show_output == 0 else 1) if save_files else 0,
             save_path=save_path,
         )
         # dpi_plot = round(1.5 *self.p.dpi_plt), NOT AVAILABLE YET (fig_size)

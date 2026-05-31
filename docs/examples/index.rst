@@ -11,7 +11,7 @@ Fitting Workflows
 Single-file fitting skills (block 0x):
 
 - ``examples/fitting_workflows/01_basic_fitting/``
-  Load data, define a model, fit baseline + 2D, visualize results, save/export.
+  Load data, define a model, fit baseline + 2D, visualize results.
 - ``examples/fitting_workflows/02_dependent_parameters/``
   Link parameters with expressions and physical constraints.
 - ``examples/fitting_workflows/03_multi_cycle_dynamics/``
@@ -25,6 +25,8 @@ Post-fit work (block 1x):
   Compare two models on the same file (baseline / SbS / 2D).
 - ``examples/fitting_workflows/11_save_load_export/``
   ``FitResults`` HDF5 round-trip, CSV/PNG export, "ship just the winners".
+- ``examples/fitting_workflows/12_uncertainty_mcmc/``
+  MCMC-based uncertainty estimation on a fitted 2D model.
 
 Multi-file workflows (block 2x):
 
@@ -50,6 +52,8 @@ Choose Your Track
   `10 model comparison notebook <../../examples/fitting_workflows/10_model_comparison/example.ipynb>`_.
 - Saving, loading, or exporting fit results:
   `11 save / load / export notebook <../../examples/fitting_workflows/11_save_load_export/example.ipynb>`_.
+- Estimating uncertainties with MCMC:
+  `12 uncertainty (MCMC) notebook <../../examples/fitting_workflows/12_uncertainty_mcmc/example.ipynb>`_.
 - Many files, fit each separately:
   `20 fit each separately notebook <../../examples/fitting_workflows/20_fit_each_separately/example.ipynb>`_.
 - Many files, shared-parameter fit:
@@ -67,6 +71,7 @@ All Notebooks
 - `04 parameter profiles <../../examples/fitting_workflows/04_parameter_profiles/example.ipynb>`_
 - `10 model comparison <../../examples/fitting_workflows/10_model_comparison/example.ipynb>`_
 - `11 save / load / export <../../examples/fitting_workflows/11_save_load_export/example.ipynb>`_
+- `12 uncertainty (MCMC) <../../examples/fitting_workflows/12_uncertainty_mcmc/example.ipynb>`_
 - `20 fit each separately <../../examples/fitting_workflows/20_fit_each_separately/example.ipynb>`_
 - `21 project-level shared fit <../../examples/fitting_workflows/21_project_level_shared_fit/example.ipynb>`_
 - `Simulator data generation <../../examples/synthetic_data/01_simulator/example.ipynb>`_

@@ -227,3 +227,64 @@ class TestPlotHelperSkipped:
         )
 
         assert mock.call_count == 0
+
+
+#
+class TestVerboseDisplayWithoutExport:
+    """``show_output>=1`` + ``auto_export=False`` shows the data/fit/residual
+    maps inline (via ``_save_{sbs,2d}_fit_legacy(save_files=False)``) but writes
+    no files — the interactive-display path mirroring fit_baseline. Guards the
+    save_files=False branch added to fit_slice_by_slice / fit_2d."""
+
+    #
+    def _verbose_no_export_setup(self, tmp_path):
+        truth_project = make_project(name="truth")
+        truth = _make_truth_file(truth_project)
+        data = simulate_noisy(truth.model_active, noise_level=0.01)
+        project = make_project(name="fit", auto_export=False, show_output=1)
+        project.path_results = tmp_path / "auto"
+        file = _make_fit_file(project, data, truth.energy, truth.time)
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+        return project, file
+
+    #
+    def test_sbs_displays_but_writes_nothing(self, tmp_path, monkeypatch):
+        # plt_fit_res_2d runs in the main process (after fitting), so the
+        # monkeypatch is visible regardless of worker path; n_workers=1 keeps
+        # the run cheap and deterministic.
+        mock_2d = MagicMock()
+        monkeypatch.setattr(fitlib, "plt_fit_res_2d", mock_2d)
+
+        project, file = self._verbose_no_export_setup(tmp_path)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        file.fit_slice_by_slice(
+            "single_glp",
+            n_workers=1,
+            seed_source="model",
+            seed_adapt=None,
+            try_ci=0,
+        )
+
+        # Display branch ran (maps shown) but nothing hit disk.
+        assert mock_2d.call_count == 1
+        assert _list_files(tmp_path / "auto") == set()
+
+    #
+    def test_2d_displays_but_writes_nothing(self, tmp_path, monkeypatch):
+        mock_2d = MagicMock()
+        monkeypatch.setattr(fitlib, "plt_fit_res_2d", mock_2d)
+
+        project, file = self._verbose_no_export_setup(tmp_path)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        file.add_time_dependence(
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml="models/file_time.yaml",
+            dynamics_model=["MonoExpPos"],
+        )
+        file.fit_2d("single_glp", stages=1, try_ci=0)
+
+        assert mock_2d.call_count == 1
+        assert _list_files(tmp_path / "auto") == set()

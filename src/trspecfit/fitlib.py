@@ -894,7 +894,7 @@ def results_to_df(
     x: ArrayLike | None = None,
     index: ArrayLike | None = None,
     config: PlotConfig | None = None,
-    save_df: int = 0,
+    save_df: int = -2,
     save_path: PathLike = "",
     num_fmt: str = "%.6e",
     delim: str = ",",
@@ -917,14 +917,16 @@ def results_to_df(
         Index values (e.g., slice numbers). If provided, included as column.
     config : PlotConfig, optional
         Plot configuration. If None, uses defaults.
-    save_df : {-1, 0, 1}, default=0
-        Save outputs:
+    save_df : {-2, -1, 0, 1}, default=-2
+        Output mode (standard ``_finalize_plot`` convention):
 
-        - 0: Don't save
-        - 1: Save DataFrame and parameter plots
-        - -1: Same as 1
+        - -2: neither save nor show (do nothing)
+        - -1: save ``fit_pars.csv`` + parameter PNGs, do not display
+        - 0: display only (no files written)
+        - 1: save ``fit_pars.csv`` + parameter PNGs and display
 
-        When save_df != 0, plots only varied (not fixed) parameters
+        Only *varied* (not fixed) parameters are ever displayed; when saving,
+        every parameter PNG is written regardless of vary state.
     save_path : str or Path, default=''
         Directory path for saving files (not full filename) (created if not exists).
         Files saved: 'fit_pars.csv', '{param_name}.png' for each parameter
@@ -962,19 +964,31 @@ def results_to_df(
     df_par_fin_slice0 = ulmfit.par_to_df(
         lmfit_params=results[0][1].params, col_type="min"
     )
-    if save_df < 0:
-        # Silent/API mode should not display parameter-evolution figures.
-        save_array = len(df_par_fin_slice0["vary"]) * [-1]
-    else:
-        save_array = [-1 if not vary else 1 for vary in df_par_fin_slice0["vary"]]
+    # Map save_df onto per-parameter save_img flags using the standard
+    # convention (1 save+show, -1 save+close, 0 show only, -2 neither). Only
+    # varied parameters are ever shown; every parameter is saved when saving.
+    do_save = abs(save_df) == 1
+    do_show = save_df >= 0
+    save_array = []
+    for vary in df_par_fin_slice0["vary"]:
+        show_this = do_show and bool(vary)
+        if do_save and show_this:
+            save_array.append(1)
+        elif do_save:
+            save_array.append(-1)
+        elif show_this:
+            save_array.append(0)
+        else:
+            save_array.append(-2)
 
-    if save_df != 0:
+    if do_save:
         # save the dataframe (index, x axis, parameter1, parameter2, ...
         df.to_csv(
             pathlib.Path(save_path) / "fit_pars.csv",
             float_format=num_fmt,
             sep=delim,
         )
+    if do_save or do_show:
         # plot individual parameters as a function of time (s)
         plt_fit_res_pars(
             df=df.loc[:, list(cols_plt)],

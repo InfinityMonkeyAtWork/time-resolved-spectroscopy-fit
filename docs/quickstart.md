@@ -25,12 +25,13 @@ Fitting workflow examples — **0x = single-file skills, 1x = post-fit work, 2x 
 
 | Example | What you learn |
 |---------|---------------|
-| 01_basic_fitting | Load data, define a model, fit baseline + 2D, visualize, save/export |
+| 01_basic_fitting | Load data, define a model, fit baseline + 2D, visualize results |
 | 02_dependent_parameters | Link parameters with expressions (e.g. spin-orbit doublets) |
 | 03_multi_cycle_dynamics | Multi-cycle dynamics with subcycles and frequency |
 | 04_parameter_profiles | Depth-dependent parameters with profile functions |
 | 10_model_comparison | Compare two models on the same file (baseline / SbS / 2D) |
 | 11_save_load_export | `FitResults` HDF5 round-trip, CSV/PNG export, ship just the winners |
+| 12_uncertainty_mcmc | MCMC-based uncertainty estimation on a fitted 2D model |
 | 20_fit_each_separately | Multi-file workspace, per-file independent fits |
 | 21_project_level_shared_fit | Multi-file workspace, shared-parameter fits across files |
 

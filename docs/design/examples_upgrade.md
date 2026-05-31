@@ -53,6 +53,29 @@ work to deserve its own branch.
   post-init mutation) gates the fit-completion CSV/PNG side effects. The basic
   notebook documents the default behavior and shows the opt-out.
 
+## Amendments (2026-05-29)
+
+Decisions revised while stress-testing notebook 01 after the upgrade landed:
+
+- **All persistence moved out of `01_basic_fitting`.** The basic notebook now
+  ends at `get_fit_results()` + plots. `save_fit` / `export_fit` /
+  `FitResults.load` are gone from 01 (it had drifted into showing `load`,
+  which was always meant to live in 11). `11_save_load_export` already covers
+  the full save/load/export story comprehensively, so this was a deletion from
+  01, not a rebuild of 11. Supersedes the §01 content target and migration
+  step 1 below.
+- **`01` sets `auto_export: false` in its `project.yaml`** so the introductory
+  notebook produces no surprise files on disk. The `auto_export` default/opt-out
+  explanation lives in `11_save_load_export`'s tips (which inherits 10's
+  `auto_export: false`), not in 01.
+- **New `12_uncertainty_mcmc` (block 1x).** MCMC was dead code in 01
+  (`MC(use_mc=0)`, never run). It now has its own notebook that `%run`-reuses
+  01 (same preamble pattern as 11←10) and samples the posterior for real via
+  `lmfit.emcee`. The 1x block legend gains "MCMC uncertainty".
+- **Notebooks use `pathlib.Path.cwd()`** instead of `import os` /
+  `os.getcwd()` for `Project(path=...)`. Applied to 01 first; the same swap is
+  made to the other notebooks as each is revisited.
+
 ## Motivation
 
 The fit-results work introduces a clearer split between:
