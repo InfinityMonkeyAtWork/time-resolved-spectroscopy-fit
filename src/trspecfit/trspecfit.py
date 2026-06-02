@@ -1714,6 +1714,7 @@ class File:
                 ],
                 x=self.energy,
                 config=config,
+                y_label=config.z_label,  # intensity, not the t_label
                 vlines=self.e_lim_abs,
             )
 
@@ -2345,6 +2346,7 @@ class File:
                 ],
                 x=self.energy,
                 config=self.plot_config,
+                y_label=self.plot_config.z_label,  # intensity, not the t_label
                 title=(
                     f"Baseline data: t in [{t_lo:.4g}, {t_hi:.4g}] "
                     f"(idx: [{self.base_t_ind[0]}, {self.base_t_ind[1] - 1}])"
@@ -2431,6 +2433,7 @@ class File:
                     data=[self.data, y_cut],
                     x=[energy, x_cut],
                     config=self.plot_config,
+                    y_label=self.plot_config.z_label,  # intensity, not the t_label
                     waterfall=(np.max(np.abs(y_cut)) - np.min(np.abs(y_cut))) / 8,
                     legend=["all", "cut"],
                     vlines=self.e_lim_abs,
