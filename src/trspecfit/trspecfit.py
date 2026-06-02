@@ -2321,8 +2321,8 @@ class File:
             time_start, time_stop, time_type=time_type
         )
         self.base_t_abs = [
-            self.time[self.base_t_ind[0]],
-            self.time[self.base_t_ind[1] - 1],
+            float(self.time[self.base_t_ind[0]]),
+            float(self.time[self.base_t_ind[1] - 1]),
         ]
 
         # cut and average
@@ -2338,13 +2338,17 @@ class File:
                     stacklevel=2,
                 )
                 return
+            t_lo, t_hi = self.base_t_abs
             uplt.plot_1d(
                 data=[
                     self.data_base,
                 ],
                 x=self.energy,
                 config=self.plot_config,
-                title=f"Baseline data: t in {self.base_t_abs} (idx: {self.base_t_ind})",
+                title=(
+                    f"Baseline data: t in [{t_lo:.4g}, {t_hi:.4g}] "
+                    f"(idx: [{self.base_t_ind[0]}, {self.base_t_ind[1] - 1}])"
+                ),
             )
 
     #
@@ -2844,9 +2848,9 @@ class File:
 
         # display/plot and save spectrum fit summary
         time_label = (
-            f"t = {self.spec_t_abs[0]}"
+            f"t = {self.spec_t_abs[0]:.4g}"
             if self.spec_t_abs[0] == self.spec_t_abs[1]
-            else f"t in [{self.spec_t_abs[0]}, {self.spec_t_abs[1]}]"
+            else f"t in [{self.spec_t_abs[0]:.4g}, {self.spec_t_abs[1]:.4g}]"
         )
         title_spec = (
             f"File: {self.path}, {time_label}, "
