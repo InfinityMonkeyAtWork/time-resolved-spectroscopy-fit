@@ -3,6 +3,12 @@
 # Display settings (general verbosity)
 show_output: 1  # 0: silent/API mode, 1: interactive/notebook mode
 
+# Auto-export side effects (CSV/PNG written at fit completion) are off here so
+# this introductory notebook produces no surprise files on disk. Saving,
+# loading, and exporting fits is the subject of the 11_save_load_export
+# notebook; MCMC uncertainty estimation lives in 12_uncertainty_mcmc.
+auto_export: False
+
 # Axis labels
 e_label: 'Binding energy (eV)' # x -> energy
 t_label: 'Time (s)' # y -> time

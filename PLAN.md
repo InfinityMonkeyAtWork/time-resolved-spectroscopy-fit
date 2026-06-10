@@ -25,6 +25,40 @@ Reorganize `examples/` around user-workflow tracks per
 - [x] `sphinx-build -W` clean.
 - [ ] Commit and open PR (pending user review of the rendered notebooks).
 
+## Gold-standard example criteria (distilled from 01)
+
+Bar for every `fitting_workflows` notebook before the PR. Review each
+notebook against this list.
+
+1. **Runs clean end-to-end.** `jupyter nbconvert --execute` from the project
+   venv exits 0 with zero warnings/errors in cell outputs. Unavoidable
+   warnings get an explaining markdown note; avoidable ones get fixed at the
+   source (cf. `try_ci=0` in 01's baseline fit).
+2. **Truth-anchored.** Synthetic data with committed `*_truth.yaml` files,
+   regenerable via `data/generate_data.ipynb`. The closing section quotes the
+   truth values so the reader can verify the fit recovers them.
+   *Real-data variant (02):* measured data is deliberately kept when known
+   physics anchors the fit instead — state that the data is real, document
+   its provenance, and compare results to literature values in the closing
+   section (02: Au 4f7/2 at 84.0 eV, 3.67 eV splitting, 3:4 ratio).
+3. **Self-contained directory.** `data/`, model YAMLs, `project.yaml`; no
+   dependence on having run another notebook first (exception: 11's
+   documented `%run` preamble).
+4. **No surprise side-effects.** `auto_export: False` with an explanatory
+   comment in `project.yaml`, unless persistence/export is the topic.
+5. **Why-driven narrative.** Opening cell gives a numbered roadmap; each
+   section explains why the step exists (e.g. 01's "Why global?"), not just
+   what the next call does.
+6. **Deliberate kwargs.** Non-obvious arguments carry a short comment; don't
+   lean on defaults that produce unexplained output.
+7. **Scope discipline.** One topic per notebook. Adjacent topics are
+   delegated via valid relative links; close with Tips + Next Steps. No
+   content the reader can't act on within this notebook.
+8. **Commented YAMLs.** Model files say what each block is for and point at
+   the `functions/` source for available functions/parameters.
+9. **Stripped outputs.** `nbstripout` stays; rendered outputs arrive via the
+   Read the Docs follow-up below, not via committed outputs.
+
 ## Follow-up — Render executed examples on Read the Docs
 
 Goal: let users browse fully rendered example notebooks (plots, fit tables)
