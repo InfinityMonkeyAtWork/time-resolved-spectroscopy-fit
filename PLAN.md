@@ -12,7 +12,10 @@ Reorganize `examples/` around user-workflow tracks per
 - [x] Split notebook 10 (comparison-only) and lift persistence content into 11.
 - [x] Create new notebook 11 (`%cd` + `%run` preamble under `%%capture`).
 - [x] Extend notebook 01 with `get_fit_results` / `export_fit` / `save_fit`
-  + `auto_export` opt-out story (casual-user exit path).
+  + `auto_export` opt-out story (casual-user exit path). *Refined during
+  cleanup (6eed236): notebook 01 keeps only `get_fit_results` and the
+  `auto_export: False` opt-out; `export_fit` / `save_fit` live in
+  notebook 11 exclusively.*
 - [x] Create new notebook 20 (bridge — multi-file separate fits) using 21's
   6-file dataset.
 - [x] Add `fitting_workflows/README.md` documenting 0x / 1x / 2x legend.
@@ -22,12 +25,37 @@ Reorganize `examples/` around user-workflow tracks per
 - [x] `sphinx-build -W` clean.
 - [ ] Commit and open PR (pending user review of the rendered notebooks).
 
+## Follow-up — Render executed examples on Read the Docs
+
+Goal: let users browse fully rendered example notebooks (plots, fit tables)
+without installing anything. Keep git sources stripped (`nbstripout` stays);
+outputs are generated at docs build time, so they are always in sync with the
+code. Executed notebook 01 is ~4.2 MB vs 14 KB stripped — do NOT commit
+outputs. Start AFTER the notebook content work above is done.
+
+- [ ] Add example notebooks to the docs as rendered pages. They live outside
+  `docs/`, so use `nbsphinx-link`: one `.nblink` file per notebook in
+  `docs/examples/` pointing at `../../examples/.../example.ipynb`, listed in
+  a toctree in `docs/examples/index.rst` (currently only plain reST links to
+  the `.ipynb` sources — nothing is rendered today).
+- [ ] Flip `nbsphinx_execute` from `"never"` to `"auto"` in `docs/conf.py` so
+  stripped notebooks are executed during the Sphinx build.
+- [ ] Time all nine notebooks; opt slow ones (likely `12_uncertainty_mcmc`)
+  out of build-time execution via notebook metadata
+  (`"nbsphinx": {"execute": "never"}`) or trim their runtime.
+- [ ] Verify `.readthedocs.yaml` installs the package with all fitting deps
+  (required for execution) and that total build time fits RTD limits.
+- [ ] Keep `sphinx-build -W` clean; watch the notebook 11 `%cd`/`%run`
+  preamble under build-time execution.
+- [ ] Add "browse the rendered examples" links to `README.md` and
+  `examples/README.md` once the RTD pages exist.
+
 ## Target Layout
 
 ```text
 examples/
   fitting_workflows/
-    01_basic_fitting/                 # extended with save/export sections
+    01_basic_fitting/                 # fit + get_fit_results (export → 11)
     02_dependent_parameters/          # unchanged
     03_multi_cycle_dynamics/          # was 03_multi_cycle
     04_parameter_profiles/            # was 04_par_profiles
