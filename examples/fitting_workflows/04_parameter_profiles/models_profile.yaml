@@ -1,43 +1,54 @@
-# Profile models: depth-dependent variation of XPS spectral parameters
+# Profile models: depth-dependent variation of energy-model parameters
 # (available functions: src/trspecfit/functions/profile.py)
 #
-# Profile naming convention:
-#   - Each top-level key is the profile model name, which must match the energy
-#     model parameter name it describes (e.g. GLP_01_A for amplitude).
-#   - Components are named and numbered like energy/time components.
-#   - Resulting lmfit parameter names:
-#       <profile_model_name>_<component_name>_<par_name>
-#     e.g.  GLP_01_A_pExpDecay_01_A,  GLP_01_x0_pLinear_01_m
+# A profile makes one parameter vary along the auxiliary axis (here: depth in
+# nm, data/aux_axis.csv). The component is evaluated at every depth point and
+# the spectra are averaged uniformly — the model of a depth-integrated
+# measurement. Attach with:
 #
-# Load with:
-#   file.add_par_profile("2D", "GLP_01_A", "models_profile.yaml", ["GLP_01_A"])
-#   file.add_par_profile("2D", "GLP_01_x0", "models_profile.yaml", ["GLP_01_x0"])
+#   file.add_par_profile(target_model, target_parameter,
+#                        'models_profile.yaml', profile_model)
+#
+# Resulting lmfit parameter names are prefixed with the target parameter:
+#   <target_parameter>_<component>_<par>,  e.g. GLP_01_A_pExpDecay_01_tau
+#
+# The *Fixed variants pin the profile parameters for the SbS / 2D fits; their
+# values are seeded from the profile_base fit results (vary=False parameters
+# inherit baseline results, exactly like energy-model parameters).
 
-# ----------------------------------------------------------------------------
-# IMFP-weighted amplitude profile (applied to GLP_01_A)
-# Physical meaning: the XPS signal from layer at depth z contributes with
-# weight exp(-z / tau_imfp), where tau_imfp is the inelastic mean free path.
-# A(z) = GLP_01_A_pExpDecay_01_A * exp(-z / GLP_01_A_pExpDecay_01_tau)
-# ----------------------------------------------------------------------------
-GLP_01_A:
+# IMFP weighting, attached to GLP_01_A (A free — fit by profile_base):
+# signal from depth z contributes with weight A * exp(-z / tau), where tau is
+# the inelastic mean free path. A is the surface spectral weight.
+#
+# tau is NOT fitted: rescaling (A, tau, gradient m) -> (c*A, tau/c, c*m)
+# leaves the depth-averaged spectrum unchanged, so fitting the IMFP together
+# with the gradient is degenerate. Standard XPS practice applies: take the
+# IMFP from tables (e.g. TPP-2M) for the material and kinetic energy.
+IMFP:
     pExpDecay:
-        A:   [200, True, 10, 1000]    # surface spectral weight
-        tau: [2.0, True, 0.5, 10.0]  # IMFP (nm); start near expected value
+        A:   [80, True, 1, 1000]
+        tau: [2.0, False]           # IMFP (nm), from tables — not fitted
 
-# ----------------------------------------------------------------------------
-# Band bending depth profile (applied to GLP_01_x0)
-# Physical meaning: the core level binding energy shifts with depth due to the
-# built-in electric field at the semiconductor surface. The linear dependence
-# is an approximation; the magnitude is exaggerated here to clearly illustrate
-# the effect in the data.
-# x0(z) = x0_surface + GLP_01_x0_pLinear_01_m * z + GLP_01_x0_pLinear_01_b
-#   pLinear_01_m < 0  ->  higher BE near surface (upward band bending for n-type)
-#   pLinear_01_b = 0  ->  profile is a pure shift relative to the surface value
-#
-# GLP_01_x0_pLinear_01_m is made time-dependent in the 2D model
-# (BandBendingRecovery in models_time.yaml).
-# ----------------------------------------------------------------------------
-GLP_01_x0:
+# Pinned IMFP variant for the SbS and 2D fits.
+IMFPfixed:
+    pExpDecay:
+        A:   [80, False]
+        tau: [2.0, False]
+
+# Band bending, attached to GLP_01_x0 (m free — fit by profile_base, and
+# per-slice by SbS): the core level shifts linearly with depth,
+# x0(z) = x0_surface + m * z.  m < 0 means higher binding energy at the
+# surface (upward band bending); b = 0 keeps the profile a pure shift
+# relative to the surface value x0.
+BandBending:
     pLinear:
-        m: [-0.5, True, -2, 2]   # band bending gradient (eV/nm)
-        b: [0.0, False, -1.0, 1.0]    # intercept offset (fixed at 0)
+        m: [-0.4, True, -2, 0]      # band bending gradient (eV/nm)
+        b: [0, False]
+
+# Pinned band bending variant for the 2D fit: the equilibrium gradient is
+# pinned; the BandBendingRecovery dynamics (models_time.yaml) adds the
+# time-dependent change on top.
+BandBendingFixed:
+    pLinear:
+        m: [-0.4, False]
+        b: [0, False]

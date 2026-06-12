@@ -1,0 +1,17 @@
+# ground truth time model for data generation
+# Attached to the band bending gradient GLP_01_x0_pLinear_01_m — a parameter
+# of the *profile* model, not of the energy model (spectral diffusion).
+
+# Photoexcitation creates a surface photovoltage that collapses the
+# equilibrium band bending (m jumps by +A, i.e. less negative), then recovers
+# exponentially with time constant tau. The step is blurred by a Gaussian IRF.
+# A = 0.5 exactly cancels the equilibrium gradient m = -0.5 at t = 0:
+# the bands are driven all the way to flat-band condition (SPV saturation).
+BandBendingRecovery:
+    gaussCONV:
+        SD: [10, True]
+    expFun:
+        A: [0.5, True]
+        tau: [100, True]
+        t0: [0, True]
+        y0: [0, True]

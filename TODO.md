@@ -3,6 +3,7 @@
 ## Fitting
 
 - [ ] **Mismatched initial guesses**: round-trip tests — one each for basic, profile, profile+dynamics.
+- [ ] **Conv kernel support is sized from the initial parameter value**: `Component.create_t_kernel` builds the kernel time axis once at model construction (`t_range = par_init * kernel_width`, e.g. ±4·SD for `gaussCONV`) and never rebuilds it. When the fitted width grows past its init, the kernel is silently truncated, biasing the recovered width (observed while building `04_parameter_profiles`, 2026-06-11: truth SD=10, init 5 → fitted SD≈10.8 at any SNR; 03's SD 0.148 vs truth 0.15 with init 0.1 is likely the same effect, mild). The GIR path snapshots the same static axis (`graph_ir.py`, `kernel_time`). Fix candidates: rebuild the kernel axis when the kernel parameter value changes; size the support from the parameter's max bound; or at minimum warn when `fitted_value * kernel_width` exceeds the kernel range. Workaround used in the examples: initialize conv widths generously above the expected value (commented in the YAMLs).
 
 Note: `fitlib.py` hardcodes `__lnsigma` value/min/max for MCMC sampling — make configurable via `mc_settings` if users need it.
 

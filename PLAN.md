@@ -25,7 +25,42 @@ Reorganize `examples/` around user-workflow tracks per
 - [x] `sphinx-build -W` clean.
 - [ ] Commit and open PR (pending user review of the rendered notebooks).
 
-## [ACTIVE] Rewrite 03_multi_cycle_dynamics
+## [DONE] Upgrade 04_parameter_profiles
+
+Core message: a parameter can vary along an auxiliary physical axis via a
+profile model (`File.add_par_profile`); profile parameters are regular fit
+parameters and can themselves be time-dependent (spectral diffusion,
+auto-promotes to dim=2). Scenario: time-resolved XPS depth profiling — IMFP
+amplitude profile + band bending position profile; photovoltage collapses the
+band bending to flat-band at t=0, recovery tau=100 ps.
+
+- [x] Generator rewritten Simulator-style (`data/generate_data.ipynb` +
+  `models_{energy,profile,time}_truth.yaml`), save→reload axes pattern.
+  Photon counting, counts_per_delay=20000, seed 42, peak SNR ~40.
+- [x] Teaching structure: standard vs profile-aware baseline (effective vs
+  physical values), SbS with exactly one free par (the gradient, via the
+  shared `BandBending` profile entry; `IMFPfixed` pinned variant), 2D fit
+  with dynamics on the profile par `GLP_01_x0_pLinear_01_m`.
+- [x] YAMLs rewritten with 01-style comments; profile YAML keys are
+  free-form (loader names the Profile by `par_name`) — descriptive names
+  `IMFP` / `BandBending` + pinned variants.
+- [x] `project.yaml`: `auto_export: False` + comment, eV/ps labels, XPS
+  x_dir rev.
+- [x] Executed generator + example end-to-end: exit 0, zero
+  warnings/errors. Truth recovery: m -0.499/-0.5, SD 10.10/10,
+  A_collapse 0.498/0.5, tau 99.0/100, x0 99.501/99.5, pExp A 100.8/100.
+  Full suite 825 passed.
+
+Two design lessons recorded:
+- Exact scaling degeneracy `(A, tau, m) -> (cA, tau/c, cm)` of depth-averaged
+  spectra: the IMFP tau must be fixed (from tables, standard XPS practice) —
+  taught in the notebook and commented in `models_profile.yaml`.
+- Library pitfall (TODO.md "Conv kernel support"): `create_t_kernel` sizes the
+  conv kernel from the INITIAL parameter value; a too-small init silently
+  truncates the kernel and biases the fitted width (bit 03 mildly too).
+  Workaround: init conv widths generously (commented in `models_time.yaml`).
+
+## [DONE] Rewrite 03_multi_cycle_dynamics
 
 Old notebook taught wrong `frequency` semantics and used real data that can't
 showcase the topic. Verified semantics (`mcp.py` `normalize_time`): `frequency`
