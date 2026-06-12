@@ -9,8 +9,8 @@ MonoExpPosIRF:
     expFun:
         A: [2, True, 0, 10]
         tau: [30, True, 1, 100]
-        t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
+        t0: [0, False]
+        y0: [0, False]
 
 # MonoExpPos — same exponential rise, no IRF convolution. Sharp turn-on
 # at t = t0; will undershoot the smoothed rise around t = 0.
@@ -18,5 +18,5 @@ MonoExpPos:
     expFun:
         A: [2, True, 0, 10]
         tau: [30, True, 1, 100]
-        t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
+        t0: [0, False]
+        y0: [0, False]

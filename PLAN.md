@@ -25,6 +25,29 @@ Reorganize `examples/` around user-workflow tracks per
 - [x] `sphinx-build -W` clean.
 - [ ] Commit and open PR (pending user review of the rendered notebooks).
 
+## [DONE] Review 10_model_comparison
+
+Already strong from the comparison-only split; the criteria review found only
+checklist deviations:
+
+- [x] `try_ci=0` (+ pointer comment) on both baseline fits — removes the two
+  CI tables, the only flagged output in the run.
+- [x] `Path.cwd()` instead of `os.getcwd()`; dropped `import os`.
+- [x] YAMLs: fixed parameters normalized to `[v, False]` (stale bounds
+  stripped).
+- [x] Re-executed end-to-end: exit 0, zero warnings, ~30 s wall. Verdicts
+  unchanged (baseline: baseA chi2_red 1.00 vs baseB 5.40; 2D: m2dA 1.01 vs
+  m2dB 4.75).
+- [x] No side-effect files. Deleted two stale gitignored `.fit.h5` leftovers
+  (`comparison.fit.h5`, `winner_base.fit.h5`) from an earlier notebook-11
+  run; 10 itself does not recreate them.
+- Criterion 2 amended below with the inline-synthetic variant.
+
+Carry-over for 11's review: the notes below claim 11's artifacts land in
+`11_save_load_export/`, but the stale `.fit.h5` files were found in 10's
+directory — verify where `save_fit` resolves its path when 11 runs the
+`%cd`/`%run` preamble (it may use `project.path`, i.e. 10's dir).
+
 ## [DONE] Upgrade 04_parameter_profiles
 
 Core message: a parameter can vary along an auxiliary physical axis via a
@@ -121,6 +144,11 @@ notebook against this list.
    physics anchors the fit instead — state that the data is real, document
    its provenance, and compare results to literature values in the closing
    section (02: Au 4f7/2 at 84.0 eV, 3.67 eV splitting, 3:4 ratio).
+   *Inline-synthetic variant (10):* generation may stay inline when the
+   tunable ground truth is itself the teaching device (edit a constant,
+   re-run, watch the metrics react) — keep the truth constants in one
+   labeled cell and print them. Simulator or plain numpy both work; pick
+   whichever makes the truth most legible in that notebook.
 3. **Self-contained directory.** `data/`, model YAMLs, `project.yaml`; no
    dependence on having run another notebook first (exception: 11's
    documented `%run` preamble).
