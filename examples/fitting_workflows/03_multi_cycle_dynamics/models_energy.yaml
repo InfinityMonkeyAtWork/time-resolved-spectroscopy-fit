@@ -1,54 +1,44 @@
-# use these models to describe the energy-dependent data
-# (available functions info: /src/trspecfit/functions/energy.py)
+# Use these models to describe the energy-dependent data
+# For available functions see: /src/trspecfit/functions/energy.py
 
-# ground state (most parameters should be able to vary)
-base: 
-    Offset:
-      y0: [4, True, 0, 5]
-    Shirley:
-        pShirley: [4.0E-4, True, 1.0E-12, 1.0E-3]
+# Ground state
+# (most parameters should be able to vary)
+base:
+    LinBack:
+      m: [1E-2, True, -1, 1]
+      b: [0, True, -5, 5]
+      xStart: [0, False]
+      xStop: [20, False]
     GLP:
-      A: [20, True, 5, 25]
-      x0: [83, True, 80, 90]
-      F: [1.0, True, 0.75, 2.5]
+      A: [10, True, 5, 15]
+      x0: [8, True, 5, 15]
+      F: [1.5, True, 0.75, 2.5]
       m: [0.3, True, 0, 1]
-    GLP:
-      A: ["3/4*GLP_01_A"]
-      x0: ["GLP_01_x0 +3.6"]
-      F: ["GLP_01_F"]
-      m: ["GLP_01_m"]
 
-# Slice-by-Slice model fit (pinned parameters will be set to "base" Model fit result values)
+# Slice-by-Slice model fit
+# (pinned parameters will be set to "base" Model fit result values)
 SbS:
-    Offset:
-      y0: [2, False, 0, 5]
-    Shirley:
-        pShirley: [4.0E-4, False, 1.0E-12, 1.0E-3]
+    LinBack:
+      m: [1E-2, False]
+      b: [0, False]
+      xStart: [0, False]
+      xStop: [20, False]
     GLP:
-      A: [20, False, 5, 25]
-      x0: [84.5, True, 82, 88]
-      F: [1.0, False, 0.75, 2.5]
-      m: [0.3, False, 0, 1]
-    GLP:
-      A: ["3/4*GLP_01_A"]
-      x0: ["GLP_01_x0 +3.6"]
-      F: ["GLP_01_F"]
-      m: ["GLP_01_m"]
-      
-# 2D model fit (pinned parameters will be set to "base" Model fit result values)
+      A: [12, False]
+      x0: [8, True, 5, 15]
+      F: [1.5, False]
+      m: [0.3, False]
+
+# 2D model fit
+# (pinned parameters will be set to "base" Model fit result values)
 2D:
-    Offset:
-      y0: [2, False, 0, 5]
-    Shirley:
-        pShirley: [4.0E-4, False, 1.0E-12, 1.0E-3]
+    LinBack:
+      m: [1E-2, False]
+      b: [0, False]
+      xStart: [0, False]
+      xStop: [20, False]
     GLP:
-      A: [20, False, 5, 25]
-      x0: [84.5, True, 82, 88]
-      F: [1.0, False, 0.75, 2.5]
-      m: [0.3, False, 0, 1]
-    GLP:
-      A: ["3/4*GLP_01_A"]
-      x0: ["GLP_01_x0 +3.6"]
-      F: ["GLP_01_F"]
-      m: ["GLP_01_m"]
-      
+      A: [12, False]
+      x0: [8, True, 5, 15]
+      F: [1.5, False]
+      m: [0.3, False]

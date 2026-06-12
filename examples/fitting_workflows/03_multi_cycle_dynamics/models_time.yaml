@@ -1,29 +1,31 @@
-# use these models to add time-dependence to a parameter in a 2D model
-# (available functions info: /src/trspecfit/functions/time.py)
+# Use these models to add multi-cycle time-dependence to a parameter in a
+# 2D model: pass a list of model names to add_time_dependence(). Element 0
+# applies globally (all times); elements 1+ alternate as subcycles within
+# each 1/frequency period.
+# For available functions see: /src/trspecfit/functions/time.py
 
-# use this to define an empty subcycle in a mcp.Dynamics model
-ModelNone:
-    none: {}
-
-# define instrument response function to convolve everything with (Gaussian)
+# Global element 0: Gaussian instrument response function (IRF).
+# Convolves the full time trace, including all subcycles.
+# (Use a model containing only `none: {}` here if no global effect is needed.)
 IRF:
     gaussCONV:
-        SD: [5.0E-2, True, 0, 1]
+        SD: [0.1, True, 0, 1]
 
-# define time-dependence of peak positions
-# exponential decay function for subcycle with negative shift 
+# Subcycle 1: negative exponential shift, relaxing back to 0.
+# t0/y0 are on the subcycle's local clock, which resets at each subcycle start.
 MonoExpNeg:
     expFun:
-        A: [-2, True, -5, -1E-3]
-        tau: [2, True, 1E-1, 10]
-        t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
+        A: [-1.5, True, -5, -1E-3]
+        tau: [1, True, 0.05, 5]
+        t0: [0, False]
+        y0: [0, False]
 
-# exponential decay function for subcycle with positive shift 
+# Subcycle 2: amplitude mirrors subcycle 1 via an expression (no extra free
+# parameter), while tau is fit independently — expressions work across
+# subcycle models just like across energy components (see 02).
 MonoExpPos:
     expFun:
         A: ["-expFun_01_A"]
-        tau: ["expFun_01_tau"]
-        t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
-        
+        tau: [1, True, 0.05, 5]
+        t0: [0, False]
+        y0: [0, False]

@@ -353,7 +353,12 @@ def validate_model_components(
                     f"component.\nMove a peak component after the background "
                     f"in {model_yaml_path}"
                 )
-            if "CONV" in last_base or last_base.endswith("CONV"):
+            # A model consisting of a single convolution component is valid:
+            # it convolves the combined trace of the models that follow it in
+            # a multi-model dynamics list (e.g. ['IRF', 'ModelA', 'ModelB']).
+            if len(comp_names) > 1 and (
+                "CONV" in last_base or last_base.endswith("CONV")
+            ):
                 raise ModelValidationError(
                     f"Last component '{comp_names[-1]}' in model "
                     f"'{model_name}' is a convolution function.\n"

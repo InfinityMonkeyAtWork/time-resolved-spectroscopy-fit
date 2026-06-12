@@ -662,6 +662,26 @@ class TestYAMLValidationErrors:
             )
 
     #
+    def test_conv_only_dynamics_model_loads(self):
+        """A single-component convolution model must pass validation.
+
+        Conv-only models are the documented global element 0 of a multi-model
+        dynamics list (e.g. ['IRF', 'ModelA', 'ModelB']), where the
+        convolution applies to the combined trace of the models after it.
+        The conv-last ordering rule only applies to multi-component models.
+        """
+
+        project = make_project()
+        file = File(parent_project=project)
+        file.time = np.linspace(-10, 100, 111)
+        file.load_model(
+            model_yaml="models/file_time.yaml",
+            model_info="IRF",
+            par_name="parTEST",
+            model_type="dynamics",
+        )
+
+    #
     def test_integer_vary_value_rejected(self):
         """vary=0 (int) must be caught by validation, not silently treated as False.
 

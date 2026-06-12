@@ -25,6 +25,51 @@ Reorganize `examples/` around user-workflow tracks per
 - [x] `sphinx-build -W` clean.
 - [ ] Commit and open PR (pending user review of the rendered notebooks).
 
+## [ACTIVE] Rewrite 03_multi_cycle_dynamics
+
+Old notebook taught wrong `frequency` semantics and used real data that can't
+showcase the topic. Verified semantics (`mcp.py` `normalize_time`): `frequency`
+= 1/T of the full repeating period; the N-1 non-global `model_info` entries
+split each period equally (subcycle duration = `1/(frequency*(N-1))`), each
+evaluated on a local clock that resets at its subcycle start; t < 0 is
+baseline (`n_sub=0`).
+
+Teaching message: pass a *list* of models to `add_time_dependence` — element 0
+is global (IRF home), elements 1+ alternate as subcycles; plus `frequency`
+semantics and cross-subcycle expression links (callback to 02).
+
+Design: 01's system (GLP + LinBack, arb. units), synthetic via
+`data/generate_data.ipynb` + truth YAMLs. Dynamics
+`['IRF', 'MonoExpNeg', 'MonoExpPos']`, `frequency=0.25` (period 4, two 2-unit
+subcycles). MonoExpPos amplitude linked (`-expFun_01_A`), taus independent
+(truth: 0.4 vs 0.8); IRF SD 0.15 (visible, ~3 time steps).
+
+- [x] Fix `t_label` ms -> s (03's time.csv was already in seconds).
+- [x] `data/generate_data.ipynb` + `models_energy_truth.yaml` /
+  `models_time_truth.yaml`; regenerate CSVs (old real-data CSVs are replaced;
+  same campaign data lives on in 02).
+- [x] Rewrite `models_energy.yaml` / `models_time.yaml` (01-style comments,
+  drop unused ModelNone, drop doublet).
+- [x] `project.yaml`: `auto_export: False` + comment, arb-unit labels.
+- [x] Rewrite `example.ipynb` in 01's structure: roadmap, baseline excluding
+  t=0, `try_ci=0`, SbS section says what to look for (sawtooth), corrected
+  frequency narrative + local-clock note, results vs truth, pruned Tips
+  (only real model names), Next Steps links, no `MC` import, `Path.cwd()`.
+- [x] Library fix enabling conv-only global element: the validator's
+  conv-cannot-be-last rule now applies only to multi-component models
+  (`utils/parsing.py`), so `['IRF', ...]` works as documented in
+  `Dynamics.set_frequency`. Guard test added in `test_model_parser.py`;
+  full suite passes (825).
+- [x] Execute generator + example end-to-end; verify all nine criteria.
+  Stock-init fit recovers truth: SD 0.148/0.15, A -1.98/-2, tau 0.406/0.4
+  and 0.804/0.8. Clean run, no warnings, suite green.
+
+Pitfall discovered (recorded in the generator notebook): subcycle masks
+switch discretely at period boundaries, so the simulation must run on the
+*reloaded* CSV axes — generating on `np.arange` axes and fitting on their
+`%.6e`-rounded reload flips the subcycle assignment of boundary-exact
+samples and visibly biases the fit (tau2 0.8 -> 1.0 before the fix).
+
 ## Gold-standard example criteria (distilled from 01)
 
 Bar for every `fitting_workflows` notebook before the PR. Review each

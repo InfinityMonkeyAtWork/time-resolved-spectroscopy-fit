@@ -30,7 +30,7 @@ The numbering restarts at the next block boundary as new notebooks are added.
 
 ## Choose your track
 
-- **Single processed file → fit + export:** `01_basic_fitting`.
+- **Single processed file → fit:** `01_basic_fitting`.
 - **Compare two models on one file:** `10_model_comparison`.
 - **Save / load / export fit results (HDF5 or CSV/PNG):** `11_save_load_export`.
 - **Estimate uncertainties with MCMC:** `12_uncertainty_mcmc`.
