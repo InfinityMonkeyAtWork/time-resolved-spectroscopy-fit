@@ -1,6 +1,5 @@
 # ground truth energy model for data generation
 # (same structure as the fit model in ../models_energy.yaml)
-# parameters: [value, vary, min, max]
 
 base:
     LinBack:
