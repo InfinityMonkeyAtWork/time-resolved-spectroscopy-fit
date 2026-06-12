@@ -25,6 +25,36 @@ Reorganize `examples/` around user-workflow tracks per
 - [x] `sphinx-build -W` clean.
 - [ ] Commit and open PR (pending user review of the rendered notebooks).
 
+## [DONE] Review 11_save_load_export
+
+The notebook content was already strong; both findings were execution
+blockers in the `%run` preamble, not content problems:
+
+- [x] **Library fix — SbS spawn pool under `%run notebook.ipynb`** (was a
+  TODO.md item, now removed): spawn workers re-ran `__main__` — the notebook
+  JSON — and died (`NameError: name 'null'` → `BrokenProcessPool`).
+  `utils/sbs.py::sanitized_spawn_main()` now hides a non-`.py`
+  `__main__.__file__` for the pool's lifetime (workers only need the
+  initializer-installed model). Regression test:
+  `tests/roundtrip/test_focused.py::test_w2_sbs_with_notebook_main_file`.
+- [x] **IPython 9.x `%%capture` tokenizer crash**: `%%capture` tokenizes the
+  cell body as Python to detect a trailing semicolon; the bare path in
+  `%cd -q ../10_model_comparison` reads as a malformed number (`10_model`).
+  Fixed by quoting the path (+ explanatory comment in the cell).
+- [x] Verified the preamble's artifact claim: `save_fit`/`export_fit`
+  resolve relative paths against the process cwd, so after `%cd -q -` all
+  artifacts land in 11's dir; 10's dir stays clean. (The stale `.fit.h5`
+  found in 10 came from an interactive session, not the committed
+  notebook.)
+- [x] `.gitignore`: added 11's `winner_base/` / `winner_2d/` export trees
+  (`*.fit.h5` was already covered) so a notebook run leaves git status
+  clean.
+- [x] Added the missing Next Steps links (12, 20) to the Tips cell.
+- [x] Executed end-to-end: exit 0, zero warnings, ~31 s wall (matches the
+  stated 30-40 s). Heartbeat reports all 6 slots. Full suite 825 passed.
+- Note for 12's review: it uses the same `%run` preamble — both fixes apply;
+  verify its preamble quotes the path too.
+
 ## [DONE] Review 10_model_comparison
 
 Already strong from the comparison-only split; the criteria review found only

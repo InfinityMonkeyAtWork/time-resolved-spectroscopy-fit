@@ -3246,14 +3246,19 @@ class File:
                     )
         else:
             # parallel path: spawn pool, install model once per worker.
+            # sanitized_spawn_main keeps workers from re-running a
+            # non-.py __main__ (e.g. a notebook executed via %run).
             ctx = multiprocessing.get_context("spawn")
             by_id: dict[int, list[Any]] = {}
-            with concurrent.futures.ProcessPoolExecutor(
-                max_workers=n_workers,
-                mp_context=ctx,
-                initializer=usbs.sbs_worker_init,
-                initargs=(self.model_sbs, _args_sbs, seed_template),
-            ) as executor:
+            with (
+                usbs.sanitized_spawn_main(),
+                concurrent.futures.ProcessPoolExecutor(
+                    max_workers=n_workers,
+                    mp_context=ctx,
+                    initializer=usbs.sbs_worker_init,
+                    initargs=(self.model_sbs, _args_sbs, seed_template),
+                ) as executor,
+            ):
                 futures = {
                     executor.submit(
                         usbs.sbs_fit_one_slice,

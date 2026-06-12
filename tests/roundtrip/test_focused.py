@@ -15,6 +15,8 @@ once n_workers > 1, so a focused W2 test is sufficient.
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 from _utils import (
     assert_recovery_exact,
@@ -153,6 +155,44 @@ def test_w2_sbs_f1():
         seed_adapt=None,
         try_ci=0,
     )
+    assert len(fit_file.results_sbs) == len(fit_file.time)
+
+
+# ---- W2 under a notebook __main__ (IPython `%run example.ipynb`) ----
+
+
+#
+def test_w2_sbs_with_notebook_main_file():
+    """SbS workers=2 must survive ``__main__.__file__`` pointing at an .ipynb.
+
+    IPython's ``%run example.ipynb`` sets ``__main__.__file__`` to the
+    notebook JSON; without sanitization, multiprocessing's spawn prepare
+    re-runs that path via runpy in every worker and the pool dies with
+    BrokenProcessPool (workers fail on ``NameError: name 'null'``).
+    """
+
+    fit_file, family = _build_fit_file_for_baseline("F1")
+
+    main_mod = sys.modules["__main__"]
+    had_file = hasattr(main_mod, "__file__")
+    orig_file = getattr(main_mod, "__file__", None)
+    main_mod.__file__ = "/nonexistent/notebook/example.ipynb"
+    try:
+        fit_file.fit_slice_by_slice(
+            model_name=family.model_name("default"),
+            stages=1,
+            n_workers=2,
+            seed_source="model",
+            seed_adapt=None,
+            try_ci=0,
+        )
+        # the sanitizer must restore __main__.__file__ once the pool closes
+        assert main_mod.__file__ == "/nonexistent/notebook/example.ipynb"
+    finally:
+        if had_file:
+            main_mod.__file__ = orig_file
+        else:
+            del main_mod.__file__
     assert len(fit_file.results_sbs) == len(fit_file.time)
 
 
