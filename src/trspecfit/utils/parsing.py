@@ -281,6 +281,27 @@ def validate_model_components(
                                 f"Got: {vary} ({type(vary).__name__})"
                             )
 
+                        # Check that 'value' is numeric. Expressions use the
+                        # single-element ["expr"] form (validated below); in the
+                        # 2-/4-element forms the first element must be a number.
+                        # Without this guard a non-numeric value silently skips
+                        # the bounds checks below and fails cryptically when the
+                        # model is built.
+                        if not isinstance(value, (int, float)):
+                            hint = (
+                                " For an expression, use the single-element"
+                                ' form: ["<expr>"].'
+                                if isinstance(value, str)
+                                else ""
+                            )
+                            raise ModelValidationError(
+                                f"Parameter '{param_name}' in '{comp_name}'"
+                                f" (model '{model_name}'):\n"
+                                f"value (1st element) must be a number.\n"
+                                f"Got: {value!r} ({type(value).__name__})."
+                                f"{hint}"
+                            )
+
                         # Check bounds validity
                         if isinstance(min_val, (int, float)) and isinstance(
                             max_val, (int, float)

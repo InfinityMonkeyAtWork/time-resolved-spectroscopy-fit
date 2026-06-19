@@ -698,6 +698,22 @@ class TestYAMLValidationErrors:
                 model_info="vary_int_bad",
             )
 
+    #
+    def test_non_numeric_value_raises(self):
+        """A non-numeric value (1st element) must fail validation clearly.
+
+        Without the guard it slips past the bounds checks and fails
+        cryptically downstream; the error also points to the ["expr"] form.
+        """
+
+        project = make_project()
+        file = File(parent_project=project)
+        with pytest.raises(ModelValidationError, match="value .1st element."):
+            file.load_model(
+                model_yaml="models/file_energy.yaml",
+                model_info="non_numeric_value",
+            )
+
 
 #
 #

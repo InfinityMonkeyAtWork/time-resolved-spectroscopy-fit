@@ -211,3 +211,12 @@ vary_int_bad:
       x0: [85.0, True, 82, 88]
       F: [1.0, False, 0.75, 2.5]
       m: [0.3, False, 0, 1]
+
+# Non-numeric value (1st element) in a [value, vary, min, max] list — must be
+# rejected with a clear error instead of silently skipping the bounds checks
+non_numeric_value:
+    GLP:
+      A: ["abc", True, 5, 25]
+      x0: [85.0, True, 82, 88]
+      F: [1.0, False, 0.75, 2.5]
+      m: [0.3, False, 0, 1]
