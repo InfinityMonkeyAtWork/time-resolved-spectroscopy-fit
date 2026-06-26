@@ -48,3 +48,7 @@ Each notebook directory contains:
   definitions.
 - `project.yaml` — project-level configuration (display, axis labels, plotting,
   `auto_export`, etc.).
+
+**Exception — post-fit notebooks.** `11_save_load_export` and
+`12_uncertainty_mcmc` have no model/`project.yaml` of their own; their preamble
+`%run`s an upstream notebook (11 → 10, 12 → 01) to reuse its fits.

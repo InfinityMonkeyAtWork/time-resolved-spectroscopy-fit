@@ -46,12 +46,19 @@ they cover how to generate datasets from a known model.
 
 ## Running examples
 
-Each example is self-contained with:
+Most examples are self-contained with:
 
 - `example.ipynb` — Jupyter notebook with step-by-step walkthrough.
 - `data/` — input data files (where applicable; some notebooks generate data inline).
 - `models_energy.yaml` / `models_time.yaml` / `models_profile.yaml` — model definitions.
 - `project.yaml` — project configuration.
+
+The two post-fit notebooks are the exception: **`11_save_load_export`** and
+**`12_uncertainty_mcmc`** carry no model files of their own. Their first cell
+`%run`s an upstream notebook (11 → 10, 12 → 01) to bring a finished fit into
+scope, then shows what to do with it — open them like any other notebook (the
+preamble handles the dependency), but expect that first cell to run for the
+better part of a minute.
 
 Install the notebook dependencies first:
 
