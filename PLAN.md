@@ -25,6 +25,79 @@ Reorganize `examples/` around user-workflow tracks per
 - [x] `sphinx-build -W` clean.
 - [ ] Commit and open PR (pending user review of the rendered notebooks).
 
+## [DONE] Review 12_uncertainty_mcmc
+
+Content was strong (the three-rung ladder + truth check). Library work
+(the user's, pre-this-session) was the `ci_sigmas` rename and the new
+`MC(sigma_ini/sigma_min/sigma_max)` knobs feeding `__lnsigma` — full suite
+826 passed, slow `test_mc_sigma_settings_reach_lnsigma` passes. Two
+execution blockers found and fixed in the notebook:
+
+- [x] **Preamble**: already quotes the `%cd -q "../01_basic_fitting"` path
+  (the IPython 9.x tokenizer fix from 11's review) — chains off **01**, not
+  10. SbS spawn-pool fix also applies via the shared `%run`.
+- [x] **Wrong YAML library (cells 3 + 14)**: cell 14 read the truth YAML
+  with PyYAML `yaml.safe_load`, the only place in the repo that bypasses the
+  project's ruamel stack. PyYAML mis-parses `8E-2` (no decimal point in the
+  exponent) as the **string** `'8E-2'` → `TypeError` in the pull. The
+  library parser (ruamel, `parsing.py`) parses it as `0.08` correctly, as do
+  all the other `1E-2`/`-1E-3` example YAML values. Fixed by switching the
+  notebook to `ruamel.yaml.YAML(typ='safe')`. (Decision: notebook-only;
+  parser already accepts the format.)
+- [x] **Hardening (follow-up, same session)**: closed the related latent gap —
+  `parsing.py` value-validation silently skipped numeric checks when `value`
+  wasn't int/float, so a non-numeric scalar (`m: ["abc", True]`) slipped past
+  the bounds checks and failed cryptically downstream. Added a numeric guard
+  raising `ModelValidationError` (hint points to the single-element `["expr"]`
+  form for the string case). Verified safe: expressions are exclusively the
+  1-element form, so no false positives. Test
+  `test_non_numeric_value_raises` + `non_numeric_value` model in
+  `tests/models/file_energy.yaml`.
+- [x] **`__lnsigma` leaked into the truth table (cells 9 + 14)**: cell 14
+  read `result[1].params` *after* the MCMC re-fit replaced
+  `file.model_base.result`, so (a) the post-MCMC `__lnsigma` row had no truth
+  → `KeyError`, and (b) the "stderr" column was MCMC posterior std, making
+  the three-rungs comparison circular. Fixed by capturing `base_pars` (the
+  leastsq value + covariance stderr) in cell 9 before MCMC overwrites it.
+  Table now shows 6 model params, three genuinely distinct-source columns
+  that agree, pulls all ≤ 1.14σ.
+- [x] Executed end-to-end via nbconvert: exit 0, zero error outputs, ~45 s
+  wall. No stray artifacts in git status.
+- [x] **Root-cause library fix — `fit_wrapper` leaked `__lnsigma` into
+  `result[1]`**: the `KeyError` above was a symptom. `_result_params(par_fin)`
+  returns the *live* `par_fin.params`, and `fit_wrapper` did
+  `.add("__lnsigma")` on it in place (`fitlib.py:734`), so the MCMC nuisance
+  parameter leaked into the stored leastsq result (`result[1]`) after every
+  MCMC fit. Fixed with `copy.deepcopy` before `.add` — emcee gets the copy,
+  `result[1]` stays model-only. Regression test
+  `test_lnsigma_does_not_leak_into_leastsq_result`. Blast-radius audit:
+  numerically SAFE everywhere (`compare_models`/χ²/AIC/BIC use the frozen
+  `result.nvarys`, not a param recount; `get_fit_results` baseline/spec/2d and
+  save/export filter by `model.parameter_names`; save-path `lnsigma` is read
+  from `emcee_fin` = `result[3]`). The leak was real but display-only:
+  `display(result[1].params)` (trspecfit.py:2646/2888/4064) and
+  `get_fit_results('sbs')` / SbS plots (only if SbS forwarded `mc_settings`)
+  showed a spurious `__lnsigma` row. All fixed by the deepcopy.
+- [x] **Readability pass (cell altitude)**: notebook was the most syntax-dense
+  of the set (median 10 lines/code-cell vs ~6 elsewhere; 7/11 cells >8 lines).
+  Split multi-step cells into one-idea cells, lifted the `one_sigma_halfwidth`
+  helper to setup — median back to ~6, no logic change.
+- [x] **Live result accessors (library)**: added `File.get_correlations`,
+  `File.get_conf_intervals`, `File.get_mcmc` (returns new
+  `ulmfit.MCMCResult` dataclass: `table`/`flatchain`/`acceptance_fraction`),
+  reading `model.result` directly — so the notebook no longer needs raw
+  `result[1..4]` indexing. Live-only by design; persisting `correl` /
+  `acceptance_fraction` into slots is a TODO ("results-data ownership
+  boundary"). 5 new tests in `test_mcp_library.py`.
+- [x] **Notebook rewrite to one "kitchen-sink" fit**: a single
+  `fit_baseline(stages=2, try_ci=1, mc_settings=mc)` now produces all three
+  rungs (one unambiguous slot, no `base_pars`/`ci_table` capture). Three
+  breakout sections read each rung via the `get_*` accessors — zero raw
+  `result[i]` indexing remains. Corner plot regenerated under rung 3 via an
+  explicit `corner.corner(get_mcmc(...).flatchain)` one-liner (getters stay
+  pure; verbosity still gates the fit-cell plots). Re-executed: exit 0, table
+  + pulls unchanged (≤1.14σ), 7 plots, unconverged 2D symptom intact.
+
 ## [DONE] Review 11_save_load_export
 
 The notebook content was already strong; both findings were execution
