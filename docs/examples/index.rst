@@ -31,8 +31,8 @@ Post-fit work (block 1x):
 
 Multi-file workflows (block 2x):
 
-- ``examples/fitting_workflows/20_fit_each_separately/``
-  Multi-file workspace, per-file independent fits (bridge to 2x).
+- ``examples/fitting_workflows/20_multi_file_independent_fit/``
+  Multi-file workspace, per-file independent fits (bridge to shared-parameter fitting).
 - ``examples/fitting_workflows/21_project_level_shared_fit/``
   Multi-file workspace with shared parameters across files.
 
@@ -55,8 +55,8 @@ Choose Your Track
   `11 save / load / export notebook <../../examples/fitting_workflows/11_save_load_export/example.ipynb>`_.
 - Estimating uncertainties with MCMC:
   `12 uncertainty (MCMC) notebook <../../examples/fitting_workflows/12_uncertainty_mcmc/example.ipynb>`_.
-- Many files, fit each separately:
-  `20 fit each separately notebook <../../examples/fitting_workflows/20_fit_each_separately/example.ipynb>`_.
+- Many files, fit each independently:
+  `20 multi-file independent fit notebook <../../examples/fitting_workflows/20_multi_file_independent_fit/example.ipynb>`_.
 - Many files, shared-parameter fit:
   `21 project-level shared fit notebook <../../examples/fitting_workflows/21_project_level_shared_fit/example.ipynb>`_.
 - Simulation or ML training data:
@@ -73,7 +73,7 @@ All Notebooks
 - `10 model comparison <../../examples/fitting_workflows/10_model_comparison/example.ipynb>`_
 - `11 save / load / export <../../examples/fitting_workflows/11_save_load_export/example.ipynb>`_
 - `12 uncertainty (MCMC) <../../examples/fitting_workflows/12_uncertainty_mcmc/example.ipynb>`_
-- `20 fit each separately <../../examples/fitting_workflows/20_fit_each_separately/example.ipynb>`_
+- `20 multi-file independent fit <../../examples/fitting_workflows/20_multi_file_independent_fit/example.ipynb>`_
 - `21 project-level shared fit <../../examples/fitting_workflows/21_project_level_shared_fit/example.ipynb>`_
 - `Simulator data generation <../../examples/synthetic_data/01_simulator/example.ipynb>`_
 - `ML training data generation <../../examples/synthetic_data/02_ml_training_data/example.ipynb>`_

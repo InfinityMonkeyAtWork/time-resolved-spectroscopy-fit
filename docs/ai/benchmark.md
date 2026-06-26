@@ -27,7 +27,7 @@ different GIR paths:
 | 3 | `03_multi_cycle_dynamics`     | subcycle dynamics |
 | 4 | `04_parameter_profiles`       | profile models |
 | — | `10_model_comparison`, `11_save_load_export` | not benchmark fixtures (model-comparison / persistence demos) |
-| — | `20_fit_each_separately`, `21_project_level_shared_fit` | not currently supported by the benchmark harness |
+| — | `20_multi_file_independent_fit`, `21_project_level_shared_fit` | not currently supported by the benchmark harness |
 
 Example 02 is the default because it is the cleanest baseline comparison
 (pure dynamics, no side paths). The harness discovers example folders by

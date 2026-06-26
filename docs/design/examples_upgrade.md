@@ -198,7 +198,7 @@ examples/
     04_parameter_profiles/                        # renamed from 04_par_profiles
     10_model_comparison/                          # block 1x: post-fit work
     11_save_load_export/                          # block 1x: post-fit work (NEW)
-    20_fit_each_separately/                       # block 2x: multi-file (NEW, bridge)
+    20_multi_file_independent_fit/                       # block 2x: multi-file (NEW, bridge)
     21_project_level_shared_fit/                  # was 05_project_level_fitting
   synthetic_data/                                 # renamed from data_generation
     01_simulator/
@@ -318,7 +318,7 @@ available for the persistence demos, not just a minimum quorum. The
 ~30–40 s runtime cost is acceptable for a notebook a reader opens
 deliberately.
 
-### `fitting_workflows/20_fit_each_separately`
+### `fitting_workflows/20_multi_file_independent_fit`
 
 Bridge story (NEW):
 
@@ -376,7 +376,7 @@ track" entry point:
 - Saving, loading, or exporting fit results (HDF5 archive or CSV/PNG
   tree): start at `fitting_workflows/11_save_load_export`.
 - Many files, separate fits: start at
-  `fitting_workflows/20_fit_each_separately`.
+  `fitting_workflows/20_multi_file_independent_fit`.
 - Shared/global fit: start at
   `fitting_workflows/21_project_level_shared_fit`.
 - Simulation or ML training data: start at `synthetic_data`.
@@ -445,7 +445,7 @@ files appearing on disk before they "exported."
      (markdown pointer + `%run ../10_model_comparison/example.ipynb`),
      then the content lifted from the pre-split notebook 10. See the
      content target above for the full scope.
-   - `fitting_workflows/20_fit_each_separately/` — NEW.
+   - `fitting_workflows/20_multi_file_independent_fit/` — NEW.
 
 5. Add `fitting_workflows/README.md` documenting the 0x / 1x / 2x numeric-block
    legend.

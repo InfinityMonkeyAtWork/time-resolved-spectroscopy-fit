@@ -25,6 +25,44 @@ Reorganize `examples/` around user-workflow tracks per
 - [x] `sphinx-build -W` clean.
 - [ ] Commit and open PR (pending user review of the rendered notebooks).
 
+## [DONE] Post-review feedback fixes (examples 11 & 12)
+
+Reviewer feedback addressed this session (all uncommitted in working tree):
+
+- **11 Tips wording**: `aic`/`bic` were mislabeled σ-calibrated. Now
+  "Calibrated columns (`chi2`, `chi2_red`) and stored metrics (`aic`, `bic`,
+  …)" — matches `fitlib.py:compute_fit_metrics` docstring (r2/aic/bic
+  σ-independent).
+- **11 archive-read cells used live `file`**: §1 prose sells `FitResults.load`
+  as standalone-no-Project, but read cells passed `file.name` (only in scope
+  via the `%run` preamble). Added `archive_file = loaded.files()[0]` after
+  `loaded`; swapped the 3 `loaded.*` read calls to it; prose snippet now omits
+  `file=` (single-file archive). Save/export cells keep live `file`
+  deliberately. Re-executed clean.
+- **READMEs "self-contained" claim**: `examples/README.md` +
+  `fitting_workflows/README.md` blanket-claimed every notebook is
+  self-contained. Added the post-fit exception: 11 → `%run` 10, 12 → `%run`
+  01 (verified against the actual `%cd` targets). 10 itself IS self-contained.
+- **12 opening cell**: workflow list renumbered 0,1,2,4,5 → 0,1,2,3,4 (matches
+  `## 0`–`## 4` headers); `us`→`is`; "quality-of-fit" hyphenated.
+- **12 index blurb retitled** in 4 spots (examples/README, fitting_workflows/
+  README, docs/quickstart.md, docs/examples/index.rst): "MCMC-based … on a
+  fitted 2D model" → "Three tiers of parameter uncertainty — `stderr`,
+  profiled CIs, and MCMC — checked against truth". (Track-chooser "Estimate
+  uncertainties with MCMC" lines left as-is.)
+- **LIBRARY FIX — MCMC quantile table excluded fixed params' `-1` sentinel**
+  (Option 4, root-cause): `fitlib.py` emcee CI build looped over all params
+  and filled fixed ones with a `-1` sentinel row that rendered as real
+  quantiles in `get_mcmc().table` (notebook 12 cell 19) AND the persisted
+  `mcmc.ci`. Now iterates only sampled params (varying + `__lnsigma`); fixed
+  params get no row (mirrors `lmfit.conf_interval`). Best-fit column rebuilt by
+  name-lookup. Docstrings updated (`fitlib.py` emcee_ci, `utils/lmfit.py`
+  MCMCResult.table). Regression test
+  `test_get_mcmc_table_excludes_fixed_parameters` + `glp_one_fixed` model in
+  `tests/models/file_energy.yaml`. Backward-compatible (old archives still
+  load). Full suite 832 passed. Optional TODO: changelog entry for the
+  user-facing `get_mcmc().table` / `mcmc.ci` content change.
+
 ## [DONE] Review 12_uncertainty_mcmc
 
 Content was strong (the three-rung ladder + truth check). Library work
@@ -306,7 +344,7 @@ examples/
     04_parameter_profiles/            # was 04_par_profiles
     10_model_comparison/              # trimmed to comparison-only
     11_save_load_export/              # NEW (%cd + %run + %%capture preamble)
-    20_fit_each_separately/           # NEW (bridge: multi-file separate fits)
+    20_multi_file_independent_fit/           # NEW (bridge: multi-file separate fits)
     21_project_level_shared_fit/      # was 05_project_level_fitting
   synthetic_data/                     # was data_generation
     01_simulator/                     # was simulator

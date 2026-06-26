@@ -219,9 +219,10 @@ examples/simulatorBL931/
 *.fit.h5
 /fit_results/
 examples/**/fit_results/
-# CSV/PNG trees written by 11_save_load_export's explicit export_fit demos
+# CSV/PNG trees written by the explicit export_fit(s) demos
 examples/fitting_workflows/11_save_load_export/winner_base/
 examples/fitting_workflows/11_save_load_export/winner_2d/
+examples/fitting_workflows/20_multi_file_independent_fit/batch_export/
 
 # Generated simulated data (from simulator and ML training examples)
 /simulated_data/
