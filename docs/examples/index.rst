@@ -26,7 +26,8 @@ Post-fit work (block 1x):
 - ``examples/fitting_workflows/11_save_load_export/``
   ``FitResults`` HDF5 round-trip, CSV/PNG export, "ship just the winners".
 - ``examples/fitting_workflows/12_uncertainty_mcmc/``
-  MCMC-based uncertainty estimation on a fitted 2D model.
+  Three tiers of parameter uncertainty (``stderr``, profiled CIs, MCMC),
+  checked against truth.
 
 Multi-file workflows (block 2x):
 
