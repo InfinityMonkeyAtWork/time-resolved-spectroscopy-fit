@@ -449,7 +449,7 @@ def fit_wrapper(
     par_names: list[str],
     par: Any,
     stages: int,
-    sigmas: list[float] | None = None,
+    ci_sigmas: list[float] | None = None,
     try_ci: int = 1,
     mc_settings: ulmfit.MC | None = None,
     fit_alg_1: str = "Nelder",
@@ -496,8 +496,10 @@ def fit_wrapper(
         - 1: Single optimization with ``fit_alg_1``
         - 2: Two-stage fit (``fit_alg_1`` then ``fit_alg_2``)
 
-    sigmas : list of int or float, default=[1,2,3]
-        Confidence levels for CI and MCMC (e.g., [1,2,3] for 1σ, 2σ, 3σ)
+    ci_sigmas : list of int or float, default=[1,2,3]
+        Confidence levels in σ units for CI and MCMC quantile tables
+        (e.g., [1,2,3] for 1σ, 2σ, 3σ). Not the data noise σ — that is
+        ``File.set_sigma()`` / ``sigma_data``.
     try_ci : {0, 1}, default=1
         Confidence interval estimation:
 
@@ -591,7 +593,7 @@ def fit_wrapper(
     ...     par=model.lmfit_pars,
     ...     stages=2,
     ...     try_ci=1,
-    ...     sigmas=[1, 2, 3],
+    ...     ci_sigmas=[1, 2, 3],
     ...     show_output=1,
     ...     save_output=1,
     ...     save_path='fit_results/baseline_fit'
@@ -642,8 +644,8 @@ def fit_wrapper(
     - PNG files: High-resolution plots for documentation
     """
 
-    if sigmas is None:
-        sigmas = [1.0, 2.0, 3.0]
+    if ci_sigmas is None:
+        ci_sigmas = [1.0, 2.0, 3.0]
     if mc_settings is None:
         mc_settings = ulmfit.MC()
 
@@ -700,16 +702,16 @@ def fit_wrapper(
     # (conf_interval and emcee)
     ci_cols = (
         ["par[v]/sigma[>]"]
-        + ["-" + str(sigma) for sigma in sigmas[::-1]]
+        + ["-" + str(sigma) for sigma in ci_sigmas[::-1]]
         + ["best fit"]
-        + ["+" + str(sigma) for sigma in sigmas]
+        + ["+" + str(sigma) for sigma in ci_sigmas]
     )
 
     # conf_interval (https://lmfit.github.io/lmfit-py/confidence.html)
     if try_ci == 1:
         if _result_errorbars(par_fin):
             ci_fin, _trace_fin = lmfit.conf_interval(
-                mini, par_fin, sigmas=sigmas, trace=True
+                mini, par_fin, sigmas=ci_sigmas, trace=True
             )
             if show_output >= 1:
                 print()
@@ -729,9 +731,17 @@ def fit_wrapper(
     # lmfit.emcee() [not a fit, it is a way to sample the parameter space!]
     if mc_settings.use_emcee == 1:
         t_emcee0 = time.time()
-        par_fin_params = _result_params(par_fin)
+        # deepcopy first: __lnsigma is an MCMC sampling construct, not a model
+        # parameter. _result_params returns the live par_fin.params (stored as
+        # result[1] and consumed downstream as the model-only fit result), so
+        # adding __lnsigma in place would leak it into every consumer of that
+        # result (display, get_fit_results, SbS tables). emcee gets the copy.
+        par_fin_params = copy.deepcopy(_result_params(par_fin))
         par_fin_params.add(
-            "__lnsigma", value=np.log(0.1), min=np.log(0.001), max=np.log(2)
+            "__lnsigma",
+            value=np.log(mc_settings.sigma_ini),
+            min=np.log(mc_settings.sigma_min),
+            max=np.log(mc_settings.sigma_max),
         )
         # always print progress bar
         print(
@@ -788,8 +798,8 @@ def fit_wrapper(
         )
         uplt._finalize_plot(emcee_save, f"{save_path}_emcee_corner_plot.png")
         # get percentage borders to categorize emcee.flatchain data
-        sigma_borders = sigma_start_stop_percent(sigmas)
-        # go through all combinations of parameters and sigmas to find
+        sigma_borders = sigma_start_stop_percent(ci_sigmas)
+        # go through all combinations of parameters and ci_sigmas to find
         # lmfit.emcee() confidence intervals
         emcee_ci_list = []  # initialize results
         for par_name in [*par_names, "__lnsigma"]:
@@ -806,7 +816,7 @@ def fit_wrapper(
             else:  # pass a list of "-1" (int) as confidence intervals
                 emcee_par_ci.extend(
                     2
-                    * len(sigmas)
+                    * len(ci_sigmas)
                     * [
                         -1,
                     ]
@@ -817,7 +827,7 @@ def fit_wrapper(
         # and add the "best fit result" in the middle
         emcee_ci = pd.DataFrame(data=emcee_ci_list)
         emcee_ci.insert(
-            loc=len(sigmas) + 1,
+            loc=len(ci_sigmas) + 1,
             column="bla",
             value=list(emcee_fin_params.valuesdict().values()),
         )

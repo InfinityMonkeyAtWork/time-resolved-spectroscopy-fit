@@ -4200,6 +4200,143 @@ class File:
         )
 
     #
+    def _result_model(self, fit_type: str) -> mcp.Model:
+        """Resolve the fitted Model for a fit_type, or raise if not yet fit.
+
+        Shared by get_correlations / get_conf_intervals / get_mcmc. Slice-by-
+        Slice is excluded — its per-slice results have a different shape (use
+        ``get_fit_results(fit_type='sbs')``).
+        """
+
+        models = {
+            "baseline": (self.model_base, "fit_baseline"),
+            "spectrum": (self.model_spec, "fit_spectrum"),
+            "2d": (self.model_2d, "fit_2d"),
+        }
+        if fit_type == "sbs":
+            raise ValueError(
+                "get_correlations / get_conf_intervals / get_mcmc are not "
+                "available for Slice-by-Slice fits (per-slice results); use "
+                "get_fit_results(fit_type='sbs')."
+            )
+        if fit_type not in models:
+            raise ValueError(
+                f"Unknown fit_type={fit_type!r}; use 'baseline', 'spectrum', or '2d'."
+            )
+        model, fit_method = models[fit_type]
+        if model is None or not model.result:
+            raise ValueError(f"No {fit_type} fit results. Run {fit_method}() first.")
+        return model
+
+    #
+    def get_correlations(
+        self,
+        *,
+        fit_type: Literal["baseline", "spectrum", "2d"] = "baseline",
+    ) -> pd.DataFrame:
+        """
+        Return the parameter correlation matrix from a completed fit.
+
+        Parameters
+        ----------
+        fit_type : {'baseline', 'spectrum', '2d'}, default='baseline'
+            Which fit to read (see :meth:`get_fit_results`).
+
+        Returns
+        -------
+        pd.DataFrame
+            Square matrix indexed by the varying parameter names: 1.0 on the
+            diagonal, lmfit's pairwise correlations off-diagonal (0.0 where a
+            pair is uncorrelated or the optimizer reported no covariance).
+
+        Raises
+        ------
+        ValueError
+            If the requested fit has not been performed yet.
+        """
+
+        params = self._result_model(fit_type).result[1].params
+        names = [n for n in params if params[n].vary]
+        mat = pd.DataFrame(np.eye(len(names)), index=names, columns=names, dtype=float)
+        for n in names:
+            for other, corr in (params[n].correl or {}).items():
+                if other in mat.columns:
+                    mat.loc[n, other] = corr
+        return mat
+
+    #
+    def get_conf_intervals(
+        self,
+        *,
+        fit_type: Literal["baseline", "spectrum", "2d"] = "baseline",
+    ) -> pd.DataFrame:
+        """
+        Return the profiled confidence-interval table from a completed fit.
+
+        Populated only when the fit ran with ``try_ci=1`` (otherwise an empty
+        DataFrame). Columns are the per-sigma bounds with the best-fit value in
+        the middle (see ``fitlib.fit_wrapper``).
+
+        Parameters
+        ----------
+        fit_type : {'baseline', 'spectrum', '2d'}, default='baseline'
+            Which fit to read.
+
+        Returns
+        -------
+        pd.DataFrame
+            The conf_interval table, or an empty DataFrame if ``try_ci`` was off.
+
+        Raises
+        ------
+        ValueError
+            If the requested fit has not been performed yet.
+        """
+
+        return self._result_model(fit_type).result[2]
+
+    #
+    def get_mcmc(
+        self,
+        *,
+        fit_type: Literal["baseline", "spectrum", "2d"] = "baseline",
+    ) -> ulmfit.MCMCResult:
+        """
+        Return the MCMC outputs (quantile table, chain, acceptance) of a fit.
+
+        Available only when the fit ran with ``mc_settings`` enabling MCMC.
+
+        Parameters
+        ----------
+        fit_type : {'baseline', 'spectrum', '2d'}, default='baseline'
+            Which fit to read.
+
+        Returns
+        -------
+        ulmfit.MCMCResult
+            Bundle of ``table`` (posterior quantiles), ``flatchain``, and
+            ``acceptance_fraction``.
+
+        Raises
+        ------
+        ValueError
+            If the requested fit has not been performed, or had no MCMC step.
+        """
+
+        model = self._result_model(fit_type)
+        emcee_fin = model.result[3]
+        if emcee_fin is None:
+            raise ValueError(
+                f"No MCMC results for the {fit_type} fit. Re-run with "
+                "mc_settings=MC(use_mc=1, ...)."
+            )
+        return ulmfit.MCMCResult(
+            table=model.result[4],
+            flatchain=emcee_fin.flatchain,
+            acceptance_fraction=np.asarray(emcee_fin.acceptance_fraction),
+        )
+
+    #
     def compare_models(
         self,
         *models: str,

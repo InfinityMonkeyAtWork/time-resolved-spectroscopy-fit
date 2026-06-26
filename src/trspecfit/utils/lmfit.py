@@ -12,6 +12,7 @@ This module provides utilities for:
 from __future__ import annotations
 
 import warnings
+from dataclasses import dataclass
 from typing import Any, Literal, overload
 
 import lmfit
@@ -504,6 +505,16 @@ class MC:
         Number of parallel workers (1 = serial)
     is_weighted : bool, default=False
         Whether to use weighted samples
+    sigma_ini : float, default=0.1
+        Initial guess for the noise scale sampled via the ``__lnsigma``
+        nuisance parameter (used when ``is_weighted=False``), in data
+        units. Start it near the known/estimated noise level — a far-off
+        init costs the walkers their burn-in just to find the scale.
+    sigma_min : float, default=0.001
+        Lower bound for the sampled noise scale (data units).
+    sigma_max : float, default=2.0
+        Upper bound for the sampled noise scale (data units). Widen this
+        when the data's noise level exceeds 2 in raw data units.
 
     Attributes
     ----------
@@ -563,7 +574,14 @@ class MC:
         ntemps: int = 1,
         workers: int = 1,
         is_weighted: bool = False,
+        sigma_ini: float = 0.1,
+        sigma_min: float = 0.001,
+        sigma_max: float = 2.0,
     ) -> None:
+        if not (sigma_min < sigma_max):
+            raise ValueError("sigma_min must be < sigma_max")
+        if not (sigma_min <= sigma_ini <= sigma_max):
+            raise ValueError("sigma_ini must lie within [sigma_min, sigma_max]")
         self.use_emcee = use_mc
         self.steps = steps
         self.nwalkers = nwalkers
@@ -572,12 +590,41 @@ class MC:
         self.ntemps = ntemps
         self.workers = workers
         self.is_weighted = is_weighted
+        self.sigma_ini = sigma_ini
+        self.sigma_min = sigma_min
+        self.sigma_max = sigma_max
 
     #
     def __repr__(self) -> str:
         return (
             f"MC(use_mc={self.use_emcee}, steps={self.steps}, nwalkers={self.nwalkers})"
         )
+
+
+#
+#
+@dataclass(frozen=True)
+class MCMCResult:
+    """Live MCMC outputs for a single fit (counterpart to the ``MC`` settings).
+
+    A read-only view over ``model.result`` (the raw ``lmfit.emcee`` result and
+    its quantile table), returned by ``File.get_mcmc``. Not persisted — see the
+    "results-data ownership boundary" TODO for the planned unified results API.
+
+    Attributes
+    ----------
+    table : pandas.DataFrame
+        Posterior quantile table, one row per parameter (including the
+        ``__lnsigma`` noise-scale nuisance row).
+    flatchain : pandas.DataFrame
+        Flattened MCMC chain, one column per sampled parameter.
+    acceptance_fraction : numpy.ndarray
+        Per-walker acceptance fraction (healthy range ≈ 0.2–0.5).
+    """
+
+    table: pd.DataFrame
+    flatchain: pd.DataFrame
+    acceptance_fraction: np.ndarray
 
 
 #

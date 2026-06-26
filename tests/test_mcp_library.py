@@ -3,6 +3,7 @@ Test MCP (Model/Component/Parameter) library functionality
 """
 
 import numpy as np
+import pandas as pd
 import pytest
 from _utils import make_project
 
@@ -974,6 +975,142 @@ class TestMCPPickling:
             if "pickle" in str(e) or "module" in str(e):
                 pytest.fail(f"MCMC workers=2 hit a pickle error: {e}")
             raise
+
+    #
+    def test_mc_sigma_settings_validate(self):
+        """MC rejects inconsistent sigma_ini/sigma_min/sigma_max."""
+
+        from trspecfit.utils.lmfit import MC
+
+        with pytest.raises(ValueError, match="sigma_min must be <"):
+            MC(sigma_min=2.0, sigma_max=1.0)
+        with pytest.raises(ValueError, match="sigma_ini must lie within"):
+            MC(sigma_ini=10.0, sigma_max=2.0)
+
+    #
+    @pytest.mark.slow
+    def test_mc_sigma_settings_reach_lnsigma(self):
+        """MC(sigma_ini/min/max) must set the __lnsigma nuisance parameter."""
+
+        from trspecfit.utils.lmfit import MC
+
+        file = self._make_fittable_file()
+        mc = MC(
+            use_mc=1,
+            steps=20,
+            nwalkers=32,
+            burn=5,
+            thin=1,
+            sigma_ini=0.5,
+            sigma_min=0.01,
+            sigma_max=5.0,
+        )
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0, mc_settings=mc)
+
+        emcee_fin = file.model_base.result[3]
+        lnsigma = emcee_fin.params["__lnsigma"]
+        np.testing.assert_allclose(lnsigma.min, np.log(0.01))
+        np.testing.assert_allclose(lnsigma.max, np.log(5.0))
+
+    #
+    @pytest.mark.slow
+    def test_lnsigma_does_not_leak_into_leastsq_result(self):
+        """__lnsigma is an MCMC construct: it must stay out of result[1].
+
+        Regression for the in-place mutation in fit_wrapper that injected
+        __lnsigma into par_fin.params (result[1]), leaking it into every
+        downstream consumer of the model-only fit result.
+        """
+
+        from trspecfit.utils.lmfit import MC
+
+        file = self._make_fittable_file()
+        mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0, mc_settings=mc)
+
+        # result[1] = par_fin (leastsq): model parameters only, no __lnsigma
+        assert "__lnsigma" not in file.model_base.result[1].params
+        # result[3] = emcee_fin (MCMC): __lnsigma belongs here
+        assert "__lnsigma" in file.model_base.result[3].params
+
+    #
+    def test_get_correlations_matrix(self):
+        """get_correlations returns a square varying-param matrix, unit diag."""
+
+        file = self._make_fittable_file()
+        # light noise so the covariance (hence correlations) is well-conditioned
+        rng = np.random.default_rng(0)
+        file.data_base = file.data_base + rng.normal(0, 0.3, file.data_base.shape)
+        file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+
+        corr = file.get_correlations(fit_type="baseline")
+        varying = [
+            p
+            for p in file.model_base.parameter_names
+            if file.model_base.result[1].params[p].vary
+        ]
+        assert list(corr.index) == varying
+        assert list(corr.columns) == varying
+        np.testing.assert_allclose(np.diag(corr.to_numpy()), 1.0)
+        assert (np.abs(corr.to_numpy()) <= 1.0 + 1e-9).all()
+
+    #
+    # GLP_01_m profiles into its 0 bound here (the lesson in 12_uncertainty_mcmc);
+    # the CI table is still populated, so silence the expected lmfit warning.
+    @pytest.mark.filterwarnings("ignore:Bound reached")
+    def test_get_conf_intervals_populated_and_empty(self):
+        """get_conf_intervals returns the CI table with try_ci=1, empty without."""
+
+        file = self._make_fittable_file()
+        # light noise so the profiled CI is well-defined
+        rng = np.random.default_rng(0)
+        file.data_base = file.data_base + rng.normal(0, 0.3, file.data_base.shape)
+
+        file.fit_baseline(model_name="single_glp", stages=2, try_ci=1)
+        ci = file.get_conf_intervals(fit_type="baseline")
+        assert isinstance(ci, pd.DataFrame)
+        assert not ci.empty
+
+        file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+        assert file.get_conf_intervals(fit_type="baseline").empty
+
+    #
+    def test_get_mcmc_raises_without_mcmc(self):
+        """get_mcmc on a fit that ran no MCMC raises a clear error."""
+
+        file = self._make_fittable_file()
+        file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+        with pytest.raises(ValueError, match="No MCMC results"):
+            file.get_mcmc(fit_type="baseline")
+
+    #
+    def test_accessors_raise_before_fit_and_reject_sbs(self):
+        """Accessors raise before a fit, and reject the per-slice 'sbs' type."""
+
+        from trspecfit.utils.lmfit import MCMCResult  # noqa: F401  (import check)
+
+        file = self._make_fittable_file()
+        with pytest.raises(ValueError, match="No baseline fit results"):
+            file.get_correlations(fit_type="baseline")
+        with pytest.raises(ValueError, match="not available for Slice-by-Slice"):
+            file.get_conf_intervals(fit_type="sbs")
+
+    #
+    @pytest.mark.slow
+    def test_get_mcmc_bundle(self):
+        """get_mcmc returns table, flatchain (with __lnsigma), acceptance array."""
+
+        from trspecfit.utils.lmfit import MC, MCMCResult
+
+        file = self._make_fittable_file()
+        mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0, mc_settings=mc)
+
+        res = file.get_mcmc(fit_type="baseline")
+        assert isinstance(res, MCMCResult)
+        assert isinstance(res.table, pd.DataFrame) and not res.table.empty
+        assert "__lnsigma" in res.flatchain.columns
+        assert res.acceptance_fraction.shape == (32,)
 
 
 if __name__ == "__main__":
