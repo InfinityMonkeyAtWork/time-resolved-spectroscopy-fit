@@ -567,7 +567,9 @@ def fit_wrapper(
         - **emcee_fin** (*lmfit.MinimizerResult or []*) -- MCMC result
           from lmfit.emcee. Empty list if MCMC not used.
         - **emcee_ci** (*pd.DataFrame*) -- MCMC confidence intervals
-          from quantiles of flatchain. Same column structure as conf_ci.
+          from quantiles of flatchain. Same column structure as conf_ci;
+          one row per sampled parameter (varying model params + the
+          ``__lnsigma`` nuisance), fixed parameters excluded.
           Empty DataFrame if MCMC not used.
 
     Examples
@@ -799,37 +801,37 @@ def fit_wrapper(
         uplt._finalize_plot(emcee_save, f"{save_path}_emcee_corner_plot.png")
         # get percentage borders to categorize emcee.flatchain data
         sigma_borders = sigma_start_stop_percent(ci_sigmas)
-        # go through all combinations of parameters and ci_sigmas to find
-        # lmfit.emcee() confidence intervals
+        # one row per sampled parameter (varying model params + the __lnsigma
+        # noise-scale nuisance). Fixed parameters have no posterior, so they
+        # get no row — mirroring lmfit.conf_interval, which only profiles
+        # varying parameters. (Emitting a placeholder row here would surface
+        # as real-looking quantiles through get_mcmc().table and the saved
+        # archive's mcmc.ci.)
+        sampled_names = [
+            par_name
+            for par_name in [*par_names, "__lnsigma"]
+            if par_name in emcee_var_names
+        ]
         emcee_ci_list = []  # initialize results
-        for par_name in [*par_names, "__lnsigma"]:
+        for par_name in sampled_names:
             emcee_par_ci: list[Any] = [par_name]  # initialize results for parameter
-            if par_name in emcee_var_names:
-                # get quantiles if fit parameter is variable
-                for sigma_b in sigma_borders:
-                    # get cutoff values that meet this sigma threshold (+/-)
-                    quantiles = np.percentile(emcee_flatchain[par_name], sigma_b)
-                    # lower threshold (0 is par_name)
-                    emcee_par_ci.insert(1, quantiles[0])
-                    # upper threshold
-                    emcee_par_ci.insert(len(emcee_par_ci), quantiles[1])
-            else:  # pass a list of "-1" (int) as confidence intervals
-                emcee_par_ci.extend(
-                    2
-                    * len(ci_sigmas)
-                    * [
-                        -1,
-                    ]
-                )
+            for sigma_b in sigma_borders:
+                # get cutoff values that meet this sigma threshold (+/-)
+                quantiles = np.percentile(emcee_flatchain[par_name], sigma_b)
+                # lower threshold (0 is par_name)
+                emcee_par_ci.insert(1, quantiles[0])
+                # upper threshold
+                emcee_par_ci.insert(len(emcee_par_ci), quantiles[1])
             # append this line to list containing all parameters
             emcee_ci_list.append(emcee_par_ci)
-        # convert confidence interval cutoffs to a dataframe
-        # and add the "best fit result" in the middle
+        # convert confidence interval cutoffs to a dataframe and add the
+        # "best fit result" in the middle (aligned to sampled_names order)
         emcee_ci = pd.DataFrame(data=emcee_ci_list)
+        best_fit = emcee_fin_params.valuesdict()
         emcee_ci.insert(
             loc=len(ci_sigmas) + 1,
             column="bla",
-            value=list(emcee_fin_params.valuesdict().values()),
+            value=[best_fit[par_name] for par_name in sampled_names],
         )
         emcee_ci.columns = ci_cols
         if show_output >= 1:

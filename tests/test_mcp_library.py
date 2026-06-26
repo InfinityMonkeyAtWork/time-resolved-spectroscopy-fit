@@ -1112,6 +1112,40 @@ class TestMCPPickling:
         assert "__lnsigma" in res.flatchain.columns
         assert res.acceptance_fraction.shape == (32,)
 
+    #
+    def test_get_mcmc_table_excludes_fixed_parameters(self):
+        """The MCMC quantile table holds only sampled params — no fixed-row
+        placeholders that would read as real posterior quantiles."""
+
+        from trspecfit import File
+        from trspecfit.utils.lmfit import MC
+
+        project = make_project()
+        file = File(parent_project=project, energy=np.linspace(80, 90, 101))
+        file.load_model(
+            model_yaml="models/file_energy.yaml", model_info="glp_one_fixed"
+        )
+        assert file.model_active is not None  # type guard
+        file.model_active.create_value_1d()
+        assert file.model_active.value_1d is not None  # type guard
+        file.data_base = file.model_active.value_1d.copy()
+        file.e_lim = [0, len(file.energy)]
+
+        mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1)
+        file.fit_baseline(
+            model_name="glp_one_fixed", stages=1, try_ci=0, mc_settings=mc
+        )
+
+        table = file.get_mcmc(fit_type="baseline").table
+        names = set(table["par[v]/sigma[>]"])
+        # fixed parameter has no posterior → no row
+        assert "GLP_01_F" not in names
+        # varying parameters + the sampled noise scale are present
+        assert {"GLP_01_A", "GLP_01_x0", "GLP_01_m", "__lnsigma"} <= names
+        # no -1 sentinel survives anywhere in the quantile columns
+        quantile_cols = [c for c in table.columns if c != "par[v]/sigma[>]"]
+        assert not (table[quantile_cols] == -1).to_numpy().any()
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

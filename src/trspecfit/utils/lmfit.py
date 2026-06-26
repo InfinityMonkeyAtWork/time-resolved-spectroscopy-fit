@@ -614,8 +614,9 @@ class MCMCResult:
     Attributes
     ----------
     table : pandas.DataFrame
-        Posterior quantile table, one row per parameter (including the
-        ``__lnsigma`` noise-scale nuisance row).
+        Posterior quantile table, one row per sampled parameter — the
+        varying model parameters plus the ``__lnsigma`` noise-scale
+        nuisance row. Fixed parameters have no posterior and are excluded.
     flatchain : pandas.DataFrame
         Flattened MCMC chain, one column per sampled parameter.
     acceptance_fraction : numpy.ndarray
