@@ -26,7 +26,7 @@ The numbering restarts at the next block boundary as new notebooks are added.
 | [`11_save_load_export`](11_save_load_export/)                 | `FitResults` HDF5 round-trip, CSV/PNG export, "ship just the winners". |
 | [`12_uncertainty_mcmc`](12_uncertainty_mcmc/)                 | Three tiers of parameter uncertainty — `stderr`, profiled CIs, and MCMC — checked against truth. |
 | [`20_multi_file_independent_fit`](20_multi_file_independent_fit/)           | Multi-file workspace, **per-file independent** fits (bridge to shared-parameter fitting). |
-| [`21_project_level_shared_fit`](21_project_level_shared_fit/) | Multi-file workspace, **shared-parameter** fits across files. |
+| [`21_multi_file_shared_fit`](21_multi_file_shared_fit/) | Multi-file workspace, **shared-parameter** fits across files. |
 
 ## Choose your track
 
@@ -35,7 +35,7 @@ The numbering restarts at the next block boundary as new notebooks are added.
 - **Save / load / export fit results (HDF5 or CSV/PNG):** `11_save_load_export`.
 - **Estimate uncertainties with MCMC:** `12_uncertainty_mcmc`.
 - **Many files, fit each independently:** `20_multi_file_independent_fit`.
-- **Many files, shared parameters across them:** `21_project_level_shared_fit`.
+- **Many files, shared parameters across them:** `21_multi_file_shared_fit`.
 - **Synthetic / ML training data:** see [`../synthetic_data/`](../synthetic_data/).
 
 ## Notebook layout

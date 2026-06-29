@@ -33,7 +33,7 @@ Fitting workflow examples — **0x = single-file skills, 1x = post-fit work, 2x 
 | 11_save_load_export | `FitResults` HDF5 round-trip, CSV/PNG export, ship just the winners |
 | 12_uncertainty_mcmc | Three tiers of parameter uncertainty (`stderr`, profiled CIs, MCMC), checked against truth |
 | 20_multi_file_independent_fit | Multi-file workspace, per-file independent fits |
-| 21_project_level_shared_fit | Multi-file workspace, shared-parameter fits across files |
+| 21_multi_file_shared_fit | Multi-file workspace, shared-parameter fits across files |
 
 Synthetic-data examples (for testing/ML):
 

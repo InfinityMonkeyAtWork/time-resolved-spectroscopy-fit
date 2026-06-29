@@ -22,7 +22,7 @@ notebook list and the 0x / 1x / 2x numeric-block legend.
 | [11_save_load_export](fitting_workflows/11_save_load_export/)       | `FitResults` HDF5 round-trip, CSV/PNG export, "ship just the winners". |
 | [12_uncertainty_mcmc](fitting_workflows/12_uncertainty_mcmc/)       | Three tiers of parameter uncertainty — `stderr`, profiled CIs, and MCMC — checked against truth. |
 | [20_multi_file_independent_fit](fitting_workflows/20_multi_file_independent_fit/) | Multi-file workspace, per-file independent fits (bridge to shared-parameter fitting). |
-| [21_project_level_shared_fit](fitting_workflows/21_project_level_shared_fit/) | Multi-file workspace, shared-parameter fits across files. |
+| [21_multi_file_shared_fit](fitting_workflows/21_multi_file_shared_fit/) | Multi-file workspace, shared-parameter fits across files. |
 
 ### [Synthetic Data](synthetic_data/)
 
@@ -41,7 +41,7 @@ they cover how to generate datasets from a known model.
 - **Save, load, or export fit results:** [`fitting_workflows/11_save_load_export`](fitting_workflows/11_save_load_export/).
 - **Estimate uncertainties with MCMC:** [`fitting_workflows/12_uncertainty_mcmc`](fitting_workflows/12_uncertainty_mcmc/).
 - **Many files, fit each independently:** [`fitting_workflows/20_multi_file_independent_fit`](fitting_workflows/20_multi_file_independent_fit/).
-- **Many files, shared-parameter fit:** [`fitting_workflows/21_project_level_shared_fit`](fitting_workflows/21_project_level_shared_fit/).
+- **Many files, shared-parameter fit:** [`fitting_workflows/21_multi_file_shared_fit`](fitting_workflows/21_multi_file_shared_fit/).
 - **Generate synthetic / ML training data:** [`synthetic_data/`](synthetic_data/).
 
 ## Running examples

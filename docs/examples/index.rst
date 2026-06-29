@@ -33,7 +33,7 @@ Multi-file workflows (block 2x):
 
 - ``examples/fitting_workflows/20_multi_file_independent_fit/``
   Multi-file workspace, per-file independent fits (bridge to shared-parameter fitting).
-- ``examples/fitting_workflows/21_project_level_shared_fit/``
+- ``examples/fitting_workflows/21_multi_file_shared_fit/``
   Multi-file workspace with shared parameters across files.
 
 Synthetic Data
@@ -58,7 +58,7 @@ Choose Your Track
 - Many files, fit each independently:
   `20 multi-file independent fit notebook <../../examples/fitting_workflows/20_multi_file_independent_fit/example.ipynb>`_.
 - Many files, shared-parameter fit:
-  `21 project-level shared fit notebook <../../examples/fitting_workflows/21_project_level_shared_fit/example.ipynb>`_.
+  `21 multi-file shared fit notebook <../../examples/fitting_workflows/21_multi_file_shared_fit/example.ipynb>`_.
 - Simulation or ML training data:
   `Simulator data generation notebook <../../examples/synthetic_data/01_simulator/example.ipynb>`_
   or `ML training data generation notebook <../../examples/synthetic_data/02_ml_training_data/example.ipynb>`_.
@@ -74,6 +74,6 @@ All Notebooks
 - `11 save / load / export <../../examples/fitting_workflows/11_save_load_export/example.ipynb>`_
 - `12 uncertainty (MCMC) <../../examples/fitting_workflows/12_uncertainty_mcmc/example.ipynb>`_
 - `20 multi-file independent fit <../../examples/fitting_workflows/20_multi_file_independent_fit/example.ipynb>`_
-- `21 project-level shared fit <../../examples/fitting_workflows/21_project_level_shared_fit/example.ipynb>`_
+- `21 multi-file shared fit <../../examples/fitting_workflows/21_multi_file_shared_fit/example.ipynb>`_
 - `Simulator data generation <../../examples/synthetic_data/01_simulator/example.ipynb>`_
 - `ML training data generation <../../examples/synthetic_data/02_ml_training_data/example.ipynb>`_

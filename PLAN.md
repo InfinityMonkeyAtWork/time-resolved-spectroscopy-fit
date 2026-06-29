@@ -25,9 +25,37 @@ Reorganize `examples/` around user-workflow tracks per
 - [x] `sphinx-build -W` clean.
 - [ ] Commit and open PR (pending user review of the rendered notebooks).
 
+## [DONE] Upgrade 20 & 21 (rename + baseline fix + dataset regen)
+
+- Renamed the 2x pair for clarity / parallel naming:
+  20 -> `20_multi_file_independent_fit`, 21 -> `21_multi_file_shared_fit`
+  (were `..._fit_each_separately` / `21_project_level_shared_fit`). All refs
+  updated incl. notebook 20's relative data path into 21.
+- **Baseline-window contamination (both notebooks).** The SD~3 IRF onset at
+  t0=0 leaked the convolved peak shift back into the baseline window — on the
+  old -10..99 axis only ~4 clean pre-onset spectra existed — biasing the
+  static ground-state params per file; frozen static, the 2D fit compensated
+  and the residual showed a position dipole. (A `time_stop=3` notebook tweak
+  was the interim workaround.) **Proper fix: regenerate the shared 2x dataset**
+  — extend the pre-t0 axis -10 -> -20 (98 time points, 41 pre-t0 spectra) and
+  lower SNR (counts_per_delay 1E5 -> 5000, mirroring 01, which was
+  over-polished). Both notebooks now use time_limits=[-20,99] and baseline
+  time_stop=22 (t<=-9, ~23 clean spectra). Truth recovery holds: x0 -> 10.00
+  everywhere; 20 chi2_red_raw ~1.0 (was ~0.05), 21 shared SD 3.0 / tau 50,
+  per-file A tracks [5,2,1,0.5,0.2,0.1] with realistic scatter on the
+  low-amplitude files.
+- 20 prose: `compare_models` survey is not pre-ranked and has no per-parameter
+  columns; "bridge to 2x" -> "bridge to shared-parameter fitting".
+- 21 polish: try_ci=0 on the baseline fit (silences lmfit.confidence warnings);
+  auto_export: False; retitle H1/subtitle/generator to "Fit Multiple Files with
+  Shared Parameters"; add Section 5 (shared-vs-per-file parameter table vs
+  truth).
+- `.gitignore`: 20's generated `batch_export/` tree.
+- TODO.md: logged the create_model_path eager-mkdir cleanup (deferred).
+
 ## [DONE] Post-review feedback fixes (examples 11 & 12)
 
-Reviewer feedback addressed this session (all uncommitted in working tree):
+Reviewer feedback addressed this session (committed in 12efa82 / bef2e8d / 19def3a):
 
 - **11 Tips wording**: `aic`/`bic` were mislabeled σ-calibrated. Now
   "Calibrated columns (`chi2`, `chi2_red`) and stored metrics (`aic`, `bic`,
@@ -345,7 +373,7 @@ examples/
     10_model_comparison/              # trimmed to comparison-only
     11_save_load_export/              # NEW (%cd + %run + %%capture preamble)
     20_multi_file_independent_fit/           # NEW (bridge: multi-file separate fits)
-    21_project_level_shared_fit/      # was 05_project_level_fitting
+    21_multi_file_shared_fit/      # was 05_project_level_fitting
   synthetic_data/                     # was data_generation
     01_simulator/                     # was simulator
     02_ml_training_data/              # was ml_training
@@ -370,5 +398,5 @@ examples/
   whole-batch survey calls `compare_models()` with no `file=` filter.
 - Benchmark harness discovers folders by `NN_` prefix. Updated:
   `--example 0` (batch mode) iterates examples 1–4; project-level
-  (`21_project_level_shared_fit`) and the new 1x notebooks sit outside the
+  (`21_multi_file_shared_fit`) and the new 1x notebooks sit outside the
   harness. Table in `docs/ai/benchmark.md` updated accordingly.

@@ -199,7 +199,7 @@ examples/
     10_model_comparison/                          # block 1x: post-fit work
     11_save_load_export/                          # block 1x: post-fit work (NEW)
     20_multi_file_independent_fit/                       # block 2x: multi-file (NEW, bridge)
-    21_project_level_shared_fit/                  # was 05_project_level_fitting
+    21_multi_file_shared_fit/                  # was 05_project_level_fitting
   synthetic_data/                                 # renamed from data_generation
     01_simulator/
     02_ml_training_data/
@@ -338,7 +338,7 @@ Bridge story (NEW):
 This notebook makes the distinction clear: multi-file workspace does not
 necessarily mean shared/project-level fitting.
 
-### `fitting_workflows/21_project_level_shared_fit`
+### `fitting_workflows/21_multi_file_shared_fit`
 
 Power-user story:
 
@@ -378,7 +378,7 @@ track" entry point:
 - Many files, separate fits: start at
   `fitting_workflows/20_multi_file_independent_fit`.
 - Shared/global fit: start at
-  `fitting_workflows/21_project_level_shared_fit`.
+  `fitting_workflows/21_multi_file_shared_fit`.
 - Simulation or ML training data: start at `synthetic_data`.
 
 The quickstart can still recommend the basic fitting notebook as the first
@@ -429,7 +429,7 @@ files appearing on disk before they "exported."
    - `fitting_workflows/04_par_profiles` →
      `fitting_workflows/04_parameter_profiles`
    - `fitting_workflows/05_project_level_fitting` →
-     `fitting_workflows/21_project_level_shared_fit`
+     `fitting_workflows/21_multi_file_shared_fit`
    - `data_generation/simulator` → `synthetic_data/01_simulator`
    - `data_generation/ml_training` → `synthetic_data/02_ml_training_data`
 
