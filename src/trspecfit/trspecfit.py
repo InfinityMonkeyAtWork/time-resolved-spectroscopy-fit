@@ -1611,7 +1611,7 @@ class File:
             float
         ] = []  # start and stop time of the baseline spectrum
         self.base_t_ind: list[int] = []  # index of the above start and stop time
-        self.data_base = None  # average spectrum between above indices
+        self.data_base: np.ndarray | None = None  # average spectrum between indices
         self.model_base: mcp.Model | None = None
         #
         self.model_sbs: mcp.Model | None = None

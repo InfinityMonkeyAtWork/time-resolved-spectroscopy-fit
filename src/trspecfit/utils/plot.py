@@ -938,7 +938,7 @@ def major_formatter_input(x: ArrayLike) -> str:
         Format string for matplotlib tick labels (e.g., '%0.2f', '%4.0f')
     """
 
-    axis_oom = oom(np.max(x))
+    axis_oom = oom(np.max(np.asarray(x, dtype=float)))
 
     if axis_oom < 0:
         return f"%0.{abs(axis_oom)}f"
