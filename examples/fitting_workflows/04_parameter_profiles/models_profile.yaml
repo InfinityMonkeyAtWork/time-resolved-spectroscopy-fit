@@ -12,9 +12,9 @@
 # Resulting lmfit parameter names are prefixed with the target parameter:
 #   <target_parameter>_<component>_<par>,  e.g. GLP_01_A_pExpDecay_01_tau
 #
-# The *Fixed variants pin the profile parameters for the SbS / 2D fits; their
-# values are seeded from the profile_base fit results (vary=False parameters
-# inherit baseline results, exactly like energy-model parameters).
+# The `IMFPfixed` variant pins the amplitude profile for the SbS / 2D fits;
+# its values are seeded from the profile_base fit results (vary=False
+# parameters inherit baseline results, exactly like energy-model parameters).
 
 # IMFP weighting, attached to GLP_01_A (A free — fit by profile_base):
 # signal from depth z contributes with weight A * exp(-z / tau), where tau is
@@ -43,12 +43,4 @@ IMFPfixed:
 BandBending:
     pLinear:
         m: [-0.4, True, -2, 0]      # band bending gradient (eV/nm)
-        b: [0, False]
-
-# Pinned band bending variant for the 2D fit: the equilibrium gradient is
-# pinned; the BandBendingRecovery dynamics (models_time.yaml) adds the
-# time-dependent change on top.
-BandBendingFixed:
-    pLinear:
-        m: [-0.4, False]
         b: [0, False]

@@ -1,6 +1,7 @@
 # Two competing baseline models and two competing SbS models on the same data.
 # We deliberately make A and B differ in only one structural choice so the
 # comparison metrics (chi2_red / r2 / AIC / BIC) have something meaningful to say.
+# (available functions: src/trspecfit/functions/energy.py)
 
 # ---- Baseline pair ---------------------------------------------------------
 # baseA: full GLP profile (Gaussian-Lorentzian product). The simulated data

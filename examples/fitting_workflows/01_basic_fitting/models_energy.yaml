@@ -2,7 +2,7 @@
 # For available functions see: /src/trspecfit/functions/energy.py
 
 # Ground state
-# (most parameters should be able to vary)
+# (most parameters vary here)
 base:
     LinBack:
       m: [1E-2, True, -1, 1]

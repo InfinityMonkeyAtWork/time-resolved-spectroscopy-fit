@@ -7,5 +7,5 @@ MonoExpPosIRF:
     expFun:
         A: [5, file, 0, 15]
         tau: [10, project, 1, 100]
-        t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
+        t0: [0, False]
+        y0: [0, False]
