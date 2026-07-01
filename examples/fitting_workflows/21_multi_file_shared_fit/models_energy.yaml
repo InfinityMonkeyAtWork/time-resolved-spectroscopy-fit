@@ -1,0 +1,32 @@
+# use these models to describe the energy-dependent data
+# (available functions info: /src/trspecfit/functions/energy.py)
+
+# ground state (most parameters should be able to vary)
+base:
+    LinBack:
+      m: [1E-2, True, -1, 1]
+      b: [0, True, -5, 5]
+      xStart: [0, False]
+      xStop: [20, False]
+    GLP:
+      A: [12, True, 5, 15]
+      x0: [8, True, 5, 15]
+      F: [1.5, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+
+# 2D model for project-level fitting
+# vary field uses "project" / "file" / "static" strings
+# - "project": shared across all files (fitted once)
+# - "file": independent per file (fitted separately)
+# - "static": fixed (not fitted), set from baseline
+2D:
+    LinBack:
+      m: [1E-2, static, -1, 1]
+      b: [0, static, -5, 5]
+      xStart: [0, False]
+      xStop: [20, False]
+    GLP:
+      A: [12, static, 5, 15]
+      x0: [8, static, 5, 15]
+      F: [1.5, static, 0.75, 2.5]
+      m: [0.3, static, 0, 1]

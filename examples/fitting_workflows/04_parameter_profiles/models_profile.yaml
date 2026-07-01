@@ -1,0 +1,46 @@
+# Profile models: depth-dependent variation of energy-model parameters
+# (available functions: src/trspecfit/functions/profile.py)
+#
+# A profile makes one parameter vary along the auxiliary axis (here: depth in
+# nm, data/aux_axis.csv). The component is evaluated at every depth point and
+# the spectra are averaged uniformly — the model of a depth-integrated
+# measurement. Attach with:
+#
+#   file.add_par_profile(target_model, target_parameter,
+#                        'models_profile.yaml', profile_model)
+#
+# Resulting lmfit parameter names are prefixed with the target parameter:
+#   <target_parameter>_<component>_<par>,  e.g. GLP_01_A_pExpDecay_01_tau
+#
+# The `IMFPfixed` variant pins the amplitude profile for the SbS / 2D fits;
+# its values are seeded from the profile_base fit results (vary=False
+# parameters inherit baseline results, exactly like energy-model parameters).
+
+# IMFP weighting, attached to GLP_01_A (A free — fit by profile_base):
+# signal from depth z contributes with weight A * exp(-z / tau), where tau is
+# the inelastic mean free path. A is the surface spectral weight.
+#
+# tau is NOT fitted: rescaling (A, tau, gradient m) -> (c*A, tau/c, c*m)
+# leaves the depth-averaged spectrum unchanged, so fitting the IMFP together
+# with the gradient is degenerate. Standard XPS practice applies: take the
+# IMFP from tables (e.g. TPP-2M) for the material and kinetic energy.
+IMFP:
+    pExpDecay:
+        A:   [80, True, 1, 1000]
+        tau: [2.0, False]           # IMFP (nm), from tables — not fitted
+
+# Pinned IMFP variant for the SbS and 2D fits.
+IMFPfixed:
+    pExpDecay:
+        A:   [80, False]
+        tau: [2.0, False]
+
+# Band bending, attached to GLP_01_x0 (m free — fit by profile_base, and
+# per-slice by SbS): the core level shifts linearly with depth,
+# x0(z) = x0_surface + m * z.  m < 0 means higher binding energy at the
+# surface (upward band bending); b = 0 keeps the profile a pure shift
+# relative to the surface value x0.
+BandBending:
+    pLinear:
+        m: [-0.4, True, -2, 0]      # band bending gradient (eV/nm)
+        b: [0, False]

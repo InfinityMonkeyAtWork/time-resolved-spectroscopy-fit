@@ -1,0 +1,14 @@
+# ground truth energy model for data generation
+# (same structure as the fit model in ../models_energy.yaml)
+
+base:
+    LinBack:
+      m: [8E-2, True]
+      b: [2.0, True]
+      xStart: [0, True]
+      xStop: [20, True]
+    GLP:
+      A: [12, True]
+      x0: [9, True]
+      F: [1.0, True]
+      m: [0.25, True]

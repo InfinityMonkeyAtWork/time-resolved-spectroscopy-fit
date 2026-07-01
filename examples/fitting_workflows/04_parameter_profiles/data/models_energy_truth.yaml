@@ -1,0 +1,15 @@
+# ground truth energy model for data generation
+# (same structure as the profile-aware fit models in ../models_energy.yaml)
+
+# Single core-level peak on a flat background. A is 0 because the IMFP depth
+# profile (data/models_profile_truth.yaml) provides the full amplitude;
+# x0 is the *surface* binding energy — the band bending profile adds the
+# depth-dependent shift.
+truth:
+    Offset:
+        y0: [0.5, True]
+    GLP:
+        A: [0, False]
+        x0: [99.5, True]
+        F: [1.2, True]
+        m: [0.3, True]

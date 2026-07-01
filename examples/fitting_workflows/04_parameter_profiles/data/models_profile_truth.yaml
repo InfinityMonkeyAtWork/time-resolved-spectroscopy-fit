@@ -1,0 +1,19 @@
+# ground truth profile models for data generation
+# Both profiles are evaluated over the depth axis (data/aux_axis.csv, nm)
+# and the spectra are averaged uniformly over that axis.
+
+# IMFP weighting, attached to GLP_01_A:
+# signal from depth z contributes with weight A * exp(-z / tau),
+# where tau is the inelastic mean free path (IMFP).
+IMFP:
+    pExpDecay:
+        A: [100, True]
+        tau: [2.0, True]
+
+# Band bending, attached to GLP_01_x0:
+# the core level shifts linearly with depth, x0(z) = x0_surface + m * z.
+# m < 0: higher binding energy at the surface (upward band bending).
+BandBending:
+    pLinear:
+        m: [-0.5, True]
+        b: [0, False]

@@ -1,6 +1,7 @@
 # Two competing baseline models and two competing SbS models on the same data.
 # We deliberately make A and B differ in only one structural choice so the
 # comparison metrics (chi2_red / r2 / AIC / BIC) have something meaningful to say.
+# (available functions: src/trspecfit/functions/energy.py)
 
 # ---- Baseline pair ---------------------------------------------------------
 # baseA: full GLP profile (Gaussian-Lorentzian product). The simulated data
@@ -30,36 +31,36 @@ baseB:
       A: [12, True, 5, 15]
       x0: [8, True, 5, 15]
       F: [1.5, True, 0.75, 2.5]
-      m: [0, False, 0, 1]
+      m: [0, False]
 
 # ---- Slice-by-Slice pair ---------------------------------------------------
 # sbsA: only the peak position x0 evolves with time (the truth in the
 # simulated data). Background and amplitude pinned from the baseline fit.
 sbsA:
     LinBack:
-      m: [1E-2, False, -1, 1]
-      b: [0, False, -5, 5]
+      m: [1E-2, False]
+      b: [0, False]
       xStart: [0, False]
       xStop: [20, False]
     GLP:
-      A: [12, False, 5, 15]
+      A: [12, False]
       x0: [8, True, 5, 15]
-      F: [1.5, False, 0.75, 2.5]
-      m: [0.3, False, 0, 1]
+      F: [1.5, False]
+      m: [0.3, False]
 
 # sbsB: x0 AND A both vary per slice. More flexible (lower chi2_red on most
 # slices) but pays for an extra free parameter in AIC/BIC.
 sbsB:
     LinBack:
-      m: [1E-2, False, -1, 1]
-      b: [0, False, -5, 5]
+      m: [1E-2, False]
+      b: [0, False]
       xStart: [0, False]
       xStop: [20, False]
     GLP:
       A: [12, True, 5, 15]
       x0: [8, True, 5, 15]
-      F: [1.5, False, 0.75, 2.5]
-      m: [0.3, False, 0, 1]
+      F: [1.5, False]
+      m: [0.3, False]
 
 # ---- 2D pair ---------------------------------------------------------------
 # m2dA / m2dB share an identical energy model (LinBack + GLP, all pinned from
@@ -71,24 +72,24 @@ sbsB:
 # m2dA to win even after AIC/BIC penalize its extra free parameter (the IRF σ).
 m2dA:
     LinBack:
-      m: [1E-2, False, -1, 1]
-      b: [0, False, -5, 5]
+      m: [1E-2, False]
+      b: [0, False]
       xStart: [0, False]
       xStop: [20, False]
     GLP:
-      A: [12, False, 5, 15]
+      A: [12, False]
       x0: [8, True, 5, 15]
-      F: [1.5, False, 0.75, 2.5]
-      m: [0.3, False, 0, 1]
+      F: [1.5, False]
+      m: [0.3, False]
 
 m2dB:
     LinBack:
-      m: [1E-2, False, -1, 1]
-      b: [0, False, -5, 5]
+      m: [1E-2, False]
+      b: [0, False]
       xStart: [0, False]
       xStop: [20, False]
     GLP:
-      A: [12, False, 5, 15]
+      A: [12, False]
       x0: [8, True, 5, 15]
-      F: [1.5, False, 0.75, 2.5]
-      m: [0.3, False, 0, 1]
+      F: [1.5, False]
+      m: [0.3, False]

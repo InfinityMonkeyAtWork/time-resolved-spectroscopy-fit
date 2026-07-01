@@ -1,0 +1,29 @@
+# Time-dynamics model for the parameter-profiles example
+# (available functions: src/trspecfit/functions/time.py)
+#
+# The key difference from 01/03: the dynamics attaches to a parameter of the
+# *profile* model, not of the energy model. target_parameter is the profile
+# parameter's lmfit name:
+#
+#   file.add_time_dependence('2D', 'GLP_01_x0_pLinear_01_m',
+#                            'models_time.yaml', 'BandBendingRecovery')
+#
+# The depth profile is then re-evaluated at every time step with the updated
+# gradient — the spectral *shape* changes in time (spectral diffusion), not
+# just a parameter offset.
+
+# Band bending recovery after photoexcitation: the surface photovoltage
+# collapses the equilibrium band bending at t = 0 (m jumps by +A, toward
+# flat-band) and recovers exponentially with time constant tau. gaussCONV
+# blurs the step with the Gaussian instrument response (IRF).
+BandBendingRecovery:
+    gaussCONV:
+        # IRF width (ps). Init generously: the convolution kernel support is
+        # sized from the initial value (+-4*SD), so a too-small init truncates
+        # the kernel when the fitted SD grows beyond it.
+        SD:  [20, True, 1, 50]
+    expFun:
+        A:   [0.3, True, 0, 1]      # collapse amplitude (eV/nm)
+        tau: [50, True, 5, 500]     # recovery time constant (ps)
+        t0:  [0, False]
+        y0:  [0, False]

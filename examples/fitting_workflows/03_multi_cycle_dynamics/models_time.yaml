@@ -1,0 +1,31 @@
+# Use these models to add multi-cycle time-dependence to a parameter in a
+# 2D model: pass a list of model names to add_time_dependence(). Element 0
+# applies globally (all times); elements 1+ alternate as subcycles within
+# each 1/frequency period.
+# For available functions see: /src/trspecfit/functions/time.py
+
+# Global element 0: Gaussian instrument response function (IRF).
+# Convolves the full time trace, including all subcycles.
+# (Use a model containing only `none: {}` here if no global effect is needed.)
+IRF:
+    gaussCONV:
+        SD: [0.1, True, 0, 1]
+
+# Subcycle 1: negative exponential shift, relaxing back to 0.
+# t0/y0 are on the subcycle's local clock, which resets at each subcycle start.
+MonoExpNeg:
+    expFun:
+        A: [-1.5, True, -5, -1E-3]
+        tau: [1, True, 0.05, 5]
+        t0: [0, False]
+        y0: [0, False]
+
+# Subcycle 2: amplitude mirrors subcycle 1 via an expression (no extra free
+# parameter), while tau is fit independently — expressions work across
+# subcycle models just like across energy components (see 02).
+MonoExpPos:
+    expFun:
+        A: ["-expFun_01_A"]
+        tau: [1, True, 0.05, 5]
+        t0: [0, False]
+        y0: [0, False]

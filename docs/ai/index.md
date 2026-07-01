@@ -10,5 +10,6 @@ add-function
 benchmark
 changelog
 check-docs
+check-example
 code-review
 ```

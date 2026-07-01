@@ -1611,7 +1611,7 @@ class File:
             float
         ] = []  # start and stop time of the baseline spectrum
         self.base_t_ind: list[int] = []  # index of the above start and stop time
-        self.data_base = None  # average spectrum between above indices
+        self.data_base: np.ndarray | None = None  # average spectrum between indices
         self.model_base: mcp.Model | None = None
         #
         self.model_sbs: mcp.Model | None = None
@@ -1714,6 +1714,7 @@ class File:
                 ],
                 x=self.energy,
                 config=config,
+                y_label=config.z_label,  # intensity, not the t_label
                 vlines=self.e_lim_abs,
             )
 
@@ -2321,8 +2322,8 @@ class File:
             time_start, time_stop, time_type=time_type
         )
         self.base_t_abs = [
-            self.time[self.base_t_ind[0]],
-            self.time[self.base_t_ind[1] - 1],
+            float(self.time[self.base_t_ind[0]]),
+            float(self.time[self.base_t_ind[1] - 1]),
         ]
 
         # cut and average
@@ -2338,13 +2339,18 @@ class File:
                     stacklevel=2,
                 )
                 return
+            t_lo, t_hi = self.base_t_abs
             uplt.plot_1d(
                 data=[
                     self.data_base,
                 ],
                 x=self.energy,
                 config=self.plot_config,
-                title=f"Baseline data: t in {self.base_t_abs} (idx: {self.base_t_ind})",
+                y_label=self.plot_config.z_label,  # intensity, not the t_label
+                title=(
+                    f"Baseline data: t in [{t_lo:.4g}, {t_hi:.4g}] "
+                    f"(idx: [{self.base_t_ind[0]}, {self.base_t_ind[1] - 1}])"
+                ),
             )
 
     #
@@ -2427,6 +2433,7 @@ class File:
                     data=[self.data, y_cut],
                     x=[energy, x_cut],
                     config=self.plot_config,
+                    y_label=self.plot_config.z_label,  # intensity, not the t_label
                     waterfall=(np.max(np.abs(y_cut)) - np.min(np.abs(y_cut))) / 8,
                     legend=["all", "cut"],
                     vlines=self.e_lim_abs,
@@ -2844,9 +2851,9 @@ class File:
 
         # display/plot and save spectrum fit summary
         time_label = (
-            f"t = {self.spec_t_abs[0]}"
+            f"t = {self.spec_t_abs[0]:.4g}"
             if self.spec_t_abs[0] == self.spec_t_abs[1]
-            else f"t in [{self.spec_t_abs[0]}, {self.spec_t_abs[1]}]"
+            else f"t in [{self.spec_t_abs[0]:.4g}, {self.spec_t_abs[1]:.4g}]"
         )
         title_spec = (
             f"File: {self.path}, {time_label}, "
@@ -3175,10 +3182,20 @@ class File:
         fit_wrapper_kwargs.setdefault("delim", self.p.delim)
 
         if n_workers == 1:
-            # serial path (debug escape hatch).
+            # serial path (debug escape hatch). tqdm (not a raw print with
+            # "\r") keeps the per-slice progress notebook-friendly: it renders
+            # as a single updating bar in Jupyter and throttles its stderr
+            # output under nbconvert instead of flooding it with one message
+            # per slice. Use plain tqdm (matching the parallel path below and
+            # lmfit.emcee's progress bar), NOT tqdm.auto: tqdm.auto selects the
+            # ipywidgets-based tqdm.notebook inside a kernel, and ipywidgets is
+            # not a dependency -- it would emit "IProgress not found" warnings.
             self.results_sbs = []
-            for s_i, s in enumerate(self.data):
-                print(f"Analyzing slice number {s_i + 1}/{len(self.time)}", end="\r")
+            for s_i, s in tqdm(
+                enumerate(self.data),
+                total=n_slices,
+                desc="SbS fit (serial)",
+            ):
                 path_slice = _slice_path(s_i)
 
                 initial_guess = usbs.prepare_sbs_model_for_slice(
@@ -3229,14 +3246,19 @@ class File:
                     )
         else:
             # parallel path: spawn pool, install model once per worker.
+            # sanitized_spawn_main keeps workers from re-running a
+            # non-.py __main__ (e.g. a notebook executed via %run).
             ctx = multiprocessing.get_context("spawn")
             by_id: dict[int, list[Any]] = {}
-            with concurrent.futures.ProcessPoolExecutor(
-                max_workers=n_workers,
-                mp_context=ctx,
-                initializer=usbs.sbs_worker_init,
-                initargs=(self.model_sbs, _args_sbs, seed_template),
-            ) as executor:
+            with (
+                usbs.sanitized_spawn_main(),
+                concurrent.futures.ProcessPoolExecutor(
+                    max_workers=n_workers,
+                    mp_context=ctx,
+                    initializer=usbs.sbs_worker_init,
+                    initargs=(self.model_sbs, _args_sbs, seed_template),
+                ) as executor,
+            ):
                 futures = {
                     executor.submit(
                         usbs.sbs_fit_one_slice,
@@ -3289,8 +3311,12 @@ class File:
             # captures pristine per-slice fit state (results_sbs and parameter
             # names taken before any post-fit cleanup).
             self._append_sbs_slot(model_name=model_name, fit_fun_str=_fun_str)
-            if self.p.auto_export:
-                self._save_sbs_fit_legacy(save_path=path_sbs_results)
+            # Display the data/fit/residual maps (and varied-parameter plots)
+            # when interactive (show_output); save only when auto_export.
+            if self.p.auto_export or self.p.show_output >= 1:
+                self._save_sbs_fit_legacy(
+                    save_path=path_sbs_results, save_files=self.p.auto_export
+                )
         self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
         self.model_sbs.args = _args_sbs
         if stages >= 1:
@@ -3299,7 +3325,9 @@ class File:
             )
 
     #
-    def _save_sbs_fit_legacy(self, save_path: PathLike) -> None:
+    def _save_sbs_fit_legacy(
+        self, save_path: PathLike, *, save_files: bool = True
+    ) -> None:
         """
         Legacy SbS export — preserves the original on-disk layout used by
         the auto-export path inside :meth:`fit_slice_by_slice`.
@@ -3307,6 +3335,13 @@ class File:
         Internal use only. The public ``save_sbs_fit`` is a deprecated
         wrapper that forwards to :meth:`export_fit` (different layout);
         prefer :meth:`export_fit` for new code.
+
+        Parameters
+        ----------
+        save_files : bool, default True
+            When ``True`` (auto-export), write the CSVs and save the figures.
+            When ``False`` (interactive display only), skip the CSVs and just
+            show the varied-parameter and data/fit/residual plots inline.
         """
 
         if self.model_sbs is None or self.time is None:
@@ -3321,33 +3356,36 @@ class File:
             raise ValueError(
                 "Slice-by-Slice model const/args missing; cannot reconstruct 2D fit."
             )
-        # axis sidecars (one value per row); paired with fit_2d.csv
-        np.savetxt(
-            pathlib.Path(save_path) / "energy.csv",
-            np.asarray(self.energy),
-            fmt=self.p.num_fmt,
-            delimiter=self.p.delim,
-        )
-        np.savetxt(
-            pathlib.Path(save_path) / "time.csv",
-            np.asarray(self.time),
-            fmt=self.p.num_fmt,
-            delimiter=self.p.delim,
-        )
-        # convert results, specifically par_fin to dataframe and save
-        # this also plots all parameters as a function of time
+        if save_files:
+            # axis sidecars (one value per row); paired with fit_2d.csv
+            np.savetxt(
+                pathlib.Path(save_path) / "energy.csv",
+                np.asarray(self.energy),
+                fmt=self.p.num_fmt,
+                delimiter=self.p.delim,
+            )
+            np.savetxt(
+                pathlib.Path(save_path) / "time.csv",
+                np.asarray(self.time),
+                fmt=self.p.num_fmt,
+                delimiter=self.p.delim,
+            )
+        # convert results, specifically par_fin to dataframe; this also plots
+        # the varied parameters as a function of time. save_df follows the
+        # standard convention: save+show / save-only when writing files, else
+        # show-only (save_df=0) so the varied-parameter curves appear inline.
         df_sbs = fitlib.results_to_df(
             results=self.results_sbs,
             x=self.time,
             index=np.arange(0, len(self.time)),
             config=self.plot_config,
-            save_df=-1 if self.p.show_output == 0 else 1,
+            save_df=(-1 if self.p.show_output == 0 else 1) if save_files else 0,
             save_path=save_path,
             num_fmt=self.p.num_fmt,
             delim=self.p.delim,
         )
 
-        # get slice-by-slice fit spectra as a 2D map
+        # get slice-by-slice fit spectra as a 2D map (write CSV only when saving)
         df_sbs_pars = df_sbs.loc[:, self.model_sbs.parameter_names]
         fit_2d_sbs = fitlib.results_to_fit_2d(
             results=df_sbs_pars,
@@ -3355,11 +3393,11 @@ class File:
             args=self.model_sbs.args,
             num_fmt=self.p.num_fmt,
             delim=self.p.delim,
-            save_2d=-1 if self.p.show_output == 0 else 1,
+            save_2d=(-1 if self.p.show_output == 0 else 1) if save_files else 0,
             save_path=save_path,
         )
 
-        # plot data, fit, and residual 2D maps
+        # plot data, fit, and residual 2D maps (save only when writing files)
         fitlib.plt_fit_res_2d(
             data=self.data,
             fit=fit_2d_sbs,
@@ -3368,7 +3406,7 @@ class File:
             config=self.plot_config,
             x_lim=self.e_lim,
             y_lim=self.t_lim,
-            save_img=-1 if self.p.show_output == 0 else 1,
+            save_img=(-1 if self.p.show_output == 0 else 1) if save_files else 0,
             save_path=save_path,
         )
 
@@ -4014,15 +4052,21 @@ class File:
             self._append_2d_slot(model_name=model_name, fit_fun_str=_fun_str)
 
         if stages >= 1:
-            if self.p.auto_export:
-                self._save_2d_fit_legacy(save_path=path_2d_results)
+            # Display the data/fit/residual maps when interactive (show_output),
+            # save them only when auto_export — mirroring fit_baseline.
+            if self.p.auto_export or self.p.show_output >= 1:
+                self._save_2d_fit_legacy(
+                    save_path=path_2d_results, save_files=self.p.auto_export
+                )
             fitlib.time_display(
                 t_start=t_2d, print_str="Time elapsed for 2D model fit: "
             )
             display(self.model_2d.result[1].params)  # display final pars below figure
 
     #
-    def _save_2d_fit_legacy(self, save_path: PathLike) -> None:
+    def _save_2d_fit_legacy(
+        self, save_path: PathLike, *, save_files: bool = True
+    ) -> None:
         """
         Legacy 2D export — preserves the original on-disk layout used by
         the auto-export path inside :meth:`fit_2d` and
@@ -4031,6 +4075,13 @@ class File:
         Internal use only. The public ``save_2d_fit`` is a deprecated
         wrapper that forwards to :meth:`export_fit` (different layout);
         prefer :meth:`export_fit` for new code.
+
+        Parameters
+        ----------
+        save_files : bool, default True
+            When ``True`` (auto-export), write the CSVs and save the figure.
+            When ``False`` (interactive display only), skip the CSVs and just
+            show the data/fit/residual maps inline.
         """
 
         if (
@@ -4045,27 +4096,28 @@ class File:
             raise ValueError(
                 "2D model evaluation did not produce value_2d; nothing to save."
             )
-        # save 2D fit map as CSV (rows=time, cols=energy), mirroring save_sbs_fit
-        np.savetxt(
-            pathlib.Path(save_path) / "fit_2d.csv",
-            self.model_2d.value_2d,
-            fmt=self.p.num_fmt,
-            delimiter=self.p.delim,
-        )
-        # axis sidecars (one value per row); paired with fit_2d.csv
-        np.savetxt(
-            pathlib.Path(save_path) / "energy.csv",
-            np.asarray(self.energy),
-            fmt=self.p.num_fmt,
-            delimiter=self.p.delim,
-        )
-        np.savetxt(
-            pathlib.Path(save_path) / "time.csv",
-            np.asarray(self.time),
-            fmt=self.p.num_fmt,
-            delimiter=self.p.delim,
-        )
-        # plot data, fit, and residual 2D maps
+        if save_files:
+            # save 2D fit map as CSV (rows=time, cols=energy), mirroring save_sbs_fit
+            np.savetxt(
+                pathlib.Path(save_path) / "fit_2d.csv",
+                self.model_2d.value_2d,
+                fmt=self.p.num_fmt,
+                delimiter=self.p.delim,
+            )
+            # axis sidecars (one value per row); paired with fit_2d.csv
+            np.savetxt(
+                pathlib.Path(save_path) / "energy.csv",
+                np.asarray(self.energy),
+                fmt=self.p.num_fmt,
+                delimiter=self.p.delim,
+            )
+            np.savetxt(
+                pathlib.Path(save_path) / "time.csv",
+                np.asarray(self.time),
+                fmt=self.p.num_fmt,
+                delimiter=self.p.delim,
+            )
+        # plot data, fit, and residual 2D maps (save only when writing files)
         fitlib.plt_fit_res_2d(
             data=self.data,
             fit=self.model_2d.value_2d,
@@ -4074,7 +4126,7 @@ class File:
             config=self.plot_config,
             x_lim=self.e_lim,
             y_lim=self.t_lim,
-            save_img=-1 if self.p.show_output == 0 else 1,
+            save_img=(-1 if self.p.show_output == 0 else 1) if save_files else 0,
             save_path=save_path,
         )
         # dpi_plot = round(1.5 *self.p.dpi_plt), NOT AVAILABLE YET (fig_size)
@@ -4145,6 +4197,143 @@ class File:
         raise ValueError(
             f"Unknown fit_type={fit_type!r}; "
             "use 'baseline', 'spectrum', 'sbs', or '2d'."
+        )
+
+    #
+    def _result_model(self, fit_type: str) -> mcp.Model:
+        """Resolve the fitted Model for a fit_type, or raise if not yet fit.
+
+        Shared by get_correlations / get_conf_intervals / get_mcmc. Slice-by-
+        Slice is excluded — its per-slice results have a different shape (use
+        ``get_fit_results(fit_type='sbs')``).
+        """
+
+        models = {
+            "baseline": (self.model_base, "fit_baseline"),
+            "spectrum": (self.model_spec, "fit_spectrum"),
+            "2d": (self.model_2d, "fit_2d"),
+        }
+        if fit_type == "sbs":
+            raise ValueError(
+                "get_correlations / get_conf_intervals / get_mcmc are not "
+                "available for Slice-by-Slice fits (per-slice results); use "
+                "get_fit_results(fit_type='sbs')."
+            )
+        if fit_type not in models:
+            raise ValueError(
+                f"Unknown fit_type={fit_type!r}; use 'baseline', 'spectrum', or '2d'."
+            )
+        model, fit_method = models[fit_type]
+        if model is None or not model.result:
+            raise ValueError(f"No {fit_type} fit results. Run {fit_method}() first.")
+        return model
+
+    #
+    def get_correlations(
+        self,
+        *,
+        fit_type: Literal["baseline", "spectrum", "2d"] = "baseline",
+    ) -> pd.DataFrame:
+        """
+        Return the parameter correlation matrix from a completed fit.
+
+        Parameters
+        ----------
+        fit_type : {'baseline', 'spectrum', '2d'}, default='baseline'
+            Which fit to read (see :meth:`get_fit_results`).
+
+        Returns
+        -------
+        pd.DataFrame
+            Square matrix indexed by the varying parameter names: 1.0 on the
+            diagonal, lmfit's pairwise correlations off-diagonal (0.0 where a
+            pair is uncorrelated or the optimizer reported no covariance).
+
+        Raises
+        ------
+        ValueError
+            If the requested fit has not been performed yet.
+        """
+
+        params = self._result_model(fit_type).result[1].params
+        names = [n for n in params if params[n].vary]
+        mat = pd.DataFrame(np.eye(len(names)), index=names, columns=names, dtype=float)
+        for n in names:
+            for other, corr in (params[n].correl or {}).items():
+                if other in mat.columns:
+                    mat.loc[n, other] = corr
+        return mat
+
+    #
+    def get_conf_intervals(
+        self,
+        *,
+        fit_type: Literal["baseline", "spectrum", "2d"] = "baseline",
+    ) -> pd.DataFrame:
+        """
+        Return the profiled confidence-interval table from a completed fit.
+
+        Populated only when the fit ran with ``try_ci=1`` (otherwise an empty
+        DataFrame). Columns are the per-sigma bounds with the best-fit value in
+        the middle (see ``fitlib.fit_wrapper``).
+
+        Parameters
+        ----------
+        fit_type : {'baseline', 'spectrum', '2d'}, default='baseline'
+            Which fit to read.
+
+        Returns
+        -------
+        pd.DataFrame
+            The conf_interval table, or an empty DataFrame if ``try_ci`` was off.
+
+        Raises
+        ------
+        ValueError
+            If the requested fit has not been performed yet.
+        """
+
+        return self._result_model(fit_type).result[2]
+
+    #
+    def get_mcmc(
+        self,
+        *,
+        fit_type: Literal["baseline", "spectrum", "2d"] = "baseline",
+    ) -> ulmfit.MCMCResult:
+        """
+        Return the MCMC outputs (quantile table, chain, acceptance) of a fit.
+
+        Available only when the fit ran with ``mc_settings`` enabling MCMC.
+
+        Parameters
+        ----------
+        fit_type : {'baseline', 'spectrum', '2d'}, default='baseline'
+            Which fit to read.
+
+        Returns
+        -------
+        ulmfit.MCMCResult
+            Bundle of ``table`` (posterior quantiles), ``flatchain``, and
+            ``acceptance_fraction``.
+
+        Raises
+        ------
+        ValueError
+            If the requested fit has not been performed, or had no MCMC step.
+        """
+
+        model = self._result_model(fit_type)
+        emcee_fin = model.result[3]
+        if emcee_fin is None:
+            raise ValueError(
+                f"No MCMC results for the {fit_type} fit. Re-run with "
+                "mc_settings=MC(use_mc=1, ...)."
+            )
+        return ulmfit.MCMCResult(
+            table=model.result[4],
+            flatchain=emcee_fin.flatchain,
+            acceptance_fraction=np.asarray(emcee_fin.acceptance_fraction),
         )
 
     #

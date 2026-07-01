@@ -43,6 +43,13 @@ repos:
     types: [jupyter]
     stages: [pre-commit]
 
+  - id: nbformat-normalize
+    name: nbformat (normalize cell sources to lists)
+    entry: .venv/bin/python scripts/normalize_notebooks.py
+    language: system
+    types: [jupyter]
+    stages: [pre-commit]
+
   - id: deptry
     name: deptry
     entry: .venv/bin/deptry .

@@ -449,7 +449,7 @@ def fit_wrapper(
     par_names: list[str],
     par: Any,
     stages: int,
-    sigmas: list[float] | None = None,
+    ci_sigmas: list[float] | None = None,
     try_ci: int = 1,
     mc_settings: ulmfit.MC | None = None,
     fit_alg_1: str = "Nelder",
@@ -496,8 +496,10 @@ def fit_wrapper(
         - 1: Single optimization with ``fit_alg_1``
         - 2: Two-stage fit (``fit_alg_1`` then ``fit_alg_2``)
 
-    sigmas : list of int or float, default=[1,2,3]
-        Confidence levels for CI and MCMC (e.g., [1,2,3] for 1σ, 2σ, 3σ)
+    ci_sigmas : list of int or float, default=[1,2,3]
+        Confidence levels in σ units for CI and MCMC quantile tables
+        (e.g., [1,2,3] for 1σ, 2σ, 3σ). Not the data noise σ — that is
+        ``File.set_sigma()`` / ``sigma_data``.
     try_ci : {0, 1}, default=1
         Confidence interval estimation:
 
@@ -565,7 +567,9 @@ def fit_wrapper(
         - **emcee_fin** (*lmfit.MinimizerResult or []*) -- MCMC result
           from lmfit.emcee. Empty list if MCMC not used.
         - **emcee_ci** (*pd.DataFrame*) -- MCMC confidence intervals
-          from quantiles of flatchain. Same column structure as conf_ci.
+          from quantiles of flatchain. Same column structure as conf_ci;
+          one row per sampled parameter (varying model params + the
+          ``__lnsigma`` nuisance), fixed parameters excluded.
           Empty DataFrame if MCMC not used.
 
     Examples
@@ -591,7 +595,7 @@ def fit_wrapper(
     ...     par=model.lmfit_pars,
     ...     stages=2,
     ...     try_ci=1,
-    ...     sigmas=[1, 2, 3],
+    ...     ci_sigmas=[1, 2, 3],
     ...     show_output=1,
     ...     save_output=1,
     ...     save_path='fit_results/baseline_fit'
@@ -642,8 +646,8 @@ def fit_wrapper(
     - PNG files: High-resolution plots for documentation
     """
 
-    if sigmas is None:
-        sigmas = [1.0, 2.0, 3.0]
+    if ci_sigmas is None:
+        ci_sigmas = [1.0, 2.0, 3.0]
     if mc_settings is None:
         mc_settings = ulmfit.MC()
 
@@ -700,16 +704,16 @@ def fit_wrapper(
     # (conf_interval and emcee)
     ci_cols = (
         ["par[v]/sigma[>]"]
-        + ["-" + str(sigma) for sigma in sigmas[::-1]]
+        + ["-" + str(sigma) for sigma in ci_sigmas[::-1]]
         + ["best fit"]
-        + ["+" + str(sigma) for sigma in sigmas]
+        + ["+" + str(sigma) for sigma in ci_sigmas]
     )
 
     # conf_interval (https://lmfit.github.io/lmfit-py/confidence.html)
     if try_ci == 1:
         if _result_errorbars(par_fin):
             ci_fin, _trace_fin = lmfit.conf_interval(
-                mini, par_fin, sigmas=sigmas, trace=True
+                mini, par_fin, sigmas=ci_sigmas, trace=True
             )
             if show_output >= 1:
                 print()
@@ -729,9 +733,17 @@ def fit_wrapper(
     # lmfit.emcee() [not a fit, it is a way to sample the parameter space!]
     if mc_settings.use_emcee == 1:
         t_emcee0 = time.time()
-        par_fin_params = _result_params(par_fin)
+        # deepcopy first: __lnsigma is an MCMC sampling construct, not a model
+        # parameter. _result_params returns the live par_fin.params (stored as
+        # result[1] and consumed downstream as the model-only fit result), so
+        # adding __lnsigma in place would leak it into every consumer of that
+        # result (display, get_fit_results, SbS tables). emcee gets the copy.
+        par_fin_params = copy.deepcopy(_result_params(par_fin))
         par_fin_params.add(
-            "__lnsigma", value=np.log(0.1), min=np.log(0.001), max=np.log(2)
+            "__lnsigma",
+            value=np.log(mc_settings.sigma_ini),
+            min=np.log(mc_settings.sigma_min),
+            max=np.log(mc_settings.sigma_max),
         )
         # always print progress bar
         print(
@@ -788,38 +800,38 @@ def fit_wrapper(
         )
         uplt._finalize_plot(emcee_save, f"{save_path}_emcee_corner_plot.png")
         # get percentage borders to categorize emcee.flatchain data
-        sigma_borders = sigma_start_stop_percent(sigmas)
-        # go through all combinations of parameters and sigmas to find
-        # lmfit.emcee() confidence intervals
+        sigma_borders = sigma_start_stop_percent(ci_sigmas)
+        # one row per sampled parameter (varying model params + the __lnsigma
+        # noise-scale nuisance). Fixed parameters have no posterior, so they
+        # get no row — mirroring lmfit.conf_interval, which only profiles
+        # varying parameters. (Emitting a placeholder row here would surface
+        # as real-looking quantiles through get_mcmc().table and the saved
+        # archive's mcmc.ci.)
+        sampled_names = [
+            par_name
+            for par_name in [*par_names, "__lnsigma"]
+            if par_name in emcee_var_names
+        ]
         emcee_ci_list = []  # initialize results
-        for par_name in [*par_names, "__lnsigma"]:
+        for par_name in sampled_names:
             emcee_par_ci: list[Any] = [par_name]  # initialize results for parameter
-            if par_name in emcee_var_names:
-                # get quantiles if fit parameter is variable
-                for sigma_b in sigma_borders:
-                    # get cutoff values that meet this sigma threshold (+/-)
-                    quantiles = np.percentile(emcee_flatchain[par_name], sigma_b)
-                    # lower threshold (0 is par_name)
-                    emcee_par_ci.insert(1, quantiles[0])
-                    # upper threshold
-                    emcee_par_ci.insert(len(emcee_par_ci), quantiles[1])
-            else:  # pass a list of "-1" (int) as confidence intervals
-                emcee_par_ci.extend(
-                    2
-                    * len(sigmas)
-                    * [
-                        -1,
-                    ]
-                )
+            for sigma_b in sigma_borders:
+                # get cutoff values that meet this sigma threshold (+/-)
+                quantiles = np.percentile(emcee_flatchain[par_name], sigma_b)
+                # lower threshold (0 is par_name)
+                emcee_par_ci.insert(1, quantiles[0])
+                # upper threshold
+                emcee_par_ci.insert(len(emcee_par_ci), quantiles[1])
             # append this line to list containing all parameters
             emcee_ci_list.append(emcee_par_ci)
-        # convert confidence interval cutoffs to a dataframe
-        # and add the "best fit result" in the middle
+        # convert confidence interval cutoffs to a dataframe and add the
+        # "best fit result" in the middle (aligned to sampled_names order)
         emcee_ci = pd.DataFrame(data=emcee_ci_list)
+        best_fit = emcee_fin_params.valuesdict()
         emcee_ci.insert(
-            loc=len(sigmas) + 1,
+            loc=len(ci_sigmas) + 1,
             column="bla",
-            value=list(emcee_fin_params.valuesdict().values()),
+            value=[best_fit[par_name] for par_name in sampled_names],
         )
         emcee_ci.columns = ci_cols
         if show_output >= 1:
@@ -894,7 +906,7 @@ def results_to_df(
     x: ArrayLike | None = None,
     index: ArrayLike | None = None,
     config: PlotConfig | None = None,
-    save_df: int = 0,
+    save_df: int = -2,
     save_path: PathLike = "",
     num_fmt: str = "%.6e",
     delim: str = ",",
@@ -917,14 +929,16 @@ def results_to_df(
         Index values (e.g., slice numbers). If provided, included as column.
     config : PlotConfig, optional
         Plot configuration. If None, uses defaults.
-    save_df : {-1, 0, 1}, default=0
-        Save outputs:
+    save_df : {-2, -1, 0, 1}, default=-2
+        Output mode (standard ``_finalize_plot`` convention):
 
-        - 0: Don't save
-        - 1: Save DataFrame and parameter plots
-        - -1: Same as 1
+        - -2: neither save nor show (do nothing)
+        - -1: save ``fit_pars.csv`` + parameter PNGs, do not display
+        - 0: display only (no files written)
+        - 1: save ``fit_pars.csv`` + parameter PNGs and display
 
-        When save_df != 0, plots only varied (not fixed) parameters
+        Only *varied* (not fixed) parameters are ever displayed; when saving,
+        every parameter PNG is written regardless of vary state.
     save_path : str or Path, default=''
         Directory path for saving files (not full filename) (created if not exists).
         Files saved: 'fit_pars.csv', '{param_name}.png' for each parameter
@@ -962,19 +976,31 @@ def results_to_df(
     df_par_fin_slice0 = ulmfit.par_to_df(
         lmfit_params=results[0][1].params, col_type="min"
     )
-    if save_df < 0:
-        # Silent/API mode should not display parameter-evolution figures.
-        save_array = len(df_par_fin_slice0["vary"]) * [-1]
-    else:
-        save_array = [-1 if not vary else 1 for vary in df_par_fin_slice0["vary"]]
+    # Map save_df onto per-parameter save_img flags using the standard
+    # convention (1 save+show, -1 save+close, 0 show only, -2 neither). Only
+    # varied parameters are ever shown; every parameter is saved when saving.
+    do_save = abs(save_df) == 1
+    do_show = save_df >= 0
+    save_array = []
+    for vary in df_par_fin_slice0["vary"]:
+        show_this = do_show and bool(vary)
+        if do_save and show_this:
+            save_array.append(1)
+        elif do_save:
+            save_array.append(-1)
+        elif show_this:
+            save_array.append(0)
+        else:
+            save_array.append(-2)
 
-    if save_df != 0:
+    if do_save:
         # save the dataframe (index, x axis, parameter1, parameter2, ...
         df.to_csv(
             pathlib.Path(save_path) / "fit_pars.csv",
             float_format=num_fmt,
             sep=delim,
         )
+    if do_save or do_show:
         # plot individual parameters as a function of time (s)
         plt_fit_res_pars(
             df=df.loc[:, list(cols_plt)],

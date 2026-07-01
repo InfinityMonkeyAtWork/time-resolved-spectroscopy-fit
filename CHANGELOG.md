@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [0.9.3] - 2026-06-29
+
+### Added
+
+- **Live uncertainty accessors.** New `File.get_correlations()`, `File.get_conf_intervals()`, and `File.get_mcmc()` read uncertainty results directly off `model.result`, so workflows no longer index raw `result[1..4]` tuples. `get_mcmc()` returns a `ulmfit.MCMCResult` dataclass exposing `.table` (best-fit + quantile CIs), `.flatchain` (for `corner.corner`), and `.acceptance_fraction`. These are live-only views of the most recent fit; persisting `correl` / `acceptance_fraction` into saved slots is deferred.
+- **MCMC noise-model controls.** `ulmfit.MC()` gains `sigma_ini` / `sigma_min` / `sigma_max` knobs that seed and bound the `__lnsigma` nuisance parameter sampled by `lmfit.emcee`, letting the noise level be estimated alongside the model parameters.
+
+### Changed
+
+- **Examples reorganized around user-workflow tracks.** The suite now progresses from basic fitting through model comparison, save/load/export, uncertainty analysis, and multi-file workflows, with clearer numbering and filenames. See `examples/fitting_workflows/README.md` for the legend and `docs/design/examples_upgrade.md` for the design.
+- **Basic and post-fit workflows split more cleanly.** `01_basic_fitting` now focuses on first-fit results (`get_fit_results` + plots); comparison, persistence/export, and uncertainty analysis live in dedicated follow-up notebooks (`10`–`12`).
+- **Multi-file independent fitting example added.** `20_multi_file_independent_fit` bridges single-file fitting and shared-parameter project fitting (`21_multi_file_shared_fit`).
+- Benchmark harness (`docs/ai/benchmark.md`, `.claude/skills/benchmark/benchmark_gir.py`) updated for the new example numbering: batch mode (`--example 0`) iterates examples 1–4; project-level fitting now lives at `21_multi_file_shared_fit` and remains outside the harness.
+- **MCMC quantile table / `mcmc.ci` no longer include fixed parameters.** `File.get_mcmc().table` and the persisted `mcmc.ci` previously emitted a `-1` sentinel row for every fixed parameter, which rendered as if it were a real quantile. The emcee CI build now iterates only sampled parameters (varying params + `__lnsigma`); fixed parameters get no row, mirroring `lmfit.conf_interval`. Old archives still load.
+- **Convolution-placement validation relaxed for single-component models.** The "convolution cannot be the last component" rule now applies only to multi-component models, so a conv-only global dynamics element (e.g. `['IRF', ...]` in `add_time_dependence`) is accepted as documented in `Dynamics.set_frequency`.
+- Plot-title time values are now formatted with a shared helper for consistent precision/units across fit plots; vertical axis labels and the Slice-by-Slice / 2D fit-result display were cleaned up.
+
+### Fixed
+
+- **`__lnsigma` leaked into the stored leastsq result after an MCMC fit.** `fit_wrapper` added the `__lnsigma` nuisance parameter to the live `par_fin.params` in place, so it persisted into `result[1]` (the leastsq result) after every MCMC run. The parameter set is now deep-copied before `__lnsigma` is added — emcee gets the copy, `result[1]` stays model-only. Was display-only (a spurious `__lnsigma` row in `display(result[1].params)` and `get_fit_results("sbs")`); metrics and save/export paths were already filtered.
+- **Slice-by-Slice parallelism (`n_workers > 1`) failed under `%run notebook.ipynb`** with a `BrokenProcessPool` — spawn workers re-ran the notebook JSON as `__main__` and died. `utils.sbs.sanitized_spawn_main()` now hides a non-`.py` `__main__.__file__` for the pool's lifetime so workers start from the installed model only.
+- **Non-numeric parameter values now raise a clear error.** Model-load value validation silently skipped its numeric/bounds checks when the first entry of a parameter info list was not an int/float, so a stray non-numeric scalar slipped past and failed cryptically downstream. It now raises `ModelValidationError` (hinting at the single-element `["expr"]` form for the expression case). Expressions are unaffected — they are exclusively the 1-element string form.
+
 ## [0.9.0] - 2026-05-27
 
 ### Added

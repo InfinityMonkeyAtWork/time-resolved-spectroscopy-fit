@@ -1,53 +1,40 @@
-# use these models to describe the energy-dependent data
-# (available functions info: /src/trspecfit/functions/energy.py)
+# Use these models to describe the energy-dependent data
+# For available functions see: /src/trspecfit/functions/energy.py
 
-# ground state (most parameters should be able to vary)
-base: 
+# Ground state (most parameters should be able to vary)
+# The two GLP peaks form a spin-orbit doublet (auto-numbered during model loading):
+# GLP_02 is fully derived from GLP_01 via expressions (no free parameters of its own).
+base:
     Offset:
       y0: [200, True, 0, 500]
     Shirley:
         pShirley: [4.0E-4, True, 1.0E-9, 1.0]
-    GLP:
+    GLP:                       # GLP_01 -- the fit-varying peak
       A: [200, True, 0, 1000]
       x0: [84.5, True, 82, 88]
       F: [1.0, True, 0.75, 2.5]
       m: [0.3, True, 0, 1]
-    GLP:
-      A: ["3/4*GLP_01_A"]
-      x0: ["GLP_01_x0 +3.6"]
-      F: ["GLP_01_F"]
-      m: ["GLP_01_m"]
+    GLP:                       # GLP_02 -- derived from GLP_01
+      A: ["3/4*GLP_01_A"]      # fixed intensity ratio (3:4)
+      x0: ["GLP_01_x0 + 3.67"] # fixed energy splitting (eV)
+      F: ["GLP_01_F"]          # shared width
+      m: ["GLP_01_m"]          # shared mixing
 
-# Slice-by-Slice model fit (pinned parameters will be set to "base" Model fit result values)
-SbS:
-    Offset:
-      y0: [50, False, 0, 1000]
-    Shirley:
-        pShirley: [8.0E-4, False, 1.0E-9, 1.0]
-    GLP:
-      A: [300, False, 0, 1000]
-      x0: [84.5, True, 82, 88]
-      F: [1.0, False, 0.75, 2.5]
-      m: [0.3, False, 0, 1]
-    GLP:
-      A: ["3/4*GLP_01_A"]
-      x0: ["GLP_01_x0 +3.6"]
-      F: ["GLP_01_F"]
-      m: ["GLP_01_m"]
-
-# 2D model fit (pinned parameters will be set to "base" Model fit result values)
+# 2D model fit (pinned parameters will be set to "base" Model fit result values).
+# Same linked doublet; add_time_dependence() attaches a time law to GLP_01_x0 and
+# GLP_02_x0 inherits it through its expression.
 2D:
     Offset:
       y0: [50, False, 0, 1000]
     Shirley:
         pShirley: [8.0E-4, False, 1.0E-9, 1.0]
-    GLP:
+    GLP:                       # GLP_01 -- position becomes time-dependent
       A: [300, False, 0, 1000]
       x0: [84.5, True, 82, 88]
       F: [1.0, False, 0.75, 2.5]
       m: [0.3, False, 0, 1]
-    GLP:
-      A: ["3/4*GLP_01_A"]
-      x0: ["GLP_01_x0 +3.6"]
-      F: ["GLP_01_F"]
-      m: ["GLP_01_m"]
+    GLP:                       # GLP_02 -- inherits GLP_01's dynamics via x0 expr
+      A: ["3/4*GLP_01_A"]      # fixed intensity ratio (3:4)
+      x0: ["GLP_01_x0 + 3.67"] # fixed energy splitting (eV)
+      F: ["GLP_01_F"]          # shared width
+      m: ["GLP_01_m"]          # shared mixing

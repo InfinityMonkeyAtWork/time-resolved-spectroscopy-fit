@@ -1,0 +1,24 @@
+# ground truth time models for data generation
+# Multi-cycle dynamics: ['IRF', 'MonoExpNeg', 'MonoExpPos'] at frequency=0.25,
+# i.e. a 4-unit period split into two 2-unit subcycles (after t = 0).
+
+# global element 0: Gaussian instrument response, convolves all time traces
+IRF:
+    gaussCONV:
+        SD: [0.15, True]
+
+# subcycle 1: negative shift, decays back to 0 on its local clock
+MonoExpNeg:
+    expFun:
+        A: [-2, True]
+        tau: [0.4, True]
+        t0: [0, True]
+        y0: [0, True]
+
+# subcycle 2: amplitude mirrors subcycle 1 via expression, tau independent
+MonoExpPos:
+    expFun:
+        A: ["-expFun_01_A"]
+        tau: [0.8, True]
+        t0: [0, True]
+        y0: [0, True]

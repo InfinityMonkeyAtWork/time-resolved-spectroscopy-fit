@@ -1,0 +1,65 @@
+# Energy models for the parameter-profiles example
+# (available functions: src/trspecfit/functions/energy.py)
+# parameters: [value, vary, min, max] or [value, vary] for fixed parameters
+#
+# Physical scenario: semiconductor XPS core level measured with time-resolved
+# XPS. The spectrum is a depth average — depth profiles are attached at
+# runtime with file.add_par_profile() (see models_profile.yaml):
+#   - GLP_01_A  gets the IMFP weighting profile (pExpDecay)
+#   - GLP_01_x0 gets the band bending profile (pLinear)
+#
+# Model naming:
+#   base          standard fit, no profiles (effective, depth-averaged values)
+#   profile_base  profile-aware baseline fit (recovers the physical values)
+#   SbS           Slice-by-Slice; everything pinned, only the band bending
+#                 gradient varies per slice (freed via the BandBending profile)
+#   2D            global 2D fit; band bending gradient becomes time-dependent
+
+# Standard baseline model — no depth profiles. Fitting the depth-averaged
+# spectrum with a plain peak yields *effective* A and x0, not the surface
+# values. Used for comparison with profile_base.
+base:
+    Offset:
+        y0: [0.5, True, 0, 3]
+    GLP:
+        A:  [10, True, 1, 100]      # effective (depth-averaged) amplitude
+        x0: [99, True, 97, 102]     # effective (depth-averaged) position
+        F:  [1.2, True, 0.5, 5]     # FWHM (eV)
+        m:  [0.3, True, 0, 1]       # Lorentzian fraction
+
+# Profile-aware baseline model.
+# A = 0 (fixed): the IMFP profile provides the full depth-integrated amplitude.
+# x0 is the *surface* binding energy; the band bending profile adds the
+# depth-dependent shift.
+profile_base:
+    Offset:
+        y0: [0.5, True, 0, 3]
+    GLP:
+        A:  [0, False]              # IMFP profile handles the amplitude
+        x0: [99, True, 97, 102]     # surface binding energy
+        F:  [1.2, True, 0.5, 5]
+        m:  [0.3, True, 0, 1]
+
+# Slice-by-Slice model: all energy parameters pinned to the profile_base fit
+# results. The only free parameter per slice is the band bending gradient,
+# freed via the attached BandBending profile (models_profile.yaml).
+SbS:
+    Offset:
+        y0: [0.5, False]
+    GLP:
+        A:  [0, False]
+        x0: [99, False]
+        F:  [1.2, False]
+        m:  [0.3, False]
+
+# Global 2D model: same pinning as SbS; the band bending gradient gets the
+# BandBendingRecovery time dependence (models_time.yaml) on top of its
+# pinned equilibrium value.
+2D:
+    Offset:
+        y0: [0.5, False]
+    GLP:
+        A:  [0, False]
+        x0: [99, True, 97, 102]
+        F:  [1.2, False]
+        m:  [0.3, False]

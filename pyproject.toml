@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trspecfit"
-version = "0.9.0"
+version = "0.9.3"
 authors = [
     {name = "Johannes Mahl", email = "johannes.a.mahl@gmail.com"},
 ]
@@ -54,6 +54,7 @@ dev = [
   "pre-commit",
   "deptry",
   "mypy",
+  "nbformat",      # used by scripts/normalize_notebooks.py (pre-commit hook)
   "nbstripout",
   "pytest",
   "pyright",
@@ -127,11 +128,17 @@ pep621_dev_dependency_groups = ["dev"]
 # py-spy is a CLI tool invoked via shell (see benchmark skill), not imported
 [tool.deptry.per_rule_ignores]
 DEP002 = [
-  "numdifftools", 
-  "emcee", 
-  "tqdm", 
-  "ipykernel", 
-  "jupyterlab", 
-  "graphviz", 
+  "numdifftools",
+  "emcee",
+  "tqdm",
+  "ipykernel",
+  "jupyterlab",
+  "graphviz",
   "py-spy",
+]
+# scripts/normalize_notebooks.py is dev-only tooling (pre-commit hook),
+# so its dev-dep imports are intentional. deptry treats anything outside
+# tests/ as runtime code by default and has no "dev source dir" knob.
+DEP004 = [
+  "nbformat",
 ]
