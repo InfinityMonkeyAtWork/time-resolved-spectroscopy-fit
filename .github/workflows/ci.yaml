@@ -18,12 +18,12 @@ jobs:
     continue-on-error: ${{ matrix.python-version != '3.12' }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
           fetch-depth: 1
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -56,3 +56,41 @@ jobs:
 
       - name: Check package metadata
         run: .venv/bin/twine check dist/*
+
+  # Verify the declared lower bounds in [project.dependencies] stay true instead
+  # of aspirational. Runs on the lowest supported Python (the floors are the
+  # first releases with cp312 wheels, so they neither install nor mean anything
+  # on 3.13/3.14 — that axis is covered by the `checks` matrix at latest deps).
+  min-versions:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Pin direct deps to their floors
+        # uv reads the floors straight from pyproject (single source of truth)
+        # and pins each DIRECT dep to its lowest version; --no-deps keeps
+        # transitive deps out of the constraints file so pip resolves those
+        # itself below — mirroring a user whose direct deps sit at our floors.
+        run: |
+          python -m pip install uv==0.11.27  # bump alongside the [dev] pins
+          uv pip compile --resolution lowest-direct --no-deps \
+            -o min-constraints.txt pyproject.toml
+          cat min-constraints.txt
+
+      - name: Install with pip (pip resolves the transitive graph)
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -c min-constraints.txt -e ".[dev]"
+
+      - name: Run tests
+        run: .venv/bin/pytest -q -m ""

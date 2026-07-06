@@ -33,34 +33,39 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 
+# Lower bounds are "supports Python >=3.12" floors, validated by the
+# min-versions CI job (pins these floors, lets pip resolve the transitive graph,
+# then runs the suite). Raise a floor when code starts relying on a newer API.
 dependencies = [
-	"lmfit",
-	"asteval",
-	"numdifftools",
-	"emcee",
-	"tqdm",
-	"corner",
-	"numpy",
-	"pandas",
-	"scipy",
-	"ruamel.yaml",
-	"h5py",
-	"ipython",
-	"matplotlib",
+	"lmfit>=1.2",
+	"asteval>=1.0",
+	"numdifftools>=0.9.41",
+	"emcee>=3.1",
+	"tqdm>=4.66",
+	"corner>=2.2",
+	"numpy>=1.26",
+	"pandas>=2.1.1",
+	"scipy>=1.11.2",
+	"ruamel.yaml>=0.18",
+	"h5py>=3.10",
+	"ipython>=8.18",
+	"matplotlib>=3.8",
 ]
 
 [project.optional-dependencies]
+# NB: the min-versions CI job pins uv (see .github/workflows/ci.yaml) — bump it
+# alongside these dev pins.
 dev = [
-  "pre-commit",
-  "deptry",
-  "mypy",
-  "nbformat",      # used by scripts/normalize_notebooks.py (pre-commit hook)
-  "nbstripout",
-  "pytest",
-  "pyright",
-  "ruff",
-  "build",
-  "twine",
+  "pre-commit==4.6.0",
+  "deptry==0.25.1",
+  "mypy==2.1.0",
+  "nbformat==5.10.4",      # used by scripts/normalize_notebooks.py (pre-commit hook)
+  "nbstripout==0.9.1",
+  "pytest==9.1.1",
+  "pyright==1.1.411",
+  "ruff==0.15.20",
+  "build==1.5.0",
+  "twine==6.2.0",
 ]
 
 # Optional notebook/visualization support
@@ -122,7 +127,7 @@ ignore = ["C901"]
 [tool.deptry]
 known_first_party = ["trspecfit"]
 ignore_notebooks = true
-pep621_dev_dependency_groups = ["dev"]
+optional_dependencies_dev_groups = ["dev"]
 # confidence interval estimation needs to work with standard install
 # keep these as runtime deps even though used indirectly via lmfit
 # py-spy is a CLI tool invoked via shell (see benchmark skill), not imported
