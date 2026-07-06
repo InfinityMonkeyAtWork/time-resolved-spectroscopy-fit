@@ -428,6 +428,125 @@ def capture_plan_time(example_num):
 
 
 # ------------------------------------------------------------------
+# Parameter variability (fit robustness vs. perturbed initial guesses)
+# ------------------------------------------------------------------
+
+
+#
+def capture_par_variability(example_num, *, n_starts=4):
+    """Run the standard pipeline from perturbed initial guesses.
+
+    Runs the baseline + fit_2d pipeline once from the example's own
+    initial values (reference) and ``n_starts`` more times with every
+    free parameter's init scaled by a fixed factor ladder, clipped
+    into bounds. Deterministic by construction -- no RNG -- so
+    repeated invocations give identical numbers.
+
+    This is a diagnostic (robustness report), not a pass/fail test:
+    a parameter whose fitted value depends on its start indicates a
+    shallow or multi-modal objective, or init-dependent machinery
+    (e.g. conv-kernel support sized from the initial value).
+    """
+
+    ladder = [0.6, 0.8, 1.25, 1.6]
+    fitted_runs = []
+    labels = []
+    redchis = []
+
+    for run in range(n_starts + 1):
+        file, dynamics_calls = load_example(example_num, add_dynamics=False)
+        file.define_baseline(
+            time_start=0, time_stop=10, time_type="ind", show_plot=False
+        )
+        file.fit_baseline(model_name="2D", stages=2, try_ci=0)
+        for call in dynamics_calls:
+            file.add_time_dependence(**call)
+
+        model = file.model_active
+        assert model is not None
+        free_names = [
+            name for name, par in model.lmfit_pars.items() if par.vary and not par.expr
+        ]
+
+        label = "reference" if run == 0 else f"start {run}"
+        if run > 0:
+            for i, name in enumerate(free_names):
+                par = model.lmfit_pars[name]
+                factor = ladder[(i + run - 1) % len(ladder)]
+                value = par.value * factor
+                if abs(par.value) < 1e-12:
+                    # multiplicative perturbation is a no-op at 0; nudge
+                    # by a fraction of the bound range when available
+                    if np.isfinite(par.min) and np.isfinite(par.max):
+                        value = par.value + 0.1 * (par.max - par.min)
+                    else:
+                        continue
+                if np.isfinite(par.min) and np.isfinite(par.max):
+                    span = par.max - par.min
+                    value = min(
+                        max(value, par.min + 0.01 * span),
+                        par.max - 0.01 * span,
+                    )
+                elif value <= par.min or value >= par.max:
+                    continue  # would leave bounds; keep original init
+                par.value = value
+
+        t0 = time.perf_counter()
+        file.fit_2d(model_name="2D", stages=2, try_ci=0)
+        wall = time.perf_counter() - t0
+
+        df = file.get_fit_results(fit_type="2d")
+        fitted = dict(zip(df["name"], df["value"], strict=True))
+        fitted_runs.append({name: fitted[name] for name in free_names})
+
+        try:
+            redchi = model.result[1].redchi
+        except (AttributeError, IndexError, TypeError):
+            redchi = float("nan")
+        labels.append(label)
+        redchis.append(redchi)
+        print(f"  {label:12s} redchi={redchi:10.4g}  wall={wall:6.2f} s")
+
+    # Separate the two failure signals: a run that converged to a worse
+    # optimum (secondary minimum) vs. spread among runs that reached the
+    # best optimum (identifiability / init-dependent machinery).
+    redchi_arr = np.array(redchis)
+    best_redchi = np.nanmin(redchi_arr)
+    ok_idx = [
+        i
+        for i in range(len(redchis))
+        if np.isfinite(redchi_arr[i]) and redchi_arr[i] <= best_redchi * 1.01
+    ]
+    off_idx = [i for i in range(len(redchis)) if i not in ok_idx]
+
+    print()
+    if off_idx:
+        off_str = ", ".join(f"{labels[i]} (redchi {redchis[i]:.4g})" for i in off_idx)
+        print(f"  off-optimum runs (excluded from spread): {off_str}")
+    print(f"  {'parameter':32s}{'reference':>12s}{'spread':>12s}{'rel':>8s}")
+    worst_rel = 0.0
+    worst_name = "-"
+    for name in fitted_runs[0]:
+        values = np.array([fitted_runs[i][name] for i in ok_idx])
+        spread = float(values.max() - values.min())
+        scale = max(abs(float(values.mean())), 1e-300)
+        rel = spread / scale
+        if rel > worst_rel:
+            worst_rel, worst_name = rel, name
+        flag = "  <-- start-sensitive" if rel > 0.01 else ""
+        print(
+            f"  {name:32s}{fitted_runs[0][name]:12.6g}{spread:12.3g}"
+            f"{rel * 100:7.2f}%{flag}"
+        )
+    print()
+    print(
+        f"  {len(ok_idx)}/{len(redchis)} runs at best optimum; "
+        f"worst spread among them: {worst_name} ({worst_rel * 100:.2f}%)"
+    )
+    return worst_rel, worst_name, len(off_idx)
+
+
+# ------------------------------------------------------------------
 # Full-fit benchmark
 # ------------------------------------------------------------------
 
@@ -536,11 +655,29 @@ if __name__ == "__main__":
             "wall time. If --example is 0, runs all examples."
         ),
     )
+    parser.add_argument(
+        "--par-variability",
+        action="store_true",
+        help=(
+            "Fit from deterministically perturbed initial guesses and "
+            "report the spread of fitted values across starts (no RNG, "
+            "reproducible). --starts controls the number of perturbed "
+            "starts. If --example is 0, runs all examples."
+        ),
+    )
+    parser.add_argument(
+        "--starts",
+        type=int,
+        default=4,
+        help="Perturbed starts for --par-variability (default: 4)",
+    )
     args = parser.parse_args()
 
-    # --nfev / --plan-time with example 0 means "all examples"; skip the
+    # Multi-example modes with example 0 mean "all examples"; skip the
     # single-example preamble so the capture fn can load each one itself.
-    skip_preamble = (args.nfev or args.plan_time) and args.example == 0
+    skip_preamble = (
+        args.nfev or args.plan_time or args.par_variability
+    ) and args.example == 0
     if not skip_preamble:
         folder = _find_example_folder(args.example)
         print(f"Example: {folder.name}")
@@ -615,6 +752,36 @@ if __name__ == "__main__":
             print(f"PLAN-TIME CAPTURE -- example {args.example:02d}")
             print("=" * 60)
             capture_plan_time(args.example)
+    elif args.par_variability:
+        if args.example == 0:
+            summaries: dict[int, str] = {}
+            for n in range(1, 5):
+                print()
+                print("=" * 60)
+                print(f"PARAMETER VARIABILITY -- example {n:02d}")
+                print("=" * 60)
+                try:
+                    worst_rel, worst_name, n_off = capture_par_variability(
+                        n, n_starts=args.starts
+                    )
+                    summaries[n] = (
+                        f"worst {worst_rel * 100:6.2f}%  ({worst_name})"
+                        f"{f'  [{n_off} off-optimum]' if n_off else ''}"
+                    )
+                except FileNotFoundError as e:
+                    print(f"  skipped: {e}")
+                    summaries[n] = "skipped"
+            print()
+            print("=" * 60)
+            print("PARAMETER VARIABILITY SUMMARY")
+            for n, summary_str in summaries.items():
+                print(f"  example {n:02d}:  {summary_str}")
+            print("=" * 60)
+        else:
+            print("=" * 60)
+            print(f"PARAMETER VARIABILITY -- example {args.example:02d}")
+            print("=" * 60)
+            capture_par_variability(args.example, n_starts=args.starts)
     else:
         bench_per_call(file, n_calls=args.calls)
 

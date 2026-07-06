@@ -41,6 +41,8 @@ Parse the arguments:
 - First positional integer -> `--example N` (default: `2`)
 - `--fit` -> include full-fit benchmark
 - `-n N` -> fit repetitions (default: `3`)
+- `--par-variability` -> fit-robustness report (see below); `--starts N` sets
+  the number of perturbed starts (default: `4`)
 
 Run:
 
@@ -70,6 +72,35 @@ table at the end.
 ```bash
 .venv/bin/python .claude/skills/benchmark/benchmark_gir.py --example <N> --nfev
 .venv/bin/python .claude/skills/benchmark/benchmark_gir.py --example <N> --plan-time
+```
+
+## Parameter variability (fit robustness vs. initial guesses)
+
+`--par-variability` runs the baseline + `fit_2d` pipeline once from the
+example's own initial values (reference) and `--starts` more times (default 4)
+with every free parameter's init scaled by a fixed factor ladder
+(x0.6 / x0.8 / x1.25 / x1.6, clipped into bounds). No RNG — repeated
+invocations give identical numbers.
+
+The report separates the two failure signals:
+
+- **off-optimum runs** — a start that converged to a worse redchi (secondary
+  minimum). Excluded from the spread statistics and listed separately.
+- **spread among best-optimum runs** — fitted-value spread across starts that
+  reached the same optimum. Nonzero spread here indicates a flat objective
+  direction (the parameter is not identifiable from the data) or
+  init-dependent machinery: state derived once from initial parameter values
+  and never rebuilt during the fit, such as a convolution-kernel support.
+  Parameters above 1% relative spread are flagged `start-sensitive`.
+
+This is a diagnostic, not a pass/fail test — it deliberately lives here rather
+than in the pytest suite, where perturbed-start convergence asserts would be
+either weak (tiny perturbations) or flaky (aggressive ones). Accepts
+`--example 0` for an all-examples summary.
+
+```bash
+.venv/bin/python .claude/skills/benchmark/benchmark_gir.py --example <N> --par-variability
+.venv/bin/python .claude/skills/benchmark/benchmark_gir.py --example 0 --par-variability --starts 6
 ```
 
 ## Profiling (GIR path only)
