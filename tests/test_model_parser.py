@@ -215,7 +215,6 @@ class TestTimeParsing:
         assert model.components[0].par_dict["A"] == [1, True, 0, 5]
         assert model.components[0].par_dict["tau"] == [2.5, True, 1, 10]
         assert model.components[0].par_dict["t0"] == [0, False, 0, 1]
-        assert model.components[0].par_dict["y0"] == [0, False, 0, 1]
 
     #
     def test_IRF_model(self):
@@ -239,7 +238,6 @@ class TestTimeParsing:
         assert model.components[1].par_dict["A"] == [1, True, 0, 5]
         assert model.components[1].par_dict["tau"] == [2.5, True, 1, 10]
         assert model.components[1].par_dict["t0"] == [0, False, 0, 1]
-        assert model.components[1].par_dict["y0"] == [0, False, 0, 1]
 
     #
     def test_multi_cycle_expression_model(self):
@@ -271,7 +269,6 @@ class TestTimeParsing:
         assert model.components[2].par_dict["A"] == ["-expFun_01_A"]
         assert model.components[2].par_dict["tau"] == ["expFun_01_tau"]
         assert model.components[2].par_dict["t0"] == [0, False, 0, 1]
-        assert model.components[2].par_dict["y0"] == [0, False, 0, 1]
 
         # Check lmfit parameters exist with prefixed names
         assert "parTEST_expFun_01_A" in model.lmfit_pars
@@ -351,7 +348,6 @@ class Test2DModelParsing:
         assert td_par_model.components[1].par_dict["A"] == [1, True, 0, 5]
         assert td_par_model.components[1].par_dict["tau"] == [2.5, True, 1, 10]
         assert td_par_model.components[1].par_dict["t0"] == [0, False, 0, 1]
-        assert td_par_model.components[1].par_dict["y0"] == [0, False, 0, 1]
         # end of time-dependent parameter model
         assert model.components[2].par_dict["F"] == [1.0, True, 0.75, 2.5]
         assert model.components[2].par_dict["m"] == [0.3, True, 0, 1]

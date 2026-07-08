@@ -1,7 +1,7 @@
 ---
 name: benchmark
-description: 'Benchmark GIR compiled evaluator vs interpreter. Args: example number (default: 2), `--fit` for full fit, `-n N` for repetitions, `--nfev` for residual-evaluation counts, `--plan-time` for planning vs fit wall time.'
-argument-hint: '[example_num] [--fit] [-n N] [--nfev] [--plan-time]'
+description: 'Benchmark GIR compiled evaluator vs interpreter. Args: example number (default: 2), `--fit` for full fit, `-n N` for repetitions, `--nfev` for residual-evaluation counts, `--plan-time` for planning vs fit wall time, `--par-variability` for fit robustness vs perturbed initial guesses (`--starts N`).'
+argument-hint: '[example_num] [--fit] [-n N] [--nfev] [--plan-time] [--par-variability] [--starts N]'
 disable-model-invocation: true
 allowed-tools: Bash(.venv/bin/python .claude/skills/benchmark/benchmark_gir.py *)
 ---
@@ -11,6 +11,6 @@ source of truth for this skill.
 
 Pass through the user's optional benchmark arguments unchanged:
 
-- `[example_num] [--fit] [-n N] [--nfev] [--plan-time]`
+- `[example_num] [--fit] [-n N] [--nfev] [--plan-time] [--par-variability] [--starts N]`
 
 When this wrapper and the shared doc differ, follow the shared doc.

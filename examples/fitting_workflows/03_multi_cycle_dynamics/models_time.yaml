@@ -12,13 +12,12 @@ IRF:
         SD: [0.1, True, 0, 1]
 
 # Subcycle 1: negative exponential shift, relaxing back to 0.
-# t0/y0 are on the subcycle's local clock, which resets at each subcycle start.
+# t0 is on the subcycle's local clock, which resets at each subcycle start.
 MonoExpNeg:
     expFun:
         A: [-1.5, True, -5, -1E-3]
         tau: [1, True, 0.05, 5]
         t0: [0, False]
-        y0: [0, False]
 
 # Subcycle 2: amplitude mirrors subcycle 1 via an expression (no extra free
 # parameter), while tau is fit independently — expressions work across
@@ -28,4 +27,3 @@ MonoExpPos:
         A: ["-expFun_01_A"]
         tau: [1, True, 0.05, 5]
         t0: [0, False]
-        y0: [0, False]

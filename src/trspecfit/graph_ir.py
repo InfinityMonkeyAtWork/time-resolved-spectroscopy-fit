@@ -128,6 +128,7 @@ class DynFuncKind(IntEnum):
     SINDIVX = 3
     ERFFUN = 4
     SQRTFUN = 5
+    STEPFUN = 6
 
 
 #
@@ -157,6 +158,7 @@ _FUNCTION_NAME_TO_DYN_FUNC: dict[str, DynFuncKind] = {
     "sinDivX": DynFuncKind.SINDIVX,
     "erfFun": DynFuncKind.ERFFUN,
     "sqrtFun": DynFuncKind.SQRTFUN,
+    "stepFun": DynFuncKind.STEPFUN,
 }
 
 _FUNCTION_NAME_TO_PROFILE_FUNC: dict[str, ProfileFuncKind] = {
@@ -2894,6 +2896,7 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         int(DynFuncKind.SINDIVX): fcts_time.sinDivX,
         int(DynFuncKind.ERFFUN): fcts_time.erfFun,
         int(DynFuncKind.SQRTFUN): fcts_time.sqrtFun,
+        int(DynFuncKind.STEPFUN): fcts_time.stepFun,
     }
 
     _CONV_KERNEL_DISPATCH: dict[int, Callable[..., Any]] = {

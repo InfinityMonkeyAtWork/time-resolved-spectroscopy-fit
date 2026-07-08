@@ -19,12 +19,11 @@ IRF:
         SD: [5.0E-2, True, 0, 1]
              
 MonoExpPos:
-    # expFun(t, A, tau, t0, y0)
+    # expFun(t, A, tau, t0)
     expFun:
         A: [1, True, 0, 5]
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
 
 # stronger amplitude for profile round-trip tests (~20% modulation)
 MonoExpPosStrong:
@@ -32,15 +31,55 @@ MonoExpPosStrong:
         A: [2, True, 0, 10]
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
 
 MonoExpNeg:
-    # expFun(t, A, tau, t0, y0)
+    # expFun(t, A, tau, t0)
     expFun:
         A: [-1, True, -5, 0]
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
+
+MonoStep:
+    # stepFun(t, A, t0)
+    stepFun:
+        A: [1.5, True, 0, 5]
+        t0: [0, False, 0, 1]
+
+MonoSin:
+    # sinFun(t, A, f, phi, t0)
+    # phi initialized nonzero (with t0=0) so a phi/t0 ordering bug in the
+    # lowered path diverges from the interpreter even at initial theta.
+    sinFun:
+        A: [1, True, 0, 5]
+        f: [0.05, True, 0.01, 0.2]
+        phi: [0.3, True, -3.15, 3.15]
+        t0: [0, False, 0, 1]
+
+MonoLin:
+    # linFun(t, m, t0)
+    linFun:
+        m: [0.02, True, -1, 1]
+        t0: [0, False, 0, 1]
+
+MonoSinDivX:
+    # sinDivX(t, A, f, t0)
+    sinDivX:
+        A: [1, True, 0, 5]
+        f: [0.05, True, 0.01, 0.2]
+        t0: [0, False, 0, 1]
+
+MonoErf:
+    # erfFun(t, A, SD, t0)
+    erfFun:
+        A: [1, True, 0, 5]
+        SD: [5, True, 1, 20]
+        t0: [20, False, 0, 50]
+
+MonoSqrt:
+    # sqrtFun(t, A, t0)
+    sqrtFun:
+        A: [0.2, True, 0, 5]
+        t0: [0, False, 0, 1]
 
 MonoExpPosIRF:
     gaussCONV:
@@ -49,7 +88,6 @@ MonoExpPosIRF:
         A: [1, True, 0, 5]
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
 
 MonoExpPosLorentzIRF:
     lorentzCONV:
@@ -58,7 +96,6 @@ MonoExpPosLorentzIRF:
         A: [1, True, 0, 5]
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
 
 MonoExpPosVoigtIRF:
     voigtCONV:
@@ -68,7 +105,6 @@ MonoExpPosVoigtIRF:
         A: [1, True, 0, 5]
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
 
 MonoExpPosExpSymIRF:
     expSymCONV:
@@ -77,7 +113,6 @@ MonoExpPosExpSymIRF:
         A: [1, True, 0, 5]
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
 
 MonoExpPosExpDecayIRF:
     expDecayCONV:
@@ -86,7 +121,6 @@ MonoExpPosExpDecayIRF:
         A: [1, True, 0, 5]
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
 
 MonoExpPosExpRiseIRF:
     expRiseCONV:
@@ -95,7 +129,6 @@ MonoExpPosExpRiseIRF:
         A: [1, True, 0, 5]
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
 
 MonoExpPosBoxIRF:
     boxCONV:
@@ -104,7 +137,6 @@ MonoExpPosBoxIRF:
         A: [1, True, 0, 5]
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
 
 # Empty subcycle placeholder (applies to all times in multi-cycle)
 ModelNone:
@@ -118,7 +150,6 @@ MonoExpPosExpr:
         A: ["-expFun_01_A"]
         tau: ["expFun_01_tau"]
         t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
 
 # Bi-exponential: two expFun, second shares t0 with first via expression.
 # Single-cycle, no convolution -- fully lowerable.
@@ -127,12 +158,10 @@ BiExpSharedT0:
         A: [3, True, 0, 10]
         tau: [5, True, 1, 20]
         t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
     expFun:
         A: [-1, True, -5, 0]
         tau: [20, True, 5, 50]
         t0: ["expFun_01_t0"]
-        y0: [0, False, 0, 1]
 
 # convolution as last component (should fail ordering validation)
 conv_last:
@@ -140,6 +169,5 @@ conv_last:
         A: [1, True, 0, 5]
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
     gaussCONV:
         SD: [5.0E-2, True, 0, 1]

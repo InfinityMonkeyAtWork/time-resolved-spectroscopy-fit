@@ -8,4 +8,3 @@ MonoExpIRF:
         A: [5, True, 0, 15]
         tau: [10, True, 1, 100]
         t0: [0, False]
-        y0: [0, False]

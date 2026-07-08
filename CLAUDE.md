@@ -5,6 +5,7 @@
 - **Token Efficiency:** Be concise. Reference file paths and line numbers rather than quoting large code blocks.
 - **Subagent Protocol:** Use subagents for repo-wide scans, parallel research, or scanning large directories. Instruct them to return only concise summaries to keep the main context window lean.
 - **Guardrails:** Use this file for coding guardrails; heavier review checklists live in `docs/ai/code-review.md`.
+- **Task recipes & skills:** Common repo tasks have step-by-step recipes in `docs/ai/*.md` (add-function, changelog, check-docs, check-example, benchmark, bump-versions, code-review), each mirrored by a thin `/`-invokable wrapper in `.claude/skills/` whose source of truth is the `docs/ai` file. Most set `disable-model-invocation: true`, so they will NOT appear in an agent's auto-invoke list—before hand-rolling one of these tasks, consult the matching `docs/ai` recipe directly.
 - **Renaming / API changes:** grep the entire repo—notebooks, YAML, tests, and docs all reference the public API.
 
 

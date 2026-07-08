@@ -14,4 +14,3 @@ BandBendingRecovery:
         A: [0.5, True]
         tau: [100, True]
         t0: [0, True]
-        y0: [0, True]

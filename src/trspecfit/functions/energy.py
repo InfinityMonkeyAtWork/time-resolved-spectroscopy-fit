@@ -255,7 +255,7 @@ def Voigt(x: np.ndarray, A: float, x0: float, SD: float, W: float) -> np.ndarray
     x : ndarray
         Energy axis
     A : float
-        Peak amplitude (maximum value, approximately, for narrow peaks)
+        Peak amplitude (maximum value, at x = x0)
     x0 : float
         Peak center position
     SD : float
@@ -270,8 +270,9 @@ def Voigt(x: np.ndarray, A: float, x0: float, SD: float, W: float) -> np.ndarray
     """
 
     voigt = np.real(wofz(((x - x0) + 1j * (W / 2)) / SD / np.sqrt(2)))
-    max_voigt = np.max(voigt, axis=-1, keepdims=True)
-    return np.asarray(A * voigt / max_voigt)
+    # analytic peak value (profile at x = x0), keeps A grid-independent
+    peak_voigt = np.real(wofz(1j * (W / 2) / SD / np.sqrt(2)))
+    return np.asarray(A * voigt / peak_voigt)
 
 
 #
@@ -295,6 +296,8 @@ def GLS(x: np.ndarray, A: float, x0: float, F: float, m: float) -> np.ndarray:
         - m = 1: Pure Lorentzian
         - 0 < m < 1: Weighted mixture
         Typical value: m ≈ 0.3
+        Keep m in [0, 1] (set parameter bounds accordingly); values
+        outside give negative mixture weights and unphysical shapes.
 
     Returns
     -------
@@ -327,6 +330,8 @@ def GLP(x: np.ndarray, A: float, x0: float, F: float, m: float) -> np.ndarray:
         - m = 1: Pure Lorentzian
         - 0 < m < 1: Hybrid shape
         Typical value: m ≈ 0.3
+        Keep m in [0, 1] (set parameter bounds accordingly); m < 0 makes
+        the denominator 1 + 4*m*u² cross zero, producing NaN/inf.
 
     Returns
     -------
@@ -359,6 +364,8 @@ def DS(x: np.ndarray, A: float, x0: float, F: float, alpha: float) -> np.ndarray
         - 0 < alpha < 0.3: Typical for metals (e.g., Al: 0.10-0.15)
         - Larger alpha: Stronger asymmetry, more pronounced tail
         - Range: typically 0-0.5 for physical systems
+        The asymmetric tail extends toward x < x0, correct for a
+        kinetic-energy axis; on a binding-energy axis it appears mirrored.
 
     Returns
     -------

@@ -249,6 +249,49 @@ class TestDynamicModels:
         F_idx = plan.opt_param_names.index("GLP_01_F")
         _perturb_theta(plan, model, theta, [A_idx, F_idx], [5.0, 0.3])
 
+    # Per-function parity for every non-expFun dynamics driver: each must
+    # match MCP at initial theta AND under perturbation of its params.
+    # expFun is already exercised pervasively via MonoExpPos; this list
+    # covers the remaining DynFuncKind enum/dispatch entries and their
+    # param counts (all decremented when y0 was removed). Perturbing more
+    # than one param where available also catches param-order bugs.
+    _DYN_DRIVER_PARITY_CASES = [
+        ("MonoStep", [("stepFun_01_A", 1.0)]),
+        (
+            "MonoSin",
+            [("sinFun_01_A", 0.5), ("sinFun_01_f", 0.02), ("sinFun_01_phi", 0.1)],
+        ),
+        ("MonoLin", [("linFun_01_m", 0.01)]),
+        ("MonoSinDivX", [("sinDivX_01_A", 0.5), ("sinDivX_01_f", 0.02)]),
+        ("MonoErf", [("erfFun_01_A", 0.5), ("erfFun_01_SD", 1.0)]),
+        ("MonoSqrt", [("sqrtFun_01_A", 0.1)]),
+    ]
+
+    #
+    @pytest.mark.parametrize(
+        ("dyn_model", "param_perturbations"),
+        _DYN_DRIVER_PARITY_CASES,
+        ids=[c[0] for c in _DYN_DRIVER_PARITY_CASES],
+    )
+    def test_dynamics_driver_parity(self, dyn_model, param_perturbations):
+        """evaluate_2d == interpreter for every lowerable dynamics driver."""
+
+        _file, model = _make_2d_model(
+            ["glp_only"],
+            [("GLP_01_A", [dyn_model])],
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+        perturb_idx = [
+            plan.opt_param_names.index(f"GLP_01_A_{suffix}")
+            for suffix, _ in param_perturbations
+        ]
+        perturb_deltas = [delta for _, delta in param_perturbations]
+        _perturb_theta(plan, model, theta, perturb_idx, perturb_deltas)
+
     def test_gls_time_dep_mixing(self):
         """GLS with mixing parameter m time-dependent."""
 

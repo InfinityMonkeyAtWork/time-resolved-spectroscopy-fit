@@ -13,7 +13,6 @@ MonoExpNeg:
         A: [-2, True]
         tau: [0.4, True]
         t0: [0, True]
-        y0: [0, True]
 
 # subcycle 2: amplitude mirrors subcycle 1 via expression, tau independent
 MonoExpPos:
@@ -21,4 +20,3 @@ MonoExpPos:
         A: ["-expFun_01_A"]
         tau: [0.8, True]
         t0: [0, True]
-        y0: [0, True]

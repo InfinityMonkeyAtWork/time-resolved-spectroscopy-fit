@@ -132,7 +132,7 @@ Time dynamics functions:
       dispatch.
 - [ ] Verify `can_lower_2d()` accepts the new function where intended.
 - [ ] If lowering fails, recommend a signature that matches the compiled
-      dynamics pattern (typically `func(t, par1, ..., t0, y0)` with vectorized
+      dynamics pattern (typically `func(t, par1, ..., t0)` with vectorized
       NumPy math and no extra runtime context).
 
 Convolution kernels:
@@ -158,6 +158,28 @@ Profile functions:
 - [ ] If lowering fails, recommend a vectorized signature that matches the
       current profile model (`func(x, par1, ...)` returning broadcast-friendly
       NumPy arrays).
+
+### GIR parity test (required when GIR support lands)
+
+The unit tests in §3 call the function directly, so they do NOT exercise the
+compiled enum/dispatch/param-count wiring. A wrong `DYNAMICS_DISPATCH` /
+`CONV_KERNEL_DISPATCH` param count, a missing enum entry, or a dispatch typo
+passes every unit and signature-discovery test and only breaks when the
+function is actually lowered. So when the function works on GIR:
+
+- [ ] Add an end-to-end parity case that drives the function through the
+      compiled path and compares against the MCP interpreter, via the shared
+      `_compare_evaluator_vs_interpreter` + `_perturb_theta` helpers. Use
+      `tests/test_evaluate_1d.py` and/or `tests/test_evaluate_2d.py` as
+      applicable, matching whichever of `can_lower_1d()` / `can_lower_2d()` the
+      function targets above. Dynamics drivers and convolution kernels have
+      parametrized lists to extend in the 2D file (`_DYN_DRIVER_PARITY_CASES`,
+      `_KERNEL_PARITY_CASES`); energy/profile functions have per-function parity
+      tests to mirror.
+- [ ] Where the function has several parameters, perturb more than one so a
+      parameter-order swap can't slip through. Watch for init values that mask
+      an ordering bug: if two args are both 0 at init, set one nonzero so a
+      swap actually changes the output.
 
 Before finishing, explicitly state one of:
 

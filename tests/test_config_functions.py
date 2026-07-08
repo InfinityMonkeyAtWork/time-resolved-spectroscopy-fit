@@ -51,10 +51,13 @@ class TestGetFunctionParameters:
     # time: dynamics functions — first arg (t) stripped
     #
     def test_expFun(self):
-        assert get_function_parameters("expFun") == ["A", "tau", "t0", "y0"]
+        assert get_function_parameters("expFun") == ["A", "tau", "t0"]
 
     def test_sinFun(self):
-        assert get_function_parameters("sinFun") == ["A", "f", "phi", "t0", "y0"]
+        assert get_function_parameters("sinFun") == ["A", "f", "phi", "t0"]
+
+    def test_stepFun(self):
+        assert get_function_parameters("stepFun") == ["A", "t0"]
 
     def test_none_has_no_params(self):
         """none() takes only t, so parameters should be empty."""

@@ -29,12 +29,13 @@ from trspecfit.utils.arrays import my_conv
 # ---------------------------------------------------------------------------
 
 DYNAMICS_DISPATCH: dict[int, tuple] = {
-    DynFuncKind.EXPFUN: (fcts_time.expFun, 4),
-    DynFuncKind.SINFUN: (fcts_time.sinFun, 5),
-    DynFuncKind.LINFUN: (fcts_time.linFun, 3),
-    DynFuncKind.SINDIVX: (fcts_time.sinDivX, 4),
-    DynFuncKind.ERFFUN: (fcts_time.erfFun, 4),
-    DynFuncKind.SQRTFUN: (fcts_time.sqrtFun, 3),
+    DynFuncKind.EXPFUN: (fcts_time.expFun, 3),
+    DynFuncKind.SINFUN: (fcts_time.sinFun, 4),
+    DynFuncKind.LINFUN: (fcts_time.linFun, 2),
+    DynFuncKind.SINDIVX: (fcts_time.sinDivX, 3),
+    DynFuncKind.ERFFUN: (fcts_time.erfFun, 3),
+    DynFuncKind.SQRTFUN: (fcts_time.sqrtFun, 2),
+    DynFuncKind.STEPFUN: (fcts_time.stepFun, 2),
 }
 
 # Convolution kernel dispatch: kernel function evaluated on the frozen

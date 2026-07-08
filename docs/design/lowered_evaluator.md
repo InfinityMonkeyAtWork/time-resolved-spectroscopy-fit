@@ -324,25 +324,23 @@ Only Shirley has a true data dependency on the peak sum.
 #### 1.5 Time-dependent model as a graph
 
 When `GLP_01_A` has a dynamics model (`expFun` with params `A`, `tau`,
-`t0`, `y0`):
+`t0`):
 
 ```
 Additional nodes:
  20: OPT_PARAM     "GLP_01_A_expFun_01_A"     value=5.0
  21: OPT_PARAM     "GLP_01_A_expFun_01_tau"   value=100.0
  22: OPT_PARAM     "GLP_01_A_expFun_01_t0"    value=0.0
- 23: STATIC_PARAM   "GLP_01_A_expFun_01_y0"   value=0.0
- 24: DYNAMICS_TRACE "GLP_01_A_dynamics"         function_name="expFun"  package="time"
- 25: PARAM_PLUS_TRACE "GLP_01_A_resolved"
+ 23: DYNAMICS_TRACE "GLP_01_A_dynamics"         function_name="expFun"  package="time"
+ 24: PARAM_PLUS_TRACE "GLP_01_A_resolved"
 
 Additional edges:
- 20 -> 24  PARAM_INPUT(pos=0)    # A -> dynamics
- 21 -> 24  PARAM_INPUT(pos=1)    # tau -> dynamics
- 22 -> 24  PARAM_INPUT(pos=2)    # t0 -> dynamics
- 23 -> 24  PARAM_INPUT(pos=3)    # y0 -> dynamics
-  2 -> 25  BASE_INPUT            # GLP_01_A base value
- 24 -> 25  TRACE_INPUT           # dynamics trace
- 25 -> 10  PARAM_INPUT(pos=0)    # resolved A -> GLP_01 (replaces edge 2->10)
+ 20 -> 23  PARAM_INPUT(pos=0)    # A -> dynamics
+ 21 -> 23  PARAM_INPUT(pos=1)    # tau -> dynamics
+ 22 -> 23  PARAM_INPUT(pos=2)    # t0 -> dynamics
+  2 -> 24  BASE_INPUT            # GLP_01_A base value
+ 23 -> 24  TRACE_INPUT           # dynamics trace
+ 24 -> 10  PARAM_INPUT(pos=0)    # resolved A -> GLP_01 (replaces edge 2->10)
 ```
 
 #### 1.6 Expression model as a graph
@@ -870,9 +868,9 @@ from `functions/time.py`:
 
 ```python
 DYNAMICS_DISPATCH = {
-    0: fcts_time.expFun,      # (t, A, tau, t0, y0) -> (n_time,)
-    1: fcts_time.sinFun,      # (t, A, f, phi, t0, y0) -> (n_time,)
-    2: fcts_time.linFun,      # (t, m, t0, y0) -> (n_time,)
+    0: fcts_time.expFun,      # (t, A, tau, t0) -> (n_time,)
+    1: fcts_time.sinFun,      # (t, A, f, phi, t0) -> (n_time,)
+    2: fcts_time.linFun,      # (t, m, t0) -> (n_time,)
     ...
 }
 ```
@@ -1030,8 +1028,9 @@ This replaces `2 * n_free_params + 1` evaluator calls per iteration with
 1 evaluator call + 1 Jacobian call. For 4 free params, that's 9 -> 2
 calls, ~4.5x fewer evaluations per iteration.
 
-**Variable projection (VARPRO):** Linear parameters (amplitudes `A`,
-offset `y0`, slope `m`) can be solved in closed form given the nonlinear
+**Variable projection (VARPRO):** Linear parameters (amplitudes `A`, the
+`Offset` background `y0`, slope `m`) can be solved in closed form given
+the nonlinear
 parameters. Reduces optimizer dimensionality. The graph makes identifying
 linear params straightforward: any param that appears as a linear factor
 in its component's function.

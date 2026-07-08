@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [0.10.0] - 2026-07-08
+
+### Added
+
+- **`stepFun(t, A, t0)` dynamics primitive**: a causal step (0 before `t0`, `A` after). Since dynamics components combine by addition, `stepFun` is the dedicated way to model baselines and plateaus (e.g. `expFun` + `stepFun` sharing `t0` gives a decay to a nonzero plateau); `erfFun` is its Gaussian-broadened counterpart. Registered on both the mcp and compiled (GIR) evaluation paths.
+
+### Changed
+
+- **Breaking: `y0` removed from all dynamics functions** (`linFun`, `expFun`, `sinFun`, `sinDivX`, `erfFun`, `sqrtFun`). The per-function offset broke the causality convention `f(t < t0) = 0` inconsistently (`sqrtFun`/`erfFun` leaked `y0` before `t0`; the others clamped to 0) and duplicated what an additive component expresses directly. Migration for model YAMLs: delete `y0:` lines that were `0` (the common case); replace a nonzero `y0` with a `stepFun` component sharing the function's `t0`. Stale `y0:` entries now fail model validation with a parameter-count error. The energy-domain `Offset(x, y0)` background is unaffected.
+- **Breaking: `Voigt` amplitude is now grid-independent.** The profile was normalized by its maximum over the sampled energy window, so the value at a fixed energy depended on the window/grid, and a peak center pushed outside the fit window rescaled the in-window tail up to amplitude `A`. Normalization now uses the analytic peak value `wofz(i·W/(2·SD·√2))` at `dx = 0`; `A` is the true peak height regardless of the sampled grid. Fitted `A` values may shift slightly relative to earlier releases (the two normalizations agree only when the sampled grid contains the exact peak). `voigtCONV` is unchanged (its kernel axis is symmetric around the peak, where max-over-grid is exact).
+
+### Fixed
+
+- **`expRiseCONV` docstring claimed the kernel is causal.** It is deliberately anti-causal — the mirror of `expDecayCONV`, nonzero only for `x ≤ 0`, so the convolved response rises before the excitation and saturates at `t0`. The docstring now says so.
+- **`boxCONV` docstring claimed "smooth edges"** — the kernel is a hard `|x| ≤ width/2` threshold; docstring corrected.
+- **`GLS`/`GLP` docstrings** now state the valid mixing range `m ∈ [0, 1]` (for `GLP`, `m < 0` makes the denominator `1 + 4·m·u²` cross zero, producing NaN/inf).
+- **`DS` docstring** now documents that the asymmetric tail extends toward `x < x0` (correct for a kinetic-energy axis; mirrored on a binding-energy axis).
+
 ## [0.9.3] - 2026-06-29
 
 ### Added
