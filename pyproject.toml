@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "trspecfit"
 version = "0.10.0"
 authors = [
-    {name = "Johannes Mahl", email = "johannes.a.mahl@gmail.com"},
+    {name = "Johannes Mahl", email = "infinitymonkeyatwork@gmail.com"},
 ]
 description = "Fit 2D time- and energy-resolved spectroscopy data"
 keywords = [
