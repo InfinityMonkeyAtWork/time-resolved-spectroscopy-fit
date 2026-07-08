@@ -8,20 +8,18 @@ IRF:
         SD: [5.0E-2, True, 0, 1]
              
 MonoExpPos:
-    # expFun(t, A, tau, t0, y0)
+    # expFun(t, A, tau, t0)
     expFun:
         A: [1, True, 0, 5]
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
 
 MonoExpNeg:
-    # expFun(t, A, tau, t0, y0)
+    # expFun(t, A, tau, t0)
     expFun:
         A: [-1, True, -5, 0]
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]
 
 MonoExpPosIRF:
     gaussCONV:
@@ -30,4 +28,3 @@ MonoExpPosIRF:
         A: [5, True, 0, 15]
         tau: [50, True, 1, 100]
         t0: [0, False, 0, 1]
-        y0: [0, False, 0, 1]

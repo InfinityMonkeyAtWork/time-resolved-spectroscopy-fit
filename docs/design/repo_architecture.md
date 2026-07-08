@@ -212,8 +212,10 @@ current peak sum (e.g. Shirley). Add new peak or background shapes here.
 ### `functions/time.py`
 
 Dynamics and convolution kernels. Dynamics functions (e.g. `expFun`,
-`sinFun`, `linFun`, `erfFun`, `sqrtFun`) share signature
-`func(t, par1, ..., t0, y0)` with the invariant `f(t < t0) = 0`.
+`sinFun`, `linFun`, `erfFun`, `sqrtFun`, `stepFun`) share signature
+`func(t, par1, ..., t0)` with the invariant `f(t < t0) = 0`; constant
+offsets are their own additive component (`stepFun`, or `erfFun` for a
+broadened onset) rather than a `y0` parameter on every function.
 Convolution kernels are named `funcCONV` (e.g. `gaussCONV`) with a
 companion `funcCONV_kernel_width(...)` returning the kernel-width multiplier.
 Add new time-domain behavior or IRF kernels here.

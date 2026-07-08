@@ -132,7 +132,7 @@ Time dynamics functions:
       dispatch.
 - [ ] Verify `can_lower_2d()` accepts the new function where intended.
 - [ ] If lowering fails, recommend a signature that matches the compiled
-      dynamics pattern (typically `func(t, par1, ..., t0, y0)` with vectorized
+      dynamics pattern (typically `func(t, par1, ..., t0)` with vectorized
       NumPy math and no extra runtime context).
 
 Convolution kernels:

@@ -6,11 +6,10 @@ Function Conventions
 Use CamelCase naming (UpperCamelCase or lowerCamelCase) for function names.
 
 **Dynamics Functions:**
-Signature: func(t, par1, par2, ..., t0, y0)
+Signature: func(t, par1, par2, ..., t0)
 - t: Time axis (numpy array)
 - par1, par2, ...: Function-specific parameters
 - t0: Time zero (function starts at this time)
-- y0: Offset value (baseline)
 - Returns: f(t) = 0 for t < t0, dynamics for t >= t0
 
 **Convolution Kernels:**
@@ -23,12 +22,15 @@ Signature: funcCONV(t, par1, par2, ...)
 **Time Zero Convention:**
 All dynamics functions are zero before t0 and activate at t >= t0.
 This reflects physical causality: response begins after excitation.
+Exception: erfFun is a smoothed step, so it is nonzero (approaching 0)
+shortly before t0; it crosses A/2 at t0.
 
-**Offset Convention:**
-Parameter y0 sets the asymptotic value or baseline.
-- Decays: approach y0 as t → ∞
-- Rises: start from 0, reach y0 + A
-- Oscillations: oscillate around y0
+**Offsets and Baselines:**
+Dynamics components combine by addition, so constant offsets are their
+own component rather than a parameter of every function:
+- stepFun: sharp onset to a constant value A at t0
+- erfFun: Gaussian-broadened onset, rises from 0 to A around t0
+For example, a decay to a nonzero plateau is expFun + stepFun sharing t0.
 
 **Time Resolution:**
 Functions inherit time axis from Dynamics model. Consider:
@@ -42,7 +44,6 @@ Common parameter names:
 - A: Amplitude (change in signal)
 - tau: Time constant (decay/rise time, 1/e point)
 - t0: Time zero (start of dynamics)
-- y0: Offset/baseline value
 - f: Frequency (for oscillations)
 - phi: Phase (for oscillations)
 - SD: Standard deviation (for Gaussian kernels)
@@ -93,7 +94,35 @@ def none(t: np.ndarray) -> np.ndarray:
 
 
 #
-def linFun(t: np.ndarray, m: float, t0: float, y0: float) -> np.ndarray:
+def stepFun(t: np.ndarray, A: float, t0: float) -> np.ndarray:
+    """
+    Step function (constant offset switching on at t0).
+
+    The causal offset primitive: dynamics components combine by addition,
+    so add stepFun to model baselines or plateaus (e.g. expFun + stepFun
+    sharing t0 gives a decay to a nonzero plateau). For a Gaussian-broadened
+    onset use erfFun instead.
+
+    Parameters
+    ----------
+    t : ndarray
+        Time axis
+    A : float
+        Step height (constant value for t >= t0)
+    t0 : float
+        Time zero (onset of the step)
+
+    Returns
+    -------
+    ndarray
+        Step function: 0 for t<t0, A for t>=t0
+    """
+
+    return np.where(t < t0, 0.0, A)
+
+
+#
+def linFun(t: np.ndarray, m: float, t0: float) -> np.ndarray:
     """
     Linear dynamics (constant rate of change).
 
@@ -107,20 +136,18 @@ def linFun(t: np.ndarray, m: float, t0: float, y0: float) -> np.ndarray:
         - m < 0: Linear decrease
     t0 : float
         Time zero (start of linear change)
-    y0 : float
-        Offset value at t0 (initial value)
 
     Returns
     -------
     ndarray
-        Linear function: 0 for t<t0, m*(t-t0)+y0 for t>=t0
+        Linear function: 0 for t<t0, m*(t-t0) for t>=t0
     """
 
-    return np.where(t < t0, 0.0, m * (t - t0) + y0)
+    return np.where(t < t0, 0.0, m * (t - t0))
 
 
 #
-def expFun(t: np.ndarray, A: float, tau: float, t0: float, y0: float) -> np.ndarray:
+def expFun(t: np.ndarray, A: float, tau: float, t0: float) -> np.ndarray:
     """
     Exponential decay or rise dynamics.
 
@@ -130,29 +157,25 @@ def expFun(t: np.ndarray, A: float, tau: float, t0: float, y0: float) -> np.ndar
         Time axis
     A : float
         Amplitude (initial change at t0).
-        - A > 0: Decay from y0+A to y0
-        - A < 0: Rise from y0 to y0+|A|
+        - A > 0: Jumps to A at t0, decays toward 0
+        - A < 0: Jumps to -|A| at t0, rises toward 0
     tau : float
         Time constant (1/e time). Units: [time units]
         At t = t0 + tau, signal changes by factor of e (≈2.718)
     t0 : float
         Time zero (start of exponential)
-    y0 : float
-        Asymptotic value (baseline as t → ∞)
 
     Returns
     -------
     ndarray
-        Exponential: 0 for t<t0, A*exp(-(t-t0)/tau)+y0 for t>=t0
+        Exponential: 0 for t<t0, A*exp(-(t-t0)/tau) for t>=t0
     """
 
-    return np.where(t < t0, 0.0, A * np.exp(-1 / tau * (t - t0)) + y0)
+    return np.where(t < t0, 0.0, A * np.exp(-1 / tau * (t - t0)))
 
 
 #
-def sinFun(
-    t: np.ndarray, A: float, f: float, phi: float, t0: float, y0: float
-) -> np.ndarray:
+def sinFun(t: np.ndarray, A: float, f: float, phi: float, t0: float) -> np.ndarray:
     """
     Sinusoidal oscillations (coherent dynamics).
 
@@ -172,20 +195,19 @@ def sinFun(
         - phi = π: Starts at zero (negative slope)
     t0 : float
         Time zero (start of oscillation)
-    y0 : float
-        Offset (center line of oscillation)
 
     Returns
     -------
     ndarray
-        Sinusoid: 0 for t<t0, A*sin(2πf(t-t0)+phi)+y0 for t>=t0
+        Sinusoid: 0 for t<t0, A*sin(2πf(t-t0)+phi) for t>=t0
+        Oscillates around 0; add stepFun to shift the center line.
     """
 
-    return np.where(t < t0, 0.0, A * np.sin(2 * np.pi * f * (t - t0) + phi) + y0)
+    return np.where(t < t0, 0.0, A * np.sin(2 * np.pi * f * (t - t0) + phi))
 
 
 #
-def sinDivX(t: np.ndarray, A: float, f: float, t0: float, y0: float) -> np.ndarray:
+def sinDivX(t: np.ndarray, A: float, f: float, t0: float) -> np.ndarray:
     """
     Damped sinc function: sin(x)/x oscillation.
 
@@ -199,50 +221,49 @@ def sinDivX(t: np.ndarray, A: float, f: float, t0: float, y0: float) -> np.ndarr
         Frequency in [1/time units]
     t0 : float
         Time zero (start of oscillation)
-    y0 : float
-        Offset value
 
     Returns
     -------
     ndarray
-        Sinc oscillation: 0 for t<t0, A*sin(2πf(t-t0))/(2πf(t-t0))+y0 for t>=t0
+        Sinc oscillation: 0 for t<t0, A*sin(2πf(t-t0))/(2πf(t-t0)) for t>=t0
     """
 
     # np.sinc(u) = sin(pi*u)/(pi*u), so u=2*f*(t-t0) gives sin(2*pi*f*dt)/(2*pi*f*dt)
-    return np.where(t < t0, 0.0, A * np.sinc(2 * f * (t - t0)) + y0)
+    return np.where(t < t0, 0.0, A * np.sinc(2 * f * (t - t0)))
 
 
 #
-def erfFun(t: np.ndarray, A: float, SD: float, t0: float, y0: float) -> np.ndarray:
+def erfFun(t: np.ndarray, A: float, SD: float, t0: float) -> np.ndarray:
     """
     Error function rise (step with Gaussian broadening).
-    erfFun ≈ step ⊗ Gaussian(SD)
+    erfFun ≈ stepFun ⊗ Gaussian(SD)
+
+    As a smoothed step this is the one dynamics function that is nonzero
+    (approaching 0) shortly before t0; it crosses A/2 at t0 and rises to A.
 
     Parameters
     ----------
     t : ndarray
         Time axis
     A : float
-        Amplitude (total change from initial to final value)
+        Amplitude (final value, asymptote as t → ∞)
     SD : float
         Standard deviation of Gaussian broadening (rise time ~2.355*SD)
         Smaller SD → sharper rise
     t0 : float
         Center of rise (50% point)
-    y0 : float
-        Final value (asymptote as t → ∞)
 
     Returns
     -------
     ndarray
-        Error function: A/2 * (1 + erf((t-t0)/(SD*√2))) + y0
+        Error function: A/2 * (1 + erf((t-t0)/(SD*√2)))
     """
 
-    return np.asarray(A / 2 * (1 + erf((t - t0) / (SD * np.sqrt(2)))) + y0)
+    return np.asarray(A / 2 * (1 + erf((t - t0) / (SD * np.sqrt(2)))))
 
 
 #
-def sqrtFun(t: np.ndarray, A: float, t0: float, y0: float) -> np.ndarray:
+def sqrtFun(t: np.ndarray, A: float, t0: float) -> np.ndarray:
     """
     Square root rise (diffusion dynamics).
 
@@ -254,17 +275,15 @@ def sqrtFun(t: np.ndarray, A: float, t0: float, y0: float) -> np.ndarray:
         Amplitude scaling factor
     t0 : float
         Time zero (start of diffusion)
-    y0 : float
-        Offset value
 
     Returns
     -------
     ndarray
-        Square root rise: 0 for t<t0, A*√(t-t0)+y0 for t>=t0
+        Square root rise: 0 for t<t0, A*√(t-t0) for t>=t0
     """
 
     # numpy array .clip sets all t<t0 to zero
-    return np.asarray(A * np.sqrt((t - t0).clip(0)) + y0)
+    return np.asarray(A * np.sqrt((t - t0).clip(0)))
 
 
 #
@@ -434,7 +453,11 @@ def expDecayCONV_kernel_width(tau: float | None = None) -> int:
 #
 def expRiseCONV(x: np.ndarray, tau: float) -> np.ndarray:
     """
-    Causal exponential rise kernel.
+    Anti-causal exponential rise kernel (mirror of expDecayCONV).
+
+    The kernel is nonzero only for x <= 0, so the convolved response at
+    time t draws from the signal at later times: it rises before the
+    excitation and saturates at t0.
 
     Parameters
     ----------
@@ -474,7 +497,7 @@ def boxCONV(x: np.ndarray, width: float) -> np.ndarray:
     Returns
     -------
     ndarray
-        Rectangular function: 1 inside width, 0 outside (with smooth edges)
+        Rectangular function: 1 inside width, 0 outside (hard edges)
     """
 
     return np.where(np.abs(x) <= width / 2, 1.0, 0.0)

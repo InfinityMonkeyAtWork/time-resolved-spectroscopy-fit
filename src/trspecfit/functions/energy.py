@@ -296,6 +296,8 @@ def GLS(x: np.ndarray, A: float, x0: float, F: float, m: float) -> np.ndarray:
         - m = 1: Pure Lorentzian
         - 0 < m < 1: Weighted mixture
         Typical value: m ≈ 0.3
+        Keep m in [0, 1] (set parameter bounds accordingly); values
+        outside give negative mixture weights and unphysical shapes.
 
     Returns
     -------
@@ -328,6 +330,8 @@ def GLP(x: np.ndarray, A: float, x0: float, F: float, m: float) -> np.ndarray:
         - m = 1: Pure Lorentzian
         - 0 < m < 1: Hybrid shape
         Typical value: m ≈ 0.3
+        Keep m in [0, 1] (set parameter bounds accordingly); m < 0 makes
+        the denominator 1 + 4*m*u² cross zero, producing NaN/inf.
 
     Returns
     -------
@@ -360,6 +364,8 @@ def DS(x: np.ndarray, A: float, x0: float, F: float, alpha: float) -> np.ndarray
         - 0 < alpha < 0.3: Typical for metals (e.g., Al: 0.10-0.15)
         - Larger alpha: Stronger asymmetry, more pronounced tail
         - Range: typically 0-0.5 for physical systems
+        The asymmetric tail extends toward x < x0, correct for a
+        kinetic-energy axis; on a binding-energy axis it appears mirrored.
 
     Returns
     -------

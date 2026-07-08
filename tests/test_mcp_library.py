@@ -279,7 +279,6 @@ class TestMCPDynamics:
                 "A": [2, True, 1, 1e2],
                 "tau": [5000, True, 1e3, 1e4],
                 "t0": [0, False, 0, 1],
-                "y0": [0, False, 0, 1],
             }
         )
 
@@ -289,7 +288,6 @@ class TestMCPDynamics:
                 "A": [5, True, 1, 1e2],
                 "tau": [1250, True, 1e2, 1e3],
                 "t0": [0, False, 0, 1],
-                "y0": [0, False, 0, 1],
             }
         )
 
@@ -318,7 +316,6 @@ class TestMCPDynamics:
                 "A": [1, True, 0, 5],
                 "tau": [2.5, True, 1, 10],
                 "t0": [0, False, 0, 1],
-                "y0": [0, False, 0, 1],
             }
         )
 

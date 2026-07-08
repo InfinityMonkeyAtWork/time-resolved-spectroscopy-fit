@@ -26,4 +26,3 @@ BandBendingRecovery:
         A:   [0.3, True, 0, 1]      # collapse amplitude (eV/nm)
         tau: [50, True, 5, 500]     # recovery time constant (ps)
         t0:  [0, False]
-        y0:  [0, False]

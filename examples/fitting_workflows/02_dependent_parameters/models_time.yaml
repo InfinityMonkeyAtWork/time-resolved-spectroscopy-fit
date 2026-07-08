@@ -7,4 +7,3 @@ sine_wave:
         f: [0.25, True, 1E-3, 10]
         phi: [0, True, -0.75, 0.75]
         t0: [0, False]
-        y0: [0, False]

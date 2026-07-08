@@ -452,15 +452,15 @@ class TestBuildGraph2D:
         )
         graph = build_graph(model)
 
-        # expFun has params: A, tau, t0, y0
-        # A and tau are vary=True, t0 and y0 are vary=False
+        # expFun has params: A, tau, t0
+        # A and tau are vary=True, t0 is vary=False
         dyn_A = _node_by_name(graph, "GLP_01_A_expFun_01_A")
         assert dyn_A is not None
         assert dyn_A.kind == NodeKind.OPT_PARAM
 
-        dyn_y0 = _node_by_name(graph, "GLP_01_A_expFun_01_y0")
-        assert dyn_y0 is not None
-        assert dyn_y0.kind == NodeKind.STATIC_PARAM
+        dyn_t0 = _node_by_name(graph, "GLP_01_A_expFun_01_t0")
+        assert dyn_t0 is not None
+        assert dyn_t0.kind == NodeKind.STATIC_PARAM
 
     #
     def test_dynamics_edges(self):
@@ -477,7 +477,7 @@ class TestBuildGraph2D:
         assert len(trace_nodes) >= 1
         trace_nid = trace_nodes[0].id
         param_edges = _edges_to(graph, trace_nid, EdgeKind.PARAM_INPUT)
-        assert len(param_edges) == 4  # A, tau, t0, y0
+        assert len(param_edges) == 3  # A, tau, t0
 
         # PARAM_PLUS_TRACE has BASE_INPUT + TRACE_INPUT
         resolved = _node_by_name(graph, "GLP_01_A_resolved")
@@ -1307,16 +1307,16 @@ class TestTimeDependentProfileParams:
         _file, model = _make_time_dep_profile_model()
         graph = build_graph(model)
 
-        # MonoExpPos has params: A, tau, t0, y0
+        # MonoExpPos has params: A, tau, t0
         # The profile par is GLP_01_A_pLinear_01_m, so dynamics params
         # are prefixed: GLP_01_A_pLinear_01_m_expFun_01_A, etc.
         dyn_A = _node_by_name(graph, "GLP_01_A_pLinear_01_m_expFun_01_A")
         assert dyn_A is not None
         assert dyn_A.kind == NodeKind.OPT_PARAM
 
-        dyn_y0 = _node_by_name(graph, "GLP_01_A_pLinear_01_m_expFun_01_y0")
-        assert dyn_y0 is not None
-        assert dyn_y0.kind == NodeKind.STATIC_PARAM
+        dyn_t0 = _node_by_name(graph, "GLP_01_A_pLinear_01_m_expFun_01_t0")
+        assert dyn_t0 is not None
+        assert dyn_t0.kind == NodeKind.STATIC_PARAM
 
     #
     def test_resolved_profile_par_in_sample_edges(self):
@@ -1992,7 +1992,7 @@ class TestSchedule2DSimple:
         # Single substep in the group
         assert plan.dyn_group_indptr[1] - plan.dyn_group_indptr[0] == 1
         assert plan.dyn_sub_func_id[0] == int(DynFuncKind.EXPFUN)
-        assert plan.dyn_sub_n_params[0] == 4  # A, tau, t0, y0
+        assert plan.dyn_sub_n_params[0] == 3  # A, tau, t0
 
     #
     def test_dynamics_param_rows_valid(self):
@@ -2611,13 +2611,6 @@ class TestExprBindingUsesEdges:
                 value=0.0,
             ),
             GraphNode(
-                id=4,
-                kind=NodeKind.STATIC_PARAM,
-                name="dyn_y0",
-                source_order=4,
-                value=0.0,
-            ),
-            GraphNode(
                 id=5,
                 kind=NodeKind.DYNAMICS_TRACE,
                 name="A_dynamics",
@@ -2673,7 +2666,6 @@ class TestExprBindingUsesEdges:
             GraphEdge(source=1, target=5, kind=EdgeKind.PARAM_INPUT, position=0),
             GraphEdge(source=2, target=5, kind=EdgeKind.PARAM_INPUT, position=1),
             GraphEdge(source=3, target=5, kind=EdgeKind.PARAM_INPUT, position=2),
-            GraphEdge(source=4, target=5, kind=EdgeKind.PARAM_INPUT, position=3),
             GraphEdge(source=0, target=6, kind=EdgeKind.BASE_INPUT),
             GraphEdge(source=5, target=6, kind=EdgeKind.TRACE_INPUT),
             # EXPR_REF: B_expr references A_base_resolved
@@ -2862,13 +2854,6 @@ class TestNonDenseNodeIds:
                 value=0.0,
             ),
             GraphNode(
-                id=104,
-                kind=NodeKind.STATIC_PARAM,
-                name="dyn_y0",
-                source_order=4,
-                value=0.0,
-            ),
-            GraphNode(
                 id=105,
                 kind=NodeKind.DYNAMICS_TRACE,
                 name="A_dynamics",
@@ -2915,7 +2900,6 @@ class TestNonDenseNodeIds:
             GraphEdge(source=101, target=105, kind=EdgeKind.PARAM_INPUT, position=0),
             GraphEdge(source=102, target=105, kind=EdgeKind.PARAM_INPUT, position=1),
             GraphEdge(source=103, target=105, kind=EdgeKind.PARAM_INPUT, position=2),
-            GraphEdge(source=104, target=105, kind=EdgeKind.PARAM_INPUT, position=3),
             GraphEdge(source=100, target=106, kind=EdgeKind.BASE_INPUT),
             GraphEdge(source=105, target=106, kind=EdgeKind.TRACE_INPUT),
             GraphEdge(source=106, target=109, kind=EdgeKind.PARAM_INPUT, position=0),

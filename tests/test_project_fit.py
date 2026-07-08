@@ -53,7 +53,6 @@ def _make_truth_file(*, amplitude=20.0, x0_shift=3.0, tau=5.0):
     model.lmfit_pars["GLP_01_x0_expFun_01_A"].value = x0_shift
     model.lmfit_pars["GLP_01_x0_expFun_01_tau"].value = tau
     model.lmfit_pars["GLP_01_x0_expFun_01_t0"].value = 0.0
-    model.lmfit_pars["GLP_01_x0_expFun_01_y0"].value = 0.0
 
     return file
 
@@ -144,11 +143,9 @@ class TestProjectFitClean:
             m.lmfit_pars["GLP_01_x0_expFun_01_A"].value = dx0_1
             m.lmfit_pars["GLP_01_x0_expFun_01_tau"].value = TRUE_TAU1
             m.lmfit_pars["GLP_01_x0_expFun_01_t0"].value = TRUE_T0
-            m.lmfit_pars["GLP_01_x0_expFun_01_y0"].value = 0.0
             m.lmfit_pars["GLP_01_x0_expFun_02_A"].value = dx0_2
             m.lmfit_pars["GLP_01_x0_expFun_02_tau"].value = TRUE_TAU2
             m.lmfit_pars["GLP_01_x0_expFun_02_t0"].value = TRUE_T0
-            m.lmfit_pars["GLP_01_x0_expFun_02_y0"].value = 0.0
             truth_files.append((tf, seed))
 
         # --- simulate and build fit files ---
@@ -276,7 +273,6 @@ class TestVaryLevelParsing:
         assert levels["GLP_01_x0_expFun_01_A"] == "file"
         assert levels["GLP_01_x0_expFun_01_tau"] == "project"
         assert levels["GLP_01_x0_expFun_01_t0"] == "static"
-        assert levels["GLP_01_x0_expFun_01_y0"] == "static"
 
     #
     def test_vary_levels_profile_with_dynamics(self):
