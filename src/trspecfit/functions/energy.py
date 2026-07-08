@@ -255,7 +255,7 @@ def Voigt(x: np.ndarray, A: float, x0: float, SD: float, W: float) -> np.ndarray
     x : ndarray
         Energy axis
     A : float
-        Peak amplitude (maximum value, approximately, for narrow peaks)
+        Peak amplitude (maximum value, at x = x0)
     x0 : float
         Peak center position
     SD : float
@@ -270,8 +270,9 @@ def Voigt(x: np.ndarray, A: float, x0: float, SD: float, W: float) -> np.ndarray
     """
 
     voigt = np.real(wofz(((x - x0) + 1j * (W / 2)) / SD / np.sqrt(2)))
-    max_voigt = np.max(voigt, axis=-1, keepdims=True)
-    return np.asarray(A * voigt / max_voigt)
+    # analytic peak value (profile at x = x0), keeps A grid-independent
+    peak_voigt = np.real(wofz(1j * (W / 2) / SD / np.sqrt(2)))
+    return np.asarray(A * voigt / peak_voigt)
 
 
 #

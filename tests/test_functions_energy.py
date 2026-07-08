@@ -368,6 +368,23 @@ class TestVoigt:
         assert result.shape == (2, x.shape[-1])
         np.testing.assert_allclose(np.max(result, axis=-1), A[:, 0], rtol=1e-3)
 
+    #
+    def test_grid_independent_amplitude(self):
+        """Value at a fixed x must not depend on the sampled window/grid.
+
+        The analytic peak normalization (wofz at dx=0) replaced the old
+        max-over-grid normalization, which rescaled the whole profile when
+        x0 fell outside the energy window.
+        """
+
+        full_x = np.linspace(-10, 10, 2001)  # includes the peak at x0=0
+        idx_probe = np.argmin(np.abs(full_x - 2.0))
+        x_probe = full_x[idx_probe]
+        tail_x = np.linspace(x_probe, 10, 18)  # excludes the peak entirely
+        full = Voigt(full_x, A=4.0, x0=0.0, SD=1.0, W=1.0)
+        tail = Voigt(tail_x, A=4.0, x0=0.0, SD=1.0, W=1.0)
+        assert tail[0] == pytest.approx(full[idx_probe], rel=1e-9)
+
 
 #
 #
