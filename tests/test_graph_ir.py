@@ -1421,31 +1421,14 @@ class TestDynamicsConvolution:
     def test_irf_dynamics_lowerable_in_2d(self):
         """Time-domain IRF dynamics are lowerable on the 2D backend.
 
-        The CONVOLUTION node carries ``package == "time"``, a registered
-        kernel function, and a populated ``kernel_time`` array, so
-        ``can_lower_2d`` accepts the graph.
+        The CONVOLUTION node carries ``package == "time"`` and a
+        registered kernel function, so ``can_lower_2d`` accepts the
+        graph.
         """
 
         _file, model = _make_irf_dynamics_model()
         graph = build_graph(model)
         assert can_lower_2d(graph)
-
-    #
-    def test_irf_without_kernel_time_not_lowerable(self):
-        """CONVOLUTION missing ``kernel_time`` falls back to MCP.
-
-        Safety guard for the lowering contract: if the graph builder
-        omits the frozen support metadata (e.g. a future code path that
-        doesn't populate it), the 2D backend must reject the graph
-        rather than silently producing wrong numerics.
-        """
-
-        _file, model = _make_irf_dynamics_model()
-        graph = build_graph(model)
-        conv_nodes = _nodes_by_kind(graph, NodeKind.CONVOLUTION)
-        assert len(conv_nodes) == 1
-        del conv_nodes[0].arrays["kernel_time"]
-        assert not can_lower_2d(graph)
 
     #
     def test_conv_without_ppt_chain_not_lowerable(self):
@@ -1531,28 +1514,6 @@ class TestDynamicsConvolution:
         A_edge = [e for e in param_edges if e.position == 0][0]
         source = graph.nodes[A_edge.source]
         assert source.kind == NodeKind.CONVOLUTION
-
-    #
-    def test_kernel_time_populated_on_dynamics_conv(self):
-        """Dynamics CONVOLUTION nodes carry the kernel time axis in arrays.
-
-        Lowering contract: lowered time-domain convolution requires
-        ``node.arrays["kernel_time"]`` to be present at graph-build time so
-        the scheduler can freeze kernel support without re-deriving it from
-        MCP helpers.  Mirrors the top-level handling for conv components.
-        """
-
-        _file, model = _make_irf_dynamics_model()
-        graph = build_graph(model)
-
-        conv_nodes = _nodes_by_kind(graph, NodeKind.CONVOLUTION)
-        assert len(conv_nodes) == 1
-        conv = conv_nodes[0]
-        assert conv.package == "time"
-        assert "kernel_time" in conv.arrays
-        kernel_time = conv.arrays["kernel_time"]
-        assert kernel_time.ndim == 1
-        assert kernel_time.size > 0
 
 
 #

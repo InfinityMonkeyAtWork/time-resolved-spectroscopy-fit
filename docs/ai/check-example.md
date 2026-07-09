@@ -211,10 +211,6 @@ Hard-won gotchas worth re-checking when a criterion looks borderline:
 
 - **`%%capture` path quoting (IPython 9.x):** a bare path in `%cd -q ../dir`
   tokenizes as a malformed number and crashes. Quote it.
-- **Convolution kernel sizing:** `create_t_kernel` sizes the kernel from the
-  *initial* parameter value and never rebuilds it — a too-small init silently
-  truncates the kernel and biases the fitted width. Initialize conv widths
-  generously above the expected value.
 - **Subcycle-boundary time samples:** generate synthetic multi-cycle data on
   the *reloaded* CSV axes, not the in-memory `np.arange` axes — boundary-exact
   samples flip subcycle assignment under `%.6e` rounding and bias the fit.

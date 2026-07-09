@@ -697,6 +697,61 @@ class TestFileFit2D:
 
     #
     @pytest.mark.slow
+    def test_kernel_width_recovered_when_init_below_truth(self):
+        """Conv kernel width is recovered when initialized well below truth.
+
+        Regression for the frozen-kernel-support bug: the support was
+        sized once from the initial SD, so once the fitted SD grew past
+        its init the kernel was silently truncated and the fit converged
+        to a biased width at any SNR. The support now tracks the current
+        parameter value, so a fit started far below truth must recover it.
+        """
+
+        project = make_project(name="gir_kernel_regrow")
+        SD_name = "GLP_01_A_gaussCONV_SD"
+        SD_truth = 0.8
+
+        energy = np.linspace(83, 87, 30)
+        time = np.linspace(-2, 10, 61)  # dt = 0.2
+        # truth model: MonoExpPosIRFWide inits SD at the truth value, so
+        # the simulated data carries a correctly sized kernel regardless
+        # of when the support is built
+        truth_file = File(parent_project=project, name="truth")
+        truth_file.energy = energy
+        truth_file.time = time
+        truth_file.dim = 2
+        truth_file.load_model(model_yaml=_FILE_ENERGY_YAML, model_info="single_glp")
+        truth_file.add_time_dependence(
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml=_TIME_YAML,
+            dynamics_model=["MonoExpPosIRFWide"],
+        )
+        truth_model = truth_file.model_active
+        assert truth_model is not None  # type guard
+        assert truth_model.lmfit_pars[SD_name].value == SD_truth
+        clean = simulate_clean(truth_model)
+
+        # fit model: same shape, but SD inits at 5e-2, 16x below truth --
+        # a frozen ±4*init support could never represent the true kernel
+        fit_file = _make_fit_file(project, clean, energy, time)
+        fit_file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+        fit_file.add_time_dependence(
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml=_TIME_YAML,
+            dynamics_model=["MonoExpPosIRF"],
+        )
+        fit_file.fit_2d(model_name="single_glp", stages=2, try_ci=0)
+
+        assert fit_file.model_2d is not None  # type guard
+        SD_fit = fit_file.model_2d.result[1].params[SD_name].value
+        assert np.isclose(SD_fit, SD_truth, rtol=2e-2), (
+            f"kernel width not recovered: truth={SD_truth}, fit={SD_fit:.4f}"
+        )
+
+    #
+    @pytest.mark.slow
     def test_compare_mode_through_fit_2d(self):
         """fit_model_compare through File.fit_2d validates both paths."""
 

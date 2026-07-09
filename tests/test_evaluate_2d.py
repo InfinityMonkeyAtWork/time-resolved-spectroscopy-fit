@@ -714,8 +714,8 @@ class TestProfileModels:
 class TestDynamicsConvolution:
     """Lowered IRF dynamics: CONVOLUTION is compiled into a kind=2 step.
 
-    Covers plan encoding (conv program layout, frozen support, resolution
-    ordering) and numerical parity against ``Model.create_value_2d()``.
+    Covers plan encoding (conv program layout, resolution ordering) and
+    numerical parity against ``Model.create_value_2d()``.
     The IRF path rewrites a resolved trace row in place via
     ``my_conv`` -- the same code MCP calls -- so tolerance matches the
     other OpKind parity tests.
@@ -763,10 +763,6 @@ class TestDynamicsConvolution:
         n_kernel_params = int(plan.conv_param_indptr[1])
         assert n_kernel_params >= 1  # at least SD
         assert plan.conv_param_rows.shape == (n_kernel_params,)
-        assert plan.conv_support_indptr.shape == (2,)
-        assert plan.conv_support_indptr[0] == 0
-        n_support = int(plan.conv_support_indptr[1])
-        assert plan.conv_support_values.shape == (n_support,)
 
     #
     def test_conv_target_row_valid(self):
@@ -785,18 +781,30 @@ class TestDynamicsConvolution:
             assert 0 <= int(row) < plan.n_params
 
     #
-    def test_conv_support_frozen_from_kernel_time(self):
-        """Plan's conv support matches the CONVOLUTION node's kernel_time array."""
+    def test_conv_support_tracks_grown_kernel_width(self):
+        """Parity holds when the kernel width grows well past its init.
 
-        plan, graph, _model = self._make_irf_plan()
-        from trspecfit.graph_ir import NodeKind
+        Regression guard for the frozen-support bug: the kernel support
+        used to be sized once from the initial SD, silently truncating
+        the kernel (and breaking parity) once the fitted SD grew past
+        it.  Both paths now rebuild the support from the current value.
+        """
 
-        conv_nodes = [n for n in graph.nodes if n.kind == NodeKind.CONVOLUTION]
-        assert len(conv_nodes) == 1
-        expected = conv_nodes[0].arrays["kernel_time"]
-        start = int(plan.conv_support_indptr[0])
-        end = int(plan.conv_support_indptr[1])
-        np.testing.assert_array_equal(plan.conv_support_values[start:end], expected)
+        plan, _graph, model = self._make_irf_plan()
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+        sd_idx = plan.opt_param_names.index("GLP_01_A_gaussCONV_SD")
+        # SD init is 5e-2 on a dt=2.2 axis; +0.6 grows the support from
+        # a sub-sample kernel to a multi-sample one
+        _perturb_theta(plan, model, theta, [sd_idx], [0.6])
+
+        # interpreter side: the kernel axis was rebuilt to span the
+        # grown width (±4*SD for gaussCONV)
+        A_par = next(p for p in model.components[0].pars if p.name == "GLP_01_A")
+        assert A_par.t_model is not None  # type guard
+        conv_comp = next(c for c in A_par.t_model.components if c.comp_type == "conv")
+        assert conv_comp.time is not None  # type guard
+        SD_grown = theta[sd_idx] + 0.6
+        assert conv_comp.time.max() >= 4 * SD_grown
 
     #
     def test_conv_step_runs_after_dynamics(self):
@@ -837,7 +845,6 @@ class TestDynamicsConvolution:
         assert plan.conv_target_rows.shape == (0,)
         assert plan.conv_func_ids.shape == (0,)
         assert plan.conv_param_rows.shape == (0,)
-        assert plan.conv_support_values.shape == (0,)
         assert 2 not in plan.resolution_kinds.tolist()
 
     # Per-kernel parity: every lowerable kernel must match MCP at

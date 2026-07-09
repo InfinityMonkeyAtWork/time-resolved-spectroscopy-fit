@@ -1617,13 +1617,20 @@ class Component:
             print()
 
     #
-    def create_t_kernel(self) -> np.ndarray:
+    def create_t_kernel(self, *, par_values: list[Any] | None = None) -> np.ndarray:
         """
         Create time axis for convolution kernel.
 
         Convolution kernels need a time axis that extends beyond the data
         time axis to properly handle edge effects. This method creates an
         appropriately sized kernel axis based on the kernel width.
+
+        Parameters
+        ----------
+        par_values : list, optional
+            Current kernel parameter values. Defaults to the initial
+            values from par_dict (model construction). Component.value
+            passes the live values so the support tracks the fitted width.
 
         Returns
         -------
@@ -1632,15 +1639,18 @@ class Component:
         """
 
         # get kernel parameters i.e. component parameters
-        par_k = cast("list[Any]", ulmfit.par_extract(self.par_dict, return_type="list"))
+        if par_values is None:
+            par_values = cast(
+                "list[Any]", ulmfit.par_extract(self.par_dict, return_type="list")
+            )
         # define kernel time axis. Kernel-width helpers may inspect the
         # full parameter list for multi-parameter kernels such as Voigt.
-        kernel_width = getattr(fcts_time, self.fct_str + "_kernel_width")(*par_k)
-        t_range = par_k[0] * kernel_width
+        kernel_width = getattr(fcts_time, self.fct_str + "_kernel_width")(*par_values)
+        t_range = par_values[0] * kernel_width
         if self.time is None or len(self.time) < 2:
             raise ValueError(f"time axis of component {self.fct_str} not defined")
         t_step = self.time[1] - self.time[0]
-        return np.arange(-t_range, t_range + t_step, t_step)
+        return uarr.conv_kernel_support(t_range, t_step)
 
     #
     def value(self, t_ind: int = 0, **kwargs) -> np.ndarray:
@@ -1711,6 +1721,11 @@ class Component:
                 raise ValueError(
                     f"Time axis not defined for component '{self.comp_name}'"
                 )
+            # conv kernels: rebuild the support from the current parameter
+            # values so the axis tracks the fitted width (a frozen support
+            # would truncate the kernel once the width grows past its init)
+            if self.comp_type == "conv":
+                self.time = self.create_t_kernel(par_values=pars)
             if self.subcycle == 0:  # single cycle
                 return np.asarray(self.fct(self.time, *pars, **kwargs))
             # multi-cycle

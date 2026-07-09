@@ -518,21 +518,15 @@ class ScheduledPlan2D:
     # --- Resolved-trace convolution program ---
     # Each conv step rewrites a trace row in-place after its PARAM_PLUS_TRACE
     # is fully resolved.  Chained CONVOLUTION nodes emit multiple steps
-    # targeting the same row, executed in order.  Kernel values are
-    # recomputed per theta from conv_param_rows; support values are frozen
-    # at plan-build time from ``node.arrays["kernel_time"]``.  Only
-    # ``package == "time"`` kernels are lowered.
+    # targeting the same row, executed in order.  Kernel values and the
+    # kernel support are recomputed per theta from conv_param_rows, so the
+    # support tracks the fitted width.  Only ``package == "time"`` kernels
+    # are lowered.
     n_conv_steps: int
     conv_target_rows: np.ndarray  # (n_conv_steps,) int -- trace row rewritten
     conv_func_ids: np.ndarray  # (n_conv_steps,) int -- kernel function registry id
     conv_param_indptr: np.ndarray  # (n_conv_steps + 1,) int -- CSR row pointers
     conv_param_rows: np.ndarray  # (total_conv_params,) int -- kernel param trace rows
-    conv_support_indptr: (
-        np.ndarray
-    )  # (n_conv_steps + 1,) int -- CSR into support values
-    conv_support_values: (
-        np.ndarray
-    )  # (total_support,) float -- kernel time axis samples
 
     # --- Profile-varying parameter groups (fixed aux_axis shape) ---
     n_aux: int
@@ -841,9 +835,6 @@ def build_graph(model: Model) -> GraphIR:
                 function_name=comp.fct_str,
                 package=pkg_name,
             )
-            # Store kernel-related arrays if available
-            if comp.time is not None:
-                b.nodes[nid].arrays["kernel_time"] = comp.time
         elif is_shirley:
             nid = b.add_node(
                 NodeKind.SPECTRUM_FED_OP,
@@ -1054,8 +1045,6 @@ def _emit_dynamics_subgraph(
                 function_name=dyn_comp.fct_str,
                 package="time",
             )
-            if dyn_comp.time is not None:
-                b.nodes[nid].arrays["kernel_time"] = dyn_comp.time
             # Wire dynamics params -> conv node
             for pos, dnid in enumerate(dyn_param_nids[i]):
                 b.add_edge(dnid, nid, EdgeKind.PARAM_INPUT, position=pos)
@@ -1523,8 +1512,7 @@ def _is_lowerable_convolution_2d(node: GraphNode, graph: GraphIR) -> bool:
     Lowering contract -- all of:
 
     1. Time-domain kernel (``package == "time"``) with a registered
-       kernel function and a ``kernel_time`` array populated at
-       graph-build time.
+       kernel function.
     2. Resolved-trace shape: the node has exactly one ``TRACE_INPUT``
        ancestor, and walking that chain terminates at a
        ``PARAM_PLUS_TRACE``.
@@ -1541,7 +1529,6 @@ def _is_lowerable_convolution_2d(node: GraphNode, graph: GraphIR) -> bool:
         node.kind != NodeKind.CONVOLUTION
         or node.package != "time"
         or node.function_name not in _FUNCTION_NAME_TO_CONV_KERNEL
-        or "kernel_time" not in node.arrays
     ):
         return False
 
@@ -2391,8 +2378,6 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     conv_func_ids_list: list[int] = []
     conv_param_indptr_list: list[int] = [0]
     conv_param_rows_list: list[int] = []
-    conv_support_indptr_list: list[int] = [0]
-    conv_support_values_list: list[float] = []
 
     for conv_node in conv_nodes_topo:
         assert conv_node.function_name is not None
@@ -2419,21 +2404,10 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
             conv_param_rows_list.append(name_to_row[src_node.name])
         conv_param_indptr_list.append(len(conv_param_rows_list))
 
-        support = conv_node.arrays.get("kernel_time")
-        if support is None:
-            raise ValueError(
-                f"CONVOLUTION node {conv_node.name!r} is missing"
-                " kernel_time array (required for lowered convolution)"
-            )
-        conv_support_values_list.extend(float(v) for v in np.asarray(support))
-        conv_support_indptr_list.append(len(conv_support_values_list))
-
     conv_target_rows = np.array(conv_target_rows_list, dtype=np.intp)
     conv_func_ids = np.array(conv_func_ids_list, dtype=np.intp)
     conv_param_indptr = np.array(conv_param_indptr_list, dtype=np.intp)
     conv_param_rows = np.array(conv_param_rows_list, dtype=np.intp)
-    conv_support_indptr = np.array(conv_support_indptr_list, dtype=np.intp)
-    conv_support_values = np.array(conv_support_values_list, dtype=np.float64)
 
     resolution_kinds_list: list[int] = []
     resolution_indices_list: list[int] = []
@@ -2899,17 +2873,8 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         int(DynFuncKind.STEPFUN): fcts_time.stepFun,
     }
 
-    _CONV_KERNEL_DISPATCH: dict[int, Callable[..., Any]] = {
-        int(ConvKernelKind.GAUSSCONV): fcts_time.gaussCONV,
-        int(ConvKernelKind.LORENTZCONV): fcts_time.lorentzCONV,
-        int(ConvKernelKind.VOIGTCONV): fcts_time.voigtCONV,
-        int(ConvKernelKind.EXPSYMCONV): fcts_time.expSymCONV,
-        int(ConvKernelKind.EXPDECAYCONV): fcts_time.expDecayCONV,
-        int(ConvKernelKind.EXPRISECONV): fcts_time.expRiseCONV,
-        int(ConvKernelKind.BOXCONV): fcts_time.boxCONV,
-    }
-    from trspecfit.eval_2d import eval_expr_program
-    from trspecfit.utils.arrays import my_conv
+    from trspecfit.eval_2d import CONV_KERNEL_DISPATCH, eval_expr_program
+    from trspecfit.utils.arrays import conv_kernel_support, my_conv
 
     # Dynamics groups, expressions, and resolved-trace convolutions are
     # interleaved in topological order so that downstream consumers see
@@ -2939,16 +2904,17 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
             )
         else:  # kind == 2: resolved-trace convolution
             target_row = int(conv_target_rows[idx])
-            kernel_func = _CONV_KERNEL_DISPATCH[int(conv_func_ids[idx])]
+            kernel_func, width_func = CONV_KERNEL_DISPATCH[int(conv_func_ids[idx])]
             p_start = int(conv_param_indptr[idx])
             p_end = int(conv_param_indptr[idx + 1])
             kernel_params = [
                 float(param_traces_init[int(conv_param_rows[j]), 0])
                 for j in range(p_start, p_end)
             ]
-            s_start = int(conv_support_indptr[idx])
-            s_end = int(conv_support_indptr[idx + 1])
-            support = conv_support_values[s_start:s_end]
+            support = conv_kernel_support(
+                kernel_params[0] * width_func(*kernel_params),
+                float(graph.time[1] - graph.time[0]),
+            )
             kernel = kernel_func(support, *kernel_params)
             param_traces_init[target_row, :] = my_conv(
                 graph.time, param_traces_init[target_row, :], kernel
@@ -3070,8 +3036,6 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         conv_func_ids=conv_func_ids,
         conv_param_indptr=conv_param_indptr,
         conv_param_rows=conv_param_rows,
-        conv_support_indptr=conv_support_indptr,
-        conv_support_values=conv_support_values,
     )
 
 

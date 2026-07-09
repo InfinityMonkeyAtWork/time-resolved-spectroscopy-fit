@@ -1,8 +1,75 @@
-"""Tests for trspecfit.utils.arrays — running_mean."""
+"""Tests for trspecfit.utils.arrays — running_mean, conv_kernel_support."""
 
 import numpy as np
+import pytest
 
-from trspecfit.utils.arrays import running_mean
+from trspecfit.utils.arrays import conv_kernel_support, running_mean
+
+
+#
+#
+class TestConvKernelSupport:
+    """Tests for the convolution kernel support builder."""
+
+    #
+    def test_symmetric_and_odd_length(self):
+        """Support is symmetric around 0 with an odd number of samples."""
+
+        axis = conv_kernel_support(3.7, 0.5)
+        assert axis.size % 2 == 1
+        np.testing.assert_allclose(axis, -axis[::-1])
+        assert axis[axis.size // 2] == 0.0
+
+    #
+    def test_covers_t_range(self):
+        """Support extends to at least ±t_range."""
+
+        axis = conv_kernel_support(3.7, 0.5)
+        assert axis.max() >= 3.7
+        assert axis.min() <= -3.7
+
+    #
+    def test_exact_multiple(self):
+        """t_range on the grid gives endpoints exactly at ±t_range."""
+
+        axis = conv_kernel_support(4.0, 0.5)
+        np.testing.assert_allclose(axis[0], -4.0)
+        np.testing.assert_allclose(axis[-1], 4.0)
+        assert axis.size == 17
+
+    #
+    def test_minimum_support(self):
+        """t_range below one step still yields a 3-sample support."""
+
+        axis = conv_kernel_support(0.01, 0.5)
+        np.testing.assert_allclose(axis, [-0.5, 0.0, 0.5])
+
+    #
+    def test_grows_with_t_range(self):
+        """Doubling t_range widens the support accordingly."""
+
+        narrow = conv_kernel_support(2.0, 0.5)
+        wide = conv_kernel_support(4.0, 0.5)
+        assert wide.size > narrow.size
+        assert wide.max() >= 2 * narrow.max() - 0.5
+
+    #
+    def test_nonfinite_range_raises(self):
+        """Non-finite t_range raises ValueError."""
+
+        with pytest.raises(ValueError, match="not finite"):
+            conv_kernel_support(np.nan, 0.5)
+        with pytest.raises(ValueError, match="not finite"):
+            conv_kernel_support(np.inf, 0.5)
+
+    #
+    def test_bad_step_raises(self):
+        """Non-positive or non-finite t_step raises ValueError."""
+
+        with pytest.raises(ValueError, match="positive"):
+            conv_kernel_support(1.0, 0.0)
+        with pytest.raises(ValueError, match="positive"):
+            conv_kernel_support(1.0, -0.5)
 
 
 #

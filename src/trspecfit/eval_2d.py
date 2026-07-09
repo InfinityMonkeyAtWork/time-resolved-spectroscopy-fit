@@ -22,7 +22,7 @@ from trspecfit.graph_ir import (
     ParamSourceKind,
     ScheduledPlan2D,
 )
-from trspecfit.utils.arrays import my_conv
+from trspecfit.utils.arrays import conv_kernel_support, my_conv
 
 # ---------------------------------------------------------------------------
 # Dynamics dispatch table
@@ -38,17 +38,30 @@ DYNAMICS_DISPATCH: dict[int, tuple] = {
     DynFuncKind.STEPFUN: (fcts_time.stepFun, 2),
 }
 
-# Convolution kernel dispatch: kernel function evaluated on the frozen
-# kernel-time support with per-theta kernel parameters.  Mirrors MCP's
-# Model.combine(...) path.
+# Convolution kernel dispatch: kernel function plus its *_kernel_width
+# helper.  The kernel support is rebuilt from the current kernel
+# parameters at every evaluation so it tracks the fitted width.
+# Mirrors MCP's Component.value(...) conv path.
 CONV_KERNEL_DISPATCH: dict[int, tuple] = {
-    ConvKernelKind.GAUSSCONV: (fcts_time.gaussCONV, 1),
-    ConvKernelKind.LORENTZCONV: (fcts_time.lorentzCONV, 1),
-    ConvKernelKind.VOIGTCONV: (fcts_time.voigtCONV, 2),
-    ConvKernelKind.EXPSYMCONV: (fcts_time.expSymCONV, 1),
-    ConvKernelKind.EXPDECAYCONV: (fcts_time.expDecayCONV, 1),
-    ConvKernelKind.EXPRISECONV: (fcts_time.expRiseCONV, 1),
-    ConvKernelKind.BOXCONV: (fcts_time.boxCONV, 1),
+    ConvKernelKind.GAUSSCONV: (fcts_time.gaussCONV, fcts_time.gaussCONV_kernel_width),
+    ConvKernelKind.LORENTZCONV: (
+        fcts_time.lorentzCONV,
+        fcts_time.lorentzCONV_kernel_width,
+    ),
+    ConvKernelKind.VOIGTCONV: (fcts_time.voigtCONV, fcts_time.voigtCONV_kernel_width),
+    ConvKernelKind.EXPSYMCONV: (
+        fcts_time.expSymCONV,
+        fcts_time.expSymCONV_kernel_width,
+    ),
+    ConvKernelKind.EXPDECAYCONV: (
+        fcts_time.expDecayCONV,
+        fcts_time.expDecayCONV_kernel_width,
+    ),
+    ConvKernelKind.EXPRISECONV: (
+        fcts_time.expRiseCONV,
+        fcts_time.expRiseCONV_kernel_width,
+    ),
+    ConvKernelKind.BOXCONV: (fcts_time.boxCONV, fcts_time.boxCONV_kernel_width),
 }
 
 
@@ -337,16 +350,17 @@ def evaluate_2d(plan: ScheduledPlan2D, theta: np.ndarray) -> np.ndarray:
         else:  # kind == 2: resolved-trace convolution
             target = int(plan.conv_target_rows[idx])
             func_id = int(plan.conv_func_ids[idx])
-            kernel_func, _k_par = CONV_KERNEL_DISPATCH[func_id]
+            kernel_func, width_func = CONV_KERNEL_DISPATCH[func_id]
             p_start = int(plan.conv_param_indptr[idx])
             p_end = int(plan.conv_param_indptr[idx + 1])
             kernel_params = [
                 float(traces[int(plan.conv_param_rows[j]), 0])
                 for j in range(p_start, p_end)
             ]
-            s_start = int(plan.conv_support_indptr[idx])
-            s_end = int(plan.conv_support_indptr[idx + 1])
-            support = plan.conv_support_values[s_start:s_end]
+            support = conv_kernel_support(
+                kernel_params[0] * width_func(*kernel_params),
+                float(plan.time[1] - plan.time[0]),
+            )
             kernel = kernel_func(support, *kernel_params)
             traces[target, :] = my_conv(plan.time, traces[target, :], kernel)
 

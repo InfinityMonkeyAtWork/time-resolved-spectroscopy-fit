@@ -309,6 +309,41 @@ def pad_x_y(
 
 
 #
+def conv_kernel_support(t_range: float, t_step: float) -> NDArray[np.float64]:
+    """
+    Build a symmetric, odd-length time axis for a convolution kernel.
+
+    Rebuilt from the current kernel parameter values at every model
+    evaluation so the support tracks the fitted width — a frozen support
+    silently truncates the kernel when the width grows past its initial
+    value.
+
+    Parameters
+    ----------
+    t_range : float
+        Half-width of the kernel support, typically
+        ``kernel_par * kernel_width(...)`` from the ``*_kernel_width``
+        helpers in trspecfit.functions.time
+    t_step : float
+        Time axis step size (matches the data time axis)
+
+    Returns
+    -------
+    ndarray
+        Kernel time axis ``[-n*t_step, ..., 0, ..., n*t_step]`` with
+        ``n = max(1, ceil(|t_range| / t_step))``, guaranteed symmetric
+        and odd-length so ``mode='same'`` convolution stays centered
+    """
+
+    if not np.isfinite(t_range):
+        raise ValueError(f"Kernel support range is not finite: {t_range}")
+    if not np.isfinite(t_step) or t_step <= 0:
+        raise ValueError(f"Kernel time step must be positive: {t_step}")
+    n = max(1, int(np.ceil(abs(t_range) / t_step)))
+    return np.arange(-n, n + 1, dtype=np.float64) * t_step
+
+
+#
 def my_conv(
     x: ArrayLike,
     y: ArrayLike,

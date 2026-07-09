@@ -89,6 +89,16 @@ MonoExpPosIRF:
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
 
+# truth-side twin of MonoExpPosIRF for the kernel-support regression test:
+# SD initializes at the truth value, 16x above MonoExpPosIRF's init
+MonoExpPosIRFWide:
+    gaussCONV:
+        SD: [0.8, True, 0, 1]
+    expFun:
+        A: [1, True, 0, 5]
+        tau: [2.5, True, 1, 10]
+        t0: [0, False, 0, 1]
+
 MonoExpPosLorentzIRF:
     lorentzCONV:
         W: [0.5, True, 0.01, 5]
