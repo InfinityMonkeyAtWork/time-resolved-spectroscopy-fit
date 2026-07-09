@@ -722,10 +722,10 @@ class TestDynamicsConvolution:
     """
 
     #
-    def _make_irf_plan(self):
+    def _make_irf_plan(self, dyn_model="MonoExpPosIRF"):
         file, model = _make_2d_model(
             ["glp_only"],
-            [("GLP_01_A", ["MonoExpPosIRF"])],
+            [("GLP_01_A", [dyn_model])],
         )
         graph = build_graph(model)
         assert can_lower_2d(graph)
@@ -790,11 +790,11 @@ class TestDynamicsConvolution:
         it.  Both paths now rebuild the support from the current value.
         """
 
-        plan, _graph, model = self._make_irf_plan()
+        plan, _graph, model = self._make_irf_plan(dyn_model="MonoExpPosIRFNarrow")
         theta = _compare_evaluator_vs_interpreter(model, plan)
         sd_idx = plan.opt_param_names.index("GLP_01_A_gaussCONV_SD")
-        # SD init is 5e-2 on a dt=2.2 axis; +0.6 grows the support from
-        # a sub-sample kernel to a multi-sample one
+        # Narrow SD init is 5e-2 on a dt=2.2 axis; +0.6 grows the support
+        # from a sub-sample kernel to a multi-sample one (within bounds)
         _perturb_theta(plan, model, theta, [sd_idx], [0.6])
 
         # interpreter side: the kernel axis was rebuilt to span the

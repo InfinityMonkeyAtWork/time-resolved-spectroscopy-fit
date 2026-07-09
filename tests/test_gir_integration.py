@@ -709,13 +709,13 @@ class TestFileFit2D:
 
         project = make_project(name="gir_kernel_regrow")
         SD_name = "GLP_01_A_gaussCONV_SD"
-        SD_truth = 0.8
+        SD_truth = 0.4
 
         energy = np.linspace(83, 87, 30)
         time = np.linspace(-2, 10, 61)  # dt = 0.2
-        # truth model: MonoExpPosIRFWide inits SD at the truth value, so
-        # the simulated data carries a correctly sized kernel regardless
-        # of when the support is built
+        # truth model: MonoExpPosIRF inits SD at the truth value, so the
+        # simulated data carries a correctly sized kernel regardless of
+        # when the support is built
         truth_file = File(parent_project=project, name="truth")
         truth_file.energy = energy
         truth_file.time = time
@@ -725,14 +725,14 @@ class TestFileFit2D:
             target_model="single_glp",
             target_parameter="GLP_01_A",
             dynamics_yaml=_TIME_YAML,
-            dynamics_model=["MonoExpPosIRFWide"],
+            dynamics_model=["MonoExpPosIRF"],
         )
         truth_model = truth_file.model_active
         assert truth_model is not None  # type guard
         assert truth_model.lmfit_pars[SD_name].value == SD_truth
         clean = simulate_clean(truth_model)
 
-        # fit model: same shape, but SD inits at 5e-2, 16x below truth --
+        # fit model: same shape, but SD inits at 5e-2, 8x below truth --
         # a frozen ±4*init support could never represent the true kernel
         fit_file = _make_fit_file(project, clean, energy, time)
         fit_file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
@@ -740,7 +740,7 @@ class TestFileFit2D:
             target_model="single_glp",
             target_parameter="GLP_01_A",
             dynamics_yaml=_TIME_YAML,
-            dynamics_model=["MonoExpPosIRF"],
+            dynamics_model=["MonoExpPosIRFNarrow"],
         )
         fit_file.fit_2d(model_name="single_glp", stages=2, try_ci=0)
 
