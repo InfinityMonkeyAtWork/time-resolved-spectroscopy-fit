@@ -987,10 +987,12 @@ class Model:
         if self.time is None or self.energy is None:
             raise ValueError("Model time and energy axes required for 2D evaluation")
 
+        t_start = 0 if t_ind is None else t_ind[0]
         time_slice = self.time if t_ind is None else self.time[t_ind[0] : t_ind[1]]
         self.value_2d = np.empty((len(time_slice), len(self.energy)))
         for ti, _t in enumerate(time_slice):
-            val = self.create_value_1d(t_ind=ti, return_1d=1)
+            # create_value_1d expects an absolute index into self.time
+            val = self.create_value_1d(t_ind=t_start + ti, return_1d=1)
             if val is None:
                 raise RuntimeError("create_value_1d returned None during 2D eval")
             self.value_2d[ti, :] = val

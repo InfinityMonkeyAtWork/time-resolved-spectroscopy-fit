@@ -108,6 +108,32 @@ class TestEvaluation:
         assert np.isclose(v2_late, v1_late + 3.6)
 
     #
+    def test_eval_partial_time_range_uses_absolute_indices(self):
+        """Partial-range 2D eval matches the same rows of the full eval.
+
+        Regression: create_value_2d(t_ind=[start, stop]) passed the
+        slice-relative loop index to create_value_1d, so time-dependent
+        parameters were evaluated at t[0:stop-start] instead of
+        t[start:stop].
+        """
+
+        file, model = self._make_file_with_model(["energy_expression"])
+        file.add_time_dependence(
+            target_model="energy_expression",
+            target_parameter="GLP_01_x0",
+            dynamics_yaml="models/file_time.yaml",
+            dynamics_model=["MonoExpPosIRF"],
+        )
+
+        model.create_value_2d()
+        value_2d_full = model.value_2d.copy()
+
+        start, stop = 40, 60
+        model.create_value_2d(t_ind=[start, stop])
+        assert model.value_2d.shape == (stop - start, len(file.energy))
+        np.testing.assert_allclose(model.value_2d, value_2d_full[start:stop])
+
+    #
     def test_eval_expression_fan_out(self):
         """Fan-out: GLP_02 and GLP_03 both reference GLP_01 directly."""
 
