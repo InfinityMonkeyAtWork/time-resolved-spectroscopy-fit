@@ -1418,6 +1418,22 @@ class TestDynamicsConvolution:
         assert "expFun" in trace_fns
 
     #
+    def test_single_point_time_axis_raises_at_schedule(self):
+        """schedule_2d raises a clear error for a conv on a 1-point time axis.
+
+        Regression: the conv precompute read time[1] - time[0] and raised
+        a bare IndexError. Unreachable through the public API (model
+        construction guards the kernel axis), so exercised by mutating
+        graph.time directly as a GIR-layer invariant check.
+        """
+
+        _file, model = _make_irf_dynamics_model()
+        graph = build_graph(model)
+        graph.time = np.array([0.0])
+        with pytest.raises(ValueError, match="at least 2 points"):
+            schedule_2d(graph)
+
+    #
     def test_irf_dynamics_lowerable_in_2d(self):
         """Time-domain IRF dynamics are lowerable on the 2D backend.
 

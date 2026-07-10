@@ -2373,6 +2373,11 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     ]
     _conv_id_to_idx: dict[int, int] = {n.id: i for i, n in enumerate(conv_nodes_topo)}
     n_conv_steps = len(conv_nodes_topo)
+    if n_conv_steps > 0 and n_time < 2:
+        raise ValueError(
+            "Convolution requires a time axis with at least 2 points "
+            f"to determine the kernel step size, got {n_time}."
+        )
 
     conv_target_rows_list: list[int] = []
     conv_func_ids_list: list[int] = []

@@ -1649,8 +1649,14 @@ class Component:
         # full parameter list for multi-parameter kernels such as Voigt.
         kernel_width = getattr(fcts_time, self.fct_str + "_kernel_width")(*par_values)
         t_range = par_values[0] * kernel_width
-        if self.time is None or len(self.time) < 2:
+        if self.time is None:
             raise ValueError(f"time axis of component {self.fct_str} not defined")
+        if len(self.time) < 2:
+            raise ValueError(
+                f"Convolution component {self.fct_str} requires a time axis "
+                f"with at least 2 points to determine the kernel step size, "
+                f"got {len(self.time)}."
+            )
         t_step = self.time[1] - self.time[0]
         return uarr.conv_kernel_support(t_range, t_step)
 

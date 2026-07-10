@@ -134,6 +134,31 @@ class TestEvaluation:
         np.testing.assert_allclose(model.value_2d, value_2d_full[start:stop])
 
     #
+    def test_conv_on_single_point_time_axis_raises(self):
+        """IRF dynamics on a 1-point time axis raise a clear error.
+
+        The convolution kernel step size comes from time[1] - time[0],
+        so the kernel axis cannot be built. The old message claimed the
+        time axis was "not defined" even when it existed with 1 point.
+        """
+
+        project = make_project()
+        file = File(parent_project=project)
+        file.energy = np.linspace(80, 90, 201)
+        file.time = np.array([0.0])
+        file.load_model(
+            model_yaml="models/file_energy.yaml",
+            model_info=["energy_expression"],
+        )
+        with pytest.raises(ValueError, match="at least 2 points"):
+            file.add_time_dependence(
+                target_model="energy_expression",
+                target_parameter="GLP_01_x0",
+                dynamics_yaml="models/file_time.yaml",
+                dynamics_model=["MonoExpPosIRF"],
+            )
+
+    #
     def test_eval_expression_fan_out(self):
         """Fan-out: GLP_02 and GLP_03 both reference GLP_01 directly."""
 
