@@ -756,11 +756,11 @@ def fit_wrapper(
             min=np.log(mc_settings.sigma_min),
             max=np.log(mc_settings.sigma_max),
         )
-        # always print progress bar
-        print(
-            "\nProgress of lmfit.emcee confidence interval determination\n"
-            "(based on Markov chain Monte Carlo parameter space sampling):"
-        )
+        if show_output >= 1:
+            print(
+                "\nProgress of lmfit.emcee confidence interval determination\n"
+                "(based on Markov chain Monte Carlo parameter space sampling):"
+            )
         # burn necessary if starting point not close to max(probability distribution)
         # i.e. not close to the optimized parameter set, so burn=0 is ok here!
         emcee_fin = mini.emcee(
@@ -772,7 +772,7 @@ def fit_wrapper(
             ntemps=mc_settings.ntemps,
             workers=mc_settings.workers,
             is_weighted=mc_settings.is_weighted,
-            progress=True,
+            progress=show_output >= 1,
         )
         emcee_fin_params = _result_params(emcee_fin)
         emcee_flatchain = cast(
@@ -789,7 +789,12 @@ def fit_wrapper(
             t_emcee1 = time.time()
             print(f"Time lmfit.emcee: {t_emcee1 - t_emcee0} s")
         # acceptence fraction of all walkers (plot)
-        emcee_save = save_output if show_output >= 1 else -abs(save_output)
+        # display per show_output, save per save_output (_finalize_plot
+        # semantics: >= 0 shows, abs == 1 saves, so -2 means neither)
+        if show_output >= 1:
+            emcee_save = save_output
+        else:
+            emcee_save = -1 if abs(save_output) == 1 else -2
         fig_emcee_walker, _ax = plt.subplots(1, 1, dpi=75)
         plt.plot(emcee_acceptance_fraction, "o")
         plt.xlabel("Walker number")

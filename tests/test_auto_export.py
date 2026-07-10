@@ -12,10 +12,13 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import matplotlib.pyplot as plt
 import numpy as np
+import pytest
 from _utils import make_project, simulate_noisy
 
 from trspecfit import File, fitlib
+from trspecfit.utils.lmfit import MC
 
 
 #
@@ -206,6 +209,48 @@ class TestPlotHelperSkipped:
         # The plot still runs so the user sees results inline; only the
         # disk write was suppressed.
         assert mock.call_count == 1
+
+    #
+    def test_fit_2d_silent_mode_prints_nothing(self, tmp_path, capsys):
+        """fit_2d honors show_output=0: no timing line, no params display.
+
+        Regression: time_display and display(params) ran whenever
+        stages >= 1, regardless of show_output.
+        """
+
+        project, file = _baseline_setup(tmp_path, auto_export=False)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        file.add_time_dependence(
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml="models/file_time.yaml",
+            dynamics_model=["MonoExpPos"],
+        )
+        capsys.readouterr()  # drop setup output
+        file.fit_2d("single_glp", stages=1, try_ci=0)
+        assert capsys.readouterr().out == ""
+
+    #
+    @pytest.mark.slow
+    def test_mcmc_silent_mode_no_output_no_figures(self, tmp_path, capsys):
+        """MCMC honors silent mode: no progress banner, no shown figures.
+
+        Regression: the emcee progress banner and progress=True ran
+        unconditionally, and with show_output=0, save_output=0 the walker
+        and corner figures reached _finalize_plot(0), i.e. plt.show(),
+        and were left open.
+        """
+
+        project, file = _baseline_setup(tmp_path, auto_export=False)
+        mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1)
+        n_figs = len(plt.get_fignums())
+        capsys.readouterr()  # drop setup output
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0, mc_settings=mc)
+
+        # emcee prints its own short-chain autocorrelation notice for the
+        # deliberately tiny chain; only our banner is under test here
+        assert "Progress of lmfit.emcee" not in capsys.readouterr().out
+        assert len(plt.get_fignums()) == n_figs
 
     #
     def test_sbs_skips_per_slice_plot_when_no_export(self, tmp_path, monkeypatch):

@@ -820,12 +820,11 @@ class Project:
             self._config_file = config_path
 
         except FileNotFoundError:
+            # missing config is a designed fallback: all settings optional
             if self.show_output >= 1:
                 print(f"Config file {config_path} not found, using defaults")
         except Exception as e:  # noqa: BLE001
-            if self.show_output >= 1:
-                print(f"Error loading config: {e}")
-                print("Using default settings")
+            raise ValueError(f"Failed to load config file {config_path}: {e}") from e
 
     # ------------------------------------------------------------------
     # Project-level model loading and baseline fitting
@@ -2306,7 +2305,8 @@ class File:
             - 'ind': Time array indices
 
         show_plot : bool, default=True
-            If True, plot the resulting baseline spectrum
+            If True, plot the resulting baseline spectrum. Suppressed
+            when ``Project.show_output < 1``.
         """
 
         if self.dim == 1:
@@ -2337,7 +2337,7 @@ class File:
         )
 
         # plot
-        if show_plot:
+        if show_plot and self.p.show_output >= 1:
             if self.data_base is None:
                 warnings.warn(
                     "Baseline data is unavailable; skipping baseline plot.",
@@ -2380,7 +2380,8 @@ class File:
             Time range for fitting ``[min, max]`` in absolute values.
             If None, no time limits are applied.
         show_plot : bool, default=True
-            If True, plot data with fit limits indicated
+            If True, plot data with fit limits indicated. Suppressed
+            when ``Project.show_output < 1``.
         """
 
         if self.energy is None:
@@ -2422,7 +2423,7 @@ class File:
                 float(np.min(time_limits)), float(np.max(time_limits))
             )
 
-        if show_plot:  # show data with limits
+        if show_plot and self.p.show_output >= 1:  # show data with limits
             if self.dim == 1:
                 if self.data is None:
                     warnings.warn("Data missing; cannot plot fit limits.", stacklevel=2)
@@ -3319,7 +3320,7 @@ class File:
                 )
         self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
         self.model_sbs.args = _args_sbs
-        if stages >= 1:
+        if stages >= 1 and self.p.show_output >= 1:
             fitlib.time_display(
                 t_start=t_sbs, print_str="Time elapsed for Slice-by-Slice fit: "
             )
@@ -4058,10 +4059,12 @@ class File:
                 self._save_2d_fit_legacy(
                     save_path=path_2d_results, save_files=self.p.auto_export
                 )
-            fitlib.time_display(
-                t_start=t_2d, print_str="Time elapsed for 2D model fit: "
-            )
-            display(self.model_2d.result[1].params)  # display final pars below figure
+            if self.p.show_output >= 1:
+                fitlib.time_display(
+                    t_start=t_2d, print_str="Time elapsed for 2D model fit: "
+                )
+                # display final pars below figure
+                display(self.model_2d.result[1].params)
 
     #
     def _save_2d_fit_legacy(

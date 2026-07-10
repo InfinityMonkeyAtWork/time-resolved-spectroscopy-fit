@@ -359,10 +359,10 @@ class TestFitLimitsAndBaseline:
     """Test fit limits and baseline."""
 
     #
-    def _make_file_with_data(self):
+    def _make_file_with_data(self, *, show_output: int = 0):
         """Create file with axes and 2D data."""
 
-        project = make_project()
+        project = make_project(show_output=show_output)
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 201)
         file.time = np.linspace(-10, 100, 111)
@@ -568,6 +568,58 @@ class TestFitLimitsAndBaseline:
         with pytest.raises(ValueError, match="Energy axis missing"):
             file.set_fit_limits([1, 3], show_plot=False)
         assert file.energy is None
+
+    #
+    def test_define_baseline_plot_suppressed_when_silent(self, monkeypatch):
+        """show_plot=True defers to Project.show_output (silent = no plot).
+
+        Regression: define_baseline plotted on its show_plot=True default
+        even with show_output=0.
+        """
+
+        import trspecfit.utils.plot as uplt
+
+        mock = unittest.mock.MagicMock()
+        monkeypatch.setattr(uplt, "plot_1d", mock)
+        file = self._make_file_with_data()  # make_project() is silent
+        file.define_baseline(-10, 0, show_plot=True)
+        assert mock.call_count == 0
+
+    #
+    def test_define_baseline_plots_when_verbose(self, monkeypatch):
+        """define_baseline still plots with show_plot=True and show_output=1."""
+
+        import trspecfit.utils.plot as uplt
+
+        mock = unittest.mock.MagicMock()
+        monkeypatch.setattr(uplt, "plot_1d", mock)
+        file = self._make_file_with_data(show_output=1)
+        file.define_baseline(-10, 0, show_plot=True)
+        assert mock.call_count == 1
+
+    #
+    def test_set_fit_limits_plot_suppressed_when_silent(self, monkeypatch):
+        """show_plot=True defers to Project.show_output (silent = no plot)."""
+
+        import trspecfit.utils.plot as uplt
+
+        mock = unittest.mock.MagicMock()
+        monkeypatch.setattr(uplt, "plot_2d", mock)
+        file = self._make_file_with_data()  # make_project() is silent
+        file.set_fit_limits([82, 88], show_plot=True)
+        assert mock.call_count == 0
+
+    #
+    def test_set_fit_limits_plots_when_verbose(self, monkeypatch):
+        """set_fit_limits still plots with show_plot=True and show_output=1."""
+
+        import trspecfit.utils.plot as uplt
+
+        mock = unittest.mock.MagicMock()
+        monkeypatch.setattr(uplt, "plot_2d", mock)
+        file = self._make_file_with_data(show_output=1)
+        file.set_fit_limits([82, 88], show_plot=True)
+        assert mock.call_count == 1
 
 
 #
@@ -1577,9 +1629,48 @@ class TestSetSigma:
         project = Project(path=tmp_path, config_file="project.yaml")
         assert np.isnan(project.sigma_data)
         assert project.noise_type == NOISE_TYPE_UNKNOWN
-        # Proves _load_config didn't bail early — show_output overrides
-        # the default of 1.
-        assert project.show_output == 0
+
+
+#
+#
+class TestProjectConfigLoading:
+    """Project config-file loading error behavior."""
+
+    #
+    def test_malformed_config_raises(self, tmp_path):
+        """A config file that fails to parse raises instead of using defaults.
+
+        Regression: any error after FileNotFoundError was swallowed with a
+        print gated on show_output, so with show_output=0 a broken config
+        silently fell back to defaults.
+        """
+
+        from trspecfit import Project
+
+        config = tmp_path / "project.yaml"
+        config.write_text("show_output: [unclosed\n")
+        with pytest.raises(ValueError, match="Failed to load config"):
+            Project(path=tmp_path, config_file="project.yaml")
+
+    #
+    def test_missing_config_falls_back_to_defaults(self, tmp_path):
+        """A missing config file falls back to defaults (designed behavior)."""
+
+        from trspecfit import Project
+
+        project = Project(path=tmp_path, config_file="does_not_exist.yaml")
+        assert project.show_output == 1  # default intact
+
+    #
+    def test_valid_config_applies(self, tmp_path):
+        """A valid config file overrides the defaults."""
+
+        from trspecfit import Project
+
+        config = tmp_path / "project.yaml"
+        config.write_text("show_output: 0\n")
+        project = Project(path=tmp_path, config_file="project.yaml")
+        assert project.show_output == 0  # override applied, not default 1
 
 
 if __name__ == "__main__":
