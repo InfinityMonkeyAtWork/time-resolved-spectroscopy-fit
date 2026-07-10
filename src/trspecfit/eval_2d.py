@@ -246,18 +246,26 @@ def _evaluate_profiled_op_2d(
     peak_sum: np.ndarray,
     *,
     needs_spectrum: bool,
+    n_aux: int,
 ) -> np.ndarray:
-    """Evaluate one profiled 2D op vectorized over aux, then average.
+    """Evaluate one profiled 2D op: loop over aux points, average.
 
-    Broadcasts to ``(n_time, n_aux, n_energy)`` in a single call: energy
-    is ``(1, 1, n_energy)``, scalar params ``(n_time, 1, 1)``, and
-    profiled params ``(n_time, n_aux, 1)``. All energy functions are
-    pure ufunc arithmetic or reduce along ``axis=-1`` (Shirley), so the
-    extra leading axis broadcasts through unchanged.
+    Param sources are resolved to ``(n_time, n_aux)`` views once,
+    outside the loop. The per-aux loop is deliberate: vectorizing over
+    aux in a single call only wins when profiled params enter the
+    function linearly (amplitude-only profiles, where broadcasting
+    keeps the transcendental part at ``(n_time, 1, n_energy)``); with a
+    profiled position or width the energy function materializes full
+    ``(n_time, n_aux, n_energy)`` temporaries and measures ~60% slower
+    (example 04: profiled x0, n_aux=50, 175x280 grid).
     """
 
     func, _needs = OP_DISPATCH[kind]
-    params: list[np.ndarray] = []
+    n_time = traces.shape[1]
+    n_energy = energy.shape[-1]
+
+    # Resolve each param source once (scalars as no-copy broadcast views)
+    sources: list[np.ndarray] = []
     for source_kind, source_idx in zip(
         param_source_kinds,
         param_indices,
@@ -266,21 +274,23 @@ def _evaluate_profiled_op_2d(
         sk = int(source_kind)
         si = int(source_idx)
         if sk == int(ParamSourceKind.SCALAR):
-            param = traces[si, :][:, np.newaxis, np.newaxis]  # (n_time, 1, 1)
+            source = np.broadcast_to(traces[si, :][:, np.newaxis], (n_time, n_aux))
         elif sk == int(ParamSourceKind.PROFILE_SAMPLE):
-            param = profile_sample_values[si][:, :, np.newaxis]  # (n_time, n_aux, 1)
+            source = profile_sample_values[si]  # (n_time, n_aux)
         else:
-            param = profile_expr_values[si][:, :, np.newaxis]  # (n_time, n_aux, 1)
-        params.append(param)
+            source = profile_expr_values[si]  # (n_time, n_aux)
+        sources.append(source)
 
-    energy_3d = energy[np.newaxis, :, :] if energy.ndim == 2 else energy
-    if needs_spectrum:
-        stacked = func(energy_3d, *params, peak_sum[:, np.newaxis, :])
-    else:
-        stacked = func(energy_3d, *params)
+    accumulated = np.zeros((n_time, n_energy), dtype=np.float64)
+    for aux_i in range(n_aux):
+        params = [s[:, aux_i, np.newaxis] for s in sources]
+        if needs_spectrum:
+            accumulated += func(energy, *params, peak_sum)
+        else:
+            accumulated += func(energy, *params)
 
-    averaged: np.ndarray = np.asarray(stacked, dtype=np.float64).mean(axis=1)
-    return averaged
+    accumulated /= n_aux
+    return accumulated
 
 
 # ---------------------------------------------------------------------------
@@ -409,6 +419,7 @@ def evaluate_2d(plan: ScheduledPlan2D, theta: np.ndarray) -> np.ndarray:
                 profile_expr_values,
                 peak_sum,
                 needs_spectrum=needs_spectrum,
+                n_aux=plan.n_aux,
             )
         else:
             param_rows = plan.op_param_indices[start:end]

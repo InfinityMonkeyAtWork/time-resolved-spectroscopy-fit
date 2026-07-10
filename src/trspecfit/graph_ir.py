@@ -2972,6 +2972,7 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
                 profile_expr_values_init,
                 cached_peak_sum,
                 needs_spectrum=bool(op_needs_spectrum[op_idx]),
+                n_aux=n_aux,
             )
         else:
             param_rows = op_param_indices[start:end]
