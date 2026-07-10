@@ -238,6 +238,7 @@ class Project:
         self.y_dir = "def"
         self.y_type = "lin"
         self.z_colormap = "viridis"
+        self.z_colormap_res = "RdBu_r"
         self.z_colorbar = "ver"
         self.z_type = "lin"
         self.dpi_plt = 100
@@ -755,6 +756,7 @@ class Project:
             print(f"    y_dir:      {self.y_dir}")
             print(f"    y_type:     {self.y_type}")
             print(f"    z_colormap: {self.z_colormap}")
+            print(f"    z_colormap_res: {self.z_colormap_res}")
             print(f"    z_colorbar: {self.z_colorbar}")
             print(f"    z_type:     {self.z_type}")
             print(f"    dpi_plt:    {self.dpi_plt}")

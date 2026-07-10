@@ -1394,8 +1394,11 @@ def plt_fit_res_2d(
         - z_lim_top : Color scale ``[min, max]`` for data and fit panels.
           Synchronized scale enables direct comparison
         - z_lim_res : Color scale ``[min, max]`` for residual panel.
-          Independent scale optimizes residual visibility
-        - z_colormap : Colormap name (default 'viridis')
+          If None, symmetric around 0 so the diverging colormap's
+          midpoint marks zero residual
+        - z_colormap : Colormap name for data/fit panels (default 'viridis')
+        - z_colormap_res : Diverging colormap name for the residual panel
+          (default 'RdBu_r')
         - x_dir, y_dir : 'def' or 'rev' for axis direction
         - x_type, y_type : 'lin' or 'log' for axis scale
         - save_img : 0 (display), 1 (save+display), -1 (save only)
@@ -1409,6 +1412,7 @@ def plt_fit_res_2d(
     x_label = kwargs.get("x_label", config.x_label)
     y_label = kwargs.get("y_label", config.y_label)
     z_colormap = kwargs.get("z_colormap", config.z_colormap)
+    z_colormap_res = kwargs.get("z_colormap_res", config.z_colormap_res)
     x_dir = kwargs.get("x_dir", config.x_dir)
     x_type = kwargs.get("x_type", config.x_type)
     y_dir = kwargs.get("y_dir", config.y_dir)
@@ -1457,8 +1461,13 @@ def plt_fit_res_2d(
     else:
         range_dat_fit = z_lim_top
 
-    # Residual has independent scale
-    range_res = [np.min(res_cut), np.max(res_cut)] if z_lim_res is None else z_lim_res
+    # Residual has independent scale, symmetric around 0 by default so the
+    # diverging colormap's midpoint marks zero residual
+    if z_lim_res is None:
+        res_amp = np.max(np.abs(res_cut))
+        range_res = [-res_amp, res_amp]
+    else:
+        range_res = z_lim_res
 
     # Create figure layout
     fig, axs = plt.subplot_mosaic(
@@ -1508,7 +1517,7 @@ def plt_fit_res_2d(
         x_arr,
         y_arr,
         res,
-        cmap=z_colormap,
+        cmap=z_colormap_res,
         vmin=range_res[0],
         vmax=range_res[1],
         shading="nearest",

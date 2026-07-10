@@ -56,6 +56,8 @@ class PlotConfig:
         DPI for saving plots
     z_colormap : str
         Colormap name for 2D plots
+    z_colormap_res : str
+        Diverging colormap name for 2D residual maps (centered on 0)
     data_slice : list[list[int]] | None
         Data slicing indices for 2D plots: [[x_start, x_stop], [y_start, y_stop]]
     colors : list[str] | None
@@ -143,6 +145,8 @@ class PlotConfig:
 
     # 2D plot settings
     z_colormap: str = "viridis"
+    # Residual maps are signed and centered on 0 -> diverging colormap
+    z_colormap_res: str = "RdBu_r"
     z_colorbar: str = "ver"  # 'ver' or 'hor'
     z_type: str = "lin"  # 'lin' or 'log' for color scale
     # 2D data handling
