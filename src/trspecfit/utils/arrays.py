@@ -236,7 +236,9 @@ def sign_change(array: ArrayLike, *, ignore_zeros: bool = True) -> NDArray[np.in
 
     asign = np.sign(array)
 
-    if ignore_zeros:
+    # all-zero input has no sign to propagate (and the loop below would
+    # never terminate); the roll-difference then correctly yields no changes
+    if ignore_zeros and asign.any():
         sz = asign == 0
         while sz.any():
             asign[sz] = np.roll(asign, 1)[sz]

@@ -1,9 +1,51 @@
-"""Tests for trspecfit.utils.arrays — running_mean, conv_kernel_support."""
+"""Tests for trspecfit.utils.arrays — running_mean, conv_kernel_support,
+sign_change."""
 
 import numpy as np
 import pytest
 
-from trspecfit.utils.arrays import conv_kernel_support, running_mean
+from trspecfit.utils.arrays import conv_kernel_support, running_mean, sign_change
+
+
+#
+#
+class TestSignChange:
+    """Tests for sign_change zero-crossing detection."""
+
+    #
+    def test_all_zero_input_returns_no_changes(self):
+        """All-zero input terminates and reports no sign changes.
+
+        Regression: the zero-propagation loop never terminated on
+        all-zero input (np.roll can't introduce a non-zero sign).
+        """
+
+        result = sign_change(np.zeros(5), ignore_zeros=True)
+        np.testing.assert_array_equal(result, np.zeros(5, dtype=int))
+
+    #
+    def test_zero_crossing_with_ignore_zeros(self):
+        """Zeros between opposite signs count as one crossing."""
+
+        np.testing.assert_array_equal(
+            sign_change([1, 0, -1], ignore_zeros=True), [0, 0, 1]
+        )
+
+    #
+    def test_zero_crossing_without_ignore_zeros(self):
+        """ignore_zeros=False treats zero as its own sign."""
+
+        np.testing.assert_array_equal(
+            sign_change([1, 0, -1], ignore_zeros=False), [0, 1, 1]
+        )
+
+    #
+    def test_no_crossing(self):
+        """Same-sign input reports no changes."""
+
+        np.testing.assert_array_equal(
+            sign_change([1, 2, 0, 3], ignore_zeros=True), [0, 0, 0, 0]
+        )
 
 
 #
