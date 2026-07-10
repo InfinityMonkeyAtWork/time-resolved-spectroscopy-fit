@@ -1727,42 +1727,48 @@ class Simulator:
                 f"  Output file: {filepath}\n"
             )
 
-        # Initialize HDF5 file with structure
-        self._initialize_sweep_hdf5(
-            filepath, parameter_sweep, n_realizations, n_configs, dim
-        )
-
-        # Process each configuration
-        for config_idx, param_config in enumerate(parameter_sweep):
-            if show_progress:
-                # Format parameters nicely
-                param_str = ", ".join(f"{k}={v:.3g}" for k, v in param_config.items())
-                print(
-                    f"Processing config {config_idx + 1}/{n_configs}: {{{param_str}}}"
-                )
-
-            # Update model parameters
-            param_names = list(param_config.keys())
-            param_values = list(param_config.values())
-            self.model.update_value(param_values, par_select=param_names)
-
-            # Generate noisy realizations for this config
-            clean, noisy_list, _noise_list = self.simulate_n(
-                n=n_realizations,
-                dim=dim,
-                show_progress=False,  # Don't clutter output
+        # Keep the file open for the whole sweep (per-config open/close is
+        # costly for large sweeps); each config is flushed after appending
+        with h5py.File(filepath, "w") as f:
+            # Initialize HDF5 file with structure
+            self._initialize_sweep_hdf5(
+                f, parameter_sweep, n_realizations, n_configs, dim
             )
 
-            # Append to HDF5 immediately (memory-efficient)
-            self._append_config_to_hdf5(
-                filepath, config_idx, param_config, clean, noisy_list
-            )
+            # Process each configuration
+            for config_idx, param_config in enumerate(parameter_sweep):
+                if show_progress:
+                    # Format parameters nicely
+                    param_str = ", ".join(
+                        f"{k}={v:.3g}" for k, v in param_config.items()
+                    )
+                    print(
+                        f"Processing config {config_idx + 1}/{n_configs}:"
+                        f" {{{param_str}}}"
+                    )
 
-            if show_progress:
-                print(
-                    f"  ✓ Saved config {config_idx + 1}"
-                    f" with {n_realizations} realizations"
+                # Update model parameters
+                param_names = list(param_config.keys())
+                param_values = list(param_config.values())
+                self.model.update_value(param_values, par_select=param_names)
+
+                # Generate noisy realizations for this config
+                clean, noisy_list, _noise_list = self.simulate_n(
+                    n=n_realizations,
+                    dim=dim,
+                    show_progress=False,  # Don't clutter output
                 )
+
+                # Append to HDF5 immediately (memory-efficient)
+                self._append_config_to_hdf5(
+                    f, config_idx, param_config, clean, noisy_list
+                )
+
+                if show_progress:
+                    print(
+                        f"  ✓ Saved config {config_idx + 1}"
+                        f" with {n_realizations} realizations"
+                    )
 
         if show_progress:
             print(
@@ -1777,7 +1783,7 @@ class Simulator:
     #
     def _initialize_sweep_hdf5(
         self,
-        filepath: str,
+        f: h5py.File,
         parameter_sweep: ParameterSweep,
         n_realizations: int,
         n_configs: int,
@@ -1811,8 +1817,8 @@ class Simulator:
 
         Parameters
         ----------
-        filepath : str
-            Path to HDF5 file to create
+        f : h5py.File
+            Freshly created HDF5 file, open for writing
         parameter_sweep : ParameterSweep
             Parameter sweep object (for metadata)
         n_realizations : int
@@ -1823,51 +1829,50 @@ class Simulator:
             Dimensionality of simulated data
         """
 
-        with h5py.File(filepath, "w") as f:
-            # Save axes (same for all configs)
-            self._write_axes_hdf5(f)
+        # Save axes (same for all configs)
+        self._write_axes_hdf5(f)
 
-            # Create groups for organization
-            f.create_group("parameter_configs")
-            f.create_group("simulated_data")
+        # Create groups for organization
+        f.create_group("parameter_configs")
+        f.create_group("simulated_data")
 
-            # Save sweep metadata
-            meta = f.create_group("metadata")
-            meta.attrs["n_configs"] = n_configs
-            meta.attrs["n_realizations_per_config"] = n_realizations
-            meta.attrs["total_datasets"] = n_configs * n_realizations
+        # Save sweep metadata
+        meta = f.create_group("metadata")
+        meta.attrs["n_configs"] = n_configs
+        meta.attrs["n_realizations_per_config"] = n_realizations
+        meta.attrs["total_datasets"] = n_configs * n_realizations
 
-            # Simulator settings
-            self._write_detection_metadata(meta)
+        # Simulator settings
+        self._write_detection_metadata(meta)
 
-            # Parameter sweep settings
-            meta.attrs["sweep_strategy"] = parameter_sweep.strategy
-            meta.attrs["sweep_seed"] = (
-                "None" if parameter_sweep.seed is None else parameter_sweep.seed
-            )
+        # Parameter sweep settings
+        meta.attrs["sweep_strategy"] = parameter_sweep.strategy
+        meta.attrs["sweep_seed"] = (
+            "None" if parameter_sweep.seed is None else parameter_sweep.seed
+        )
 
-            # Save parameter space definition as JSON
-            param_space = {}
-            for par_name, spec in parameter_sweep.parameter_specs.items():
-                # Convert numpy arrays to lists for JSON serialization
-                spec_copy = spec.copy()
-                if "values" in spec_copy:
-                    spec_copy["values"] = spec_copy["values"].tolist()
-                param_space[par_name] = spec_copy
+        # Save parameter space definition as JSON
+        param_space = {}
+        for par_name, spec in parameter_sweep.parameter_specs.items():
+            # Convert numpy arrays to lists for JSON serialization
+            spec_copy = spec.copy()
+            if "values" in spec_copy:
+                spec_copy["values"] = spec_copy["values"].tolist()
+            param_space[par_name] = spec_copy
 
-            meta.attrs["parameter_space"] = json.dumps(param_space, indent=2)
+        meta.attrs["parameter_space"] = json.dumps(param_space, indent=2)
 
-            # Save full model definition once (static across all configs)
-            meta.attrs["model_parameters"] = self._model_parameters_json()
-            meta.attrs["model_name"] = self.model.name
+        # Save full model definition once (static across all configs)
+        meta.attrs["model_parameters"] = self._model_parameters_json()
+        meta.attrs["model_name"] = self.model.name
 
-            # Dimension matches the actual data written, not model capability
-            meta.attrs["dimension"] = dim
+        # Dimension matches the actual data written, not model capability
+        meta.attrs["dimension"] = dim
 
     #
     def _append_config_to_hdf5(
         self,
-        filepath: str,
+        f: h5py.File,
         config_idx: int,
         param_config: dict[str, float],
         clean: np.ndarray,
@@ -1878,8 +1883,8 @@ class Simulator:
 
         Parameters
         ----------
-        filepath : str
-            Path to HDF5 file
+        f : h5py.File
+            Sweep HDF5 file, open for writing
         config_idx : int
             Configuration index (for naming)
         param_config : dict
@@ -1890,28 +1895,30 @@ class Simulator:
             List of noisy realizations
         """
 
-        with h5py.File(filepath, "a") as f:
-            # Create group for this configuration
-            config_name = f"config_{config_idx:06d}"
-            configs_group = require_group(f["parameter_configs"], "parameter_configs")
-            config_group = configs_group.create_group(config_name)
+        # Create group for this configuration
+        config_name = f"config_{config_idx:06d}"
+        configs_group = require_group(f["parameter_configs"], "parameter_configs")
+        config_group = configs_group.create_group(config_name)
 
-            # Save swept parameters as attributes
-            for par_name, value in param_config.items():
-                config_group.attrs[par_name] = float(value)
+        # Save swept parameters as attributes
+        for par_name, value in param_config.items():
+            config_group.attrs[par_name] = float(value)
 
-            # Save all parameter values for this config (full model state)
-            param_values = {
-                par_name: float(self.model.lmfit_pars[par_name].value)
-                for par_name in self.model.lmfit_pars
-            }
-            config_group.attrs["all_parameter_values"] = json.dumps(param_values)
+        # Save all parameter values for this config (full model state)
+        param_values = {
+            par_name: float(self.model.lmfit_pars[par_name].value)
+            for par_name in self.model.lmfit_pars
+        }
+        config_group.attrs["all_parameter_values"] = json.dumps(param_values)
 
-            # Save clean data for this configuration
-            config_group.create_dataset("clean", data=clean)
+        # Save clean data for this configuration
+        config_group.create_dataset("clean", data=clean)
 
-            # Save noisy realizations
-            simulated_group = require_group(f["simulated_data"], "simulated_data")
-            data_group = simulated_group.create_group(config_name)
-            for real_idx, noisy_data in enumerate(noisy_list):
-                data_group.create_dataset(f"{real_idx:06d}", data=noisy_data)
+        # Save noisy realizations
+        simulated_group = require_group(f["simulated_data"], "simulated_data")
+        data_group = simulated_group.create_group(config_name)
+        for real_idx, noisy_data in enumerate(noisy_list):
+            data_group.create_dataset(f"{real_idx:06d}", data=noisy_data)
+
+        # Completed configs stay on disk if the sweep is interrupted
+        f.flush()
