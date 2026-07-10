@@ -409,13 +409,9 @@ class Simulator:
 
         if self.detection == "analog":
             # Use traditional noise addition
-            if dim == 1:
-                noise = self._generate_noise_analog_1d(clean_data)
-            elif dim == 2:
-                noise = self._generate_noise_analog_2d(clean_data)
-            else:
+            if dim not in (1, 2):
                 raise ValueError(f"dim must be 1 or 2, got {dim}")
-
+            noise = self._generate_noise_analog(clean_data)
             noisy_data = clean_data + noise
 
         elif self.detection == "photon_counting":
@@ -766,9 +762,9 @@ class Simulator:
         return clean_data, noisy_data_list, noise_list
 
     #
-    def _generate_noise_analog_1d(self, signal: np.ndarray) -> np.ndarray:
+    def _generate_noise_analog(self, signal: np.ndarray) -> np.ndarray:
         """
-        Generate 1D noise array for analog detectors.
+        Generate noise array for analog detectors (1D or 2D signal).
 
         Parameters
         ----------
@@ -796,53 +792,6 @@ class Simulator:
 
             # Scale signal to photon counts (higher = less relative noise)
             scale_factor = 1.0 / (self.noise_level + 1e-10)  # Avoid division by zero
-            signal_scaled = signal_positive * scale_factor
-
-            # Generate Poisson noise
-            noisy_scaled = self.rng.poisson(signal_scaled)
-
-            # Scale back and compute noise component
-            signal_noisy = noisy_scaled / scale_factor
-            noise = signal_noisy - signal_positive
-
-            # Restore original sign
-            return cast("np.ndarray", noise * np.sign(signal))
-
-        raise ValueError(
-            f"Unknown noise type: {self.noise_type}. "
-            "Use 'poisson', 'gaussian', or 'none'"
-        )
-
-    #
-    def _generate_noise_analog_2d(self, signal: np.ndarray) -> np.ndarray:
-        """
-        Generate 2D noise array for analog detectors.
-
-        Parameters
-        ----------
-        signal : ndarray
-            Clean 2D signal array.
-
-        Returns
-        -------
-        ndarray
-            2D noise array with same shape as signal.
-        """
-
-        if self.noise_type == "none":
-            return np.zeros_like(signal)
-
-        if self.noise_type == "gaussian":
-            # Gaussian noise with amplitude proportional to noise_level
-            noise_amp = self.noise_level * np.max(np.abs(signal))
-            return cast("np.ndarray", self.rng.normal(0, noise_amp, signal.shape))
-
-        if self.noise_type == "poisson":
-            # Poisson noise: scale signal to photon counts, add noise, scale back
-            signal_positive = np.abs(signal)
-
-            # Scale signal to photon counts
-            scale_factor = 1.0 / (self.noise_level + 1e-10)
             signal_scaled = signal_positive * scale_factor
 
             # Generate Poisson noise
@@ -1607,6 +1556,50 @@ class Simulator:
             print(f"Data saved to: {filepath}")
 
     #
+    def _write_axes_hdf5(self, f: h5py.File) -> None:
+        """Write energy and time axes at the file root (empty time if 1D)."""
+
+        f.create_dataset("energy", data=self.model.energy)
+        if self.model.time is not None and len(self.model.time) > 0:
+            f.create_dataset("time", data=self.model.time)
+        else:
+            f.create_dataset("time", data=np.array([]))
+
+    #
+    def _write_detection_metadata(self, meta: h5py.Group) -> None:
+        """Write detection/noise settings and seed as metadata attributes."""
+
+        meta.attrs["detection"] = self.detection
+        if self.detection == "analog":
+            meta.attrs["noise_level"] = self.noise_level
+            meta.attrs["noise_type"] = self.noise_type
+        elif self.detection == "photon_counting":
+            meta.attrs["counts_per_delay"] = self.counts_per_delay
+            if self.count_rate is not None:
+                meta.attrs["count_rate"] = self.count_rate
+            if self.integration_time is not None:
+                meta.attrs["integration_time"] = self.integration_time
+
+        if self.seed is not None:
+            meta.attrs["seed"] = self.seed
+
+    #
+    def _model_parameters_json(self) -> str:
+        """Serialize the model's lmfit parameters (full spec) to JSON."""
+
+        params_dict = {}
+        for par_name in self.model.lmfit_pars:
+            par = self.model.lmfit_pars[par_name]
+            params_dict[par_name] = {
+                "value": float(par.value),
+                "vary": bool(par.vary),
+                "min": float(par.min) if par.min is not None else None,
+                "max": float(par.max) if par.max is not None else None,
+                "expr": par.expr or None,
+            }
+        return json.dumps(params_dict, indent=2)
+
+    #
     def _save_hdf5(self, filepath: str, n_data: list[np.ndarray] | None = None) -> None:
         """
         Save data to HDF5 format with proper structure
@@ -1623,14 +1616,7 @@ class Simulator:
 
         with h5py.File(filepath, "w") as f:
             # Save axes at root level
-            f.create_dataset("energy", data=self.model.energy)
-
-            # Handle time axis - check if it exists and has valid data
-            if self.model.time is not None and len(self.model.time) > 0:
-                f.create_dataset("time", data=self.model.time)
-            else:
-                # For 1D simulations, save empty array
-                f.create_dataset("time", data=np.array([]))
+            self._write_axes_hdf5(f)
 
             # Save clean data at root level
             if self.data_clean is not None:
@@ -1651,21 +1637,7 @@ class Simulator:
 
             # Save metadata group at root level
             meta = f.create_group("metadata")
-            meta.attrs["detection"] = self.detection
-
-            # Save detection-specific parameters
-            if self.detection == "analog":
-                meta.attrs["noise_level"] = self.noise_level
-                meta.attrs["noise_type"] = self.noise_type
-            elif self.detection == "photon_counting":
-                meta.attrs["counts_per_delay"] = self.counts_per_delay
-                if self.count_rate is not None:
-                    meta.attrs["count_rate"] = self.count_rate
-                if self.integration_time is not None:
-                    meta.attrs["integration_time"] = self.integration_time
-
-            if self.seed is not None:
-                meta.attrs["seed"] = self.seed
+            self._write_detection_metadata(meta)
 
             # Determine dimensionality from clean data
             if self.data_clean is not None:
@@ -1681,19 +1653,7 @@ class Simulator:
                 meta.attrs["n_datasets"] = 1
 
             # Save model parameters as JSON in metadata
-            params_dict = {}
-            for par_name in self.model.lmfit_pars:
-                par = self.model.lmfit_pars[par_name]
-                params_dict[par_name] = {
-                    "value": float(par.value),
-                    "vary": bool(par.vary),
-                    "min": float(par.min) if par.min is not None else None,
-                    "max": float(par.max) if par.max is not None else None,
-                    "expr": par.expr or None,
-                }
-
-            # Save as JSON string in metadata
-            meta.attrs["model_parameters"] = json.dumps(params_dict, indent=2)
+            meta.attrs["model_parameters"] = self._model_parameters_json()
             meta.attrs["model_name"] = self.model.name
 
     #
@@ -1894,11 +1854,7 @@ class Simulator:
 
         with h5py.File(filepath, "w") as f:
             # Save axes (same for all configs)
-            f.create_dataset("energy", data=self.model.energy)
-            if self.model.time is not None and len(self.model.time) > 0:
-                f.create_dataset("time", data=self.model.time)
-            else:
-                f.create_dataset("time", data=np.array([]))
+            self._write_axes_hdf5(f)
 
             # Create groups for organization
             f.create_group("parameter_configs")
@@ -1911,19 +1867,7 @@ class Simulator:
             meta.attrs["total_datasets"] = n_configs * n_realizations
 
             # Simulator settings
-            meta.attrs["detection"] = self.detection
-            if self.detection == "analog":
-                meta.attrs["noise_level"] = self.noise_level
-                meta.attrs["noise_type"] = self.noise_type
-            elif self.detection == "photon_counting":
-                meta.attrs["counts_per_delay"] = self.counts_per_delay
-                if self.count_rate is not None:
-                    meta.attrs["count_rate"] = self.count_rate
-                if self.integration_time is not None:
-                    meta.attrs["integration_time"] = self.integration_time
-
-            if self.seed is not None:
-                meta.attrs["seed"] = self.seed
+            self._write_detection_metadata(meta)
 
             # Parameter sweep settings
             meta.attrs["sweep_strategy"] = parameter_sweep.strategy
@@ -1943,17 +1887,7 @@ class Simulator:
             meta.attrs["parameter_space"] = json.dumps(param_space, indent=2)
 
             # Save full model definition once (static across all configs)
-            model_params = {}
-            for par_name in self.model.lmfit_pars:
-                par = self.model.lmfit_pars[par_name]
-                model_params[par_name] = {
-                    "value": float(par.value),
-                    "vary": bool(par.vary),
-                    "min": float(par.min) if par.min is not None else None,
-                    "max": float(par.max) if par.max is not None else None,
-                    "expr": par.expr or None,
-                }
-            meta.attrs["model_parameters"] = json.dumps(model_params, indent=2)
+            meta.attrs["model_parameters"] = self._model_parameters_json()
             meta.attrs["model_name"] = self.model.name
 
             # Dimension matches the actual data written, not model capability
