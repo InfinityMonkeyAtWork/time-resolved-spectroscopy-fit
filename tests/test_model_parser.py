@@ -397,6 +397,28 @@ class Test2DModelParsing:
                 dynamics_model=["MonoExpPos"],
             )
 
+    #
+    def test_dynamics_expression_cross_model_reference_raises(self):
+        """Dynamics expressions cannot reference energy-model parameters.
+
+        The lowered evaluator reads dynamics params as t=0 scalars
+        (eval_2d.resolve_param_traces); that is only exact because rows
+        feeding a dynamics substep are time-constant by construction. This
+        test pins the authoring-time rejection that guarantees it — if
+        cross-model references are ever allowed, the t=0 reads must be
+        revisited.
+        """
+
+        file = self._make_file_with_energy_model(model_energy=["simple_energy"])
+
+        with pytest.raises(ValueError, match="references an unknown parameter"):
+            file.add_time_dependence(
+                target_model="simple_energy",
+                target_parameter="GLP_01_A",
+                dynamics_yaml="models/file_time.yaml",
+                dynamics_model=["CrossModelExpr"],
+            )
+
 
 #
 #

@@ -197,3 +197,11 @@ conv_last:
         t0: [0, False, 0, 1]
     gaussCONV:
         SD: [5.0E-2, True, 0, 1]
+# expression referencing a parameter outside the dynamics model
+# (must be rejected at add_time_dependence; energy-model parameters
+# are not in a dynamics model's namespace)
+CrossModelExpr:
+    expFun:
+        A: [1, True, 0, 5]
+        tau: ["GLP_01_x0 / 20"]
+        t0: [0, False, 0, 1]

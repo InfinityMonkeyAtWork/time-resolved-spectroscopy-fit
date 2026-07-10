@@ -640,7 +640,16 @@ class Model:
             )
 
         # add Dynamics model and update corresponding parameter
-        target_par.update(dynamics_model)
+        try:
+            target_par.update(dynamics_model)
+        except NameError as e:
+            # lmfit evaluates dynamics expressions in the dynamics model's
+            # own parameter namespace; unknown names surface as NameError
+            raise ValueError(
+                f'Dynamics model for "{dynamics_model.name}" references an '
+                f"unknown parameter ({e}). Expressions in a dynamics model "
+                "can only reference parameters of that same dynamics model."
+            ) from e
         # update model lmfit_par_list, parameter_names and components
         self.update()
 

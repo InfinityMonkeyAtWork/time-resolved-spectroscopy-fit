@@ -194,6 +194,10 @@ def resolve_param_traces(
                 func, _n_par = DYNAMICS_DISPATCH[func_id]
                 n_par = int(dyn_sub_n_params[s])
                 param_rows = dyn_sub_param_rows[s, :n_par]
+                # Reading t=0 is exact: substep and kernel param rows are
+                # time-constant by construction — dynamics-model expressions
+                # cannot reference cross-model (potentially time-varying)
+                # parameters; add_dynamics rejects them.
                 dyn_params = [float(traces[int(row), 0]) for row in param_rows]
                 traces[target, :] += (
                     func(dyn_sub_time_axes[s], *dyn_params) * dyn_sub_masks[s]
@@ -207,6 +211,7 @@ def resolve_param_traces(
             kernel_func, width_func = CONV_KERNEL_DISPATCH[func_id]
             p_start = int(conv_param_indptr[idx])
             p_end = int(conv_param_indptr[idx + 1])
+            # t=0 read is exact; same time-constant invariant as above
             kernel_params = [
                 float(traces[int(conv_param_rows[j]), 0]) for j in range(p_start, p_end)
             ]
