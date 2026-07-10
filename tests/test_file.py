@@ -520,6 +520,55 @@ class TestFitLimitsAndBaseline:
         with pytest.raises(ValueError, match="Unknown time_type"):
             file.define_baseline(-10, 0, time_type="bogus", show_plot=False)
 
+    #
+    def _make_axisless_file_with_data(self, *, show_output: int = 0):
+        """Data present but axes missing — only reachable by bypassing __init__.
+
+        File(data=...) always fabricates index axes, so this corrupted
+        state indicates direct attribute assignment.
+        """
+
+        project = make_project(show_output=show_output)
+        file = File(parent_project=project)
+        file.data = np.zeros((5, 7))
+        file.dim = 2
+        return file
+
+    #
+    def test_describe_missing_axes_raises_without_mutating(self):
+        """describe raises on missing axes instead of fabricating them.
+
+        Regression: describe assigned index axes to self.energy/self.time
+        as a side effect of an inspection call.
+        """
+
+        file = self._make_axisless_file_with_data(show_output=1)
+        with pytest.raises(ValueError, match="Energy axis missing"):
+            file.describe()
+        assert file.energy is None
+        file.energy = np.arange(7.0)
+        with pytest.raises(ValueError, match="Time axis missing"):
+            file.describe()
+        assert file.time is None
+
+    #
+    def test_define_baseline_missing_time_axis_raises_without_mutating(self):
+        """define_baseline raises on a missing time axis instead of fabricating it."""
+
+        file = self._make_axisless_file_with_data()
+        with pytest.raises(ValueError, match="Time axis missing"):
+            file.define_baseline(0, 2, time_type="ind", show_plot=False)
+        assert file.time is None
+
+    #
+    def test_set_fit_limits_missing_energy_axis_raises_without_mutating(self):
+        """set_fit_limits raises on a missing energy axis instead of fabricating it."""
+
+        file = self._make_axisless_file_with_data()
+        with pytest.raises(ValueError, match="Energy axis missing"):
+            file.set_fit_limits([1, 3], show_plot=False)
+        assert file.energy is None
+
 
 #
 #

@@ -1699,11 +1699,15 @@ class File:
             warnings.warn("No data loaded; nothing to describe.", stacklevel=2)
             return
         if self.energy is None:
-            self.energy = np.arange(self.data.shape[-1])
-            warnings.warn("Energy axis missing; using index axis.", stacklevel=2)
+            raise ValueError(
+                "Energy axis missing; cannot describe data. "
+                "Pass energy= when constructing File."
+            )
         if self.dim == 2 and self.time is None:
-            self.time = np.arange(self.data.shape[0])
-            warnings.warn("Time axis missing; using index axis.", stacklevel=2)
+            raise ValueError(
+                "Time axis missing; cannot describe 2D data. "
+                "Pass time= when constructing File."
+            )
 
         config = self.plot_config
 
@@ -2310,14 +2314,15 @@ class File:
         if self.data is None:
             raise ValueError("No data loaded; cannot define baseline.")
         if self.time is None:
-            self.time = np.arange(self.data.shape[0])
-            warnings.warn(
-                "Time axis missing; using index axis for baseline definition.",
-                stacklevel=2,
+            raise ValueError(
+                "Time axis missing; cannot define baseline. "
+                "Pass time= when constructing File."
             )
         if self.energy is None:
-            self.energy = np.arange(self.data.shape[1])
-            warnings.warn("Energy axis missing; using index axis.", stacklevel=2)
+            raise ValueError(
+                "Energy axis missing; cannot define baseline. "
+                "Pass energy= when constructing File."
+            )
         self.base_t_ind = self._resolve_time_selection(
             time_start, time_stop, time_type=time_type
         )
@@ -2378,13 +2383,11 @@ class File:
             If True, plot data with fit limits indicated
         """
 
-        if self.data is None and self.energy is None:
-            raise ValueError("No data/energy axis loaded; cannot set fit limits.")
-        if self.energy is None and self.data is not None:
-            self.energy = np.arange(self.data.shape[-1])
-            warnings.warn("Energy axis missing; using index axis.", stacklevel=2)
         if self.energy is None:
-            raise ValueError("Energy axis unavailable; cannot set fit limits.")
+            raise ValueError(
+                "Energy axis missing; cannot set fit limits. "
+                "Pass energy= when constructing File."
+            )
         energy = self.energy
         if energy_limits is None:
             energy_limits = [float(np.min(energy)), float(np.max(energy))]
@@ -2410,12 +2413,9 @@ class File:
             time_limits = [float(np.min(self.time)), float(np.max(self.time))]
         if time_limits is not None:
             if self.time is None:
-                if self.data is None or self.dim != 2:
-                    raise ValueError("Time axis missing; cannot apply time limits.")
-                self.time = np.arange(self.data.shape[0])
-                warnings.warn(
-                    "Time axis missing; using index axis for time limits.",
-                    stacklevel=2,
+                raise ValueError(
+                    "Time axis missing; cannot apply time limits. "
+                    "Pass time= when constructing File."
                 )
             self.t_lim_abs = list(time_limits)
             self.t_lim = self._resolve_time_selection(
