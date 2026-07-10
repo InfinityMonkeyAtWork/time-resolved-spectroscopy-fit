@@ -152,6 +152,18 @@ MonoExpPosBoxIRF:
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
 
+# chained convolution: both kernels rewrite the same resolved trace in
+# sequence (two conv steps targeting one row in the lowered plan)
+MonoExpPosDoubleIRF:
+    gaussCONV:
+        SD: [0.4, True, 0, 1]
+    boxCONV:
+        width: [2.0, True, 0.1, 20]
+    expFun:
+        A: [1, True, 0, 5]
+        tau: [2.5, True, 1, 10]
+        t0: [0, False, 0, 1]
+
 # Empty subcycle placeholder (applies to all times in multi-cycle)
 ModelNone:
     none: {}

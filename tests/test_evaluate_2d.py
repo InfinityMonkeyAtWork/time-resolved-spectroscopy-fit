@@ -655,6 +655,29 @@ class TestProfileModels:
         _compare_evaluator_vs_interpreter(model, plan)
 
     #
+    def test_constant_profiled_op_folds_into_cache(self):
+        """A fully-fixed profiled component compiles into the cached result.
+
+        Exercises the compile-time constant-op branch in schedule_2d: the
+        profiled op is evaluated once at plan build and folded into
+        ``cached_result`` instead of re-evaluating per theta.
+        """
+
+        _file, model = _make_2d_profile_model(
+            ["pinned_gauss_offset"],
+            [("Offset_y0", ["MonoExpPos"])],
+            [("Gauss_01_A", ["profile_pExpDecayFixed"])],
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+
+        # the pinned profiled Gauss op is constant; the free Offset is not
+        assert plan.op_is_constant.any()
+        assert not plan.op_is_constant.all()
+        _compare_evaluator_vs_interpreter(model, plan)
+
+    #
     def test_profile_with_time_dep_profile_params(self):
         """Profile function params themselves have dynamics (the hard case).
 
