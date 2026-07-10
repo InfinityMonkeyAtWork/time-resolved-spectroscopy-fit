@@ -379,6 +379,11 @@ def my_conv(
     x_arr = np.asarray(x, dtype=float)
     y_arr = np.asarray(y, dtype=float)
     kernel_arr = np.asarray(kernel, dtype=float)
+    if x_arr.size < 2:
+        raise ValueError(
+            "my_conv requires at least 2 x samples to determine the "
+            f"step size, got {x_arr.size}"
+        )
     pad_size = int(kernel_arr.size / 2)
 
     # Add padding to minimize edge artifacts

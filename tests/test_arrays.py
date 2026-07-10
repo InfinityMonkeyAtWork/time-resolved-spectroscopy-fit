@@ -1,10 +1,48 @@
 """Tests for trspecfit.utils.arrays — running_mean, conv_kernel_support,
-sign_change."""
+sign_change, my_conv."""
 
 import numpy as np
 import pytest
 
-from trspecfit.utils.arrays import conv_kernel_support, running_mean, sign_change
+from trspecfit.utils.arrays import (
+    conv_kernel_support,
+    my_conv,
+    running_mean,
+    sign_change,
+)
+
+
+#
+#
+class TestMyConv:
+    """Tests for my_conv padded convolution."""
+
+    #
+    def test_delta_kernel_is_identity(self):
+        """A single-sample kernel returns the input signal unchanged."""
+
+        x = np.linspace(0, 10, 21)
+        y = np.sin(x)
+        np.testing.assert_allclose(my_conv(x, y, np.array([1.0])), y)
+
+    #
+    def test_normalization(self):
+        """Kernel normalization preserves the level of a constant signal."""
+
+        x = np.linspace(0, 10, 21)
+        y = np.full(21, 3.0)
+        kernel = np.array([1.0, 2.0, 1.0])
+        np.testing.assert_allclose(my_conv(x, y, kernel), y)
+
+    #
+    def test_single_element_x_raises(self):
+        """Degenerate x axis raises a clear error instead of IndexError.
+
+        Regression: x_arr[1] - x_arr[0] had no length guard.
+        """
+
+        with pytest.raises(ValueError, match="at least 2 x samples"):
+            my_conv(np.array([0.0]), np.array([1.0]), np.array([1.0]))
 
 
 #
