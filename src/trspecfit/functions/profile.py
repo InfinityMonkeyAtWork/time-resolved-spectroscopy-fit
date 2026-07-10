@@ -57,6 +57,11 @@ def pExpDecay(x: np.ndarray, A: float, tau: float) -> np.ndarray:
     tau : float
         Decay constant (same units as x).
 
+    Returns
+    -------
+    ndarray
+        Profile values ``A * exp(-x / tau)``, same shape as *x*.
+
     Notes
     -----
     Primary use cases: IMFP-weighted depth profiles in XPS,
@@ -79,6 +84,11 @@ def pLinear(x: np.ndarray, m: float, b: float) -> np.ndarray:
         Slope.
     b : float
         Intercept.
+
+    Returns
+    -------
+    ndarray
+        Profile values ``m * x + b``, same shape as *x*.
 
     Notes
     -----
@@ -103,6 +113,11 @@ def pGauss(x: np.ndarray, A: float, x0: float, SD: float) -> np.ndarray:
         Center position.
     SD : float
         Standard deviation (width).
+
+    Returns
+    -------
+    ndarray
+        Gaussian profile values (peak *A* at *x0*), same shape as *x*.
 
     Notes
     -----
