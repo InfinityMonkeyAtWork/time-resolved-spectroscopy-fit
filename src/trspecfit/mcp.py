@@ -2254,8 +2254,10 @@ class Par:
             value = float(base[0] + self.t_model.value_1d[t_ind])
 
         else:
-            value = -1.0
-            print(f't_vary attribute of Par "{self.name}" is not valid')
+            raise RuntimeError(
+                f'Par "{self.name}" has t_vary set but no t_model attached; '
+                "add time dependence via File.add_time_dependence."
+            )
 
         return value
 

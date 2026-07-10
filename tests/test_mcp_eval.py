@@ -159,6 +159,20 @@ class TestEvaluation:
             )
 
     #
+    def test_t_vary_without_t_model_raises(self):
+        """Par.value raises on t_vary without a t_model.
+
+        Regression: it printed a warning and returned -1.0, silently
+        poisoning any spectrum evaluated from the corrupted parameter.
+        """
+
+        _file, model = self._make_file_with_model(["energy_expression"])
+        p_A = self._par(model, "GLP_01_A")
+        p_A.t_vary = True  # corrupt state: no t_model attached
+        with pytest.raises(RuntimeError, match="no t_model"):
+            p_A.value(t_ind=0)
+
+    #
     def test_eval_expression_fan_out(self):
         """Fan-out: GLP_02 and GLP_03 both reference GLP_01 directly."""
 
