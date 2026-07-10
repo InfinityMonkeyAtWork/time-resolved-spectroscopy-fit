@@ -232,14 +232,18 @@ class TestPlotHelperSkipped:
 
     #
     @pytest.mark.slow
-    def test_mcmc_silent_mode_no_output_no_figures(self, tmp_path, capsys):
-        """MCMC honors silent mode: no progress banner, no shown figures.
+    def test_mcmc_silent_mode_no_output_no_figures(self, tmp_path, capsys, monkeypatch):
+        """MCMC honors silent mode: no progress banner, no figures built.
 
         Regression: the emcee progress banner and progress=True ran
         unconditionally, and with show_output=0, save_output=0 the walker
-        and corner figures reached _finalize_plot(0), i.e. plt.show(),
-        and were left open.
+        and corner figures were built and reached _finalize_plot(0),
+        i.e. plt.show(), and were left open. With neither display nor
+        save requested the figures must not be constructed at all.
         """
+
+        mock_corner = MagicMock()
+        monkeypatch.setattr(fitlib, "corner", mock_corner)
 
         project, file = _baseline_setup(tmp_path, auto_export=False)
         mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1)
@@ -251,6 +255,7 @@ class TestPlotHelperSkipped:
         # deliberately tiny chain; only our banner is under test here
         assert "Progress of lmfit.emcee" not in capsys.readouterr().out
         assert len(plt.get_fignums()) == n_figs
+        assert mock_corner.corner.call_count == 0
 
     #
     def test_sbs_skips_per_slice_plot_when_no_export(self, tmp_path, monkeypatch):

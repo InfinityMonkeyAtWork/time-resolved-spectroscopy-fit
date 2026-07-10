@@ -788,33 +788,36 @@ def fit_wrapper(
             lmfit.report_fit(emcee_fin_params)
             t_emcee1 = time.time()
             print(f"Time lmfit.emcee: {t_emcee1 - t_emcee0} s")
-        # acceptence fraction of all walkers (plot)
         # display per show_output, save per save_output (_finalize_plot
-        # semantics: >= 0 shows, abs == 1 saves, so -2 means neither)
+        # semantics: >= 0 shows, abs == 1 saves, so -2 means neither);
+        # skip figure construction entirely when neither shows nor saves
         if show_output >= 1:
             emcee_save = save_output
         else:
             emcee_save = -1 if abs(save_output) == 1 else -2
-        fig_emcee_walker, _ax = plt.subplots(1, 1, dpi=75)
-        plt.plot(emcee_acceptance_fraction, "o")
-        plt.xlabel("Walker number")
-        plt.ylabel("Acceptance fraction")
-        uplt._finalize_plot(
-            emcee_save, f"{save_path}_emcee_walker_acceptance_ratio.png"
-        )
-        # draw all combinations of the typically ellipsoidal chi plot
-        # [<x=par1, y=par2, z=chi2> plot]
-        emcee_truths = [
-            emcee_fin_params.valuesdict().get(par_name) for par_name in emcee_var_names
-        ]
-        fig_emcee_corner = plt.figure(figsize=(10, 10))
-        corner.corner(
-            emcee_flatchain,
-            labels=emcee_var_names,
-            truths=emcee_truths,
-            fig=fig_emcee_corner,
-        )
-        uplt._finalize_plot(emcee_save, f"{save_path}_emcee_corner_plot.png")
+        if emcee_save != -2:
+            # acceptance fraction of all walkers (plot)
+            fig_emcee_walker, _ax = plt.subplots(1, 1, dpi=75)
+            plt.plot(emcee_acceptance_fraction, "o")
+            plt.xlabel("Walker number")
+            plt.ylabel("Acceptance fraction")
+            uplt._finalize_plot(
+                emcee_save, f"{save_path}_emcee_walker_acceptance_ratio.png"
+            )
+            # draw all combinations of the typically ellipsoidal chi plot
+            # [<x=par1, y=par2, z=chi2> plot]
+            emcee_truths = [
+                emcee_fin_params.valuesdict().get(par_name)
+                for par_name in emcee_var_names
+            ]
+            fig_emcee_corner = plt.figure(figsize=(10, 10))
+            corner.corner(
+                emcee_flatchain,
+                labels=emcee_var_names,
+                truths=emcee_truths,
+                fig=fig_emcee_corner,
+            )
+            uplt._finalize_plot(emcee_save, f"{save_path}_emcee_corner_plot.png")
         # get percentage borders to categorize emcee.flatchain data
         sigma_borders = sigma_start_stop_percent(ci_sigmas)
         # one row per sampled parameter (varying model params + the __lnsigma
