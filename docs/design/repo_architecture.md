@@ -242,8 +242,12 @@ own `scipy.signal.convolve` wrapper.
 ### `utils/hdf5.py`
 
 Typed HDF5 helpers. `require_group`, `require_dataset`, `json_loads_attr`.
-All HDF5 I/O in the repo should go through these rather than raw
-`h5py` calls — they normalize attribute types across numpy/bytes/str.
+All HDF5 *reads* should go through these rather than raw subscripting —
+`require_*` narrow `Group | Dataset` lookups with a clear error naming the
+archive path, and `json_loads_attr` normalizes JSON attributes across
+numpy/bytes/str. Write-side calls (`h5py.File(...)`, `create_group`,
+`create_dataset`, attribute assignment) have no wrapper and use `h5py`
+directly.
 
 ### `utils/fit_io.py`
 
@@ -327,5 +331,5 @@ evaluator. New features are generally prototyped on that slow path first.
 - **New fit-result post-processing (CI, MCMC, in-fit plots)** → `fitlib.py`.
 - **New fit-archive field, exporter format, or comparison metric** → `utils/fit_io.py` (data model + writer/reader + CSV exporter) and `fit_results.py` (query / `compare_models`). Slot extraction stays in `utils/fit_io.py`; the four `_append_<fit_type>_slot` call sites in `trspecfit.py` should not be replicated elsewhere.
 - **New simulator feature / sampling strategy** → `simulator.py` / `utils/sweep.py`.
-- **New HDF5 I/O** → go through `utils/hdf5.py` helpers.
+- **New HDF5 reads** → go through `utils/hdf5.py` helpers (writes use `h5py` directly).
 - **Performance optimization of an existing feature** → lower into `graph_ir` / `eval_*`. Do **not** optimize mcp.
