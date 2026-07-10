@@ -698,9 +698,14 @@ def plot_1d(
             raise ValueError("x axis could not be determined")
         y_data = data_series[i]
 
-        # Normalize if requested
+        # Normalize if requested; a constant trace has zero amplitude and
+        # maps to baseline 0 (dividing by its zero range would yield NaNs)
         if y_norm == 1:
-            y_plot = (y_data - np.min(y_data)) / (np.max(y_data - np.min(y_data)))
+            y_range = np.max(y_data) - np.min(y_data)
+            if y_range == 0:
+                y_plot = np.zeros_like(y_data, dtype=float)
+            else:
+                y_plot = (y_data - np.min(y_data)) / y_range
             y_plot = y_plot + i * waterfall
         else:
             y_plot = y_scale_arr[i] * y_data + i * waterfall

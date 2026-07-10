@@ -136,6 +136,26 @@ class TestPlot1D:
         plt.close("all")
 
     #
+    def test_y_norm_constant_trace_stays_finite(self):
+        """y_norm=1 maps a constant trace to baseline 0 instead of NaN.
+
+        Regression: normalization divided by the trace's own range,
+        which is zero for a constant trace (silent inf/NaN plot).
+        """
+
+        x = np.linspace(0, 10, 50)
+        y_list = [np.full(50, 5.0), np.sin(x)]
+        config = PlotConfig()
+
+        plot_1d(y_list, x=x, config=config, y_norm=1, save_img=0)
+        ax = plt.gca()
+        y_const, y_sine = (line.get_ydata() for line in ax.get_lines()[:2])
+        assert np.all(np.isfinite(y_const))
+        np.testing.assert_array_equal(y_const, np.zeros(50))
+        assert np.all(np.isfinite(y_sine))
+        plt.close("all")
+
+    #
     def test_plot_with_custom_config(self):
         """Test 1D plot with custom config"""
 
