@@ -54,6 +54,27 @@ class TestPlotConfig:
         assert config.z_colormap == "viridis"
 
     #
+    def test_every_field_settable_via_project(self):
+        """Every PlotConfig field must have a Project counterpart.
+
+        Project.yaml keys only apply to existing Project attributes, and
+        PlotConfig.from_project only copies fields the Project has — a
+        PlotConfig field without a Project default is silently unsettable
+        from project.yaml.
+        """
+
+        from dataclasses import fields
+
+        project = make_project(name="cfg-coverage")
+        aliases = {"x_label": "e_label", "y_label": "t_label", "dpi_plot": "dpi_plt"}
+        missing = [
+            f.name
+            for f in fields(PlotConfig)
+            if not hasattr(project, aliases.get(f.name, f.name))
+        ]
+        assert missing == [], f"PlotConfig fields without Project defaults: {missing}"
+
+    #
     def test_custom_creation(self):
         """Test creating config with custom values"""
 
@@ -559,6 +580,10 @@ class TestPlotConfigFromYAML:
         "z_label: 'Counts'\n"
         "x_dir: 'rev'\n"
         "z_colormap: 'RdBu'\n"
+        "z_colormap_res: 'coolwarm'\n"
+        "refline_color: '#ff0000'\n"
+        "refline_style: '--'\n"
+        "panel_size: [5.0, 3.5]\n"
         "x_lim: [63.0, -2.6]\n"
         "y_lim: [-0.5, 5.0]\n"
     )
@@ -569,6 +594,10 @@ class TestPlotConfigFromYAML:
         "z_label": "Counts",
         "x_dir": "rev",
         "z_colormap": "RdBu",
+        "z_colormap_res": "coolwarm",
+        "refline_color": "#ff0000",
+        "refline_style": "--",
+        "panel_size": (5.0, 3.5),
         "x_lim": (63.0, -2.6),
         "y_lim": (-0.5, 5.0),
     }

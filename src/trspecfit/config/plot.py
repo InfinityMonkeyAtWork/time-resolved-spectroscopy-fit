@@ -200,7 +200,8 @@ class PlotConfig:
             "y_label": "t_label",
             "dpi_plot": "dpi_plt",
         }
-        limit_fields = {"x_lim", "y_lim", "z_lim"}
+        # Tuple-typed fields arrive as lists when set via project.yaml
+        tuple_fields = {"x_lim", "y_lim", "z_lim", "panel_size"}
 
         config_dict = {}
         for field in fields(cls):
@@ -209,7 +210,7 @@ class PlotConfig:
                 continue
 
             value = cp.deepcopy(getattr(project, source_attr))
-            if field.name in limit_fields and value is not None:
+            if field.name in tuple_fields and value is not None:
                 value = tuple(value)
 
             config_dict[field.name] = value

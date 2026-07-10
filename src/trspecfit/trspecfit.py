@@ -259,7 +259,10 @@ class Project:
         self.waterfall = 0
         self.vlines = None
         self.hlines = None
+        self.refline_color = "#808080"
+        self.refline_style = ":"
         self.ticksize = None
+        self.panel_size = (4.0, 3.0)
         self.y_norm = 0
         self.y_scale = None
         # File I/O settings
