@@ -32,7 +32,7 @@ def _make_energy_model(model_info):
     file = File(parent_project=project, energy=np.linspace(80, 90, 101))
     file.load_model(model_yaml=_ENERGY_YAML, model_info=model_info)
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
     return file, model
 
 
@@ -65,7 +65,7 @@ def _make_profile_energy_model(
             profile_model=profile_model,
         )
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
     return file, model
 
 
@@ -378,7 +378,7 @@ class TestCanLower1D:
             dynamics_model=["MonoExpPos"],
         )
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
         graph = build_graph(model)
         assert not can_lower_1d(graph)
 

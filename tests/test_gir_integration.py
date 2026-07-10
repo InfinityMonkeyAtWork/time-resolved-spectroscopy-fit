@@ -65,7 +65,7 @@ def _make_2d_model(project, model_info, dynamics_params, *, frequency=None):
     file.time = np.linspace(-10, 100, 51)
     file.load_model(model_yaml=_ENERGY_YAML, model_info=model_info)
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
 
     for target_par, dyn_model in dynamics_params:
         kwargs = {
@@ -99,7 +99,7 @@ def _make_1d_profile_model(project, model_info, profiles):
             profile_model=profile_model,
         )
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
     return file, model
 
 
@@ -132,7 +132,7 @@ def _make_2d_profile_model(project, model_info, dynamics_params, profiles):
         )
 
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
     return file, model
 
 
@@ -228,7 +228,7 @@ class TestGIRDispatch:
         file = File(parent_project=project, energy=np.linspace(80, 90, 101))
         file.load_model(model_yaml=_ENERGY_YAML, model_info=["glp_only"])
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
 
         graph = build_graph(model)
         assert can_lower_1d(graph)
@@ -309,7 +309,7 @@ class TestGIRDispatch:
         file = File(parent_project=project, energy=np.linspace(80, 90, 101))
         file.load_model(model_yaml=_ENERGY_YAML, model_info=["offset_only"])
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
 
         graph = build_graph(model)
         plan = schedule_1d(graph)
@@ -333,7 +333,7 @@ class TestGIRDispatch:
         file = File(parent_project=project, energy=np.linspace(80, 90, 101))
         file.load_model(model_yaml=_ENERGY_YAML, model_info=["glp_only"])
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
 
         par = _extract_par_list(model)
         # Pass (model, dim=1) — no plan → delegates to MCP
@@ -360,7 +360,7 @@ class TestGIRvsInterpreter:
 
         # Generate synthetic data from the model
         model.create_value_2d()
-        assert model.value_2d is not None
+        assert model.value_2d is not None  # type guard
         data = model.value_2d + 0.01  # small offset so residual is non-zero
 
         # Compile GIR path
@@ -432,7 +432,7 @@ class TestGIRvsInterpreter:
         )
 
         model.create_value_2d()
-        assert model.value_2d is not None
+        assert model.value_2d is not None  # type guard
         data = model.value_2d + 0.01
 
         graph = build_graph(model)
@@ -483,7 +483,7 @@ class TestGIRvsInterpreter:
         )
 
         model.create_value_2d()
-        assert model.value_2d is not None
+        assert model.value_2d is not None  # type guard
         data = model.value_2d + 0.01
 
         graph = build_graph(model)
@@ -554,7 +554,7 @@ class TestGIRvsInterpreter:
         )
 
         model.create_value_2d()
-        assert model.value_2d is not None
+        assert model.value_2d is not None  # type guard
         data = model.value_2d + 0.01
 
         graph = build_graph(model)
@@ -666,7 +666,7 @@ class TestGIRvsInterpreter:
         )
 
         model.create_value_2d()
-        assert model.value_2d is not None
+        assert model.value_2d is not None  # type guard
         data = model.value_2d + 0.01
 
         graph = build_graph(model)
@@ -708,7 +708,7 @@ class TestGIRvsInterpreter:
         )
 
         model.create_value_2d()
-        assert model.value_2d is not None
+        assert model.value_2d is not None  # type guard
         data = model.value_2d + 0.01
 
         graph = build_graph(model)
@@ -751,7 +751,7 @@ class TestGIRvsInterpreter:
         )
 
         model.create_value_2d()
-        assert model.value_2d is not None
+        assert model.value_2d is not None  # type guard
         data = model.value_2d + 0.01
 
         graph = build_graph(model)
@@ -852,7 +852,7 @@ class TestFileFit2D:
         fit_file.fit_2d(model_name="single_glp", stages=2, try_ci=0)
 
         # Verify writeback: model_2d.lmfit_pars should match result params
-        assert fit_file.model_2d is not None
+        assert fit_file.model_2d is not None  # type guard
         result_params = fit_file.model_2d.result[1].params
         for name in fit_file.model_2d.parameter_names:
             model_val = fit_file.model_2d.lmfit_pars[name].value
@@ -963,11 +963,11 @@ class TestGIR1DvsInterpreter:
         file = File(parent_project=project, energy=np.linspace(80, 90, 101))
         file.load_model(model_yaml=_ENERGY_YAML, model_info=["glp_only"])
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
 
         # Generate synthetic data
         model.create_value_1d()
-        assert model.value_1d is not None
+        assert model.value_1d is not None  # type guard
         data = model.value_1d + 0.01
 
         # Compile GIR 1D path
@@ -1009,7 +1009,7 @@ class TestGIR1DvsInterpreter:
         file = File(parent_project=project, energy=np.linspace(80, 90, 101))
         file.load_model(model_yaml=_ENERGY_YAML, model_info=["offset_only"])
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
 
         model.create_value_1d()
         data = model.value_1d + 0.01
@@ -1056,7 +1056,7 @@ class TestGIR1DvsInterpreter:
         )
 
         model.create_value_1d()
-        assert model.value_1d is not None
+        assert model.value_1d is not None  # type guard
         data = model.value_1d + 0.01
 
         graph = build_graph(model)
@@ -1093,7 +1093,7 @@ class TestGIR1DvsInterpreter:
         file = File(parent_project=project, energy=np.linspace(80, 90, 101))
         file.load_model(model_yaml=_ENERGY_YAML, model_info=["glp_expression"])
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
 
         graph = build_graph(model)
         assert can_lower_1d(graph)
@@ -1148,7 +1148,7 @@ class TestGIR1DvsInterpreter:
         )
 
         model.create_value_2d()
-        assert model.value_2d is not None
+        assert model.value_2d is not None  # type guard
         data = model.value_2d + 0.01
 
         graph = build_graph(model)
@@ -1228,7 +1228,7 @@ class TestGIR1DvsInterpreter:
         assert not can_lower_1d(graph)
 
         dyn.create_value_1d()
-        assert dyn.value_1d is not None
+        assert dyn.value_1d is not None  # type guard
         data = np.asarray(dyn.value_1d) + 0.01
 
         res_mcp = fitlib.residual_fun(
@@ -1288,7 +1288,12 @@ class TestFileFitBaseline:
 
     #
     def test_1d_dispatch_args_lower_on_2d_file(self):
-        """1D workflow args compile on a 2D File with a plain energy model."""
+        """1D workflow args compile on a 2D File with a plain energy model.
+
+        Invariant check on the private dispatch-args contract that the
+        fit_baseline/fit_spectrum/fit_slice_by_slice call sites rely on;
+        end-to-end public-path coverage is test_gir_baseline_writes_back.
+        """
 
         project = _make_project()
         energy = np.linspace(83, 87, 50)
@@ -1324,7 +1329,7 @@ class TestFileFitBaseline:
 
         # Tile 1D truth spectrum into 2D data (constant across time)
         truth.model_active.create_value_1d()
-        assert truth.model_active.value_1d is not None
+        assert truth.model_active.value_1d is not None  # type guard
         spectrum_1d = truth.model_active.value_1d.copy()
         data_2d = np.tile(spectrum_1d, (len(truth.time), 1))
 
@@ -1332,7 +1337,7 @@ class TestFileFitBaseline:
         fit_file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
 
         # Verify writeback
-        assert fit_file.model_base is not None
+        assert fit_file.model_base is not None  # type guard
         result_params = fit_file.model_base.result[1].params
         for name in fit_file.model_base.parameter_names:
             model_val = fit_file.model_base.lmfit_pars[name].value
@@ -1439,8 +1444,8 @@ class TestFileFitSliceBySlice:
             model_name="single_glp", stages=1, try_ci=0, n_workers=n_workers
         )
 
-        assert fit_file.model_sbs is not None
-        assert fit_file.model_sbs.args is not None
+        assert fit_file.model_sbs is not None  # type guard
+        assert fit_file.model_sbs.args is not None  # type guard
         assert len(fit_file.model_sbs.args) == 4
         assert isinstance(fit_file.model_sbs.args[0], ScheduledPlan1D)
         assert len(fit_file.results_sbs) == len(truth.time)
@@ -1527,7 +1532,7 @@ class TestFileFitSliceBySlice:
         fit_file = _make_1d_fit_file(project, data_2d, truth.energy, truth.time)
         fit_file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
 
-        assert fit_file.model_base is not None
+        assert fit_file.model_base is not None  # type guard
         expected = ulmfit.par_extract(fit_file.model_base.result[1], return_type="list")
         seed_values = None
 
@@ -1550,7 +1555,7 @@ class TestFileFitSliceBySlice:
             seed_adapt=seed_adapt,
         )
 
-        assert fit_file.model_sbs is not None
+        assert fit_file.model_sbs is not None  # type guard
         for name, expected_value in zip(
             fit_file.model_sbs.parameter_names, expected, strict=True
         ):

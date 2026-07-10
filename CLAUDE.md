@@ -42,7 +42,7 @@
 - **Pattern:** Use plain pytest. Avoid `unittest.TestCase` and fixtures; prefer explicit helper builders named by intent.
 - **API Usage:** Use the public API (`Project`, `File.load_model`, etc.) in tests to avoid masking bugs by skipping validation or setup. Use internals only for pure-math unit tests or explicit invariant checks.
 - **Execution:** Run `pytest -q`. Keep YAML test assets in `tests/models/`.
-- **Plots:** Always suppress plot display in tests: pass `show_plot=False` where available, or `save_img=-2`.
+- **Plots:** Always suppress plot display in tests: pass `show_plot=False` where available, or `save_img=-2`. Exception: figure-inspection tests that assert on the live axes cannot pass `save_img=-2` (it closes the figure); they rely on the module-level Agg backend and must call `plt.close("all")` after the assertions.
 - **Type Guards:** When `assert x is not None` narrows an `X | None` type, add a `# type guard` comment.
 - **Variable Naming:** For variables derived from registry parameters or components, keep original casing (e.g., `SD = 2.0`, `c_Shirley = Component("Shirley")`). Name derived variables as `{par}_{qualifier}` (e.g., `A_early`, `mean_A`).
 

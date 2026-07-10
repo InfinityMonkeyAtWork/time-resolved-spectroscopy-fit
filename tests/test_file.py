@@ -407,7 +407,7 @@ class TestFitLimitsAndBaseline:
 
         file = self._make_file_with_data()
         file.set_fit_limits(None, show_plot=False)
-        assert file.e_lim_abs is not None
+        assert file.e_lim_abs is not None  # type guard
         assert np.isclose(file.e_lim_abs[0], 80.0)
         assert np.isclose(file.e_lim_abs[1], 90.0)
 

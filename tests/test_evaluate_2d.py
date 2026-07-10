@@ -38,7 +38,7 @@ def _make_energy_model(model_info):
     file.energy = np.linspace(80, 90, 101)
     file.load_model(model_yaml=_ENERGY_YAML, model_info=model_info)
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
     return file, model
 
 
@@ -58,7 +58,7 @@ def _make_2d_model(model_info, dynamics_params, *, frequency=None, time=None):
     file.time = np.linspace(-10, 100, 51) if time is None else time
     file.load_model(model_yaml=_ENERGY_YAML, model_info=model_info)
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
 
     for target_par, dyn_model in dynamics_params:
         kwargs = {
@@ -518,7 +518,7 @@ def _make_2d_profile_model(
     file = File(parent_project=project, energy=energy, time=time, aux_axis=aux_axis)
     file.load_model(model_yaml=model_yaml, model_info=model_info)
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
 
     for target_par, dyn_model in dynamics_params:
         file.add_time_dependence(
@@ -1051,7 +1051,7 @@ class TestSubcycleDynamics:
         file.time = np.linspace(-10, 100, 51)
         file.load_model(model_yaml=_ENERGY_YAML, model_info=["offset_only"])
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
 
         file.add_time_dependence(
             target_model="offset_only",
