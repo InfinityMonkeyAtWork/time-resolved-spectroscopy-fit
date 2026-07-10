@@ -1300,6 +1300,14 @@ class Simulator:
         get_snr : SNR calculation shown in title
         """
 
+        # auto-simulate before building the title: get_snr raises on a
+        # fresh Simulator with no simulated data
+        if self.data_clean is None:
+            if dim == 1:
+                self.simulate_1d(t_ind)
+            elif dim == 2:
+                self.simulate_2d()
+
         detection_str = f" [{self.detection}]"
         plt_title = (
             f"Simulated Data (SNR: {self.get_snr(scale=snr_scale):.1f}"
@@ -1307,8 +1315,6 @@ class Simulator:
         )
 
         if dim == 1:
-            if self.data_clean is None:
-                self.simulate_1d(t_ind)
             if self.data_clean is None or self.data_noisy is None or self.noise is None:
                 raise RuntimeError("Simulation data not available for plotting")
 
@@ -1333,8 +1339,6 @@ class Simulator:
             )
 
         elif dim == 2:
-            if self.data_clean is None:
-                self.simulate_2d()
             if self.data_clean is None or self.data_noisy is None or self.noise is None:
                 raise RuntimeError("Simulation data not available for plotting")
 

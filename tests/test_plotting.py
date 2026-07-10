@@ -794,6 +794,30 @@ class TestPlotConfigPropagation:
         assert any(ax.get_xlabel() == "Binding Energy (eV)" for ax in main_axes)
         plt.close("all")
 
+    #
+    def test_simulator_plot_comparison_fresh_auto_simulates(self):
+        """plot_comparison on a fresh Simulator auto-simulates, not raises.
+
+        Regression: the SNR plot title was built before the auto-simulate
+        guard, so calling plot_comparison without a prior simulate_1d/2d
+        raised ValueError from get_snr.
+        """
+
+        from trspecfit import Simulator
+
+        file = self._make_file_with_model()
+        model = file.model_active
+        assert model is not None  # type guard
+
+        sim_1d = Simulator(model, noise_level=0.05)
+        sim_1d.plot_comparison(dim=1, save_img=-2)
+        assert sim_1d.data_clean is not None
+
+        sim_2d = Simulator(model, noise_level=0.05)
+        sim_2d.plot_comparison(dim=2, save_img=-2)
+        assert sim_2d.data_clean is not None
+        plt.close("all")
+
 
 #
 #
