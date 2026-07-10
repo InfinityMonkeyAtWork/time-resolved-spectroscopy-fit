@@ -386,19 +386,19 @@ def my_conv(
         )
     pad_size = int(kernel_arr.size / 2)
 
-    # Add padding to minimize edge artifacts
-    _x_pad, y_pad = pad_x_y(x_arr, y_arr, float(x_arr[1] - x_arr[0]), pad_size)
+    # Add padding to minimize edge artifacts (y only; the x grid is not
+    # needed for the convolution itself)
+    y_pad = np.pad(y_arr, pad_size, mode="edge")
+
+    # Normalize the kernel (cheaper than dividing the padded signal)
+    kernel_norm = kernel_arr / np.sum(kernel_arr)
 
     # Compute convolution with normalized kernel
     if method == "scipy":
-        y_conv_pad = np.asarray(
-            convolve(y_pad, kernel_arr, mode="same") / np.sum(kernel_arr),
-            dtype=float,
-        )
+        y_conv_pad = np.asarray(convolve(y_pad, kernel_norm, mode="same"), dtype=float)
     elif method == "numpy":
         y_conv_pad = np.asarray(
-            np.convolve(y_pad, kernel_arr, mode="same") / np.sum(kernel_arr),
-            dtype=float,
+            np.convolve(y_pad, kernel_norm, mode="same"), dtype=float
         )
     else:
         raise ValueError(f"Unknown method '{method}'")

@@ -78,8 +78,10 @@ def eval_expr_program(
     """Evaluate an RPN ExprProgram against the trace matrix.
 
     Works for both plan initialization and hot-path evaluation.
-    Each PARAM_REF reads a full ``(n_time,)`` row from *traces*;
-    constants are broadcast to ``(n_time,)`` via ``np.full``.
+    Each PARAM_REF pushes a *view* of its ``(n_time,)`` trace row and
+    constants stay scalar; every operator allocates a fresh array, so
+    the views are never written to. Callers must not mutate the result
+    in place (it may alias a *traces* row).
 
     Parameters
     ----------
@@ -95,20 +97,19 @@ def eval_expr_program(
     """
 
     n_time = traces.shape[1]
-    stack: list[np.ndarray] = []
+    stack: list[np.ndarray | np.float64] = []
     instr = program.instructions
     n_instr = len(instr) // 2
 
     for i in range(n_instr):
-        kind = ExprNodeKind(instr[2 * i])
+        kind = int(instr[2 * i])
         operand = instr[2 * i + 1]
 
         if kind == ExprNodeKind.CONST:
-            val = np.int64(operand).view(np.float64)
-            stack.append(np.full(n_time, val, dtype=np.float64))
+            stack.append(np.int64(operand).view(np.float64))
 
         elif kind == ExprNodeKind.PARAM_REF:
-            stack.append(traces[int(operand), :].copy())
+            stack.append(traces[int(operand), :])
 
         elif kind == ExprNodeKind.ADD:
             b, a = stack.pop(), stack.pop()
@@ -134,7 +135,10 @@ def eval_expr_program(
             stack.append(a**b)
 
     assert len(stack) == 1
-    return stack[0]
+    result = stack[0]
+    if not isinstance(result, np.ndarray):  # constant-only program
+        return np.full(n_time, float(result), dtype=np.float64)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -170,10 +174,9 @@ def _evaluate_profile_sample_values_2d(
 
     for group_idx in range(n_groups):
         base_row = int(profile_sample_base_rows[group_idx])
-        # base trace -> (n_time, 1) -> broadcast to (n_time, n_aux)
-        values = np.broadcast_to(
-            traces[base_row, :][:, np.newaxis], (n_time, n_aux)
-        ).copy()
+        # base trace -> (n_time, 1) broadcast into the output row
+        values = sample_values[group_idx]
+        values[:] = traces[base_row, :][:, np.newaxis]
 
         comp_start = int(profile_sample_component_indptr[group_idx])
         comp_end = int(profile_sample_component_indptr[group_idx + 1])
@@ -186,8 +189,6 @@ def _evaluate_profile_sample_values_2d(
                 for row in profile_component_param_rows[param_start:param_end]
             ]
             values += np.asarray(func(aux_2d, *params), dtype=np.float64)
-
-        sample_values[group_idx] = values
 
     return sample_values
 
@@ -219,7 +220,9 @@ def _evaluate_profile_expr_values_2d(
     # Virtual trace: regular params repeated across aux, profile samples
     # flattened from (n_groups, n_time, n_aux) -> (n_groups, n_time*n_aux).
     virtual = np.empty((n_params + n_groups, n_cols), dtype=np.float64)
-    virtual[:n_params, :] = np.repeat(traces, n_aux, axis=1)
+    # broadcast-write params across aux in place (no np.repeat temporary)
+    virtual_params = virtual[:n_params, :].reshape(n_params, n_time, n_aux)
+    virtual_params[:] = traces[:, :, np.newaxis]
     if n_groups > 0:
         virtual[n_params:, :] = profile_sample_values.reshape(n_groups, n_cols)
 
@@ -243,41 +246,41 @@ def _evaluate_profiled_op_2d(
     peak_sum: np.ndarray,
     *,
     needs_spectrum: bool,
-    n_aux: int,
 ) -> np.ndarray:
-    """Evaluate one profiled 2D op: loop over aux points, average."""
+    """Evaluate one profiled 2D op vectorized over aux, then average.
+
+    Broadcasts to ``(n_time, n_aux, n_energy)`` in a single call: energy
+    is ``(1, 1, n_energy)``, scalar params ``(n_time, 1, 1)``, and
+    profiled params ``(n_time, n_aux, 1)``. All energy functions are
+    pure ufunc arithmetic or reduce along ``axis=-1`` (Shirley), so the
+    extra leading axis broadcasts through unchanged.
+    """
 
     func, _needs = OP_DISPATCH[kind]
-    n_time = traces.shape[1]
-    n_energy = energy.shape[-1]
-    accumulated = np.zeros((n_time, n_energy), dtype=np.float64)
-
-    for aux_i in range(n_aux):
-        params: list[np.ndarray] = []
-        for source_kind, source_idx in zip(
-            param_source_kinds,
-            param_indices,
-            strict=True,
-        ):
-            sk = int(source_kind)
-            si = int(source_idx)
-            if sk == int(ParamSourceKind.SCALAR):
-                param = traces[si, :][:, np.newaxis]  # (n_time, 1)
-            elif sk == int(ParamSourceKind.PROFILE_SAMPLE):
-                param = profile_sample_values[si, :, aux_i][
-                    :, np.newaxis
-                ]  # (n_time, 1)
-            else:
-                param = profile_expr_values[si, :, aux_i][:, np.newaxis]  # (n_time, 1)
-            params.append(param)
-
-        if needs_spectrum:
-            accumulated += func(energy, *params, peak_sum)
+    params: list[np.ndarray] = []
+    for source_kind, source_idx in zip(
+        param_source_kinds,
+        param_indices,
+        strict=True,
+    ):
+        sk = int(source_kind)
+        si = int(source_idx)
+        if sk == int(ParamSourceKind.SCALAR):
+            param = traces[si, :][:, np.newaxis, np.newaxis]  # (n_time, 1, 1)
+        elif sk == int(ParamSourceKind.PROFILE_SAMPLE):
+            param = profile_sample_values[si][:, :, np.newaxis]  # (n_time, n_aux, 1)
         else:
-            accumulated += func(energy, *params)
+            param = profile_expr_values[si][:, :, np.newaxis]  # (n_time, n_aux, 1)
+        params.append(param)
 
-    accumulated /= n_aux
-    return accumulated
+    energy_3d = energy[np.newaxis, :, :] if energy.ndim == 2 else energy
+    if needs_spectrum:
+        stacked = func(energy_3d, *params, peak_sum[:, np.newaxis, :])
+    else:
+        stacked = func(energy_3d, *params)
+
+    averaged: np.ndarray = np.asarray(stacked, dtype=np.float64).mean(axis=1)
+    return averaged
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +409,6 @@ def evaluate_2d(plan: ScheduledPlan2D, theta: np.ndarray) -> np.ndarray:
                 profile_expr_values,
                 peak_sum,
                 needs_spectrum=needs_spectrum,
-                n_aux=plan.n_aux,
             )
         else:
             param_rows = plan.op_param_indices[start:end]

@@ -2434,6 +2434,9 @@ class TestExprCompilerParity:
         program = _bind_expr_to_rows(symbolic, name_to_row)
         result = eval_expr_program(program, traces)
 
+        # Always a full (n_time,) row, even for constant-only programs
+        # (callers assign or reshape the result, so a scalar would break)
+        assert np.shape(result) == (n_time,)
         # All time steps should match the scalar asteval result
         assert np.allclose(result, expected, rtol=1e-12), (
             f"Expression {expr_string!r}: RPN gave {result[0]}, asteval gave {expected}"
