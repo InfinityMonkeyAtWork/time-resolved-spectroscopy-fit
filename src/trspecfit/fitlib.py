@@ -150,6 +150,25 @@ def compute_fit_metrics(
 
 
 #
+def _fit_window_slices(
+    ndim: int, e_lim: list[int] | None, t_lim: list[int] | None
+) -> tuple[slice, ...]:
+    """Build array slices selecting the user-defined fit window.
+
+    Empty or None limits select the full axis. 1D data is indexed as
+    [energy]; 2D data as [time, energy].
+    """
+
+    e_slice = slice(e_lim[0], e_lim[1]) if e_lim else slice(None)
+    if ndim == 1:
+        return (e_slice,)
+    if ndim == 2:
+        t_slice = slice(t_lim[0], t_lim[1]) if t_lim else slice(None)
+        return (t_slice, e_slice)
+    raise ValueError("data must be 1D or 2D")
+
+
+#
 def residual_fun(
     par: Any,
     x: ArrayLike,
@@ -248,30 +267,8 @@ def residual_fun(
     data_arr = np.asarray(data)
 
     # select user-defined region to consider for residual computation
-    if len(data_arr.shape) == 1:  # 1D data
-        if len(e_lim) != 0:
-            residual = data_arr[e_lim[0] : e_lim[1]] - fit_arr[e_lim[0] : e_lim[1]]
-        else:  # use entire data and fit array to compute RSS
-            residual = data_arr - fit_arr
-    elif len(data_arr.shape) == 2:  # 2D data
-        if (len(e_lim) != 0) and (len(t_lim) == 0):
-            residual = (
-                data_arr[:, e_lim[0] : e_lim[1]] - fit_arr[:, e_lim[0] : e_lim[1]]
-            )
-        elif (len(e_lim) == 0) and (len(t_lim) != 0):
-            residual = (
-                data_arr[t_lim[0] : t_lim[1], :] - fit_arr[t_lim[0] : t_lim[1], :]
-            )
-        elif (len(e_lim) != 0) and (len(t_lim) != 0):
-            residual = (
-                data_arr[t_lim[0] : t_lim[1], e_lim[0] : e_lim[1]]
-                - fit_arr[t_lim[0] : t_lim[1], e_lim[0] : e_lim[1]]
-            )
-        # or use entire data and fit array to compute RSS
-        else:
-            residual = data_arr - fit_arr
-    else:
-        raise ValueError("data must be 1D or 2D")
+    window = _fit_window_slices(data_arr.ndim, e_lim, t_lim)
+    residual = data_arr[window] - fit_arr[window]
 
     # type of residual to return
     if res_type == "RSS":
@@ -653,6 +650,20 @@ def fit_wrapper(
 
     if stages not in (1, 2):
         raise ValueError(f"stages must be 1 or 2, got {stages}")
+
+    # Fail fast on NaN/Inf inside the fit window: lmfit raises a generic
+    # error that blames "input data or the objective/model function",
+    # leaving the user to figure out which. Non-finite data outside the
+    # e_lim/t_lim window never reaches the residual and stays legal.
+    data_arr = np.asarray(const[1], dtype=float)
+    window = data_arr[_fit_window_slices(data_arr.ndim, const[4], const[5])]
+    n_bad = int(np.size(window) - np.count_nonzero(np.isfinite(window)))
+    if n_bad > 0:
+        raise ValueError(
+            f"Data contains {n_bad} non-finite value(s) (NaN/Inf) inside "
+            "the fit window. Clean the data or exclude the affected "
+            "region with set_fit_limits() before fitting."
+        )
 
     # construct the lmfit parameters if necessary
     if isinstance(par, lmfit.parameter.Parameters):
