@@ -2863,67 +2863,30 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         row = name_to_row[node.name]
         param_traces_init[row, :] = node.value if node.value is not None else 0.0
 
-    # PARAM_PLUS_TRACE: base + dynamics trace at initial values.
-    # We need to evaluate dynamics functions at initial parameter values
-    # to populate these rows.
-    from trspecfit.functions import time as fcts_time
+    # PARAM_PLUS_TRACE: base + dynamics trace at initial values, resolved
+    # by the shared hot-path routine.
+    from trspecfit.eval_2d import resolve_param_traces
 
-    _DYN_DISPATCH: dict[int, Callable[..., Any]] = {
-        int(DynFuncKind.EXPFUN): fcts_time.expFun,
-        int(DynFuncKind.SINFUN): fcts_time.sinFun,
-        int(DynFuncKind.LINFUN): fcts_time.linFun,
-        int(DynFuncKind.SINDIVX): fcts_time.sinDivX,
-        int(DynFuncKind.ERFFUN): fcts_time.erfFun,
-        int(DynFuncKind.SQRTFUN): fcts_time.sqrtFun,
-        int(DynFuncKind.STEPFUN): fcts_time.stepFun,
-    }
-
-    from trspecfit.eval_2d import CONV_KERNEL_DISPATCH, eval_expr_program
-    from trspecfit.utils.arrays import conv_kernel_support, my_conv
-
-    # Dynamics groups, expressions, and resolved-trace convolutions are
-    # interleaved in topological order so that downstream consumers see
-    # the fully resolved trace (base + dynamics + expressions + IRF).
-    for step in range(len(resolution_kinds)):
-        kind = int(resolution_kinds[step])
-        idx = int(resolution_indices[step])
-        if kind == 0:  # dynamics group
-            target = int(dyn_group_target_row[idx])
-            base = int(dyn_group_base_row[idx])
-            param_traces_init[target, :] = param_traces_init[base, :]
-            for s in range(int(dyn_group_indptr[idx]), int(dyn_group_indptr[idx + 1])):
-                n_dp = int(dyn_sub_n_params[s])
-                p_vals = [
-                    float(param_traces_init[dyn_sub_param_rows[s, j], 0])
-                    for j in range(n_dp)
-                ]
-                func = _DYN_DISPATCH[int(dyn_sub_func_id[s])]
-                param_traces_init[target, :] += (
-                    func(dyn_sub_time_axes[s], *p_vals) * dyn_sub_masks[s]
-                )
-        elif kind == 1:  # expression
-            target_row = int(expr_target_rows[idx])
-            program = expr_programs[idx]
-            param_traces_init[target_row, :] = eval_expr_program(
-                program, param_traces_init
-            )
-        else:  # kind == 2: resolved-trace convolution
-            target_row = int(conv_target_rows[idx])
-            kernel_func, width_func = CONV_KERNEL_DISPATCH[int(conv_func_ids[idx])]
-            p_start = int(conv_param_indptr[idx])
-            p_end = int(conv_param_indptr[idx + 1])
-            kernel_params = [
-                float(param_traces_init[int(conv_param_rows[j]), 0])
-                for j in range(p_start, p_end)
-            ]
-            support = conv_kernel_support(
-                kernel_params[0] * width_func(*kernel_params),
-                float(graph.time[1] - graph.time[0]),
-            )
-            kernel = kernel_func(support, *kernel_params)
-            param_traces_init[target_row, :] = my_conv(
-                graph.time, param_traces_init[target_row, :], kernel
-            )
+    resolve_param_traces(
+        param_traces_init,
+        graph.time,
+        resolution_kinds,
+        resolution_indices,
+        dyn_group_target_row,
+        dyn_group_base_row,
+        dyn_group_indptr,
+        dyn_sub_func_id,
+        dyn_sub_n_params,
+        dyn_sub_param_rows,
+        dyn_sub_time_axes,
+        dyn_sub_masks,
+        expr_target_rows,
+        expr_programs,
+        conv_target_rows,
+        conv_func_ids,
+        conv_param_indptr,
+        conv_param_rows,
+    )
 
     # ------------------------------------------------------------------ #
     # 6b. Precompute constant component contributions                      #

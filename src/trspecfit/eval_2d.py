@@ -142,6 +142,83 @@ def eval_expr_program(
 
 
 # ---------------------------------------------------------------------------
+# Shared trace resolution
+# ---------------------------------------------------------------------------
+
+
+#
+def resolve_param_traces(
+    traces: np.ndarray,
+    time: np.ndarray,
+    resolution_kinds: np.ndarray,
+    resolution_indices: np.ndarray,
+    dyn_group_target_row: np.ndarray,
+    dyn_group_base_row: np.ndarray,
+    dyn_group_indptr: np.ndarray,
+    dyn_sub_func_id: np.ndarray,
+    dyn_sub_n_params: np.ndarray,
+    dyn_sub_param_rows: np.ndarray,
+    dyn_sub_time_axes: np.ndarray,
+    dyn_sub_masks: np.ndarray,
+    expr_target_rows: np.ndarray,
+    expr_programs: list[ExprProgram],
+    conv_target_rows: np.ndarray,
+    conv_func_ids: np.ndarray,
+    conv_param_indptr: np.ndarray,
+    conv_param_rows: np.ndarray,
+) -> None:
+    """Resolve dynamics, expressions, and convolutions into *traces* in place.
+
+    Dynamics groups, expressions, and resolved-trace convolutions are
+    interleaved in topological order so that downstream consumers see the
+    fully resolved trace (base + dynamics + expressions + IRF).  A dynamics
+    group evaluates all substeps (e.g. two expFun in a bi-exponential) and
+    sums them: target = base + sum(traces).  Expression-valued dynamics
+    params are resolved before the group that consumes them.
+
+    Shared between the hot path (``evaluate_2d``) and compile-time trace
+    initialization in ``schedule_2d``.
+    """
+
+    for step in range(len(resolution_kinds)):
+        kind = int(resolution_kinds[step])
+        idx = int(resolution_indices[step])
+        if kind == 0:  # dynamics group
+            target = int(dyn_group_target_row[idx])
+            base = int(dyn_group_base_row[idx])
+            traces[target, :] = traces[base, :]
+            s_start = int(dyn_group_indptr[idx])
+            s_end = int(dyn_group_indptr[idx + 1])
+            for s in range(s_start, s_end):
+                func_id = int(dyn_sub_func_id[s])
+                func, _n_par = DYNAMICS_DISPATCH[func_id]
+                n_par = int(dyn_sub_n_params[s])
+                param_rows = dyn_sub_param_rows[s, :n_par]
+                dyn_params = [float(traces[int(row), 0]) for row in param_rows]
+                traces[target, :] += (
+                    func(dyn_sub_time_axes[s], *dyn_params) * dyn_sub_masks[s]
+                )
+        elif kind == 1:  # expression
+            target = int(expr_target_rows[idx])
+            traces[target, :] = eval_expr_program(expr_programs[idx], traces)
+        else:  # kind == 2: resolved-trace convolution
+            target = int(conv_target_rows[idx])
+            func_id = int(conv_func_ids[idx])
+            kernel_func, width_func = CONV_KERNEL_DISPATCH[func_id]
+            p_start = int(conv_param_indptr[idx])
+            p_end = int(conv_param_indptr[idx + 1])
+            kernel_params = [
+                float(traces[int(conv_param_rows[j]), 0]) for j in range(p_start, p_end)
+            ]
+            support = conv_kernel_support(
+                kernel_params[0] * width_func(*kernel_params),
+                float(time[1] - time[0]),
+            )
+            kernel = kernel_func(support, *kernel_params)
+            traces[target, :] = my_conv(time, traces[target, :], kernel)
+
+
+# ---------------------------------------------------------------------------
 # Profile evaluation helpers (2D)
 # ---------------------------------------------------------------------------
 
@@ -334,48 +411,28 @@ def evaluate_2d(plan: ScheduledPlan2D, theta: np.ndarray) -> np.ndarray:
     # 1b. Broadcast optimizer params
     traces[plan.opt_indices, :] = theta[:, np.newaxis]
 
-    # 1c+d. Resolve dynamics groups and expressions in interleaved topo
-    # order.  A dynamics group evaluates all substeps (e.g. two expFun
-    # in a bi-exponential) and sums them: target = base + sum(traces).
-    # Expression-valued dynamics params are resolved before the group
-    # that consumes them.
-    for step in range(len(plan.resolution_kinds)):
-        kind = int(plan.resolution_kinds[step])
-        idx = int(plan.resolution_indices[step])
-        if kind == 0:  # dynamics group
-            target = int(plan.dyn_group_target_row[idx])
-            base = int(plan.dyn_group_base_row[idx])
-            traces[target, :] = traces[base, :]
-            s_start = int(plan.dyn_group_indptr[idx])
-            s_end = int(plan.dyn_group_indptr[idx + 1])
-            for s in range(s_start, s_end):
-                func_id = int(plan.dyn_sub_func_id[s])
-                func, _n_par = DYNAMICS_DISPATCH[func_id]
-                n_par = int(plan.dyn_sub_n_params[s])
-                param_rows = plan.dyn_sub_param_rows[s, :n_par]
-                dyn_params = [float(traces[int(row), 0]) for row in param_rows]
-                traces[target, :] += (
-                    func(plan.dyn_sub_time_axes[s], *dyn_params) * plan.dyn_sub_masks[s]
-                )
-        elif kind == 1:  # expression
-            target = int(plan.expr_target_rows[idx])
-            traces[target, :] = eval_expr_program(plan.expr_programs[idx], traces)
-        else:  # kind == 2: resolved-trace convolution
-            target = int(plan.conv_target_rows[idx])
-            func_id = int(plan.conv_func_ids[idx])
-            kernel_func, width_func = CONV_KERNEL_DISPATCH[func_id]
-            p_start = int(plan.conv_param_indptr[idx])
-            p_end = int(plan.conv_param_indptr[idx + 1])
-            kernel_params = [
-                float(traces[int(plan.conv_param_rows[j]), 0])
-                for j in range(p_start, p_end)
-            ]
-            support = conv_kernel_support(
-                kernel_params[0] * width_func(*kernel_params),
-                float(plan.time[1] - plan.time[0]),
-            )
-            kernel = kernel_func(support, *kernel_params)
-            traces[target, :] = my_conv(plan.time, traces[target, :], kernel)
+    # 1c+d. Resolve dynamics groups, expressions, and trace convolutions
+    # in interleaved topological order.
+    resolve_param_traces(
+        traces,
+        plan.time,
+        plan.resolution_kinds,
+        plan.resolution_indices,
+        plan.dyn_group_target_row,
+        plan.dyn_group_base_row,
+        plan.dyn_group_indptr,
+        plan.dyn_sub_func_id,
+        plan.dyn_sub_n_params,
+        plan.dyn_sub_param_rows,
+        plan.dyn_sub_time_axes,
+        plan.dyn_sub_masks,
+        plan.expr_target_rows,
+        plan.expr_programs,
+        plan.conv_target_rows,
+        plan.conv_func_ids,
+        plan.conv_param_indptr,
+        plan.conv_param_rows,
+    )
 
     # 1e. Profile evaluation (after parameter resolution).
     profile_sample_values = _evaluate_profile_sample_values_2d(
