@@ -60,7 +60,6 @@ from pathlib import Path
 from typing import cast
 
 import h5py
-import matplotlib.pyplot as plt
 import numpy as np
 
 from trspecfit.config.plot import PlotConfig
@@ -1296,42 +1295,14 @@ class Simulator:
             if plot_kwargs:
                 resolved_config = resolved_config.copy(**plot_kwargs)
 
-            # Create 3-panel plot
-            _fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-
-            panels = [
-                (self.data_clean, "Clean Model Data"),
-                (self.data_noisy, plt_title),
-                (self.noise, "Noise (Simulated - Clean)"),
-            ]
-            for ax, (data, title) in zip(axes, panels, strict=True):
-                im = ax.pcolormesh(
-                    self.model.energy,
-                    self.model.time,
-                    data,
-                    shading="nearest",
-                    cmap=resolved_config.z_colormap,
-                )
-                ax.set_title(title)
-                ax.set_xlabel(resolved_config.x_label)
-                ax.set_ylabel(resolved_config.y_label)
-                if resolved_config.ticksize is not None:
-                    ax.tick_params(labelsize=resolved_config.ticksize)
-                uplt._apply_axis_settings(
-                    ax,
-                    x_type=resolved_config.x_type,
-                    x_dir=resolved_config.x_dir,
-                    y_type=resolved_config.y_type,
-                    y_dir=resolved_config.y_dir,
-                    x_lim=resolved_config.x_lim,
-                    y_lim=resolved_config.y_lim,
-                )
-                plt.colorbar(im, ax=ax)
-
-            plt.tight_layout()
-            uplt._finalize_plot(
+            uplt.plot_2d_grid(
+                [self.data_clean, self.data_noisy, self.noise],
+                x=self.model.energy,
+                y=self.model.time,
+                titles=["Clean Model Data", plt_title, "Noise (Simulated - Clean)"],
+                config=resolved_config,
+                columns=3,
                 save_img=save_img,
-                save_path="",
                 dpi_save=resolved_config.dpi_save,
             )
 

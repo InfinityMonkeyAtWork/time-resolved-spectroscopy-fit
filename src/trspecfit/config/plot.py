@@ -78,8 +78,14 @@ class PlotConfig:
         X-coordinates for vertical lines
     hlines : list[float] | None
         Y-coordinates for horizontal lines
+    refline_color : str
+        Color for vlines/hlines reference lines
+    refline_style : str
+        Line style for vlines/hlines reference lines
     ticksize : float | None
         Font size for tick labels
+    panel_size : tuple[float, float]
+        Per-panel (width, height) in inches for multi-panel grid plots
 
     Examples
     --------
@@ -156,7 +162,12 @@ class PlotConfig:
     waterfall: float = 0
     vlines: list[float] | None = None
     hlines: list[float] | None = None
+    refline_color: str = "#808080"
+    refline_style: str = ":"
     ticksize: float | None = None
+
+    # Per-panel size (width, height in inches) for multi-panel grid plots
+    panel_size: tuple[float, float] = (4.0, 3.0)
 
     # Normalization
     y_norm: int = 0  # 0: no normalization, 1: normalize to [0,1]
