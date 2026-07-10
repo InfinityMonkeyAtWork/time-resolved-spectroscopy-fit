@@ -148,7 +148,8 @@ def LinBack(
         bad = np.argmax((xs >= xe).ravel())
         raise ValueError(
             f"LinBack requires xStart < xStop, got xStart={xs.ravel()[bad]}, "
-            f"xStop={xe.ravel()[bad]}"
+            f"xStop={xe.ravel()[bad]}. If xStart/xStop are fit parameters, "
+            f"set min/max bounds that keep them ordered."
         )
     y = m * (x - xStart) + b
     y_stop = m * (xStop - xStart) + b
