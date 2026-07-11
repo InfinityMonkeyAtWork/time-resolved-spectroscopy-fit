@@ -232,6 +232,7 @@ class Simulator:
         ------
         ValueError
             If detection type is invalid
+            If noise_type is invalid
             If counts_per_delay ≤ 0 (after estimation)
 
         Examples
@@ -260,7 +261,7 @@ class Simulator:
 
         # Analog detector parameters
         self.noise_level = noise_level
-        self.noise_type = noise_type.lower()
+        self.noise_type = self._validated_noise_type(noise_type)
 
         # Photon counting parameters
         self.counts_per_delay: int | None = counts_per_delay
@@ -284,6 +285,19 @@ class Simulator:
         self.data_clean: np.ndarray | None = None  # Without noise
         self.data_noisy: np.ndarray | None = None  # With noise
         self.noise: np.ndarray | None = None  # Just the noise component
+
+    #
+    @staticmethod
+    def _validated_noise_type(noise_type: str) -> str:
+        """Normalize and validate a noise_type string."""
+
+        noise_type = noise_type.lower()
+        if noise_type not in ("poisson", "gaussian", "none"):
+            raise ValueError(
+                f"Unknown noise type: {noise_type}. "
+                "Use 'poisson', 'gaussian', or 'none'"
+            )
+        return noise_type
 
     #
     def __repr__(self) -> str:
@@ -935,13 +949,7 @@ class Simulator:
                 "noise_type only applies to analog detection",
                 stacklevel=2,
             )
-        noise_type = noise_type.lower()
-        if noise_type not in ("poisson", "gaussian", "none"):
-            raise ValueError(
-                f"Unknown noise type: {noise_type}. "
-                "Use 'poisson', 'gaussian', or 'none'"
-            )
-        self.noise_type = noise_type
+        self.noise_type = self._validated_noise_type(noise_type)
 
     #
     def set_counts_per_delay(self, counts_per_delay: int) -> None:

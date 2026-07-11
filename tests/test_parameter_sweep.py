@@ -284,6 +284,20 @@ class TestSimulatorNoiseType:
         with pytest.raises(ValueError, match="Unknown noise type"):
             sim.set_noise_type("uniform")
 
+    #
+    def test_constructor_unknown_noise_type_raises(self):
+        """The constructor shares the setter's validation."""
+
+        sim = self._make_simulator()
+        with pytest.raises(ValueError, match="Unknown noise type"):
+            Simulator(
+                model=sim.model,
+                detection="analog",
+                noise_level=0.05,
+                noise_type="uniform",
+                seed=42,
+            )
+
 
 #
 #
