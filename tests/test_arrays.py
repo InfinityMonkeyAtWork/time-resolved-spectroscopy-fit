@@ -44,6 +44,24 @@ class TestMyConv:
         with pytest.raises(ValueError, match="at least 2 x samples"):
             my_conv(np.array([0.0]), np.array([1.0]), np.array([1.0]))
 
+    #
+    def test_zero_sum_kernel_raises(self):
+        """A kernel that sums to zero raises instead of yielding NaN/inf."""
+
+        x = np.linspace(0, 10, 21)
+        y = np.sin(x)
+        with pytest.raises(ValueError, match="cannot normalize"):
+            my_conv(x, y, np.zeros(5))
+
+    #
+    def test_nonfinite_kernel_raises(self):
+        """A kernel with non-finite entries raises instead of propagating."""
+
+        x = np.linspace(0, 10, 21)
+        y = np.sin(x)
+        with pytest.raises(ValueError, match="cannot normalize"):
+            my_conv(x, y, np.array([1.0, np.nan, 1.0]))
+
 
 #
 #

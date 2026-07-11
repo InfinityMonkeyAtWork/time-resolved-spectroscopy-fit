@@ -221,6 +221,69 @@ class TestParameterSweep:
         assert configs1 == configs2
         assert len(configs1) == 5
 
+    #
+    def test_empty_sweep_raises(self):
+        """A sweep with no parameters must fail loudly, not yield {}."""
+
+        sweep = ParameterSweep(strategy="grid")
+
+        with pytest.raises(ValueError, match="No parameters added"):
+            sweep.get_n_configs()
+        with pytest.raises(ValueError, match="No parameters added"):
+            list(sweep)
+
+    #
+    def test_unknown_spec_type_raises(self):
+        """Random generation must reject unrecognized distribution types."""
+
+        sweep = ParameterSweep(strategy="random")
+        sweep.add_uniform("param_A", 0, 10, n_samples=3)
+        # specs are only created by add_*; inject directly to pin the guard
+        sweep.parameter_specs["param_B"] = {"type": "cauchy", "n_samples": 3}
+
+        with pytest.raises(ValueError, match="Unknown distribution type"):
+            list(sweep)
+
+
+#
+#
+class TestSimulatorNoiseType:
+    """Test Simulator.set_noise_type validation."""
+
+    #
+    def _make_simulator(self):
+        """Analog Simulator on a minimal 1D energy model."""
+
+        project = make_project(name="test")
+        file = File(
+            parent_project=project,
+            energy=np.arange(0, 20, 0.5),
+            time=np.arange(-10, 100, 5),
+        )
+        file.load_model(
+            model_yaml="models/file_energy.yaml", model_info="simple_energy"
+        )
+        assert file.model_active is not None  # type guard
+        return Simulator(
+            model=file.model_active,
+            detection="analog",
+            noise_level=0.05,
+            noise_type="gaussian",
+            seed=42,
+        )
+
+    #
+    def test_set_noise_type_normalizes_case(self):
+        sim = self._make_simulator()
+        sim.set_noise_type("Poisson")
+        assert sim.noise_type == "poisson"
+
+    #
+    def test_set_noise_type_unknown_raises(self):
+        sim = self._make_simulator()
+        with pytest.raises(ValueError, match="Unknown noise type"):
+            sim.set_noise_type("uniform")
+
 
 #
 #

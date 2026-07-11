@@ -3392,9 +3392,9 @@ class File:
         )
 
         # get slice-by-slice fit spectra as a 2D map (write CSV only when saving)
-        df_sbs_pars = df_sbs.loc[:, self.model_sbs.parameter_names]
         fit_2d_sbs = fitlib.results_to_fit_2d(
-            results=df_sbs_pars,
+            results=df_sbs,
+            parameter_names=self.model_sbs.parameter_names,
             const=self.model_sbs.const,
             args=self.model_sbs.args,
             num_fmt=self.p.num_fmt,

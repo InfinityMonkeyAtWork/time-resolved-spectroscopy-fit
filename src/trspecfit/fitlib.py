@@ -1037,6 +1037,7 @@ def results_to_fit_2d(
     results: list[Any] | pd.DataFrame,
     const: tuple[Any, ...],
     args: tuple[Any, ...],
+    parameter_names: list[str] | None = None,
     num_fmt: str = "%.6e",
     delim: str = ",",
     save_2d: int = 0,
@@ -1057,6 +1058,14 @@ def results_to_fit_2d(
         - list: Output from fit_wrapper for each slice.
           Each element: ``[par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]``
         - pd.DataFrame: From results_to_df() with parameters as columns
+
+    parameter_names : list of str, optional
+        For DataFrame results: select and order these columns as the
+        parameter vector before evaluation. Pass when the DataFrame may
+        carry extra non-parameter columns (e.g. the metrics columns in
+        ``results_to_df`` output); extra columns are otherwise passed to
+        the fit function as parameters. If None, all columns are used in
+        DataFrame order. Ignored for list results.
 
     const : tuple
         Constants for residual_fun:
@@ -1095,6 +1104,11 @@ def results_to_fit_2d(
         e_lim_const,
         t_lim_const,
     ) = const
+
+    # Select/order parameter columns; raises KeyError on missing names
+    if isinstance(results, pd.DataFrame) and parameter_names is not None:
+        results = results.loc[:, parameter_names]
+
     lst = []  # intialize
     for i in range(len(results)):
         # list of lmfit_wrapper fit results

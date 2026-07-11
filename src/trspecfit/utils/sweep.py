@@ -226,6 +226,16 @@ class ParameterSweep:
         }
 
     #
+    def _require_parameters(self) -> None:
+        """Raise if no parameters have been added to the sweep."""
+
+        if not self.parameter_specs:
+            raise ValueError(
+                "No parameters added to this sweep. Use add_range / "
+                "add_uniform / add_normal / add_lognormal first."
+            )
+
+    #
     def _determine_strategy(self) -> str:
         """
         Determine which sampling strategy to use.
@@ -341,6 +351,12 @@ class ParameterSweep:
                     config[par_name] = self.rng.normal(spec["mean"], spec["std"])
                 elif spec["type"] == "lognormal":
                     config[par_name] = self.rng.lognormal(spec["mean"], spec["std"])
+                else:
+                    raise ValueError(
+                        f"Unknown distribution type '{spec['type']}' for "
+                        f"parameter '{par_name}'. Must be 'range', "
+                        "'uniform', 'normal', or 'lognormal'."
+                    )
             yield config
 
     #
@@ -353,6 +369,8 @@ class ParameterSweep:
         dict
             Parameter configuration {par_name: value, ...}
         """
+
+        self._require_parameters()
 
         # Reset seed at start of iteration for reproducibility
         if self.seed is not None:
@@ -384,6 +402,7 @@ class ParameterSweep:
         12
         """
 
+        self._require_parameters()
         strategy = self._determine_strategy()
 
         if strategy == "grid":

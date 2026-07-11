@@ -391,7 +391,14 @@ def my_conv(
     y_pad = np.pad(y_arr, pad_size, mode="edge")
 
     # Normalize the kernel (cheaper than dividing the padded signal)
-    kernel_norm = kernel_arr / np.sum(kernel_arr)
+    kernel_sum = np.sum(kernel_arr)
+    if kernel_sum == 0 or not np.isfinite(kernel_sum):
+        raise ValueError(
+            f"my_conv kernel sums to {kernel_sum}; cannot normalize. "
+            "The kernel likely collapsed below the axis step "
+            "(width parameter too small) or contains non-finite values."
+        )
+    kernel_norm = kernel_arr / kernel_sum
 
     # Compute convolution with normalized kernel
     if method == "scipy":

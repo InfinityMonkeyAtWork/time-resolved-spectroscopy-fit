@@ -927,7 +927,7 @@ class Simulator:
         Parameters
         ----------
         noise_type : str
-            Noise distribution: ``'gaussian'`` or ``'uniform'``.
+            Noise distribution: ``'poisson'``, ``'gaussian'``, or ``'none'``.
         """
 
         if self.detection != "analog":
@@ -935,7 +935,13 @@ class Simulator:
                 "noise_type only applies to analog detection",
                 stacklevel=2,
             )
-        self.noise_type = noise_type.lower()
+        noise_type = noise_type.lower()
+        if noise_type not in ("poisson", "gaussian", "none"):
+            raise ValueError(
+                f"Unknown noise type: {noise_type}. "
+                "Use 'poisson', 'gaussian', or 'none'"
+            )
+        self.noise_type = noise_type
 
     #
     def set_counts_per_delay(self, counts_per_delay: int) -> None:
