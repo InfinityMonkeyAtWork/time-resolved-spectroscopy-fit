@@ -58,8 +58,73 @@ orphan: true
 >   the interpreter per-call.
 > - *Parity*: mcp and GIR paths agree to 4.4e-14 (max |diff|).
 >
-> The rest of this note is the original plan, kept for the rationale
-> and the measured defect it fixed.
+> The next section records the final design decisions (folded from the
+> implementation plan when it was cleared); the rest of this note is
+> the original planning note, kept for the rationale and the measured
+> defect it fixed.
+
+## Final design decisions (2026-07-11)
+
+- **Kernel drop rationale.** `voigtCONV` and `lorentzCONV` were removed
+  on physics grounds: neither has a basis as a *time-domain* IRF (Voigt
+  and Lorentzian are energy-domain lineshape stories, already covered by
+  the energy layer), and no example used them; pre-1.0 is the time to
+  remove names. Voigt's missing closed-form CDF is what blocked the
+  exact-edge design; Lorentz has an elementary CDF
+  (`(W/2)(atan(2x/W) + pi/2)` for our body), so its removal was the
+  physics/API call, not a technical necessity.
+- **Companions return masses, not CDFs.**
+  `_<name>CONV_edge_mass(dt_left, dt_right, *params) -> (M_L, M_R)`,
+  where `M_L(i)` is the integral of the kernel body over `(-inf, t[0]]`
+  (upper tail at `dt_left[i] = t_i - t[0]`) and `M_R(i)` the integral
+  over `[t[-1], inf)` (lower tail at `dt_right[i] = t_i - t[-1]`).
+  Returning masses lets each kernel use its natural well-conditioned
+  form — `erfc` for gauss, direct `exp` for the exponentials, `clip`
+  for box — and removes any `G(inf)`/`np.inf`-evaluation convention.
+  (Plain `G(inf) - G(x)` subtraction would already be fine in
+  *absolute* terms — masses join O(1) row sums — but the direct forms
+  are cleaner and free.) Companions must integrate the body with its
+  exact normalization: the gauss body is peak-1, so
+  `M = SD*sqrt(pi/2)*erfc(x/(sqrt(2)*SD))`; expDecay/expRise are
+  `tau`-scaled one-sided exponentials with one of the two masses
+  identically 0; expSym is piecewise; box uses the `clip` form.
+- **Quadrature weights are true trapezoid** — half-cells at both window
+  ends, NOT `np.gradient`, whose endpoint weights are full cells and
+  would double-count against the analytic edge masses.
+- **Layering.** `utils/arrays.py` stays kernel-agnostic:
+  `conv_matrix_apply(operator, kernel_values, edge_mass_left,
+  edge_mass_right, y)`; callers compute the masses via the registry.
+- **Companions are private** (`_gaussCONV_edge_mass`, ...), exposed
+  through the single public registry dict `CONV_EDGE_MASS` — one source
+  of truth for both evaluation paths, and the private names keep them
+  out of registry introspection (no INTERNAL_SUFFIXES resurrection in
+  the guard tests).
+- **No callables on the plan.** `ScheduledPlan2D` keeps numeric
+  kernel-kind ids; the evaluator resolves companions via
+  `CONV_EDGE_MASS_DISPATCH`, keyed by the same `ConvKernelKind` enum as
+  `CONV_KERNEL_DISPATCH`; `schedule_2d` only validates the entry
+  exists. This keeps the plan serializable / JAX-friendly. A missing
+  companion is a loud validation error at `add_components` /
+  `schedule_2d` time, not a silent fallback.
+- **Validation split per the two-layer design.** Authoring layer: conv
+  kernel parameters must be strictly positive, and varying parameters
+  must carry an explicit positive lower bound (the unbound
+  `[value, True]` form would give lmfit `min=-inf`), enforced at model
+  load with a clear error. The edge-mass companions validate their
+  parameters (strictly positive, finite) on every evaluation as the
+  backstop for expression-driven kernel parameters (`boxCONV` with
+  width 0 would otherwise silently become the identity operator). Hot
+  path: cheap O(n) finite/nonnegative checks on `kernel_values`, both
+  mass vectors, and all input shapes in `conv_matrix_apply` (a row-sum
+  check alone lets signed errors cancel). All of these are host-side
+  checks, outside any future jit boundary.
+- **Related registry cleanup** in the same change: function discovery
+  in `config/functions.py` was restricted to functions defined in the
+  `functions/` modules, so imported helpers (`erf`, `erfc`, `wofz`,
+  `Callable`) no longer leak into the function registry.
+- **Released as 0.11.0, not 0.10.3**: public names were removed (two
+  kernels, `conv_kernel_support`, the `*_kernel_width` helpers) and the
+  convolution semantics changed.
 
 ## Summary
 
