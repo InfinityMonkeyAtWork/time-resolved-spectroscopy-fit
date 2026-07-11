@@ -19,21 +19,35 @@ from trspecfit.functions import time as fcts_time
 
 
 #
+def _module_functions(module) -> tuple[str, ...]:
+    """
+    Get public function names defined in a functions module.
+
+    Only plain functions whose ``__module__`` is the module itself are
+    discovered: imported names (scipy/numpy helpers, typing constructs)
+    would otherwise leak into the registry and let malformed YAML pass
+    function-name validation only to fail during evaluation.
+    """
+
+    return tuple(
+        name
+        for name in dir(module)
+        if not name.startswith("_")
+        and inspect.isfunction(getattr(module, name))
+        and getattr(module, name).__module__ == module.__name__
+    )
+
+
+#
 def all_functions() -> tuple[str, ...]:
     """
     Dynamically discover all available function names from the functions modules.
-    Returns a set of all function names that can be used as components.
+    Returns a tuple of all function names that can be used as components.
     """
 
-    function_names = set()
-
-    # Get all function names from each module
+    function_names: set[str] = set()
     for module in [fcts_energy, fcts_time, fcts_profile]:
-        for name in dir(module):
-            # Only include callable functions (not constants or classes)
-            if callable(getattr(module, name)) and not name.startswith("_"):
-                function_names.add(name)
-
+        function_names.update(_module_functions(module))
     return tuple(function_names)
 
 
@@ -90,11 +104,7 @@ def energy_functions() -> tuple[str, ...]:
         All public function names from energy module
     """
 
-    return tuple(
-        name
-        for name in dir(fcts_energy)
-        if callable(getattr(fcts_energy, name)) and not name.startswith("_")
-    )
+    return _module_functions(fcts_energy)
 
 
 #
@@ -115,11 +125,7 @@ def time_functions() -> tuple[str, ...]:
 
     # Get all function names from functions/time.py excluding convolutions
     return tuple(
-        name
-        for name in dir(fcts_time)
-        if callable(getattr(fcts_time, name))
-        and not name.startswith("_")
-        and not name.endswith("CONV")
+        name for name in _module_functions(fcts_time) if not name.endswith("CONV")
     )
 
 
@@ -139,13 +145,7 @@ def convolution_functions() -> tuple[str, ...]:
     """
 
     # Get all function names ending in 'CONV' from functions/time.py
-    return tuple(
-        name
-        for name in dir(fcts_time)
-        if callable(getattr(fcts_time, name))
-        and name.endswith("CONV")
-        and not name.startswith("_")
-    )
+    return tuple(name for name in _module_functions(fcts_time) if name.endswith("CONV"))
 
 
 #

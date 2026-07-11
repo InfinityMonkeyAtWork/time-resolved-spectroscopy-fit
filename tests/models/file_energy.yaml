@@ -204,7 +204,7 @@ background_last:
 # convolution in a top-level energy model (unsupported; IRF belongs in Dynamics)
 energy_convolution_unsupported:
     gaussCONV:
-      SD: [5.0E-2, True, 0, 1]
+      SD: [5.0E-2, True, 1.0E-6, 1]
     GLP:
       A: [20, True, 5, 25]
       x0: [84.5, True, 82, 88]

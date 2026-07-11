@@ -73,13 +73,12 @@ useful cleanup before or during a JAX port:
   `evaluate(plan, theta)` is already the right API. New work should protect
   that contract rather than pushing JAX concerns back into model objects or
   fit-time parsing.
-- **Land kernel-matrix convolution first.** The lowered convolution path
-  builds a theta-dependent 1D kernel whose support length tracks the fitted
-  width — silently wrong on non-uniform time axes and a jit blocker
-  (theta-dependent array shapes). Replacing it with the quadrature-weighted
-  kernel-matrix operator
-  ([kernel-matrix-convolution.md](kernel-matrix-convolution.md)) on the
-  NumPy paths removes that blocker before the port begins.
+- **Kernel-matrix convolution has landed** (2026-07): the lowered
+  convolution path now evaluates registry kernels elementwise on a
+  precomputed dt matrix and applies a quadrature-weighted matmul
+  ([kernel-matrix-convolution.md](archive/kernel-matrix-convolution.md)). All
+  array shapes in the convolution path are theta-independent, so the
+  former jit blocker (per-theta kernel support lengths) is gone.
 
 Of these, expression flattening is the one prep item most worth doing even if
 the eventual backend choice changes again.
@@ -99,11 +98,15 @@ The main technical work is in the evaluator itself:
 - **Host-side checks must stay outside the jitted region.** Shape checks and
   Python exceptions are fine at the outer boundary, but should not live inside
   the compiled path.
-- **SciPy-dependent kernels need JAX-compatible replacements.** The current
-  code still depends on SciPy for Voigt/Faddeeva (`wofz`) and for convolution
-  utilities used by the lowered convolution path. The kernel-matrix change
-  ([kernel-matrix-convolution.md](kernel-matrix-convolution.md)) retires the
-  convolution dependency, leaving Voigt/`wofz` as the remaining gap.
+- **SciPy-dependent kernels need JAX-compatible replacements.** The
+  kernel-matrix change
+  ([kernel-matrix-convolution.md](archive/kernel-matrix-convolution.md)) retired
+  the SciPy convolution utilities from the lowered path, and the removal
+  of `voigtCONV`/`lorentzCONV` (2026-07) retired `wofz` from
+  `functions/time.py` entirely — the conv path is now JAX-expressible
+  (`erfc` for the Gaussian edge masses exists in `jax.scipy.special`).
+  The energy-domain `Voigt` profile still uses `wofz` and remains the
+  one special-function gap.
 
 ### 3. Jacobian and optimizer work
 
@@ -183,7 +186,7 @@ Add the remaining lowered features incrementally:
 - profile-varying parameters,
 - subcycle-aware dynamics,
 - resolved-trace convolution (kernel-matrix form; see
-  [kernel-matrix-convolution.md](kernel-matrix-convolution.md)),
+  [kernel-matrix-convolution.md](archive/kernel-matrix-convolution.md)),
 - Voigt / special-function support.
 
 Each widening step should ship with direct parity tests against the existing

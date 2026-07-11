@@ -2,12 +2,69 @@
 orphan: true
 ---
 
-# Planning Note: Kernel-Matrix Convolution
+# Kernel-Matrix Convolution
+
+> **Status: implemented** (2026-07, `conv-kernel-matrix` branch). The
+> operator lives in `utils/arrays.py` (`conv_matrix_operator` /
+> `conv_matrix_apply`, bundled as the `ConvOperator` NamedTuple:
+> `dt_unique`, `gather_idx`, `quad_weights`, `dt_left`, `dt_right`);
+> the mcp path consumes it via `Component.conv_operator()` /
+> `Component.convolve()` (cached per `Component.time` identity) and the
+> GIR path via the `ScheduledPlan2D.conv_operator` plan field (numeric
+> kernel ids only — companions resolve via enum-keyed dispatch, so the
+> plan stays serializable).
+>
+> **Edge handling (revised 2026-07-11):** the note below proposed edge
+> policy (b) via a ghost-point extension of the quadrature grid. That
+> was implemented first, then replaced: its coverage (`n_t` ghost
+> samples per side continuing the boundary step) silently truncated
+> kernels broader than `n_t x boundary_step`, and row normalization hid
+> the loss — worst exactly on fine-boundary axes (user-reported). The
+> final implementation computes the exterior masses **analytically**:
+> each kernel registers a private edge-mass companion in
+> `functions/time.py::CONV_EDGE_MASS` returning the exact integrals of
+> the kernel body over `(-inf, t[0]]` and `[t[-1], inf)`
+> (cancellation-safe tail forms: erfc / exp / clip). No ghost points,
+> no coverage limit, no truncation for any theta; the dt matrix is
+> interior-only `(n_t, n_t)` with true trapezoid weights (half-cells at
+> the window edges). This is what made dropping `voigtCONV` (no
+> closed-form CDF) and `lorentzCONV` (no time-domain physical basis)
+> part of this change; it also retired `wofz` from `functions/time.py`.
+> Kernels without a companion are rejected at model validation (mcp)
+> and scheduling (GIR); kernel parameters must be strictly positive
+> with positive lower bounds, enforced at model load.
+>
+> Other deviations from the plan below:
+>
+> 1. a kernel far narrower than the local step now degrades to identity
+>    (the dt=0 diagonal keeps row sums positive) instead of raising the
+>    old zero-sum-kernel error;
+> 2. the kernel is evaluated only on the **unique** dt values
+>    (`dt_unique` + `gather_idx` reconstruction) rather than the full
+>    matrix — a naive elementwise evaluation was a 2.6x GIR regression;
+>    the dedup makes the new path faster than the old 1D convolution.
+>
+> **Measured results** (2026-07-11, ghost-scheme state; see changelog
+> for the final edge-mass numbers):
+>
+> - *Accuracy on example 21's non-uniform axis* (steps 0.5 → 2.0, truth
+>   parameters): worst-case deviation from the exact continuous
+>   convolution dropped from ~7% of trace max (old sample-index
+>   convolution) to ~4% (residual O(h) sampling at the ``expFun`` jump).
+> - *Performance, example 01* (the conv GIR path, 481x400 grid,
+>   `benchmark_gir.py --example 1 --calls 200`): 2.95 ms/call GIR
+>   (interior-only matrix + analytic edge masses; was 8.4 ms/call with
+>   the ghost scheme, ~11 ms/call with the original 1D kernel); 6.5x vs
+>   the interpreter per-call.
+> - *Parity*: mcp and GIR paths agree to 4.4e-14 (max |diff|).
+>
+> The rest of this note is the original plan, kept for the rationale
+> and the measured defect it fixed.
 
 ## Summary
 
 Replace the 1D-kernel-array convolution
-([`my_conv`](../../src/trspecfit/utils/arrays.py) plus the per-theta
+([`my_conv`](../../../src/trspecfit/utils/arrays.py) plus the per-theta
 `conv_kernel_support` rebuild) with a quadrature-weighted kernel-matrix
 operator, on both the mcp and GIR paths, in one branch. Two motivations:
 
@@ -18,7 +75,7 @@ operator, on both the mcp and GIR paths, in one branch. Two motivations:
    past the step change.
 2. **Architecture.** It removes theta-dependent kernel array shapes — the
    main jit blocker for the JAX track
-   ([jax-planning.md](jax-planning.md)) — and retires the SciPy
+   ([jax-planning.md](../jax-planning.md)) — and retires the SciPy
    convolution dependency in the lowered path.
 
 The mcp and GIR changes cannot be split across branches: parity tests
@@ -29,10 +86,10 @@ change everywhere at once.
 ## The defect today
 
 - Kernels are sampled at `t_step = time[1] - time[0]`
-  ([`Component.create_t_kernel`](../../src/trspecfit/mcp.py),
+  ([`Component.create_t_kernel`](../../../src/trspecfit/mcp.py),
   `resolve_param_traces` in
-  [`eval_2d.py`](../../src/trspecfit/eval_2d.py), and the schedule-time
-  trace init in [`graph_ir.py`](../../src/trspecfit/graph_ir.py)).
+  [`eval_2d.py`](../../../src/trspecfit/eval_2d.py), and the schedule-time
+  trace init in [`graph_ir.py`](../../../src/trspecfit/graph_ir.py)).
 - `my_conv` convolves by sample index; the axis itself never enters the
   computation. On a non-uniform axis the effective IRF width scales with
   the local step (4x wider in example 21's coarse region), and points
@@ -76,16 +133,16 @@ Call-site inventory — every convolution in the package acts on a 1D
 trace sampled on the time axis:
 
 - **mcp (single site).** `Model._combine_component` in
-  [`mcp.py`](../../src/trspecfit/mcp.py) handles `comp_type == "conv"`
+  [`mcp.py`](../../../src/trspecfit/mcp.py) handles `comp_type == "conv"`
   for standalone `TIME_1D` models and for dynamics traces inside 2D
   models alike — parameter time dependence evaluates via
   `par.t_model.create_value_1d()`, i.e. the 2D case reuses the 1D
   time-trace evaluator. Replacing this one site covers both.
 - **GIR (two sites).** The `kind == 2` branch of
   `resolve_param_traces` in
-  [`eval_2d.py`](../../src/trspecfit/eval_2d.py), and the schedule-time
+  [`eval_2d.py`](../../../src/trspecfit/eval_2d.py), and the schedule-time
   trace initialization in
-  [`graph_ir.py`](../../src/trspecfit/graph_ir.py). The plan gains the
+  [`graph_ir.py`](../../../src/trspecfit/graph_ir.py). The plan gains the
   precomputed `dt` matrix and weights; the per-theta support recompute
   disappears.
 - **Future.** The 1D time-trace fitting item in `TODO.md` inherits
@@ -149,7 +206,7 @@ trace sampled on the time axis:
 
 ## Relationship to the JAX track
 
-Land this before Phase B/C of [jax-planning.md](jax-planning.md). It
+Land this before Phase B/C of [jax-planning.md](../jax-planning.md). It
 removes two blockers listed there: the SciPy convolution utilities in
 the lowered path, and the theta-dependent kernel shapes introduced by
 the dynamic-support fix. After this change, porting convolution to JAX

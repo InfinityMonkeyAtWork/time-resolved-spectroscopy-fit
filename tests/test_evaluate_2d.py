@@ -739,9 +739,10 @@ class TestDynamicsConvolution:
 
     Covers plan encoding (conv program layout, resolution ordering) and
     numerical parity against ``Model.create_value_2d()``.
-    The IRF path rewrites a resolved trace row in place via
-    ``my_conv`` -- the same code MCP calls -- so tolerance matches the
-    other OpKind parity tests.
+    The IRF path rewrites a resolved trace row in place via the
+    kernel-matrix operator (``conv_matrix_apply`` on the plan's
+    precomputed dt matrix) -- the same code MCP calls -- so tolerance
+    matches the other OpKind parity tests.
     """
 
     #
@@ -804,30 +805,43 @@ class TestDynamicsConvolution:
             assert 0 <= int(row) < plan.n_params
 
     #
-    def test_conv_support_tracks_grown_kernel_width(self):
+    def test_conv_parity_when_kernel_width_grows(self):
         """Parity holds when the kernel width grows well past its init.
 
-        Regression guard for the frozen-support bug: the kernel support
-        used to be sized once from the initial SD, silently truncating
-        the kernel (and breaking parity) once the fitted SD grew past
-        it.  Both paths now rebuild the support from the current value.
+        Regression guard descended from the frozen-support bug of the
+        old 1D-kernel path (support sized once from the initial SD,
+        silently truncating a grown kernel).  The kernel-matrix
+        operator has no support at all -- the dt matrix spans the full
+        axis regardless of theta -- so a width far above its init must
+        stay in parity with no shape change anywhere.
         """
 
         plan, _graph, model = self._make_irf_plan(dyn_model="MonoExpPosIRFNarrow")
         theta = _compare_evaluator_vs_interpreter(model, plan)
         sd_idx = plan.opt_param_names.index("GLP_01_A_gaussCONV_SD")
-        # Narrow SD init is 5e-2 on a dt=2.2 axis; +0.6 grows the support
-        # from a sub-sample kernel to a multi-sample one (within bounds)
+        # Narrow SD init is 5e-2 on a dt=2.2 axis; +0.6 grows the kernel
+        # from sub-sample to multi-sample (within bounds)
         _perturb_theta(plan, model, theta, [sd_idx], [0.6])
 
-        # interpreter side: the kernel axis was rebuilt to span the
-        # grown width (±4*SD for gaussCONV)
-        A_par = next(p for p in model.components[0].pars if p.name == "GLP_01_A")
-        assert A_par.t_model is not None  # type guard
-        conv_comp = next(c for c in A_par.t_model.components if c.comp_type == "conv")
-        assert conv_comp.time is not None  # type guard
-        SD_grown = theta[sd_idx] + 0.6
-        assert conv_comp.time.max() >= 4 * SD_grown
+    #
+    def test_conv_operator_precomputed_on_plan(self):
+        """The plan carries the theta-independent kernel-matrix operator.
+
+        Static shapes are the point of the operator (no per-theta kernel
+        arrays): the interior gather matrix is (n_time, n_time) and the
+        edge-mass abscissae match the axis. The plan stores no
+        callables — edge-mass companions resolve via
+        CONV_EDGE_MASS_DISPATCH from the numeric conv_func_ids.
+        """
+
+        plan, _graph, _model = self._make_irf_plan()
+        op = plan.conv_operator
+        assert op is not None  # type guard
+        n_time = plan.n_time
+        assert op.gather_idx.shape == (n_time, n_time)
+        assert op.quad_weights.shape == (n_time,)
+        assert op.dt_left.shape == (n_time,)
+        assert op.dt_right.shape == (n_time,)
 
     #
     def test_conv_step_runs_after_dynamics(self):
@@ -873,11 +887,8 @@ class TestDynamicsConvolution:
     # Per-kernel parity: every lowerable kernel must match MCP at
     # initial theta AND under perturbation of every kernel parameter.
     # Parametrized by dyn_model YAML and the list of (param_suffix, delta)
-    # pairs to perturb -- one entry per kernel param, so voigtCONV's
-    # two-param case is covered alongside the one-param kernels.
+    # pairs to perturb -- one entry per kernel param.
     _KERNEL_PARITY_CASES = [
-        ("MonoExpPosLorentzIRF", [("lorentzCONV_W", 0.2)]),
-        ("MonoExpPosVoigtIRF", [("voigtCONV_SD", 0.05), ("voigtCONV_W", 0.05)]),
         ("MonoExpPosExpSymIRF", [("expSymCONV_tau", 0.5)]),
         ("MonoExpPosExpDecayIRF", [("expDecayCONV_tau", 0.5)]),
         ("MonoExpPosExpRiseIRF", [("expRiseCONV_tau", 0.5)]),

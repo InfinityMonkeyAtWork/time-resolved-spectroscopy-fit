@@ -9,6 +9,8 @@ signatures that work for both 1D and 2D evaluation.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 
 from trspecfit.functions import time as fcts_time
@@ -22,7 +24,7 @@ from trspecfit.graph_ir import (
     ParamSourceKind,
     ScheduledPlan2D,
 )
-from trspecfit.utils.arrays import conv_kernel_support, my_conv
+from trspecfit.utils.arrays import ConvOperator, conv_matrix_apply
 
 # ---------------------------------------------------------------------------
 # Dynamics dispatch table
@@ -38,30 +40,28 @@ DYNAMICS_DISPATCH: dict[int, tuple] = {
     DynFuncKind.STEPFUN: (fcts_time.stepFun, 2),
 }
 
-# Convolution kernel dispatch: kernel function plus its *_kernel_width
-# helper.  The kernel support is rebuilt from the current kernel
-# parameters at every evaluation so it tracks the fitted width.
-# Mirrors MCP's Component.value(...) conv path.
-CONV_KERNEL_DISPATCH: dict[int, tuple] = {
-    ConvKernelKind.GAUSSCONV: (fcts_time.gaussCONV, fcts_time.gaussCONV_kernel_width),
-    ConvKernelKind.LORENTZCONV: (
-        fcts_time.lorentzCONV,
-        fcts_time.lorentzCONV_kernel_width,
-    ),
-    ConvKernelKind.VOIGTCONV: (fcts_time.voigtCONV, fcts_time.voigtCONV_kernel_width),
-    ConvKernelKind.EXPSYMCONV: (
-        fcts_time.expSymCONV,
-        fcts_time.expSymCONV_kernel_width,
-    ),
-    ConvKernelKind.EXPDECAYCONV: (
-        fcts_time.expDecayCONV,
-        fcts_time.expDecayCONV_kernel_width,
-    ),
-    ConvKernelKind.EXPRISECONV: (
-        fcts_time.expRiseCONV,
-        fcts_time.expRiseCONV_kernel_width,
-    ),
-    ConvKernelKind.BOXCONV: (fcts_time.boxCONV, fcts_time.boxCONV_kernel_width),
+# Convolution kernel dispatch.  Kernel functions are elementwise in
+# their first argument, so they evaluate directly on the precomputed
+# deduplicated dt values of the kernel-matrix operator
+# (plan.conv_operator.dt_unique).  Mirrors MCP's Component.convolve.
+CONV_KERNEL_DISPATCH: dict[int, Callable] = {
+    ConvKernelKind.GAUSSCONV: fcts_time.gaussCONV,
+    ConvKernelKind.EXPSYMCONV: fcts_time.expSymCONV,
+    ConvKernelKind.EXPDECAYCONV: fcts_time.expDecayCONV,
+    ConvKernelKind.EXPRISECONV: fcts_time.expRiseCONV,
+    ConvKernelKind.BOXCONV: fcts_time.boxCONV,
+}
+
+# Edge-mass dispatch: exact analytic exterior masses per kernel
+# (edge-value padding), keyed by the same enum as the kernel dispatch.
+# Callables live in functions/time.py (CONV_EDGE_MASS); the plan itself
+# stores only numeric kernel ids, keeping it serializable.
+CONV_EDGE_MASS_DISPATCH: dict[int, Callable] = {
+    ConvKernelKind.GAUSSCONV: fcts_time.CONV_EDGE_MASS["gaussCONV"],
+    ConvKernelKind.EXPSYMCONV: fcts_time.CONV_EDGE_MASS["expSymCONV"],
+    ConvKernelKind.EXPDECAYCONV: fcts_time.CONV_EDGE_MASS["expDecayCONV"],
+    ConvKernelKind.EXPRISECONV: fcts_time.CONV_EDGE_MASS["expRiseCONV"],
+    ConvKernelKind.BOXCONV: fcts_time.CONV_EDGE_MASS["boxCONV"],
 }
 
 
@@ -149,7 +149,6 @@ def eval_expr_program(
 #
 def resolve_param_traces(
     traces: np.ndarray,
-    time: np.ndarray,
     resolution_kinds: np.ndarray,
     resolution_indices: np.ndarray,
     dyn_group_target_row: np.ndarray,
@@ -166,6 +165,7 @@ def resolve_param_traces(
     conv_func_ids: np.ndarray,
     conv_param_indptr: np.ndarray,
     conv_param_rows: np.ndarray,
+    conv_operator: ConvOperator | None,
 ) -> None:
     """Resolve dynamics, expressions, and convolutions into *traces* in place.
 
@@ -206,21 +206,26 @@ def resolve_param_traces(
             target = int(expr_target_rows[idx])
             traces[target, :] = eval_expr_program(expr_programs[idx], traces)
         else:  # kind == 2: resolved-trace convolution
+            assert conv_operator is not None  # type guard: set when steps exist
             target = int(conv_target_rows[idx])
             func_id = int(conv_func_ids[idx])
-            kernel_func, width_func = CONV_KERNEL_DISPATCH[func_id]
+            kernel_func = CONV_KERNEL_DISPATCH[func_id]
+            edge_mass_func = CONV_EDGE_MASS_DISPATCH[func_id]
             p_start = int(conv_param_indptr[idx])
             p_end = int(conv_param_indptr[idx + 1])
             # t=0 read is exact; same time-constant invariant as above
             kernel_params = [
                 float(traces[int(conv_param_rows[j]), 0]) for j in range(p_start, p_end)
             ]
-            support = conv_kernel_support(
-                kernel_params[0] * width_func(*kernel_params),
-                float(time[1] - time[0]),
+            # companion first: it validates the parameters, so the
+            # kernel body never sees a nonpositive width
+            mass_left, mass_right = edge_mass_func(
+                conv_operator.dt_left, conv_operator.dt_right, *kernel_params
             )
-            kernel = kernel_func(support, *kernel_params)
-            traces[target, :] = my_conv(time, traces[target, :], kernel)
+            kernel_values = kernel_func(conv_operator.dt_unique, *kernel_params)
+            traces[target, :] = conv_matrix_apply(
+                conv_operator, kernel_values, mass_left, mass_right, traces[target, :]
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +425,6 @@ def evaluate_2d(plan: ScheduledPlan2D, theta: np.ndarray) -> np.ndarray:
     # in interleaved topological order.
     resolve_param_traces(
         traces,
-        plan.time,
         plan.resolution_kinds,
         plan.resolution_indices,
         plan.dyn_group_target_row,
@@ -437,6 +441,7 @@ def evaluate_2d(plan: ScheduledPlan2D, theta: np.ndarray) -> np.ndarray:
         plan.conv_func_ids,
         plan.conv_param_indptr,
         plan.conv_param_rows,
+        plan.conv_operator,
     )
 
     # 1e. Profile evaluation (after parameter resolution).

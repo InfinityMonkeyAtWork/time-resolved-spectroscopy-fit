@@ -14,10 +14,24 @@ Signature: func(t, par1, par2, ..., t0)
 
 **Convolution Kernels:**
 Signature: funcCONV(t, par1, par2, ...)
-- t: Time axis centered at zero (from create_t_kernel)
+
+- t: Time differences centered at zero. Kernels must be elementwise in
+  this argument: the kernel-matrix convolution evaluates them on a 2D
+  matrix of time differences (see utils.arrays.conv_matrix_operator)
 - par1, par2, ...: Kernel parameters
-- Returns: Normalized kernel function
-- Must have a companion funcCONV_kernel_width(...) helper for support width
+- Returns: Kernel values (unnormalized; the convolution row-normalizes)
+
+Every kernel additionally requires a private edge-mass companion
+``_<name>_edge_mass(dt_left, dt_right, **params)`` registered in
+``CONV_EDGE_MASS``. It returns the exact exterior masses of the kernel
+body (same normalization) beyond the data window — the analytic
+integrals over ``(-inf, t[0]]`` and ``[t[-1], inf)`` used for
+edge-value padding. Use cancellation-safe tail forms (erfc, direct
+exp, clip) rather than CDF differences, and validate the parameters
+(strictly positive, finite) — companions are the runtime backstop for
+expression-driven kernel parameters that bypass model-load bound
+checks. A kernel without a companion is rejected at model validation
+(mcp) and scheduling (GIR).
 
 **Time Zero Convention:**
 All dynamics functions are zero before t0 and activate at t >= t0.
@@ -55,12 +69,14 @@ To add a new dynamics or convolution function:
 
 1. Implement following conventions above
 2. Ensure f(t<t0) = 0 for dynamics functions
-3. Add kernel_width function for convolution kernels
+3. Keep convolution kernels elementwise in their first argument
 4. Test with realistic time-resolved data
 """
 
+from collections.abc import Callable
+
 import numpy as np
-from scipy.special import erf, wofz
+from scipy.special import erf, erfc
 
 
 #
@@ -158,7 +174,7 @@ def expFun(t: np.ndarray, A: float, tau: float, t0: float) -> np.ndarray:
     A : float
         Amplitude (initial change at t0).
         - A > 0: Jumps to A at t0, decays toward 0
-        - A < 0: Jumps to -|A| at t0, rises toward 0
+        - A < 0: Jumps to ``-|A|`` at t0, rises toward 0
     tau : float
         Time constant (1/e time). Units: [time units]
         At t = t0 + tau, signal changes by factor of e (≈2.718)
@@ -287,8 +303,9 @@ def sqrtFun(t: np.ndarray, A: float, t0: float) -> np.ndarray:
 
 
 #
-# convolution functions
-# kernels followed by respective recommended kernel width
+# convolution kernels
+# elementwise in the time-difference argument (evaluated on the dt
+# matrix of the kernel-matrix convolution operator)
 #
 
 
@@ -300,7 +317,7 @@ def gaussCONV(x: np.ndarray, SD: float) -> np.ndarray:
     Parameters
     ----------
     x : ndarray
-        Time axis (typically from Component.create_t_kernel, centered at 0)
+        Time differences (centered at 0)
     SD : float
         Standard deviation (Gaussian width).
         FWHM = 2.355 * SD = 2*√(2ln2) * SD
@@ -312,84 +329,6 @@ def gaussCONV(x: np.ndarray, SD: float) -> np.ndarray:
     """
 
     return np.exp(-1 / 2 * (x / SD) ** 2)
-
-
-#
-def gaussCONV_kernel_width(SD: float | None = None) -> int:
-    """
-    Kernel width multiplier for Gaussian convolution.
-    Kernel extends to ±4*SD from center.
-    At 4*SD, Gaussian has decayed to exp(-8) ≈ 3×10⁻⁴ of peak value.
-    """
-
-    return 4
-
-
-#
-def lorentzCONV(x: np.ndarray, W: float) -> np.ndarray:
-    """
-    Lorentzian convolution kernel.
-
-    Parameters
-    ----------
-    x : ndarray
-        Time axis (centered at 0)
-    W : float
-        Full width at half maximum (FWHM) of Lorentzian
-
-    Returns
-    -------
-    ndarray
-        Lorentzian kernel (unnormalized)
-    """
-
-    return 1 / (1 + (2 * x / W) ** 2)
-
-
-#
-def lorentzCONV_kernel_width(W: float | None = None) -> int:
-    """Kernel width multiplier for Lorentzian (10×W)."""
-
-    return 10
-
-
-#
-def voigtCONV(x: np.ndarray, SD: float, W: float) -> np.ndarray:
-    """
-    Voigt convolution kernel (Gaussian and Lorentzian combined).
-
-    Parameters
-    ----------
-    x : ndarray
-        Time axis (centered at 0)
-    SD : float
-        Gaussian standard deviation
-    W : float
-        Lorentzian FWHM
-
-    Returns
-    -------
-    ndarray
-        Voigt kernel (normalized to peak = 1)
-    """
-
-    voigt = np.real(wofz((x + 1j * (W / 2)) / SD / np.sqrt(2)))
-    return np.asarray(voigt / np.max(voigt))
-
-
-#
-def voigtCONV_kernel_width(SD: float = 1.0, W: float = 0.0) -> float:
-    """Kernel width multiplier for Voigt support.
-
-    ``create_t_kernel`` multiplies the first kernel parameter by this
-    value. For ``voigtCONV`` the first parameter is ``SD``, but broad
-    Lorentzian tails are controlled by ``W``. Return a multiplier large
-    enough that the support spans at least ``max(12*SD, 10*W)``.
-    """
-
-    if SD <= 0:
-        return 12.0
-    return max(12.0, 10.0 * W / SD)
 
 
 #
@@ -416,13 +355,6 @@ def expSymCONV(x: np.ndarray, tau: float) -> np.ndarray:
 
 
 #
-def expSymCONV_kernel_width(tau: float | None = None) -> int:
-    """Kernel width multiplier for symmetric exponential (6×tau)."""
-
-    return 6
-
-
-#
 def expDecayCONV(x: np.ndarray, tau: float) -> np.ndarray:
     """
     Causal exponential kernel (one-sided decay).
@@ -441,13 +373,6 @@ def expDecayCONV(x: np.ndarray, tau: float) -> np.ndarray:
     """
 
     return np.where(x < 0, 0.0, expSymCONV(x, tau))
-
-
-#
-def expDecayCONV_kernel_width(tau: float | None = None) -> int:
-    """Kernel width multiplier for decay exponential (6×tau)."""
-
-    return 6
 
 
 #
@@ -476,13 +401,6 @@ def expRiseCONV(x: np.ndarray, tau: float) -> np.ndarray:
 
 
 #
-def expRiseCONV_kernel_width(tau: float | None = None) -> int:
-    """Kernel width multiplier for rise exponential (6×tau)."""
-
-    return 6
-
-
-#
 def boxCONV(x: np.ndarray, width: float) -> np.ndarray:
     """
     Box (rectangular) convolution kernel.
@@ -504,7 +422,98 @@ def boxCONV(x: np.ndarray, width: float) -> np.ndarray:
 
 
 #
-def boxCONV_kernel_width(width: float | None = None) -> int:
-    """Kernel width multiplier for box (1×width)."""
+# edge-mass companions
+# exact exterior masses of each kernel body (same normalization as the
+# body) for the edge-value padding of the kernel-matrix convolution:
+# M_L = integral over (-inf, t[0]] = upper tail at dt_left = t - t[0],
+# M_R = integral over [t[-1], inf) = lower tail at dt_right = t - t[-1].
+# Companions validate their parameters (strictly positive, finite):
+# they run on every evaluation, so they are the backstop for
+# expression-driven kernel parameters that bypass the model-load bound
+# checks (e.g. boxCONV width = 0 would otherwise silently become the
+# identity operator). Private (excluded from registry discovery);
+# dispatched via CONV_EDGE_MASS below.
+#
 
-    return 1
+
+#
+def _validate_kernel_par(name: str, value: float) -> None:
+    """Reject nonpositive or non-finite kernel parameters at evaluation."""
+
+    if not (np.isfinite(value) and value > 0):
+        raise ValueError(
+            f"Convolution kernel parameter '{name}' must be strictly "
+            f"positive and finite, got {value}."
+        )
+
+
+#
+def _gaussCONV_edge_mass(
+    dt_left: np.ndarray, dt_right: np.ndarray, SD: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Exterior masses of the peak-1 Gaussian body (erfc tail forms)."""
+
+    _validate_kernel_par("SD", SD)
+    scale = SD * np.sqrt(np.pi / 2)
+    M_L = scale * erfc(dt_left / (np.sqrt(2) * SD))
+    M_R = scale * erfc(-dt_right / (np.sqrt(2) * SD))
+    return np.asarray(M_L), np.asarray(M_R)
+
+
+#
+def _expSymCONV_edge_mass(
+    dt_left: np.ndarray, dt_right: np.ndarray, tau: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Exterior masses of exp(-|x|/tau); dt_left >= 0 and dt_right <= 0."""
+
+    _validate_kernel_par("tau", tau)
+    M_L = tau * np.exp(-dt_left / tau)
+    M_R = tau * np.exp(dt_right / tau)
+    return np.asarray(M_L), np.asarray(M_R)
+
+
+#
+def _expDecayCONV_edge_mass(
+    dt_left: np.ndarray, dt_right: np.ndarray, tau: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Exterior masses of the causal kernel: zero body for x < 0."""
+
+    _validate_kernel_par("tau", tau)
+    M_L = tau * np.exp(-dt_left / tau)
+    M_R = np.zeros_like(dt_right)
+    return np.asarray(M_L), M_R
+
+
+#
+def _expRiseCONV_edge_mass(
+    dt_left: np.ndarray, dt_right: np.ndarray, tau: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Exterior masses of the anti-causal kernel: zero body for x > 0."""
+
+    _validate_kernel_par("tau", tau)
+    M_L = np.zeros_like(dt_left)
+    M_R = tau * np.exp(dt_right / tau)
+    return M_L, np.asarray(M_R)
+
+
+#
+def _boxCONV_edge_mass(
+    dt_left: np.ndarray, dt_right: np.ndarray, width: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Exterior masses of the unit box on [-width/2, width/2]."""
+
+    _validate_kernel_par("width", width)
+    M_L = np.clip(width / 2 - dt_left, 0.0, width)
+    M_R = np.clip(dt_right + width / 2, 0.0, width)
+    return np.asarray(M_L), np.asarray(M_R)
+
+
+# kernel name -> edge-mass companion; single source of truth consumed by
+# both evaluation paths (mcp.Component.convolve and the GIR evaluator)
+CONV_EDGE_MASS: dict[str, Callable] = {
+    "gaussCONV": _gaussCONV_edge_mass,
+    "expSymCONV": _expSymCONV_edge_mass,
+    "expDecayCONV": _expDecayCONV_edge_mass,
+    "expRiseCONV": _expRiseCONV_edge_mass,
+    "boxCONV": _boxCONV_edge_mass,
+}
