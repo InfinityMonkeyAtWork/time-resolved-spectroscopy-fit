@@ -3,7 +3,7 @@
 
 MonoExpIRF:
     gaussCONV:
-        SD: [5, True, 0, 10]
+        SD: [5, True, 1.0E-6, 10]
     expFun:
         A: [5, True, 0, 15]
         tau: [10, True, 1, 100]

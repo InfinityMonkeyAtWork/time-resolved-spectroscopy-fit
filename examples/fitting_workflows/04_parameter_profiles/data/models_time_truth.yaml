@@ -9,7 +9,7 @@
 # the bands are driven all the way to flat-band condition (SPV saturation).
 BandBendingRecovery:
     gaussCONV:
-        SD: [10, True]
+        SD: [10, True, 1.0E-6, 100]
     expFun:
         A: [0.5, True]
         tau: [100, True]

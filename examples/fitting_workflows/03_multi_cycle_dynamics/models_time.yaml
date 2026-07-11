@@ -9,7 +9,7 @@
 # (Use a model containing only `none: {}` here if no global effect is needed.)
 IRF:
     gaussCONV:
-        SD: [0.1, True, 0, 1]
+        SD: [0.1, True, 1.0E-6, 1]
 
 # Subcycle 1: negative exponential shift, relaxing back to 0.
 # t0 is on the subcycle's local clock, which resets at each subcycle start.

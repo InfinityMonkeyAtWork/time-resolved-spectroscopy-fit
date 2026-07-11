@@ -5,7 +5,7 @@
 # Matches the simulated ground truth in this notebook (IRF σ ≈ 3, τ ≈ 30).
 MonoExpPosIRF:
     gaussCONV:
-        SD: [3, True, 0, 10]
+        SD: [3, True, 1.0E-6, 10]
     expFun:
         A: [2, True, 0, 10]
         tau: [30, True, 1, 100]
