@@ -22,7 +22,7 @@ from trspecfit.graph_ir import (
     ParamSourceKind,
     ScheduledPlan2D,
 )
-from trspecfit.utils.arrays import my_conv
+from trspecfit.utils.arrays import conv_kernel_support, my_conv
 
 # ---------------------------------------------------------------------------
 # Dynamics dispatch table
@@ -38,17 +38,30 @@ DYNAMICS_DISPATCH: dict[int, tuple] = {
     DynFuncKind.STEPFUN: (fcts_time.stepFun, 2),
 }
 
-# Convolution kernel dispatch: kernel function evaluated on the frozen
-# kernel-time support with per-theta kernel parameters.  Mirrors MCP's
-# Model.combine(...) path.
+# Convolution kernel dispatch: kernel function plus its *_kernel_width
+# helper.  The kernel support is rebuilt from the current kernel
+# parameters at every evaluation so it tracks the fitted width.
+# Mirrors MCP's Component.value(...) conv path.
 CONV_KERNEL_DISPATCH: dict[int, tuple] = {
-    ConvKernelKind.GAUSSCONV: (fcts_time.gaussCONV, 1),
-    ConvKernelKind.LORENTZCONV: (fcts_time.lorentzCONV, 1),
-    ConvKernelKind.VOIGTCONV: (fcts_time.voigtCONV, 2),
-    ConvKernelKind.EXPSYMCONV: (fcts_time.expSymCONV, 1),
-    ConvKernelKind.EXPDECAYCONV: (fcts_time.expDecayCONV, 1),
-    ConvKernelKind.EXPRISECONV: (fcts_time.expRiseCONV, 1),
-    ConvKernelKind.BOXCONV: (fcts_time.boxCONV, 1),
+    ConvKernelKind.GAUSSCONV: (fcts_time.gaussCONV, fcts_time.gaussCONV_kernel_width),
+    ConvKernelKind.LORENTZCONV: (
+        fcts_time.lorentzCONV,
+        fcts_time.lorentzCONV_kernel_width,
+    ),
+    ConvKernelKind.VOIGTCONV: (fcts_time.voigtCONV, fcts_time.voigtCONV_kernel_width),
+    ConvKernelKind.EXPSYMCONV: (
+        fcts_time.expSymCONV,
+        fcts_time.expSymCONV_kernel_width,
+    ),
+    ConvKernelKind.EXPDECAYCONV: (
+        fcts_time.expDecayCONV,
+        fcts_time.expDecayCONV_kernel_width,
+    ),
+    ConvKernelKind.EXPRISECONV: (
+        fcts_time.expRiseCONV,
+        fcts_time.expRiseCONV_kernel_width,
+    ),
+    ConvKernelKind.BOXCONV: (fcts_time.boxCONV, fcts_time.boxCONV_kernel_width),
 }
 
 
@@ -65,8 +78,10 @@ def eval_expr_program(
     """Evaluate an RPN ExprProgram against the trace matrix.
 
     Works for both plan initialization and hot-path evaluation.
-    Each PARAM_REF reads a full ``(n_time,)`` row from *traces*;
-    constants are broadcast to ``(n_time,)`` via ``np.full``.
+    Each PARAM_REF pushes a *view* of its ``(n_time,)`` trace row and
+    constants stay scalar; every operator allocates a fresh array, so
+    the views are never written to. Callers must not mutate the result
+    in place (it may alias a *traces* row).
 
     Parameters
     ----------
@@ -82,20 +97,19 @@ def eval_expr_program(
     """
 
     n_time = traces.shape[1]
-    stack: list[np.ndarray] = []
+    stack: list[np.ndarray | np.float64] = []
     instr = program.instructions
     n_instr = len(instr) // 2
 
     for i in range(n_instr):
-        kind = ExprNodeKind(instr[2 * i])
+        kind = int(instr[2 * i])
         operand = instr[2 * i + 1]
 
         if kind == ExprNodeKind.CONST:
-            val = np.int64(operand).view(np.float64)
-            stack.append(np.full(n_time, val, dtype=np.float64))
+            stack.append(np.int64(operand).view(np.float64))
 
         elif kind == ExprNodeKind.PARAM_REF:
-            stack.append(traces[int(operand), :].copy())
+            stack.append(traces[int(operand), :])
 
         elif kind == ExprNodeKind.ADD:
             b, a = stack.pop(), stack.pop()
@@ -121,7 +135,92 @@ def eval_expr_program(
             stack.append(a**b)
 
     assert len(stack) == 1
-    return stack[0]
+    result = stack[0]
+    if not isinstance(result, np.ndarray):  # constant-only program
+        return np.full(n_time, float(result), dtype=np.float64)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Shared trace resolution
+# ---------------------------------------------------------------------------
+
+
+#
+def resolve_param_traces(
+    traces: np.ndarray,
+    time: np.ndarray,
+    resolution_kinds: np.ndarray,
+    resolution_indices: np.ndarray,
+    dyn_group_target_row: np.ndarray,
+    dyn_group_base_row: np.ndarray,
+    dyn_group_indptr: np.ndarray,
+    dyn_sub_func_id: np.ndarray,
+    dyn_sub_n_params: np.ndarray,
+    dyn_sub_param_rows: np.ndarray,
+    dyn_sub_time_axes: np.ndarray,
+    dyn_sub_masks: np.ndarray,
+    expr_target_rows: np.ndarray,
+    expr_programs: list[ExprProgram],
+    conv_target_rows: np.ndarray,
+    conv_func_ids: np.ndarray,
+    conv_param_indptr: np.ndarray,
+    conv_param_rows: np.ndarray,
+) -> None:
+    """Resolve dynamics, expressions, and convolutions into *traces* in place.
+
+    Dynamics groups, expressions, and resolved-trace convolutions are
+    interleaved in topological order so that downstream consumers see the
+    fully resolved trace (base + dynamics + expressions + IRF).  A dynamics
+    group evaluates all substeps (e.g. two expFun in a bi-exponential) and
+    sums them: target = base + sum(traces).  Expression-valued dynamics
+    params are resolved before the group that consumes them.
+
+    Shared between the hot path (``evaluate_2d``) and compile-time trace
+    initialization in ``schedule_2d``.
+    """
+
+    for step in range(len(resolution_kinds)):
+        kind = int(resolution_kinds[step])
+        idx = int(resolution_indices[step])
+        if kind == 0:  # dynamics group
+            target = int(dyn_group_target_row[idx])
+            base = int(dyn_group_base_row[idx])
+            traces[target, :] = traces[base, :]
+            s_start = int(dyn_group_indptr[idx])
+            s_end = int(dyn_group_indptr[idx + 1])
+            for s in range(s_start, s_end):
+                func_id = int(dyn_sub_func_id[s])
+                func, _n_par = DYNAMICS_DISPATCH[func_id]
+                n_par = int(dyn_sub_n_params[s])
+                param_rows = dyn_sub_param_rows[s, :n_par]
+                # Reading t=0 is exact: substep and kernel param rows are
+                # time-constant by construction — dynamics-model expressions
+                # cannot reference cross-model (potentially time-varying)
+                # parameters; add_dynamics rejects them.
+                dyn_params = [float(traces[int(row), 0]) for row in param_rows]
+                traces[target, :] += (
+                    func(dyn_sub_time_axes[s], *dyn_params) * dyn_sub_masks[s]
+                )
+        elif kind == 1:  # expression
+            target = int(expr_target_rows[idx])
+            traces[target, :] = eval_expr_program(expr_programs[idx], traces)
+        else:  # kind == 2: resolved-trace convolution
+            target = int(conv_target_rows[idx])
+            func_id = int(conv_func_ids[idx])
+            kernel_func, width_func = CONV_KERNEL_DISPATCH[func_id]
+            p_start = int(conv_param_indptr[idx])
+            p_end = int(conv_param_indptr[idx + 1])
+            # t=0 read is exact; same time-constant invariant as above
+            kernel_params = [
+                float(traces[int(conv_param_rows[j]), 0]) for j in range(p_start, p_end)
+            ]
+            support = conv_kernel_support(
+                kernel_params[0] * width_func(*kernel_params),
+                float(time[1] - time[0]),
+            )
+            kernel = kernel_func(support, *kernel_params)
+            traces[target, :] = my_conv(time, traces[target, :], kernel)
 
 
 # ---------------------------------------------------------------------------
@@ -157,10 +256,9 @@ def _evaluate_profile_sample_values_2d(
 
     for group_idx in range(n_groups):
         base_row = int(profile_sample_base_rows[group_idx])
-        # base trace -> (n_time, 1) -> broadcast to (n_time, n_aux)
-        values = np.broadcast_to(
-            traces[base_row, :][:, np.newaxis], (n_time, n_aux)
-        ).copy()
+        # base trace -> (n_time, 1) broadcast into the output row
+        values = sample_values[group_idx]
+        values[:] = traces[base_row, :][:, np.newaxis]
 
         comp_start = int(profile_sample_component_indptr[group_idx])
         comp_end = int(profile_sample_component_indptr[group_idx + 1])
@@ -173,8 +271,6 @@ def _evaluate_profile_sample_values_2d(
                 for row in profile_component_param_rows[param_start:param_end]
             ]
             values += np.asarray(func(aux_2d, *params), dtype=np.float64)
-
-        sample_values[group_idx] = values
 
     return sample_values
 
@@ -206,7 +302,9 @@ def _evaluate_profile_expr_values_2d(
     # Virtual trace: regular params repeated across aux, profile samples
     # flattened from (n_groups, n_time, n_aux) -> (n_groups, n_time*n_aux).
     virtual = np.empty((n_params + n_groups, n_cols), dtype=np.float64)
-    virtual[:n_params, :] = np.repeat(traces, n_aux, axis=1)
+    # broadcast-write params across aux in place (no np.repeat temporary)
+    virtual_params = virtual[:n_params, :].reshape(n_params, n_time, n_aux)
+    virtual_params[:] = traces[:, :, np.newaxis]
     if n_groups > 0:
         virtual[n_params:, :] = profile_sample_values.reshape(n_groups, n_cols)
 
@@ -232,32 +330,42 @@ def _evaluate_profiled_op_2d(
     needs_spectrum: bool,
     n_aux: int,
 ) -> np.ndarray:
-    """Evaluate one profiled 2D op: loop over aux points, average."""
+    """Evaluate one profiled 2D op: loop over aux points, average.
+
+    Param sources are resolved to ``(n_time, n_aux)`` views once,
+    outside the loop. The per-aux loop is deliberate: vectorizing over
+    aux in a single call only wins when profiled params enter the
+    function linearly (amplitude-only profiles, where broadcasting
+    keeps the transcendental part at ``(n_time, 1, n_energy)``); with a
+    profiled position or width the energy function materializes full
+    ``(n_time, n_aux, n_energy)`` temporaries and measures ~60% slower
+    (example 04: profiled x0, n_aux=50, 175x280 grid).
+    """
 
     func, _needs = OP_DISPATCH[kind]
     n_time = traces.shape[1]
     n_energy = energy.shape[-1]
+
+    # Resolve each param source once (scalars as no-copy broadcast views)
+    sources: list[np.ndarray] = []
+    for source_kind, source_idx in zip(
+        param_source_kinds,
+        param_indices,
+        strict=True,
+    ):
+        sk = int(source_kind)
+        si = int(source_idx)
+        if sk == int(ParamSourceKind.SCALAR):
+            source = np.broadcast_to(traces[si, :][:, np.newaxis], (n_time, n_aux))
+        elif sk == int(ParamSourceKind.PROFILE_SAMPLE):
+            source = profile_sample_values[si]  # (n_time, n_aux)
+        else:
+            source = profile_expr_values[si]  # (n_time, n_aux)
+        sources.append(source)
+
     accumulated = np.zeros((n_time, n_energy), dtype=np.float64)
-
     for aux_i in range(n_aux):
-        params: list[np.ndarray] = []
-        for source_kind, source_idx in zip(
-            param_source_kinds,
-            param_indices,
-            strict=True,
-        ):
-            sk = int(source_kind)
-            si = int(source_idx)
-            if sk == int(ParamSourceKind.SCALAR):
-                param = traces[si, :][:, np.newaxis]  # (n_time, 1)
-            elif sk == int(ParamSourceKind.PROFILE_SAMPLE):
-                param = profile_sample_values[si, :, aux_i][
-                    :, np.newaxis
-                ]  # (n_time, 1)
-            else:
-                param = profile_expr_values[si, :, aux_i][:, np.newaxis]  # (n_time, 1)
-            params.append(param)
-
+        params = [s[:, aux_i, np.newaxis] for s in sources]
         if needs_spectrum:
             accumulated += func(energy, *params, peak_sum)
         else:
@@ -308,47 +416,28 @@ def evaluate_2d(plan: ScheduledPlan2D, theta: np.ndarray) -> np.ndarray:
     # 1b. Broadcast optimizer params
     traces[plan.opt_indices, :] = theta[:, np.newaxis]
 
-    # 1c+d. Resolve dynamics groups and expressions in interleaved topo
-    # order.  A dynamics group evaluates all substeps (e.g. two expFun
-    # in a bi-exponential) and sums them: target = base + sum(traces).
-    # Expression-valued dynamics params are resolved before the group
-    # that consumes them.
-    for step in range(len(plan.resolution_kinds)):
-        kind = int(plan.resolution_kinds[step])
-        idx = int(plan.resolution_indices[step])
-        if kind == 0:  # dynamics group
-            target = int(plan.dyn_group_target_row[idx])
-            base = int(plan.dyn_group_base_row[idx])
-            traces[target, :] = traces[base, :]
-            s_start = int(plan.dyn_group_indptr[idx])
-            s_end = int(plan.dyn_group_indptr[idx + 1])
-            for s in range(s_start, s_end):
-                func_id = int(plan.dyn_sub_func_id[s])
-                func, _n_par = DYNAMICS_DISPATCH[func_id]
-                n_par = int(plan.dyn_sub_n_params[s])
-                param_rows = plan.dyn_sub_param_rows[s, :n_par]
-                dyn_params = [float(traces[int(row), 0]) for row in param_rows]
-                traces[target, :] += (
-                    func(plan.dyn_sub_time_axes[s], *dyn_params) * plan.dyn_sub_masks[s]
-                )
-        elif kind == 1:  # expression
-            target = int(plan.expr_target_rows[idx])
-            traces[target, :] = eval_expr_program(plan.expr_programs[idx], traces)
-        else:  # kind == 2: resolved-trace convolution
-            target = int(plan.conv_target_rows[idx])
-            func_id = int(plan.conv_func_ids[idx])
-            kernel_func, _k_par = CONV_KERNEL_DISPATCH[func_id]
-            p_start = int(plan.conv_param_indptr[idx])
-            p_end = int(plan.conv_param_indptr[idx + 1])
-            kernel_params = [
-                float(traces[int(plan.conv_param_rows[j]), 0])
-                for j in range(p_start, p_end)
-            ]
-            s_start = int(plan.conv_support_indptr[idx])
-            s_end = int(plan.conv_support_indptr[idx + 1])
-            support = plan.conv_support_values[s_start:s_end]
-            kernel = kernel_func(support, *kernel_params)
-            traces[target, :] = my_conv(plan.time, traces[target, :], kernel)
+    # 1c+d. Resolve dynamics groups, expressions, and trace convolutions
+    # in interleaved topological order.
+    resolve_param_traces(
+        traces,
+        plan.time,
+        plan.resolution_kinds,
+        plan.resolution_indices,
+        plan.dyn_group_target_row,
+        plan.dyn_group_base_row,
+        plan.dyn_group_indptr,
+        plan.dyn_sub_func_id,
+        plan.dyn_sub_n_params,
+        plan.dyn_sub_param_rows,
+        plan.dyn_sub_time_axes,
+        plan.dyn_sub_masks,
+        plan.expr_target_rows,
+        plan.expr_programs,
+        plan.conv_target_rows,
+        plan.conv_func_ids,
+        plan.conv_param_indptr,
+        plan.conv_param_rows,
+    )
 
     # 1e. Profile evaluation (after parameter resolution).
     profile_sample_values = _evaluate_profile_sample_values_2d(

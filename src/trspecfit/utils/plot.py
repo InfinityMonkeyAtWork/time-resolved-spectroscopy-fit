@@ -181,6 +181,7 @@ def plot_2d_grid(
     y: ArrayLike | None = None,
     titles: Sequence[str] | None = None,
     config: "PlotConfig | None" = None,
+    columns: int | None = None,
     vlines: Sequence[Sequence[float]] | None = None,
     hlines: Sequence[Sequence[float]] | None = None,
     save_img: int = 0,
@@ -201,7 +202,10 @@ def plot_2d_grid(
     titles : list of str, optional
         Title for each panel. If None, panels are untitled.
     config : PlotConfig, optional
-        Plot configuration (colormap, axis directions, labels).
+        Plot configuration (colormap, axis directions, labels, panel size,
+        reference-line styling).
+    columns : int, optional
+        Number of grid columns. If None, auto-selected from the panel count.
     vlines : list of list of float, optional
         Per-panel vertical reference lines. Each element is a list of
         x-coordinates for that panel (or empty list for none).
@@ -224,8 +228,10 @@ def plot_2d_grid(
     if n == 0:
         return
 
+    if columns is not None:
+        cols = columns
     # Auto-select columns: 2 for <=4, 3 for <=9, 4 for <=16, 5 above
-    if n <= 4:
+    elif n <= 4:
         cols = 2
     elif n <= 9:
         cols = 3
@@ -240,10 +246,11 @@ def plot_2d_grid(
     x_arr = None if x is None else np.asarray(x)
     y_arr = None if y is None else np.asarray(y)
 
+    panel_w, panel_h = config.panel_size
     fig, axs = plt.subplots(
         rows,
         cols,
-        figsize=(4.0 * cols, 3.0 * rows),
+        figsize=(panel_w * cols, panel_h * rows),
         squeeze=False,
         dpi=config.dpi_plot or 100,
     )
@@ -271,7 +278,11 @@ def plot_2d_grid(
             config.x_dir,
             config.y_type,
             config.y_dir,
+            config.x_lim,
+            config.y_lim,
         )
+        if config.ticksize is not None:
+            ax.tick_params(labelsize=config.ticksize)
 
         # Reference lines
         if vlines is not None and idx < len(vlines) and vlines[idx]:
@@ -279,16 +290,16 @@ def plot_2d_grid(
                 x=np.asarray(vlines[idx]),
                 ymin=np.min(yp),
                 ymax=np.max(yp),
-                color="#000000",
-                linestyle=":",
+                color=config.refline_color,
+                linestyle=config.refline_style,
             )
         if hlines is not None and idx < len(hlines) and hlines[idx]:
             ax.hlines(
                 y=np.asarray(hlines[idx]),
                 xmin=np.min(xp),
                 xmax=np.max(xp),
-                color="#000000",
-                linestyle=":",
+                color=config.refline_color,
+                linestyle=config.refline_style,
             )
 
     # Hide unused subplots
@@ -342,6 +353,7 @@ def plot_2d(
         - z_colorbar : 'ver' or 'hor' for colorbar orientation
         - data_slice : [[x_start, x_stop], [y_start, y_stop]] for slicing by index
         - vlines, hlines : List of coordinates for reference lines
+        - refline_color, refline_style : Reference-line color and line style
         - ticksize : Font size for tick labels
         - dpi_plot, dpi_save : Display and save resolution
         - save_img : 0 (display), 1 (save+display), -1 (save only)
@@ -403,6 +415,8 @@ def plot_2d(
     z_type = kwargs.get("z_type", config.z_type)
     vlines = kwargs.get("vlines", config.vlines)
     hlines = kwargs.get("hlines", config.hlines)
+    refline_color = kwargs.get("refline_color", config.refline_color)
+    refline_style = kwargs.get("refline_style", config.refline_style)
     ticksize = kwargs.get("ticksize", config.ticksize)
     save_img = kwargs.get("save_img", 0)
     save_path = kwargs.get("save_path", "")
@@ -513,8 +527,8 @@ def plot_2d(
             y=np.asarray(hlines),
             xmin=np.min(x_plt),
             xmax=np.max(x_plt),
-            color="#000000",
-            linestyle=":",
+            color=refline_color,
+            linestyle=refline_style,
         )
 
     if vlines is not None:
@@ -522,8 +536,8 @@ def plot_2d(
             x=np.asarray(vlines),
             ymin=np.min(y_plt),
             ymax=np.max(y_plt),
-            color="#000000",
-            linestyle=":",
+            color=refline_color,
+            linestyle=refline_style,
         )
 
     # Save/show/close
@@ -572,6 +586,7 @@ def plot_1d(
         - y_norm : 0 (raw data) or 1 (normalize each trace to [0, 1])
         - y_scale : List of scaling factors for each trace
         - vlines, hlines : List of coordinates for reference lines
+        - refline_color, refline_style : Reference-line color and line style
         - ticksize : Font size for tick labels
         - dpi_plot, dpi_save : Display and save resolution
         - save_img : 0 (display), 1 (save+display), -1 (save only)
@@ -648,6 +663,8 @@ def plot_1d(
     legend = kwargs.get("legend", config.legend)
     vlines = kwargs.get("vlines", config.vlines)
     hlines = kwargs.get("hlines", config.hlines)
+    refline_color = kwargs.get("refline_color", config.refline_color)
+    refline_style = kwargs.get("refline_style", config.refline_style)
     y_scale = kwargs.get("y_scale", config.y_scale)
 
     # Determine number of plots
@@ -698,9 +715,14 @@ def plot_1d(
             raise ValueError("x axis could not be determined")
         y_data = data_series[i]
 
-        # Normalize if requested
+        # Normalize if requested; a constant trace has zero amplitude and
+        # maps to baseline 0 (dividing by its zero range would yield NaNs)
         if y_norm == 1:
-            y_plot = (y_data - np.min(y_data)) / (np.max(y_data - np.min(y_data)))
+            y_range = np.max(y_data) - np.min(y_data)
+            if y_range == 0:
+                y_plot = np.zeros_like(y_data, dtype=float)
+            else:
+                y_plot = (y_data - np.min(y_data)) / y_range
             y_plot = y_plot + i * waterfall
         else:
             y_plot = y_scale_arr[i] * y_data + i * waterfall
@@ -740,8 +762,8 @@ def plot_1d(
             y=np.asarray(hlines),
             xmin=x_minmax[0],
             xmax=x_minmax[1],
-            color="#808080",
-            linestyle=":",
+            color=refline_color,
+            linestyle=refline_style,
         )
 
     if vlines is not None:
@@ -760,8 +782,8 @@ def plot_1d(
             x=np.asarray(vlines),
             ymin=y_minmax[0],
             ymax=y_minmax[1],
-            color="#808080",
-            linestyle="--",
+            color=refline_color,
+            linestyle=refline_style,
         )
 
     # Axis settings

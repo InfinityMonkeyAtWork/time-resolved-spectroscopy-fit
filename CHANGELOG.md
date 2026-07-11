@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [0.10.2] - 2026-07-10
+
+### Added
+
+- **Diverging colormap for residual maps**: new `z_colormap_res` plot setting (default `'RdBu_r'`). 2D data+fit+residual panels now render the residual with its own zero-centered diverging colormap and symmetric color limits, instead of reusing the data colormap.
+- **New plot styling settings**: `refline_color` / `refline_style` for `vlines`/`hlines` reference lines (unified default: grey dotted — previously inconsistent between 1D and 2D plots) and `panel_size` for multi-panel grid plots; `plot_2d_grid` gained a `columns` argument.
+- **Every `PlotConfig` field is now settable via `project.yaml`**, with tuple-valued fields (`x_lim`, `panel_size`, ...) accepting YAML lists; a coverage test guards future fields.
+- `results_to_fit_2d` accepts `parameter_names` to select and order DataFrame columns, so extra non-parameter columns (e.g. from `results_to_df` output) cannot silently corrupt the reconstructed 2D fit.
+
+### Changed
+
+- **Silent mode is honored throughout**: with `show_output=0`, MCMC no longer prints its banner/progress bar or leaves walker/corner figures open, and `fit_2d`/`fit_slice_by_slice` no longer display timing and parameter tables. A broken `project.yaml` now raises `ValueError` instead of silently falling back to defaults.
+- **Clear errors instead of silent misbehavior**: fits reject NaN/Inf inside the fit window with a message naming the count and pointing to `set_fit_limits()`; `describe`/`define_baseline`/`set_fit_limits` raise when axes are missing instead of fabricating index axes; convolution on a single-point time axis, zero-sum convolution kernels, unknown `Simulator` noise types (constructor and setter), unknown sweep distribution types, empty parameter sweeps, and dynamics-model expressions referencing parameters outside their own dynamics model all raise immediately with actionable messages; a `t_vary` parameter without a dynamics model raises instead of returning `-1.0`; `LinBack` ordering errors suggest setting bounds on `xStart`/`xStop`.
+- **Performance**: the compiled 2D evaluator avoids per-instruction array allocation and copies (preallocated profile buffers, hoisted profiled-op parameter sources), `my_conv` no longer builds a discarded padded axis, MCMC walker/corner figures are only constructed when shown or saved, and parameter sweeps write to one open HDF5 file instead of reopening it per configuration.
+
+### Fixed
+
+- **Convolution kernel support no longer truncates during fits**: the IRF kernel time axis was built once from the initial width parameter and never rebuilt, silently truncating the kernel and biasing the fitted width once it grew past its initial value. Both evaluation paths now rebuild the kernel support from current parameter values on every evaluation.
+- **Partial-range 2D evaluation used wrong time indices**: `Model.create_value_2d(t_ind=[start, stop])` computed dynamics for `t[0:stop-start]` instead of `t[start:stop]`.
+- `Simulator.plot_comparison` on a fresh simulator now auto-simulates with current settings instead of failing.
+- `sign_change` no longer hangs on all-zero input.
+- `plot_1d` with `y_norm=1` no longer produces all-NaN plots for constant traces.
+
 ## [0.10.0] - 2026-07-08
 
 ### Added

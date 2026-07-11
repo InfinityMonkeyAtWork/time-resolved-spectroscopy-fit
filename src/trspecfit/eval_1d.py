@@ -10,79 +10,12 @@ from __future__ import annotations
 import numpy as np
 
 from trspecfit.graph_ir import (
-    ExprNodeKind,
-    ExprProgram,
     ScheduledPlan1D,
+    _eval_expr_scalar,
     _evaluate_profile_expr_values,
     _evaluate_profile_sample_values,
     _evaluate_scheduled_op_1d,
 )
-
-# ---------------------------------------------------------------------------
-# Scalar RPN expression evaluator
-# ---------------------------------------------------------------------------
-
-
-#
-def eval_expr_program_1d(
-    program: ExprProgram,
-    values: np.ndarray,
-) -> float:
-    """Evaluate an RPN ExprProgram against a scalar parameter vector.
-
-    Parameters
-    ----------
-    program
-        Compiled RPN instruction array.
-    values
-        ``(n_params,)`` scalar parameter vector.
-
-    Returns
-    -------
-    float
-        Scalar result.
-    """
-
-    stack: list[float] = []
-    instr = program.instructions
-    n_instr = len(instr) // 2
-
-    for i in range(n_instr):
-        kind = ExprNodeKind(instr[2 * i])
-        operand = instr[2 * i + 1]
-
-        if kind == ExprNodeKind.CONST:
-            stack.append(float(np.int64(operand).view(np.float64)))
-
-        elif kind == ExprNodeKind.PARAM_REF:
-            stack.append(float(values[int(operand)]))
-
-        elif kind == ExprNodeKind.ADD:
-            b, a = stack.pop(), stack.pop()
-            stack.append(a + b)
-
-        elif kind == ExprNodeKind.SUB:
-            b, a = stack.pop(), stack.pop()
-            stack.append(a - b)
-
-        elif kind == ExprNodeKind.MUL:
-            b, a = stack.pop(), stack.pop()
-            stack.append(a * b)
-
-        elif kind == ExprNodeKind.DIV:
-            b, a = stack.pop(), stack.pop()
-            stack.append(a / b)
-
-        elif kind == ExprNodeKind.NEG:
-            stack.append(-stack.pop())
-
-        elif kind == ExprNodeKind.POW:
-            b, a = stack.pop(), stack.pop()
-            stack.append(a**b)
-
-    assert len(stack) == 1
-    return stack[0]
-
 
 # ---------------------------------------------------------------------------
 # Core 1D evaluator
@@ -127,7 +60,7 @@ def evaluate_1d(plan: ScheduledPlan1D, theta: np.ndarray) -> np.ndarray:
     # 1c. Resolve expressions in topological order
     for i in range(plan.n_expressions):
         target = int(plan.expr_target_indices[i])
-        values[target] = eval_expr_program_1d(plan.expr_programs[i], values)
+        values[target] = _eval_expr_scalar(plan.expr_programs[i], values)
 
     profile_sample_values = _evaluate_profile_sample_values(
         plan.aux_axis,

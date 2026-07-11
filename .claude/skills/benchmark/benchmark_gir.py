@@ -74,39 +74,79 @@ def _extract_float(src, key):
 
 
 #
-def _parse_dynamics_from_notebook(notebook_path):
-    """Extract add_time_dependence kwargs from example.ipynb.
+def _iter_call_args(src, func_name):
+    """Yield the argument text of each ``func_name(...)`` call in *src*.
+
+    Matches parentheses so multiple calls per cell stay separate (a
+    cell-level regex would mix kwargs of neighboring calls).
+    """
+
+    start = 0
+    while True:
+        idx = src.find(func_name + "(", start)
+        if idx == -1:
+            return
+        depth = 0
+        for j in range(idx + len(func_name), len(src)):
+            if src[j] == "(":
+                depth += 1
+            elif src[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    yield src[idx + len(func_name) + 1 : j]
+                    start = j + 1
+                    break
+        else:
+            return
+
+
+#
+def _parse_calls_from_notebook(notebook_path):
+    """Extract add_par_profile / add_time_dependence kwargs from example.ipynb.
 
     Returns
     -------
-    list of dict
-        Each dict has keys: target_model, target_parameter,
+    profile_calls : list of dict
+        add_par_profile kwargs: target_model, target_parameter,
+        profile_yaml, profile_model.
+    dynamics_calls : list of dict
+        add_time_dependence kwargs: target_model, target_parameter,
         dynamics_yaml, dynamics_model, and optionally frequency.
     """
 
     with notebook_path.open() as f:
         nb = json.load(f)
 
-    calls = []
+    profile_calls = []
+    dynamics_calls = []
     for cell in nb["cells"]:
         if cell["cell_type"] != "code":
             continue
         src = "".join(cell["source"])
-        if "add_time_dependence" not in src:
-            continue
 
-        call = {
-            "target_model": _extract_str(src, "target_model"),
-            "target_parameter": _extract_str(src, "target_parameter"),
-            "dynamics_yaml": _extract_str(src, "dynamics_yaml"),
-            "dynamics_model": _extract_str_or_list(src, "dynamics_model"),
-        }
-        freq = _extract_float(src, "frequency")
-        if freq is not None:
-            call["frequency"] = freq
-        calls.append(call)
+        for args in _iter_call_args(src, "add_par_profile"):
+            profile_calls.append(
+                {
+                    "target_model": _extract_str(args, "target_model"),
+                    "target_parameter": _extract_str(args, "target_parameter"),
+                    "profile_yaml": _extract_str(args, "profile_yaml"),
+                    "profile_model": _extract_str_or_list(args, "profile_model"),
+                }
+            )
 
-    return calls
+        for args in _iter_call_args(src, "add_time_dependence"):
+            call = {
+                "target_model": _extract_str(args, "target_model"),
+                "target_parameter": _extract_str(args, "target_parameter"),
+                "dynamics_yaml": _extract_str(args, "dynamics_yaml"),
+                "dynamics_model": _extract_str_or_list(args, "dynamics_model"),
+            }
+            freq = _extract_float(args, "frequency")
+            if freq is not None:
+                call["frequency"] = freq
+            dynamics_calls.append(call)
+
+    return profile_calls, dynamics_calls
 
 
 # ------------------------------------------------------------------
@@ -140,7 +180,10 @@ def load_example(example_num, *, add_dynamics=True):
     -------
     file : File
     dynamics_calls : list of dict
-        Parsed add_time_dependence kwargs from the notebook.
+        Parsed add_time_dependence kwargs from the notebook ("2D" model
+        only).
+    profile_calls : list of dict
+        Parsed add_par_profile kwargs already attached to the model.
     """
 
     folder = _find_example_folder(example_num)
@@ -152,6 +195,8 @@ def load_example(example_num, *, add_dynamics=True):
     energy = np.loadtxt(data_dir / "energy.csv")
     time_ax = np.loadtxt(data_dir / "time.csv")
     data = np.loadtxt(data_dir / "data.csv", delimiter=",")
+    aux_path = data_dir / "aux_axis.csv"
+    aux_axis = np.loadtxt(aux_path) if aux_path.exists() else None
 
     file = File(
         parent_project=project,
@@ -159,16 +204,26 @@ def load_example(example_num, *, add_dynamics=True):
         data=data,
         energy=energy,
         time=time_ax,
+        aux_axis=aux_axis,
     )
     file.load_model(model_yaml="models_energy.yaml", model_info="2D")
 
-    dynamics_calls = _parse_dynamics_from_notebook(folder / "example.ipynb")
+    profile_calls, dynamics_calls = _parse_calls_from_notebook(folder / "example.ipynb")
+    # The notebooks also attach to their baseline/SbS models; only calls
+    # targeting the benchmarked "2D" model apply here.
+    profile_calls = [c for c in profile_calls if c["target_model"] == "2D"]
+    dynamics_calls = [c for c in dynamics_calls if c["target_model"] == "2D"]
+
+    # Profiles are model structure, not time dependence: attach always,
+    # and before dynamics (dynamics may target a profile parameter).
+    for call in profile_calls:
+        file.add_par_profile(**call)
 
     if add_dynamics:
         for call in dynamics_calls:
             file.add_time_dependence(**call)
 
-    return file, dynamics_calls
+    return file, dynamics_calls, profile_calls
 
 
 #
@@ -333,7 +388,7 @@ def capture_nfev(example_num):
         print(f"  {label:32s}{call_count[0]:6d}  (+{call_count[0] - prev})")
 
     try:
-        file, dynamics_calls = load_example(example_num, add_dynamics=False)
+        file, dynamics_calls, _ = load_example(example_num, add_dynamics=False)
         file.define_baseline(
             time_start=0, time_stop=10, time_type="ind", show_plot=False
         )
@@ -397,7 +452,7 @@ def capture_plan_time(example_num):
     graph_ir.schedule_2d = timed_sched
 
     try:
-        file, dynamics_calls = load_example(example_num, add_dynamics=False)
+        file, dynamics_calls, _ = load_example(example_num, add_dynamics=False)
         file.define_baseline(
             time_start=0, time_stop=10, time_type="ind", show_plot=False
         )
@@ -454,7 +509,7 @@ def capture_par_variability(example_num, *, n_starts=4):
     redchis = []
 
     for run in range(n_starts + 1):
-        file, dynamics_calls = load_example(example_num, add_dynamics=False)
+        file, dynamics_calls, _ = load_example(example_num, add_dynamics=False)
         file.define_baseline(
             time_start=0, time_stop=10, time_type="ind", show_plot=False
         )
@@ -563,7 +618,7 @@ def bench_fit(example_num, dynamics_calls, *, n_reps=3):
             ("fit_model_gir", gir_times),
             ("fit_model_mcp", mcp_times),
         ]:
-            file, _ = load_example(example_num, add_dynamics=False)
+            file, _, _ = load_example(example_num, add_dynamics=False)
             file.define_baseline(
                 time_start=0, time_stop=10, time_type="ind", show_plot=False
             )
@@ -682,11 +737,15 @@ if __name__ == "__main__":
         folder = _find_example_folder(args.example)
         print(f"Example: {folder.name}")
 
-        file, dynamics_calls = load_example(args.example)
+        file, dynamics_calls, profile_attaches = load_example(args.example)
         model = file.model_active
         assert model is not None
         graph = build_graph(model)
         print(f"  lowerable: {can_lower_2d(graph)}")
+        for call in profile_attaches:
+            target_parameter = call["target_parameter"]
+            profile_model = call["profile_model"]
+            print(f"  profile:   {target_parameter} <- {profile_model}")
         for call in dynamics_calls:
             target_parameter = call["target_parameter"]
             dynamics_model = call["dynamics_model"]

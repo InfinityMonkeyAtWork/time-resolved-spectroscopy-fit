@@ -56,6 +56,8 @@ class PlotConfig:
         DPI for saving plots
     z_colormap : str
         Colormap name for 2D plots
+    z_colormap_res : str
+        Diverging colormap name for 2D residual maps (centered on 0)
     data_slice : list[list[int]] | None
         Data slicing indices for 2D plots: [[x_start, x_stop], [y_start, y_stop]]
     colors : list[str] | None
@@ -78,8 +80,14 @@ class PlotConfig:
         X-coordinates for vertical lines
     hlines : list[float] | None
         Y-coordinates for horizontal lines
+    refline_color : str
+        Color for vlines/hlines reference lines
+    refline_style : str
+        Line style for vlines/hlines reference lines
     ticksize : float | None
         Font size for tick labels
+    panel_size : tuple[float, float]
+        Per-panel (width, height) in inches for multi-panel grid plots
 
     Examples
     --------
@@ -137,6 +145,8 @@ class PlotConfig:
 
     # 2D plot settings
     z_colormap: str = "viridis"
+    # Residual maps are signed and centered on 0 -> diverging colormap
+    z_colormap_res: str = "RdBu_r"
     z_colorbar: str = "ver"  # 'ver' or 'hor'
     z_type: str = "lin"  # 'lin' or 'log' for color scale
     # 2D data handling
@@ -156,7 +166,12 @@ class PlotConfig:
     waterfall: float = 0
     vlines: list[float] | None = None
     hlines: list[float] | None = None
+    refline_color: str = "#808080"
+    refline_style: str = ":"
     ticksize: float | None = None
+
+    # Per-panel size (width, height in inches) for multi-panel grid plots
+    panel_size: tuple[float, float] = (4.0, 3.0)
 
     # Normalization
     y_norm: int = 0  # 0: no normalization, 1: normalize to [0,1]
@@ -185,7 +200,8 @@ class PlotConfig:
             "y_label": "t_label",
             "dpi_plot": "dpi_plt",
         }
-        limit_fields = {"x_lim", "y_lim", "z_lim"}
+        # Tuple-typed fields arrive as lists when set via project.yaml
+        tuple_fields = {"x_lim", "y_lim", "z_lim", "panel_size"}
 
         config_dict = {}
         for field in fields(cls):
@@ -194,7 +210,7 @@ class PlotConfig:
                 continue
 
             value = cp.deepcopy(getattr(project, source_attr))
-            if field.name in limit_fields and value is not None:
+            if field.name in tuple_fields and value is not None:
                 value = tuple(value)
 
             config_dict[field.name] = value

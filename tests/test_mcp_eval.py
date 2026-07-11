@@ -108,6 +108,71 @@ class TestEvaluation:
         assert np.isclose(v2_late, v1_late + 3.6)
 
     #
+    def test_eval_partial_time_range_uses_absolute_indices(self):
+        """Partial-range 2D eval matches the same rows of the full eval.
+
+        Regression: create_value_2d(t_ind=[start, stop]) passed the
+        slice-relative loop index to create_value_1d, so time-dependent
+        parameters were evaluated at t[0:stop-start] instead of
+        t[start:stop].
+        """
+
+        file, model = self._make_file_with_model(["energy_expression"])
+        file.add_time_dependence(
+            target_model="energy_expression",
+            target_parameter="GLP_01_x0",
+            dynamics_yaml="models/file_time.yaml",
+            dynamics_model=["MonoExpPosIRF"],
+        )
+
+        model.create_value_2d()
+        value_2d_full = model.value_2d.copy()
+
+        start, stop = 40, 60
+        model.create_value_2d(t_ind=[start, stop])
+        assert model.value_2d.shape == (stop - start, len(file.energy))
+        np.testing.assert_allclose(model.value_2d, value_2d_full[start:stop])
+
+    #
+    def test_conv_on_single_point_time_axis_raises(self):
+        """IRF dynamics on a 1-point time axis raise a clear error.
+
+        The convolution kernel step size comes from time[1] - time[0],
+        so the kernel axis cannot be built. The old message claimed the
+        time axis was "not defined" even when it existed with 1 point.
+        """
+
+        project = make_project()
+        file = File(parent_project=project)
+        file.energy = np.linspace(80, 90, 201)
+        file.time = np.array([0.0])
+        file.load_model(
+            model_yaml="models/file_energy.yaml",
+            model_info=["energy_expression"],
+        )
+        with pytest.raises(ValueError, match="at least 2 points"):
+            file.add_time_dependence(
+                target_model="energy_expression",
+                target_parameter="GLP_01_x0",
+                dynamics_yaml="models/file_time.yaml",
+                dynamics_model=["MonoExpPosIRF"],
+            )
+
+    #
+    def test_t_vary_without_t_model_raises(self):
+        """Par.value raises on t_vary without a t_model.
+
+        Regression: it printed a warning and returned -1.0, silently
+        poisoning any spectrum evaluated from the corrupted parameter.
+        """
+
+        _file, model = self._make_file_with_model(["energy_expression"])
+        p_A = self._par(model, "GLP_01_A")
+        p_A.t_vary = True  # corrupt state: no t_model attached
+        with pytest.raises(RuntimeError, match="no t_model"):
+            p_A.value(t_ind=0)
+
+    #
     def test_eval_expression_fan_out(self):
         """Fan-out: GLP_02 and GLP_03 both reference GLP_01 directly."""
 

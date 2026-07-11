@@ -18,10 +18,7 @@
 # blurs the step with the Gaussian instrument response (IRF).
 BandBendingRecovery:
     gaussCONV:
-        # IRF width (ps). Init generously: the convolution kernel support is
-        # sized from the initial value (+-4*SD), so a too-small init truncates
-        # the kernel when the fitted SD grows beyond it.
-        SD:  [20, True, 1, 50]
+        SD:  [20, True, 1, 50]      # IRF width (ps)
     expFun:
         A:   [0.3, True, 0, 1]      # collapse amplitude (eV/nm)
         tau: [50, True, 5, 500]     # recovery time constant (ps)

@@ -73,6 +73,13 @@ useful cleanup before or during a JAX port:
   `evaluate(plan, theta)` is already the right API. New work should protect
   that contract rather than pushing JAX concerns back into model objects or
   fit-time parsing.
+- **Land kernel-matrix convolution first.** The lowered convolution path
+  builds a theta-dependent 1D kernel whose support length tracks the fitted
+  width — silently wrong on non-uniform time axes and a jit blocker
+  (theta-dependent array shapes). Replacing it with the quadrature-weighted
+  kernel-matrix operator
+  ([kernel-matrix-convolution.md](kernel-matrix-convolution.md)) on the
+  NumPy paths removes that blocker before the port begins.
 
 Of these, expression flattening is the one prep item most worth doing even if
 the eventual backend choice changes again.
@@ -94,8 +101,9 @@ The main technical work is in the evaluator itself:
   the compiled path.
 - **SciPy-dependent kernels need JAX-compatible replacements.** The current
   code still depends on SciPy for Voigt/Faddeeva (`wofz`) and for convolution
-  utilities used by the lowered convolution path. A JAX backend needs
-  compatible implementations for those pieces.
+  utilities used by the lowered convolution path. The kernel-matrix change
+  ([kernel-matrix-convolution.md](kernel-matrix-convolution.md)) retires the
+  convolution dependency, leaving Voigt/`wofz` as the remaining gap.
 
 ### 3. Jacobian and optimizer work
 
@@ -174,7 +182,8 @@ Add the remaining lowered features incrementally:
 
 - profile-varying parameters,
 - subcycle-aware dynamics,
-- resolved-trace convolution,
+- resolved-trace convolution (kernel-matrix form; see
+  [kernel-matrix-convolution.md](kernel-matrix-convolution.md)),
 - Voigt / special-function support.
 
 Each widening step should ship with direct parity tests against the existing

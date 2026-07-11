@@ -236,7 +236,9 @@ def sign_change(array: ArrayLike, *, ignore_zeros: bool = True) -> NDArray[np.in
 
     asign = np.sign(array)
 
-    if ignore_zeros:
+    # all-zero input has no sign to propagate (and the loop below would
+    # never terminate); the roll-difference then correctly yields no changes
+    if ignore_zeros and asign.any():
         sz = asign == 0
         while sz.any():
             asign[sz] = np.roll(asign, 1)[sz]
@@ -309,6 +311,41 @@ def pad_x_y(
 
 
 #
+def conv_kernel_support(t_range: float, t_step: float) -> NDArray[np.float64]:
+    """
+    Build a symmetric, odd-length time axis for a convolution kernel.
+
+    Rebuilt from the current kernel parameter values at every model
+    evaluation so the support tracks the fitted width — a frozen support
+    silently truncates the kernel when the width grows past its initial
+    value.
+
+    Parameters
+    ----------
+    t_range : float
+        Half-width of the kernel support, typically
+        ``kernel_par * kernel_width(...)`` from the ``*_kernel_width``
+        helpers in trspecfit.functions.time
+    t_step : float
+        Time axis step size (matches the data time axis)
+
+    Returns
+    -------
+    ndarray
+        Kernel time axis ``[-n*t_step, ..., 0, ..., n*t_step]`` with
+        ``n = max(1, ceil(|t_range| / t_step))``, guaranteed symmetric
+        and odd-length so ``mode='same'`` convolution stays centered
+    """
+
+    if not np.isfinite(t_range):
+        raise ValueError(f"Kernel support range is not finite: {t_range}")
+    if not np.isfinite(t_step) or t_step <= 0:
+        raise ValueError(f"Kernel time step must be positive: {t_step}")
+    n = max(1, int(np.ceil(abs(t_range) / t_step)))
+    return np.arange(-n, n + 1, dtype=np.float64) * t_step
+
+
+#
 def my_conv(
     x: ArrayLike,
     y: ArrayLike,
@@ -342,21 +379,33 @@ def my_conv(
     x_arr = np.asarray(x, dtype=float)
     y_arr = np.asarray(y, dtype=float)
     kernel_arr = np.asarray(kernel, dtype=float)
+    if x_arr.size < 2:
+        raise ValueError(
+            "my_conv requires at least 2 x samples to determine the "
+            f"step size, got {x_arr.size}"
+        )
     pad_size = int(kernel_arr.size / 2)
 
-    # Add padding to minimize edge artifacts
-    _x_pad, y_pad = pad_x_y(x_arr, y_arr, float(x_arr[1] - x_arr[0]), pad_size)
+    # Add padding to minimize edge artifacts (y only; the x grid is not
+    # needed for the convolution itself)
+    y_pad = np.pad(y_arr, pad_size, mode="edge")
+
+    # Normalize the kernel (cheaper than dividing the padded signal)
+    kernel_sum = np.sum(kernel_arr)
+    if kernel_sum == 0 or not np.isfinite(kernel_sum):
+        raise ValueError(
+            f"my_conv kernel sums to {kernel_sum}; cannot normalize. "
+            "The kernel likely collapsed below the axis step "
+            "(width parameter too small) or contains non-finite values."
+        )
+    kernel_norm = kernel_arr / kernel_sum
 
     # Compute convolution with normalized kernel
     if method == "scipy":
-        y_conv_pad = np.asarray(
-            convolve(y_pad, kernel_arr, mode="same") / np.sum(kernel_arr),
-            dtype=float,
-        )
+        y_conv_pad = np.asarray(convolve(y_pad, kernel_norm, mode="same"), dtype=float)
     elif method == "numpy":
         y_conv_pad = np.asarray(
-            np.convolve(y_pad, kernel_arr, mode="same") / np.sum(kernel_arr),
-            dtype=float,
+            np.convolve(y_pad, kernel_norm, mode="same"), dtype=float
         )
     else:
         raise ValueError(f"Unknown method '{method}'")

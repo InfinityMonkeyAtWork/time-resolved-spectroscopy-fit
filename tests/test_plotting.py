@@ -54,6 +54,27 @@ class TestPlotConfig:
         assert config.z_colormap == "viridis"
 
     #
+    def test_every_field_settable_via_project(self):
+        """Every PlotConfig field must have a Project counterpart.
+
+        Project.yaml keys only apply to existing Project attributes, and
+        PlotConfig.from_project only copies fields the Project has — a
+        PlotConfig field without a Project default is silently unsettable
+        from project.yaml.
+        """
+
+        from dataclasses import fields
+
+        project = make_project(name="cfg-coverage")
+        aliases = {"x_label": "e_label", "y_label": "t_label", "dpi_plot": "dpi_plt"}
+        missing = [
+            f.name
+            for f in fields(PlotConfig)
+            if not hasattr(project, aliases.get(f.name, f.name))
+        ]
+        assert missing == [], f"PlotConfig fields without Project defaults: {missing}"
+
+    #
     def test_custom_creation(self):
         """Test creating config with custom values"""
 
@@ -133,6 +154,26 @@ class TestPlot1D:
         ax = plt.gca()
         assert len(ax.get_lines()) >= 2
         assert ax.get_xlabel() == "x axis"  # default label
+        plt.close("all")
+
+    #
+    def test_y_norm_constant_trace_stays_finite(self):
+        """y_norm=1 maps a constant trace to baseline 0 instead of NaN.
+
+        Regression: normalization divided by the trace's own range,
+        which is zero for a constant trace (silent inf/NaN plot).
+        """
+
+        x = np.linspace(0, 10, 50)
+        y_list = [np.full(50, 5.0), np.sin(x)]
+        config = PlotConfig()
+
+        plot_1d(y_list, x=x, config=config, y_norm=1, save_img=0)
+        ax = plt.gca()
+        y_const, y_sine = (line.get_ydata() for line in ax.get_lines()[:2])
+        assert np.all(np.isfinite(y_const))
+        np.testing.assert_array_equal(y_const, np.zeros(50))
+        assert np.all(np.isfinite(y_sine))
         plt.close("all")
 
     #
@@ -539,6 +580,10 @@ class TestPlotConfigFromYAML:
         "z_label: 'Counts'\n"
         "x_dir: 'rev'\n"
         "z_colormap: 'RdBu'\n"
+        "z_colormap_res: 'coolwarm'\n"
+        "refline_color: '#ff0000'\n"
+        "refline_style: '--'\n"
+        "panel_size: [5.0, 3.5]\n"
         "x_lim: [63.0, -2.6]\n"
         "y_lim: [-0.5, 5.0]\n"
     )
@@ -549,6 +594,10 @@ class TestPlotConfigFromYAML:
         "z_label": "Counts",
         "x_dir": "rev",
         "z_colormap": "RdBu",
+        "z_colormap_res": "coolwarm",
+        "refline_color": "#ff0000",
+        "refline_style": "--",
+        "panel_size": (5.0, 3.5),
         "x_lim": (63.0, -2.6),
         "y_lim": (-0.5, 5.0),
     }
@@ -792,6 +841,30 @@ class TestPlotConfigPropagation:
         # Find a main panel axis (not colorbar)
         main_axes = [ax for ax in fig.axes if ax.get_xlabel() != ""]
         assert any(ax.get_xlabel() == "Binding Energy (eV)" for ax in main_axes)
+        plt.close("all")
+
+    #
+    def test_simulator_plot_comparison_fresh_auto_simulates(self):
+        """plot_comparison on a fresh Simulator auto-simulates, not raises.
+
+        Regression: the SNR plot title was built before the auto-simulate
+        guard, so calling plot_comparison without a prior simulate_1d/2d
+        raised ValueError from get_snr.
+        """
+
+        from trspecfit import Simulator
+
+        file = self._make_file_with_model()
+        model = file.model_active
+        assert model is not None  # type guard
+
+        sim_1d = Simulator(model, noise_level=0.05)
+        sim_1d.plot_comparison(dim=1, save_img=-2)
+        assert sim_1d.data_clean is not None
+
+        sim_2d = Simulator(model, noise_level=0.05)
+        sim_2d.plot_comparison(dim=2, save_img=-2)
+        assert sim_2d.data_clean is not None
         plt.close("all")
 
 

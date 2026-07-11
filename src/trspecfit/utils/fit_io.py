@@ -41,6 +41,7 @@ from trspecfit.fitlib import (
     plt_fit_res_2d,
     plt_fit_res_pars,
 )
+from trspecfit.utils.hdf5 import require_dataset, require_group
 
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
 SCHEMA_VERSION = "2"
@@ -139,32 +140,6 @@ def _compute_sigma_eff(
             if n_avg > 1:
                 return float(sigma_data / np.sqrt(n_avg))
     return float(sigma_data)
-
-
-#
-def _as_group(obj: Any) -> h5py.Group:
-    """
-    Narrow an h5py lookup result (``Group | Dataset | Datatype | Link``) to
-    ``h5py.Group``, raising if it isn't one. Used at archive-traversal sites
-    to give pyright a stable type without sprinkling ``cast`` everywhere.
-    """
-
-    if not isinstance(obj, h5py.Group):
-        raise TypeError(
-            f"expected h5py.Group at archive path, got {type(obj).__name__}"
-        )
-    return obj
-
-
-#
-def _as_dataset(obj: Any) -> h5py.Dataset:
-    """``Dataset`` counterpart to :func:`_as_group` for read-side lookups."""
-
-    if not isinstance(obj, h5py.Dataset):
-        raise TypeError(
-            f"expected h5py.Dataset at archive path, got {type(obj).__name__}"
-        )
-    return obj
 
 
 #
@@ -901,10 +876,10 @@ def _find_file_by_fingerprint(
     files_obj = archive.get("files")
     if files_obj is None:
         return None
-    files_group = _as_group(files_obj)
+    files_group = require_group(files_obj, "files")
     for key in sorted(files_group.keys()):
-        fg = _as_group(files_group[key])
-        meta = _as_group(fg["metadata"])
+        fg = require_group(files_group[key], f"files/{key}")
+        meta = require_group(fg["metadata"], f"files/{key}/metadata")
         if str(meta.attrs.get("data_sha256", "")) != fingerprint["data_sha256"]:
             continue
         if str(meta.attrs.get("energy_sha256", "")) != fingerprint["energy_sha256"]:
@@ -940,13 +915,13 @@ def _find_slot_by_archive_key(
     slots_obj = file_group.get("slots")
     if slots_obj is None:
         return None
-    slots_group = _as_group(slots_obj)
+    slots_group = require_group(slots_obj, "slots")
     for key in sorted(slots_group.keys()):
-        slot_group = _as_group(slots_group[key])
+        slot_group = require_group(slots_group[key], f"slots/{key}")
         meta_obj = slot_group.get("metadata")
         if meta_obj is None:
             continue
-        meta = _as_group(meta_obj)
+        meta = require_group(meta_obj, f"slots/{key}/metadata")
         if str(meta.attrs.get("archive_slot_key", "")) == archive_slot_key:
             return slot_group
     return None
@@ -1190,7 +1165,7 @@ def _classify_archive_for_write(
     """
 
     meta_obj = archive.get("metadata")
-    meta = _as_group(meta_obj) if meta_obj is not None else None
+    meta = require_group(meta_obj, "metadata") if meta_obj is not None else None
     if meta is not None and "schema_version" in meta.attrs:
         existing = str(meta.attrs["schema_version"])
         if existing != project.schema_version:
@@ -1530,9 +1505,13 @@ def _read_mcmc_group(group: h5py.Group) -> dict[str, Any]:
     if flatchain_obj is None:
         flatchain: pd.DataFrame | None = None
     else:
-        flatchain = _decode_dataframe(_as_dataset(flatchain_obj))
+        flatchain = _decode_dataframe(require_dataset(flatchain_obj, "mcmc/flatchain"))
     ci_obj = group.get("ci")
-    ci = _decode_dataframe(_as_dataset(ci_obj)) if ci_obj is not None else None
+    ci = (
+        _decode_dataframe(require_dataset(ci_obj, "mcmc/ci"))
+        if ci_obj is not None
+        else None
+    )
     lnsigma_attr = group.attrs.get("lnsigma")
     lnsigma: float | None
     if lnsigma_attr is None:
@@ -1552,33 +1531,41 @@ def _read_slot(
 ) -> SavedFitSlot:
     """Decode one slot group into a ``SavedFitSlot``."""
 
-    meta = _as_group(slot_group["metadata"])
+    meta = require_group(slot_group["metadata"], "metadata")
     a = meta.attrs
     fit_type = cast(FitType, _attr_str(a["fit_type"]))
     selection_json = _attr_str(a["selection_json"])
     model_name = _attr_str(a["model_name"])
 
-    params = _decode_dataframe(_as_dataset(slot_group["params"]))
+    params = _decode_dataframe(require_dataset(slot_group["params"], "params"))
     if fit_type != "sbs":
         # Restore the schema's "" ↔ None / NaN ↔ None mappings for long-form
         # params. sbs params is wide-form numeric and carries no None
         # semantics, so this only applies to baseline / spectrum / 2d.
         _restore_long_params_nones(params)
-    observed = np.asarray(_as_dataset(slot_group["observed"])[...])
-    fit_arr = np.asarray(_as_dataset(slot_group["fit"])[...])
+    observed = np.asarray(require_dataset(slot_group["observed"], "observed")[...])
+    fit_arr = np.asarray(require_dataset(slot_group["fit"], "fit")[...])
 
     metrics: dict[str, Any]
     if fit_type == "sbs":
-        metrics = _read_metrics_per_slice(_as_dataset(slot_group["metrics_per_slice"]))
+        metrics = _read_metrics_per_slice(
+            require_dataset(slot_group["metrics_per_slice"], "metrics_per_slice")
+        )
     else:
         metrics = {k: float(np.asarray(a[k]).item()) for k in _METRICS_KEYS}
 
     conf_ci_obj = slot_group.get("conf_ci")
     conf_ci = (
-        _decode_dataframe(_as_dataset(conf_ci_obj)) if conf_ci_obj is not None else None
+        _decode_dataframe(require_dataset(conf_ci_obj, "conf_ci"))
+        if conf_ci_obj is not None
+        else None
     )
     mcmc_obj = slot_group.get("mcmc")
-    mcmc = _read_mcmc_group(_as_group(mcmc_obj)) if mcmc_obj is not None else None
+    mcmc = (
+        _read_mcmc_group(require_group(mcmc_obj, "mcmc"))
+        if mcmc_obj is not None
+        else None
+    )
 
     yaml_filename = _attr_str(a["yaml_filename"]) if "yaml_filename" in a else None
     selection = json.loads(selection_json)
@@ -1621,7 +1608,7 @@ def _read_slot(
 def _read_file(file_group: h5py.Group) -> SavedFile:
     """Decode one file group into a ``SavedFile``."""
 
-    meta = _as_group(file_group["metadata"])
+    meta = require_group(file_group["metadata"], "metadata")
     a = meta.attrs
     name = _attr_str(a["name"])
     original_path = _attr_str(a["original_path"])
@@ -1636,16 +1623,16 @@ def _read_file(file_group: h5py.Group) -> SavedFile:
     e_lim = [int(x) for x in np.asarray(a["e_lim"]).ravel()] if "e_lim" in a else None
     t_lim = [int(x) for x in np.asarray(a["t_lim"]).ravel()] if "t_lim" in a else None
 
-    data = np.asarray(_as_dataset(file_group["data"])[...])
-    energy = np.asarray(_as_dataset(file_group["energy"])[...])
-    time = np.asarray(_as_dataset(file_group["time"])[...])
+    data = np.asarray(require_dataset(file_group["data"], "data")[...])
+    energy = np.asarray(require_dataset(file_group["energy"], "energy")[...])
+    time = np.asarray(require_dataset(file_group["time"], "time")[...])
 
     slot_records: list[SavedFitSlot] = []
     slots_obj = file_group.get("slots")
     if slots_obj is not None:
-        slots_group = _as_group(slots_obj)
+        slots_group = require_group(slots_obj, "slots")
         for key in sorted(slots_group.keys()):
-            sg = _as_group(slots_group[key])
+            sg = require_group(slots_group[key], f"slots/{key}")
             slot_records.append(
                 _read_slot(sg, file_fingerprint=fingerprint, file_name=name)
             )
@@ -1680,7 +1667,7 @@ def read_archive(filepath: PathLike | str) -> SavedProject:
 
     path = Path(filepath)
     with h5py.File(path, "r") as archive:
-        meta = _as_group(archive["metadata"])
+        meta = require_group(archive["metadata"], "metadata")
         ma = meta.attrs
         schema_version = _attr_str(ma["schema_version"])
         if schema_version != SCHEMA_VERSION:
@@ -1691,9 +1678,10 @@ def read_archive(filepath: PathLike | str) -> SavedProject:
         files_obj = archive.get("files")
         files: list[SavedFile] = []
         if files_obj is not None:
-            files_group = _as_group(files_obj)
+            files_group = require_group(files_obj, "files")
             for key in sorted(files_group.keys()):
-                files.append(_read_file(_as_group(files_group[key])))
+                fg = require_group(files_group[key], f"files/{key}")
+                files.append(_read_file(fg))
 
         return SavedProject(
             name=_attr_str(ma["project_name"]),

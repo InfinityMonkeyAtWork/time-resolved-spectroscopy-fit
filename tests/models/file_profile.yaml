@@ -12,6 +12,20 @@ profile_pLinear:
         m: [-0.5, True, -2, 2]
         b: [0.0, False, -1.0, 1.0]
 
+# pGauss profile for an amplitude parameter (centered on the test aux axis)
+profile_pGauss:
+    pGauss:
+        A:  [3.0, True, 0.5, 10]
+        x0: [2.0, True, 0, 4]
+        SD: [1.5, True, 0.5, 5]
+
+# fully-fixed profile: attached to a pinned parameter it makes the profiled
+# op constant, exercising the compile-time constant-op path in schedule_2d
+profile_pExpDecayFixed:
+    pExpDecay:
+        A:   [200, False]
+        tau: [2.0, False]
+
 # round-trip test profiles (moderate values for reliable convergence)
 
 # linear shift of x0 over depth: x0(z) = 0.5*z, max shift 2.0 eV

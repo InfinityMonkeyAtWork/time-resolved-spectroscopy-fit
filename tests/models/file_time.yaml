@@ -81,7 +81,21 @@ MonoSqrt:
         A: [0.2, True, 0, 5]
         t0: [0, False, 0, 1]
 
+# SD ~ 0.8*dt of the shared test time axis: wide enough that the width is
+# identifiable from the data, narrow enough not to bury the expFun dynamics
 MonoExpPosIRF:
+    gaussCONV:
+        SD: [0.4, True, 0, 1]
+    expFun:
+        A: [1, True, 0, 5]
+        tau: [2.5, True, 1, 10]
+        t0: [0, False, 0, 1]
+
+# sub-sample IRF: SD sits far below the shared test time steps, so the
+# kernel is numerically a delta and SD is not identifiable from the data.
+# Use as the far-below-truth fit init in kernel-support tests, never as a
+# recovery target.
+MonoExpPosIRFNarrow:
     gaussCONV:
         SD: [5.0E-2, True, 0, 1]
     expFun:
@@ -138,6 +152,18 @@ MonoExpPosBoxIRF:
         tau: [2.5, True, 1, 10]
         t0: [0, False, 0, 1]
 
+# chained convolution: both kernels rewrite the same resolved trace in
+# sequence (two conv steps targeting one row in the lowered plan)
+MonoExpPosDoubleIRF:
+    gaussCONV:
+        SD: [0.4, True, 0, 1]
+    boxCONV:
+        width: [2.0, True, 0.1, 20]
+    expFun:
+        A: [1, True, 0, 5]
+        tau: [2.5, True, 1, 10]
+        t0: [0, False, 0, 1]
+
 # Empty subcycle placeholder (applies to all times in multi-cycle)
 ModelNone:
     none: {}
@@ -171,3 +197,11 @@ conv_last:
         t0: [0, False, 0, 1]
     gaussCONV:
         SD: [5.0E-2, True, 0, 1]
+# expression referencing a parameter outside the dynamics model
+# (must be rejected at add_time_dependence; energy-model parameters
+# are not in a dynamics model's namespace)
+CrossModelExpr:
+    expFun:
+        A: [1, True, 0, 5]
+        tau: ["GLP_01_x0 / 20"]
+        t0: [0, False, 0, 1]

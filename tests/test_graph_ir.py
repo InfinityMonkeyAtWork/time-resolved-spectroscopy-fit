@@ -33,7 +33,7 @@ def _make_energy_model(model_info):
         model_info=model_info,
     )
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
     return file, model
 
 
@@ -58,7 +58,7 @@ def _make_2d_model(model_info, dynamics_params):
         model_info=model_info,
     )
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
 
     for target_par, _dyn_yaml, dyn_model in dynamics_params:
         file.add_time_dependence(
@@ -159,20 +159,20 @@ class TestBuildGraphEnergy1D:
 
         # Offset_y0: vary=True -> OPT_PARAM
         offset_y0 = _node_by_name(graph, "Offset_y0")
-        assert offset_y0 is not None
+        assert offset_y0 is not None  # type guard
         assert offset_y0.kind == NodeKind.OPT_PARAM
         assert offset_y0.value == 2.0
         assert offset_y0.vary is True
 
         # Shirley_pShirley: vary=False -> STATIC_PARAM
         shirley_p = _node_by_name(graph, "Shirley_pShirley")
-        assert shirley_p is not None
+        assert shirley_p is not None  # type guard
         assert shirley_p.kind == NodeKind.STATIC_PARAM
         assert np.isclose(shirley_p.value, 4e-4)
 
         # GLP_01_A: vary=True with bounds
         glp_A = _node_by_name(graph, "GLP_01_A")
-        assert glp_A is not None
+        assert glp_A is not None  # type guard
         assert glp_A.kind == NodeKind.OPT_PARAM
         assert glp_A.value == 20.0
         assert glp_A.bounds == (5.0, 25.0)
@@ -199,7 +199,7 @@ class TestBuildGraphEnergy1D:
         graph = build_graph(model)
 
         offset_node = _node_by_name(graph, "Offset")
-        assert offset_node is not None
+        assert offset_node is not None  # type guard
         assert offset_node.kind == NodeKind.COMPONENT_EVAL
         # No SPECTRUM_INPUT edge
         spec_edges = _edges_to(graph, offset_node.id, EdgeKind.SPECTRUM_INPUT)
@@ -213,7 +213,7 @@ class TestBuildGraphEnergy1D:
         graph = build_graph(model)
 
         shirley_node = _node_by_name(graph, "Shirley")
-        assert shirley_node is not None
+        assert shirley_node is not None  # type guard
         spec_edges = _edges_to(graph, shirley_node.id, EdgeKind.SPECTRUM_INPUT)
         assert len(spec_edges) == 1
         # Source should be peak_sum SUM node
@@ -335,7 +335,7 @@ class TestBuildGraphExpressions:
         assert len(expr_nodes) == 4
 
         A_expr = _node_by_name(graph, "GLP_02_A")
-        assert A_expr is not None
+        assert A_expr is not None  # type guard
         assert A_expr.kind == NodeKind.EXPRESSION
         assert A_expr.expr_string == "3/4*GLP_01_A"
 
@@ -395,7 +395,7 @@ class TestBuildGraphExpressions:
 
         # GLP_01_A references GLP_02_A (forward ref)
         glp01_A = _node_by_name(graph, "GLP_01_A")
-        assert glp01_A is not None
+        assert glp01_A is not None  # type guard
         assert glp01_A.kind == NodeKind.EXPRESSION
 
 
@@ -481,7 +481,7 @@ class TestBuildGraph2D:
 
         # PARAM_PLUS_TRACE has BASE_INPUT + TRACE_INPUT
         resolved = _node_by_name(graph, "GLP_01_A_resolved")
-        assert resolved is not None
+        assert resolved is not None  # type guard
         base_edges = _edges_to(graph, resolved.id, EdgeKind.BASE_INPUT)
         trace_edges = _edges_to(graph, resolved.id, EdgeKind.TRACE_INPUT)
         assert len(base_edges) == 1
@@ -620,11 +620,11 @@ class TestPackageMapping:
         graph = build_graph(model)
 
         glp01 = _node_by_name(graph, "GLP_01")
-        assert glp01 is not None
+        assert glp01 is not None  # type guard
         assert glp01.package == "energy"
 
         offset = _node_by_name(graph, "Offset")
-        assert offset is not None
+        assert offset is not None  # type guard
         assert offset.package == "energy"
 
     #
@@ -661,7 +661,7 @@ def _make_profile_model(energy_model_info, target_par, profile_model_info):
         profile_model=profile_model_info,
     )
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
     return file, model
 
 
@@ -712,7 +712,7 @@ class TestProfileNodes:
         graph = build_graph(model)
 
         comp_avg = _node_by_name(graph, "Gauss_01_profile_avg")
-        assert comp_avg is not None
+        assert comp_avg is not None  # type guard
         addend_edges = _edges_to(graph, comp_avg.id, EdgeKind.ADDEND)
         assert len(addend_edges) == 5  # one per aux_axis point
         for edge in addend_edges:
@@ -736,7 +736,7 @@ class TestProfileNodes:
 
         # PROFILE_AVERAGE should exist and receive ADDEND from sample evals
         avg_node = _node_by_name(graph, "Gauss_01_profile_avg")
-        assert avg_node is not None
+        assert avg_node is not None  # type guard
         assert avg_node.kind == NodeKind.PROFILE_AVERAGE
 
         # Each sample COMPONENT_EVAL feeds into PROFILE_AVERAGE
@@ -790,7 +790,7 @@ class TestProfileNodes:
 
         # Check the first sample's component eval
         sample_eval = _node_by_name(graph, "Gauss_01_sample_0")
-        assert sample_eval is not None
+        assert sample_eval is not None  # type guard
         assert sample_eval.function_name == "Gauss"
 
         param_edges = _edges_to(graph, sample_eval.id, EdgeKind.PARAM_INPUT)
@@ -909,7 +909,7 @@ def _make_subcycle_model():
         frequency=10,
     )
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
     return file, model
 
 
@@ -1087,12 +1087,12 @@ class TestDynamicsExpressions:
 
         # expFun_02_t0 is [0, False, 0, 1] -> STATIC_PARAM
         t0 = _node_by_name(graph, "GLP_01_A_expFun_02_t0")
-        assert t0 is not None
+        assert t0 is not None  # type guard
         assert t0.kind == NodeKind.STATIC_PARAM
 
         # expFun_01_A is [-1, True, -5, 0] -> OPT_PARAM
         A1 = _node_by_name(graph, "GLP_01_A_expFun_01_A")
-        assert A1 is not None
+        assert A1 is not None  # type guard
         assert A1.kind == NodeKind.OPT_PARAM
 
 
@@ -1195,7 +1195,7 @@ class TestProfileExpressionInteraction:
 
         # GLP_02 should have per-sample COMPONENT_EVAL + EXPRESSION nodes
         glp02_avg = _node_by_name(graph, "GLP_02_profile_avg")
-        assert glp02_avg is not None
+        assert glp02_avg is not None  # type guard
         assert glp02_avg.kind == NodeKind.PROFILE_AVERAGE
 
         # 5 sample component evals feed into GLP_02's profile average
@@ -1205,7 +1205,7 @@ class TestProfileExpressionInteraction:
         # Each per-sample EXPRESSION references a PROFILE_SAMPLE (not avg)
         for aux_i in range(5):
             expr_node = _node_by_name(graph, f"GLP_02_A_profile_expr_{aux_i}")
-            assert expr_node is not None
+            assert expr_node is not None  # type guard
             assert expr_node.kind == NodeKind.EXPRESSION
 
             ref_edges = _edges_to(graph, expr_node.id, EdgeKind.EXPR_REF)
@@ -1268,7 +1268,7 @@ def _make_time_dep_profile_model(dynamics_model=None):
         dynamics_model=dynamics_model or ["MonoExpPos"],
     )
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
     return file, model
 
 
@@ -1380,7 +1380,7 @@ def _make_irf_dynamics_model():
         dynamics_model=["MonoExpPosIRF"],
     )
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
     return file, model
 
 
@@ -1418,34 +1418,33 @@ class TestDynamicsConvolution:
         assert "expFun" in trace_fns
 
     #
+    def test_single_point_time_axis_raises_at_schedule(self):
+        """schedule_2d raises a clear error for a conv on a 1-point time axis.
+
+        Regression: the conv precompute read time[1] - time[0] and raised
+        a bare IndexError. Unreachable through the public API (model
+        construction guards the kernel axis), so exercised by mutating
+        graph.time directly as a GIR-layer invariant check.
+        """
+
+        _file, model = _make_irf_dynamics_model()
+        graph = build_graph(model)
+        graph.time = np.array([0.0])
+        with pytest.raises(ValueError, match="at least 2 points"):
+            schedule_2d(graph)
+
+    #
     def test_irf_dynamics_lowerable_in_2d(self):
         """Time-domain IRF dynamics are lowerable on the 2D backend.
 
-        The CONVOLUTION node carries ``package == "time"``, a registered
-        kernel function, and a populated ``kernel_time`` array, so
-        ``can_lower_2d`` accepts the graph.
+        The CONVOLUTION node carries ``package == "time"`` and a
+        registered kernel function, so ``can_lower_2d`` accepts the
+        graph.
         """
 
         _file, model = _make_irf_dynamics_model()
         graph = build_graph(model)
         assert can_lower_2d(graph)
-
-    #
-    def test_irf_without_kernel_time_not_lowerable(self):
-        """CONVOLUTION missing ``kernel_time`` falls back to MCP.
-
-        Safety guard for the lowering contract: if the graph builder
-        omits the frozen support metadata (e.g. a future code path that
-        doesn't populate it), the 2D backend must reject the graph
-        rather than silently producing wrong numerics.
-        """
-
-        _file, model = _make_irf_dynamics_model()
-        graph = build_graph(model)
-        conv_nodes = _nodes_by_kind(graph, NodeKind.CONVOLUTION)
-        assert len(conv_nodes) == 1
-        del conv_nodes[0].arrays["kernel_time"]
-        assert not can_lower_2d(graph)
 
     #
     def test_conv_without_ppt_chain_not_lowerable(self):
@@ -1531,28 +1530,6 @@ class TestDynamicsConvolution:
         A_edge = [e for e in param_edges if e.position == 0][0]
         source = graph.nodes[A_edge.source]
         assert source.kind == NodeKind.CONVOLUTION
-
-    #
-    def test_kernel_time_populated_on_dynamics_conv(self):
-        """Dynamics CONVOLUTION nodes carry the kernel time axis in arrays.
-
-        Lowering contract: lowered time-domain convolution requires
-        ``node.arrays["kernel_time"]`` to be present at graph-build time so
-        the scheduler can freeze kernel support without re-deriving it from
-        MCP helpers.  Mirrors the top-level handling for conv components.
-        """
-
-        _file, model = _make_irf_dynamics_model()
-        graph = build_graph(model)
-
-        conv_nodes = _nodes_by_kind(graph, NodeKind.CONVOLUTION)
-        assert len(conv_nodes) == 1
-        conv = conv_nodes[0]
-        assert conv.package == "time"
-        assert "kernel_time" in conv.arrays
-        kernel_time = conv.arrays["kernel_time"]
-        assert kernel_time.ndim == 1
-        assert kernel_time.size > 0
 
 
 #
@@ -1732,8 +1709,8 @@ class TestProfileCollapsing:
         dot_collapsed = model.visualize(rendering="string", collapse_profiles=True)
         dot_full = model.visualize(rendering="string", collapse_profiles=False)
 
-        assert dot_collapsed is not None
-        assert dot_full is not None
+        assert dot_collapsed is not None  # type guard
+        assert dot_full is not None  # type guard
         assert "\u00d75" in dot_collapsed
         assert "profile_sample_1" in dot_full
 
@@ -2200,7 +2177,7 @@ class TestSchedule2DExpressions:
             if plan.expr_target_rows[i] == _find_row_for_name(graph, plan, "GLP_02_A"):
                 expr_target_idx = i
                 break
-        assert expr_target_idx is not None
+        assert expr_target_idx is not None  # type guard
 
         # Check that the program contains a PARAM_REF to the resolved row
         prog = plan.expr_programs[expr_target_idx]
@@ -2366,8 +2343,8 @@ class TestSchedule2DExpressionOnly:
             if plan.expr_target_rows[i] == row_03_A:
                 idx_03 = i
 
-        assert idx_02 is not None
-        assert idx_03 is not None
+        assert idx_02 is not None  # type guard
+        assert idx_03 is not None  # type guard
         assert idx_02 < idx_03
 
     #
@@ -2457,6 +2434,9 @@ class TestExprCompilerParity:
         program = _bind_expr_to_rows(symbolic, name_to_row)
         result = eval_expr_program(program, traces)
 
+        # Always a full (n_time,) row, even for constant-only programs
+        # (callers assign or reshape the result, so a scalar would break)
+        assert np.shape(result) == (n_time,)
         # All time steps should match the scalar asteval result
         assert np.allclose(result, expected, rtol=1e-12), (
             f"Expression {expr_string!r}: RPN gave {result[0]}, asteval gave {expected}"

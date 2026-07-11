@@ -150,6 +150,25 @@ def compute_fit_metrics(
 
 
 #
+def _fit_window_slices(
+    ndim: int, e_lim: list[int] | None, t_lim: list[int] | None
+) -> tuple[slice, ...]:
+    """Build array slices selecting the user-defined fit window.
+
+    Empty or None limits select the full axis. 1D data is indexed as
+    [energy]; 2D data as [time, energy].
+    """
+
+    e_slice = slice(e_lim[0], e_lim[1]) if e_lim else slice(None)
+    if ndim == 1:
+        return (e_slice,)
+    if ndim == 2:
+        t_slice = slice(t_lim[0], t_lim[1]) if t_lim else slice(None)
+        return (t_slice, e_slice)
+    raise ValueError("data must be 1D or 2D")
+
+
+#
 def residual_fun(
     par: Any,
     x: ArrayLike,
@@ -248,30 +267,8 @@ def residual_fun(
     data_arr = np.asarray(data)
 
     # select user-defined region to consider for residual computation
-    if len(data_arr.shape) == 1:  # 1D data
-        if len(e_lim) != 0:
-            residual = data_arr[e_lim[0] : e_lim[1]] - fit_arr[e_lim[0] : e_lim[1]]
-        else:  # use entire data and fit array to compute RSS
-            residual = data_arr - fit_arr
-    elif len(data_arr.shape) == 2:  # 2D data
-        if (len(e_lim) != 0) and (len(t_lim) == 0):
-            residual = (
-                data_arr[:, e_lim[0] : e_lim[1]] - fit_arr[:, e_lim[0] : e_lim[1]]
-            )
-        elif (len(e_lim) == 0) and (len(t_lim) != 0):
-            residual = (
-                data_arr[t_lim[0] : t_lim[1], :] - fit_arr[t_lim[0] : t_lim[1], :]
-            )
-        elif (len(e_lim) != 0) and (len(t_lim) != 0):
-            residual = (
-                data_arr[t_lim[0] : t_lim[1], e_lim[0] : e_lim[1]]
-                - fit_arr[t_lim[0] : t_lim[1], e_lim[0] : e_lim[1]]
-            )
-        # or use entire data and fit array to compute RSS
-        else:
-            residual = data_arr - fit_arr
-    else:
-        raise ValueError("data must be 1D or 2D")
+    window = _fit_window_slices(data_arr.ndim, e_lim, t_lim)
+    residual = data_arr[window] - fit_arr[window]
 
     # type of residual to return
     if res_type == "RSS":
@@ -654,6 +651,20 @@ def fit_wrapper(
     if stages not in (1, 2):
         raise ValueError(f"stages must be 1 or 2, got {stages}")
 
+    # Fail fast on NaN/Inf inside the fit window: lmfit raises a generic
+    # error that blames "input data or the objective/model function",
+    # leaving the user to figure out which. Non-finite data outside the
+    # e_lim/t_lim window never reaches the residual and stays legal.
+    data_arr = np.asarray(const[1], dtype=float)
+    window = data_arr[_fit_window_slices(data_arr.ndim, const[4], const[5])]
+    n_bad = int(np.size(window) - np.count_nonzero(np.isfinite(window)))
+    if n_bad > 0:
+        raise ValueError(
+            f"Data contains {n_bad} non-finite value(s) (NaN/Inf) inside "
+            "the fit window. Clean the data or exclude the affected "
+            "region with set_fit_limits() before fitting."
+        )
+
     # construct the lmfit parameters if necessary
     if isinstance(par, lmfit.parameter.Parameters):
         par_ini = copy.deepcopy(par)
@@ -745,11 +756,11 @@ def fit_wrapper(
             min=np.log(mc_settings.sigma_min),
             max=np.log(mc_settings.sigma_max),
         )
-        # always print progress bar
-        print(
-            "\nProgress of lmfit.emcee confidence interval determination\n"
-            "(based on Markov chain Monte Carlo parameter space sampling):"
-        )
+        if show_output >= 1:
+            print(
+                "\nProgress of lmfit.emcee confidence interval determination\n"
+                "(based on Markov chain Monte Carlo parameter space sampling):"
+            )
         # burn necessary if starting point not close to max(probability distribution)
         # i.e. not close to the optimized parameter set, so burn=0 is ok here!
         emcee_fin = mini.emcee(
@@ -761,7 +772,7 @@ def fit_wrapper(
             ntemps=mc_settings.ntemps,
             workers=mc_settings.workers,
             is_weighted=mc_settings.is_weighted,
-            progress=True,
+            progress=show_output >= 1,
         )
         emcee_fin_params = _result_params(emcee_fin)
         emcee_flatchain = cast(
@@ -777,28 +788,36 @@ def fit_wrapper(
             lmfit.report_fit(emcee_fin_params)
             t_emcee1 = time.time()
             print(f"Time lmfit.emcee: {t_emcee1 - t_emcee0} s")
-        # acceptence fraction of all walkers (plot)
-        emcee_save = save_output if show_output >= 1 else -abs(save_output)
-        fig_emcee_walker, _ax = plt.subplots(1, 1, dpi=75)
-        plt.plot(emcee_acceptance_fraction, "o")
-        plt.xlabel("Walker number")
-        plt.ylabel("Acceptance fraction")
-        uplt._finalize_plot(
-            emcee_save, f"{save_path}_emcee_walker_acceptance_ratio.png"
-        )
-        # draw all combinations of the typically ellipsoidal chi plot
-        # [<x=par1, y=par2, z=chi2> plot]
-        emcee_truths = [
-            emcee_fin_params.valuesdict().get(par_name) for par_name in emcee_var_names
-        ]
-        fig_emcee_corner = plt.figure(figsize=(10, 10))
-        corner.corner(
-            emcee_flatchain,
-            labels=emcee_var_names,
-            truths=emcee_truths,
-            fig=fig_emcee_corner,
-        )
-        uplt._finalize_plot(emcee_save, f"{save_path}_emcee_corner_plot.png")
+        # display per show_output, save per save_output (_finalize_plot
+        # semantics: >= 0 shows, abs == 1 saves, so -2 means neither);
+        # skip figure construction entirely when neither shows nor saves
+        if show_output >= 1:
+            emcee_save = save_output
+        else:
+            emcee_save = -1 if abs(save_output) == 1 else -2
+        if emcee_save != -2:
+            # acceptance fraction of all walkers (plot)
+            fig_emcee_walker, _ax = plt.subplots(1, 1, dpi=75)
+            plt.plot(emcee_acceptance_fraction, "o")
+            plt.xlabel("Walker number")
+            plt.ylabel("Acceptance fraction")
+            uplt._finalize_plot(
+                emcee_save, f"{save_path}_emcee_walker_acceptance_ratio.png"
+            )
+            # draw all combinations of the typically ellipsoidal chi plot
+            # [<x=par1, y=par2, z=chi2> plot]
+            emcee_truths = [
+                emcee_fin_params.valuesdict().get(par_name)
+                for par_name in emcee_var_names
+            ]
+            fig_emcee_corner = plt.figure(figsize=(10, 10))
+            corner.corner(
+                emcee_flatchain,
+                labels=emcee_var_names,
+                truths=emcee_truths,
+                fig=fig_emcee_corner,
+            )
+            uplt._finalize_plot(emcee_save, f"{save_path}_emcee_corner_plot.png")
         # get percentage borders to categorize emcee.flatchain data
         sigma_borders = sigma_start_stop_percent(ci_sigmas)
         # one row per sampled parameter (varying model params + the __lnsigma
@@ -1018,6 +1037,7 @@ def results_to_fit_2d(
     results: list[Any] | pd.DataFrame,
     const: tuple[Any, ...],
     args: tuple[Any, ...],
+    parameter_names: list[str] | None = None,
     num_fmt: str = "%.6e",
     delim: str = ",",
     save_2d: int = 0,
@@ -1038,6 +1058,14 @@ def results_to_fit_2d(
         - list: Output from fit_wrapper for each slice.
           Each element: ``[par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]``
         - pd.DataFrame: From results_to_df() with parameters as columns
+
+    parameter_names : list of str, optional
+        For DataFrame results: select and order these columns as the
+        parameter vector before evaluation. Pass when the DataFrame may
+        carry extra non-parameter columns (e.g. the metrics columns in
+        ``results_to_df`` output); extra columns are otherwise passed to
+        the fit function as parameters. If None, all columns are used in
+        DataFrame order. Ignored for list results.
 
     const : tuple
         Constants for residual_fun:
@@ -1076,6 +1104,11 @@ def results_to_fit_2d(
         e_lim_const,
         t_lim_const,
     ) = const
+
+    # Select/order parameter columns; raises KeyError on missing names
+    if isinstance(results, pd.DataFrame) and parameter_names is not None:
+        results = results.loc[:, parameter_names]
+
     lst = []  # intialize
     for i in range(len(results)):
         # list of lmfit_wrapper fit results
@@ -1375,8 +1408,11 @@ def plt_fit_res_2d(
         - z_lim_top : Color scale ``[min, max]`` for data and fit panels.
           Synchronized scale enables direct comparison
         - z_lim_res : Color scale ``[min, max]`` for residual panel.
-          Independent scale optimizes residual visibility
-        - z_colormap : Colormap name (default 'viridis')
+          If None, symmetric around 0 so the diverging colormap's
+          midpoint marks zero residual
+        - z_colormap : Colormap name for data/fit panels (default 'viridis')
+        - z_colormap_res : Diverging colormap name for the residual panel
+          (default 'RdBu_r')
         - x_dir, y_dir : 'def' or 'rev' for axis direction
         - x_type, y_type : 'lin' or 'log' for axis scale
         - save_img : 0 (display), 1 (save+display), -1 (save only)
@@ -1390,6 +1426,7 @@ def plt_fit_res_2d(
     x_label = kwargs.get("x_label", config.x_label)
     y_label = kwargs.get("y_label", config.y_label)
     z_colormap = kwargs.get("z_colormap", config.z_colormap)
+    z_colormap_res = kwargs.get("z_colormap_res", config.z_colormap_res)
     x_dir = kwargs.get("x_dir", config.x_dir)
     x_type = kwargs.get("x_type", config.x_type)
     y_dir = kwargs.get("y_dir", config.y_dir)
@@ -1438,8 +1475,13 @@ def plt_fit_res_2d(
     else:
         range_dat_fit = z_lim_top
 
-    # Residual has independent scale
-    range_res = [np.min(res_cut), np.max(res_cut)] if z_lim_res is None else z_lim_res
+    # Residual has independent scale, symmetric around 0 by default so the
+    # diverging colormap's midpoint marks zero residual
+    if z_lim_res is None:
+        res_amp = np.max(np.abs(res_cut))
+        range_res = [-res_amp, res_amp]
+    else:
+        range_res = z_lim_res
 
     # Create figure layout
     fig, axs = plt.subplot_mosaic(
@@ -1489,7 +1531,7 @@ def plt_fit_res_2d(
         x_arr,
         y_arr,
         res,
-        cmap=z_colormap,
+        cmap=z_colormap_res,
         vmin=range_res[0],
         vmax=range_res[1],
         shading="nearest",

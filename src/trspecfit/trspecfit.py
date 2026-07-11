@@ -238,6 +238,7 @@ class Project:
         self.y_dir = "def"
         self.y_type = "lin"
         self.z_colormap = "viridis"
+        self.z_colormap_res = "RdBu_r"
         self.z_colorbar = "ver"
         self.z_type = "lin"
         self.dpi_plt = 100
@@ -258,7 +259,10 @@ class Project:
         self.waterfall = 0
         self.vlines = None
         self.hlines = None
+        self.refline_color = "#808080"
+        self.refline_style = ":"
         self.ticksize = None
+        self.panel_size = (4.0, 3.0)
         self.y_norm = 0
         self.y_scale = None
         # File I/O settings
@@ -755,6 +759,7 @@ class Project:
             print(f"    y_dir:      {self.y_dir}")
             print(f"    y_type:     {self.y_type}")
             print(f"    z_colormap: {self.z_colormap}")
+            print(f"    z_colormap_res: {self.z_colormap_res}")
             print(f"    z_colorbar: {self.z_colorbar}")
             print(f"    z_type:     {self.z_type}")
             print(f"    dpi_plt:    {self.dpi_plt}")
@@ -820,12 +825,11 @@ class Project:
             self._config_file = config_path
 
         except FileNotFoundError:
+            # missing config is a designed fallback: all settings optional
             if self.show_output >= 1:
                 print(f"Config file {config_path} not found, using defaults")
         except Exception as e:  # noqa: BLE001
-            if self.show_output >= 1:
-                print(f"Error loading config: {e}")
-                print("Using default settings")
+            raise ValueError(f"Failed to load config file {config_path}: {e}") from e
 
     # ------------------------------------------------------------------
     # Project-level model loading and baseline fitting
@@ -1699,11 +1703,15 @@ class File:
             warnings.warn("No data loaded; nothing to describe.", stacklevel=2)
             return
         if self.energy is None:
-            self.energy = np.arange(self.data.shape[-1])
-            warnings.warn("Energy axis missing; using index axis.", stacklevel=2)
+            raise ValueError(
+                "Energy axis missing; cannot describe data. "
+                "Pass energy= when constructing File."
+            )
         if self.dim == 2 and self.time is None:
-            self.time = np.arange(self.data.shape[0])
-            warnings.warn("Time axis missing; using index axis.", stacklevel=2)
+            raise ValueError(
+                "Time axis missing; cannot describe 2D data. "
+                "Pass time= when constructing File."
+            )
 
         config = self.plot_config
 
@@ -2302,7 +2310,8 @@ class File:
             - 'ind': Time array indices
 
         show_plot : bool, default=True
-            If True, plot the resulting baseline spectrum
+            If True, plot the resulting baseline spectrum. Suppressed
+            when ``Project.show_output < 1``.
         """
 
         if self.dim == 1:
@@ -2310,14 +2319,15 @@ class File:
         if self.data is None:
             raise ValueError("No data loaded; cannot define baseline.")
         if self.time is None:
-            self.time = np.arange(self.data.shape[0])
-            warnings.warn(
-                "Time axis missing; using index axis for baseline definition.",
-                stacklevel=2,
+            raise ValueError(
+                "Time axis missing; cannot define baseline. "
+                "Pass time= when constructing File."
             )
         if self.energy is None:
-            self.energy = np.arange(self.data.shape[1])
-            warnings.warn("Energy axis missing; using index axis.", stacklevel=2)
+            raise ValueError(
+                "Energy axis missing; cannot define baseline. "
+                "Pass energy= when constructing File."
+            )
         self.base_t_ind = self._resolve_time_selection(
             time_start, time_stop, time_type=time_type
         )
@@ -2332,7 +2342,7 @@ class File:
         )
 
         # plot
-        if show_plot:
+        if show_plot and self.p.show_output >= 1:
             if self.data_base is None:
                 warnings.warn(
                     "Baseline data is unavailable; skipping baseline plot.",
@@ -2375,16 +2385,15 @@ class File:
             Time range for fitting ``[min, max]`` in absolute values.
             If None, no time limits are applied.
         show_plot : bool, default=True
-            If True, plot data with fit limits indicated
+            If True, plot data with fit limits indicated. Suppressed
+            when ``Project.show_output < 1``.
         """
 
-        if self.data is None and self.energy is None:
-            raise ValueError("No data/energy axis loaded; cannot set fit limits.")
-        if self.energy is None and self.data is not None:
-            self.energy = np.arange(self.data.shape[-1])
-            warnings.warn("Energy axis missing; using index axis.", stacklevel=2)
         if self.energy is None:
-            raise ValueError("Energy axis unavailable; cannot set fit limits.")
+            raise ValueError(
+                "Energy axis missing; cannot set fit limits. "
+                "Pass energy= when constructing File."
+            )
         energy = self.energy
         if energy_limits is None:
             energy_limits = [float(np.min(energy)), float(np.max(energy))]
@@ -2410,19 +2419,16 @@ class File:
             time_limits = [float(np.min(self.time)), float(np.max(self.time))]
         if time_limits is not None:
             if self.time is None:
-                if self.data is None or self.dim != 2:
-                    raise ValueError("Time axis missing; cannot apply time limits.")
-                self.time = np.arange(self.data.shape[0])
-                warnings.warn(
-                    "Time axis missing; using index axis for time limits.",
-                    stacklevel=2,
+                raise ValueError(
+                    "Time axis missing; cannot apply time limits. "
+                    "Pass time= when constructing File."
                 )
             self.t_lim_abs = list(time_limits)
             self.t_lim = self._resolve_time_selection(
                 float(np.min(time_limits)), float(np.max(time_limits))
             )
 
-        if show_plot:  # show data with limits
+        if show_plot and self.p.show_output >= 1:  # show data with limits
             if self.dim == 1:
                 if self.data is None:
                     warnings.warn("Data missing; cannot plot fit limits.", stacklevel=2)
@@ -3319,7 +3325,7 @@ class File:
                 )
         self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
         self.model_sbs.args = _args_sbs
-        if stages >= 1:
+        if stages >= 1 and self.p.show_output >= 1:
             fitlib.time_display(
                 t_start=t_sbs, print_str="Time elapsed for Slice-by-Slice fit: "
             )
@@ -3386,9 +3392,9 @@ class File:
         )
 
         # get slice-by-slice fit spectra as a 2D map (write CSV only when saving)
-        df_sbs_pars = df_sbs.loc[:, self.model_sbs.parameter_names]
         fit_2d_sbs = fitlib.results_to_fit_2d(
-            results=df_sbs_pars,
+            results=df_sbs,
+            parameter_names=self.model_sbs.parameter_names,
             const=self.model_sbs.const,
             args=self.model_sbs.args,
             num_fmt=self.p.num_fmt,
@@ -4058,10 +4064,12 @@ class File:
                 self._save_2d_fit_legacy(
                     save_path=path_2d_results, save_files=self.p.auto_export
                 )
-            fitlib.time_display(
-                t_start=t_2d, print_str="Time elapsed for 2D model fit: "
-            )
-            display(self.model_2d.result[1].params)  # display final pars below figure
+            if self.p.show_output >= 1:
+                fitlib.time_display(
+                    t_start=t_2d, print_str="Time elapsed for 2D model fit: "
+                )
+                # display final pars below figure
+                display(self.model_2d.result[1].params)
 
     #
     def _save_2d_fit_legacy(

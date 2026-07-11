@@ -38,7 +38,7 @@ def _make_energy_model(model_info):
     file.energy = np.linspace(80, 90, 101)
     file.load_model(model_yaml=_ENERGY_YAML, model_info=model_info)
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
     return file, model
 
 
@@ -58,7 +58,7 @@ def _make_2d_model(model_info, dynamics_params, *, frequency=None, time=None):
     file.time = np.linspace(-10, 100, 51) if time is None else time
     file.load_model(model_yaml=_ENERGY_YAML, model_info=model_info)
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
 
     for target_par, dyn_model in dynamics_params:
         kwargs = {
@@ -518,7 +518,7 @@ def _make_2d_profile_model(
     file = File(parent_project=project, energy=energy, time=time, aux_axis=aux_axis)
     file.load_model(model_yaml=model_yaml, model_info=model_info)
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
 
     for target_par, dyn_model in dynamics_params:
         file.add_time_dependence(
@@ -655,6 +655,29 @@ class TestProfileModels:
         _compare_evaluator_vs_interpreter(model, plan)
 
     #
+    def test_constant_profiled_op_folds_into_cache(self):
+        """A fully-fixed profiled component compiles into the cached result.
+
+        Exercises the compile-time constant-op branch in schedule_2d: the
+        profiled op is evaluated once at plan build and folded into
+        ``cached_result`` instead of re-evaluating per theta.
+        """
+
+        _file, model = _make_2d_profile_model(
+            ["pinned_gauss_offset"],
+            [("Offset_y0", ["MonoExpPos"])],
+            [("Gauss_01_A", ["profile_pExpDecayFixed"])],
+        )
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+
+        # the pinned profiled Gauss op is constant; the free Offset is not
+        assert plan.op_is_constant.any()
+        assert not plan.op_is_constant.all()
+        _compare_evaluator_vs_interpreter(model, plan)
+
+    #
     def test_profile_with_time_dep_profile_params(self):
         """Profile function params themselves have dynamics (the hard case).
 
@@ -714,18 +737,18 @@ class TestProfileModels:
 class TestDynamicsConvolution:
     """Lowered IRF dynamics: CONVOLUTION is compiled into a kind=2 step.
 
-    Covers plan encoding (conv program layout, frozen support, resolution
-    ordering) and numerical parity against ``Model.create_value_2d()``.
+    Covers plan encoding (conv program layout, resolution ordering) and
+    numerical parity against ``Model.create_value_2d()``.
     The IRF path rewrites a resolved trace row in place via
     ``my_conv`` -- the same code MCP calls -- so tolerance matches the
     other OpKind parity tests.
     """
 
     #
-    def _make_irf_plan(self):
+    def _make_irf_plan(self, dyn_model="MonoExpPosIRF"):
         file, model = _make_2d_model(
             ["glp_only"],
-            [("GLP_01_A", ["MonoExpPosIRF"])],
+            [("GLP_01_A", [dyn_model])],
         )
         graph = build_graph(model)
         assert can_lower_2d(graph)
@@ -763,10 +786,6 @@ class TestDynamicsConvolution:
         n_kernel_params = int(plan.conv_param_indptr[1])
         assert n_kernel_params >= 1  # at least SD
         assert plan.conv_param_rows.shape == (n_kernel_params,)
-        assert plan.conv_support_indptr.shape == (2,)
-        assert plan.conv_support_indptr[0] == 0
-        n_support = int(plan.conv_support_indptr[1])
-        assert plan.conv_support_values.shape == (n_support,)
 
     #
     def test_conv_target_row_valid(self):
@@ -785,18 +804,30 @@ class TestDynamicsConvolution:
             assert 0 <= int(row) < plan.n_params
 
     #
-    def test_conv_support_frozen_from_kernel_time(self):
-        """Plan's conv support matches the CONVOLUTION node's kernel_time array."""
+    def test_conv_support_tracks_grown_kernel_width(self):
+        """Parity holds when the kernel width grows well past its init.
 
-        plan, graph, _model = self._make_irf_plan()
-        from trspecfit.graph_ir import NodeKind
+        Regression guard for the frozen-support bug: the kernel support
+        used to be sized once from the initial SD, silently truncating
+        the kernel (and breaking parity) once the fitted SD grew past
+        it.  Both paths now rebuild the support from the current value.
+        """
 
-        conv_nodes = [n for n in graph.nodes if n.kind == NodeKind.CONVOLUTION]
-        assert len(conv_nodes) == 1
-        expected = conv_nodes[0].arrays["kernel_time"]
-        start = int(plan.conv_support_indptr[0])
-        end = int(plan.conv_support_indptr[1])
-        np.testing.assert_array_equal(plan.conv_support_values[start:end], expected)
+        plan, _graph, model = self._make_irf_plan(dyn_model="MonoExpPosIRFNarrow")
+        theta = _compare_evaluator_vs_interpreter(model, plan)
+        sd_idx = plan.opt_param_names.index("GLP_01_A_gaussCONV_SD")
+        # Narrow SD init is 5e-2 on a dt=2.2 axis; +0.6 grows the support
+        # from a sub-sample kernel to a multi-sample one (within bounds)
+        _perturb_theta(plan, model, theta, [sd_idx], [0.6])
+
+        # interpreter side: the kernel axis was rebuilt to span the
+        # grown width (±4*SD for gaussCONV)
+        A_par = next(p for p in model.components[0].pars if p.name == "GLP_01_A")
+        assert A_par.t_model is not None  # type guard
+        conv_comp = next(c for c in A_par.t_model.components if c.comp_type == "conv")
+        assert conv_comp.time is not None  # type guard
+        SD_grown = theta[sd_idx] + 0.6
+        assert conv_comp.time.max() >= 4 * SD_grown
 
     #
     def test_conv_step_runs_after_dynamics(self):
@@ -837,7 +868,6 @@ class TestDynamicsConvolution:
         assert plan.conv_target_rows.shape == (0,)
         assert plan.conv_func_ids.shape == (0,)
         assert plan.conv_param_rows.shape == (0,)
-        assert plan.conv_support_values.shape == (0,)
         assert 2 not in plan.resolution_kinds.tolist()
 
     # Per-kernel parity: every lowerable kernel must match MCP at
@@ -1021,7 +1051,7 @@ class TestSubcycleDynamics:
         file.time = np.linspace(-10, 100, 51)
         file.load_model(model_yaml=_ENERGY_YAML, model_info=["offset_only"])
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
 
         file.add_time_dependence(
             target_model="offset_only",

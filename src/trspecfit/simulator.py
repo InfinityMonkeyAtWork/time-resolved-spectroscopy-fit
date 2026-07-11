@@ -60,7 +60,6 @@ from pathlib import Path
 from typing import cast
 
 import h5py
-import matplotlib.pyplot as plt
 import numpy as np
 
 from trspecfit.config.plot import PlotConfig
@@ -233,6 +232,7 @@ class Simulator:
         ------
         ValueError
             If detection type is invalid
+            If noise_type is invalid
             If counts_per_delay ≤ 0 (after estimation)
 
         Examples
@@ -261,7 +261,7 @@ class Simulator:
 
         # Analog detector parameters
         self.noise_level = noise_level
-        self.noise_type = noise_type.lower()
+        self.noise_type = self._validated_noise_type(noise_type)
 
         # Photon counting parameters
         self.counts_per_delay: int | None = counts_per_delay
@@ -285,6 +285,19 @@ class Simulator:
         self.data_clean: np.ndarray | None = None  # Without noise
         self.data_noisy: np.ndarray | None = None  # With noise
         self.noise: np.ndarray | None = None  # Just the noise component
+
+    #
+    @staticmethod
+    def _validated_noise_type(noise_type: str) -> str:
+        """Normalize and validate a noise_type string."""
+
+        noise_type = noise_type.lower()
+        if noise_type not in ("poisson", "gaussian", "none"):
+            raise ValueError(
+                f"Unknown noise type: {noise_type}. "
+                "Use 'poisson', 'gaussian', or 'none'"
+            )
+        return noise_type
 
     #
     def __repr__(self) -> str:
@@ -409,13 +422,9 @@ class Simulator:
 
         if self.detection == "analog":
             # Use traditional noise addition
-            if dim == 1:
-                noise = self._generate_noise_analog_1d(clean_data)
-            elif dim == 2:
-                noise = self._generate_noise_analog_2d(clean_data)
-            else:
+            if dim not in (1, 2):
                 raise ValueError(f"dim must be 1 or 2, got {dim}")
-
+            noise = self._generate_noise_analog(clean_data)
             noisy_data = clean_data + noise
 
         elif self.detection == "photon_counting":
@@ -766,9 +775,9 @@ class Simulator:
         return clean_data, noisy_data_list, noise_list
 
     #
-    def _generate_noise_analog_1d(self, signal: np.ndarray) -> np.ndarray:
+    def _generate_noise_analog(self, signal: np.ndarray) -> np.ndarray:
         """
-        Generate 1D noise array for analog detectors.
+        Generate noise array for analog detectors (1D or 2D signal).
 
         Parameters
         ----------
@@ -796,53 +805,6 @@ class Simulator:
 
             # Scale signal to photon counts (higher = less relative noise)
             scale_factor = 1.0 / (self.noise_level + 1e-10)  # Avoid division by zero
-            signal_scaled = signal_positive * scale_factor
-
-            # Generate Poisson noise
-            noisy_scaled = self.rng.poisson(signal_scaled)
-
-            # Scale back and compute noise component
-            signal_noisy = noisy_scaled / scale_factor
-            noise = signal_noisy - signal_positive
-
-            # Restore original sign
-            return cast("np.ndarray", noise * np.sign(signal))
-
-        raise ValueError(
-            f"Unknown noise type: {self.noise_type}. "
-            "Use 'poisson', 'gaussian', or 'none'"
-        )
-
-    #
-    def _generate_noise_analog_2d(self, signal: np.ndarray) -> np.ndarray:
-        """
-        Generate 2D noise array for analog detectors.
-
-        Parameters
-        ----------
-        signal : ndarray
-            Clean 2D signal array.
-
-        Returns
-        -------
-        ndarray
-            2D noise array with same shape as signal.
-        """
-
-        if self.noise_type == "none":
-            return np.zeros_like(signal)
-
-        if self.noise_type == "gaussian":
-            # Gaussian noise with amplitude proportional to noise_level
-            noise_amp = self.noise_level * np.max(np.abs(signal))
-            return cast("np.ndarray", self.rng.normal(0, noise_amp, signal.shape))
-
-        if self.noise_type == "poisson":
-            # Poisson noise: scale signal to photon counts, add noise, scale back
-            signal_positive = np.abs(signal)
-
-            # Scale signal to photon counts
-            scale_factor = 1.0 / (self.noise_level + 1e-10)
             signal_scaled = signal_positive * scale_factor
 
             # Generate Poisson noise
@@ -979,7 +941,7 @@ class Simulator:
         Parameters
         ----------
         noise_type : str
-            Noise distribution: ``'gaussian'`` or ``'uniform'``.
+            Noise distribution: ``'poisson'``, ``'gaussian'``, or ``'none'``.
         """
 
         if self.detection != "analog":
@@ -987,7 +949,7 @@ class Simulator:
                 "noise_type only applies to analog detection",
                 stacklevel=2,
             )
-        self.noise_type = noise_type.lower()
+        self.noise_type = self._validated_noise_type(noise_type)
 
     #
     def set_counts_per_delay(self, counts_per_delay: int) -> None:
@@ -1300,6 +1262,14 @@ class Simulator:
         get_snr : SNR calculation shown in title
         """
 
+        # auto-simulate before building the title: get_snr raises on a
+        # fresh Simulator with no simulated data
+        if self.data_clean is None:
+            if dim == 1:
+                self.simulate_1d(t_ind)
+            elif dim == 2:
+                self.simulate_2d()
+
         detection_str = f" [{self.detection}]"
         plt_title = (
             f"Simulated Data (SNR: {self.get_snr(scale=snr_scale):.1f}"
@@ -1307,8 +1277,6 @@ class Simulator:
         )
 
         if dim == 1:
-            if self.data_clean is None:
-                self.simulate_1d(t_ind)
             if self.data_clean is None or self.data_noisy is None or self.noise is None:
                 raise RuntimeError("Simulation data not available for plotting")
 
@@ -1333,8 +1301,6 @@ class Simulator:
             )
 
         elif dim == 2:
-            if self.data_clean is None:
-                self.simulate_2d()
             if self.data_clean is None or self.data_noisy is None or self.noise is None:
                 raise RuntimeError("Simulation data not available for plotting")
 
@@ -1343,42 +1309,14 @@ class Simulator:
             if plot_kwargs:
                 resolved_config = resolved_config.copy(**plot_kwargs)
 
-            # Create 3-panel plot
-            _fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-
-            panels = [
-                (self.data_clean, "Clean Model Data"),
-                (self.data_noisy, plt_title),
-                (self.noise, "Noise (Simulated - Clean)"),
-            ]
-            for ax, (data, title) in zip(axes, panels, strict=True):
-                im = ax.pcolormesh(
-                    self.model.energy,
-                    self.model.time,
-                    data,
-                    shading="nearest",
-                    cmap=resolved_config.z_colormap,
-                )
-                ax.set_title(title)
-                ax.set_xlabel(resolved_config.x_label)
-                ax.set_ylabel(resolved_config.y_label)
-                if resolved_config.ticksize is not None:
-                    ax.tick_params(labelsize=resolved_config.ticksize)
-                uplt._apply_axis_settings(
-                    ax,
-                    x_type=resolved_config.x_type,
-                    x_dir=resolved_config.x_dir,
-                    y_type=resolved_config.y_type,
-                    y_dir=resolved_config.y_dir,
-                    x_lim=resolved_config.x_lim,
-                    y_lim=resolved_config.y_lim,
-                )
-                plt.colorbar(im, ax=ax)
-
-            plt.tight_layout()
-            uplt._finalize_plot(
+            uplt.plot_2d_grid(
+                [self.data_clean, self.data_noisy, self.noise],
+                x=self.model.energy,
+                y=self.model.time,
+                titles=["Clean Model Data", plt_title, "Noise (Simulated - Clean)"],
+                config=resolved_config,
+                columns=3,
                 save_img=save_img,
-                save_path="",
                 dpi_save=resolved_config.dpi_save,
             )
 
@@ -1603,6 +1541,50 @@ class Simulator:
             print(f"Data saved to: {filepath}")
 
     #
+    def _write_axes_hdf5(self, f: h5py.File) -> None:
+        """Write energy and time axes at the file root (empty time if 1D)."""
+
+        f.create_dataset("energy", data=self.model.energy)
+        if self.model.time is not None and len(self.model.time) > 0:
+            f.create_dataset("time", data=self.model.time)
+        else:
+            f.create_dataset("time", data=np.array([]))
+
+    #
+    def _write_detection_metadata(self, meta: h5py.Group) -> None:
+        """Write detection/noise settings and seed as metadata attributes."""
+
+        meta.attrs["detection"] = self.detection
+        if self.detection == "analog":
+            meta.attrs["noise_level"] = self.noise_level
+            meta.attrs["noise_type"] = self.noise_type
+        elif self.detection == "photon_counting":
+            meta.attrs["counts_per_delay"] = self.counts_per_delay
+            if self.count_rate is not None:
+                meta.attrs["count_rate"] = self.count_rate
+            if self.integration_time is not None:
+                meta.attrs["integration_time"] = self.integration_time
+
+        if self.seed is not None:
+            meta.attrs["seed"] = self.seed
+
+    #
+    def _model_parameters_json(self) -> str:
+        """Serialize the model's lmfit parameters (full spec) to JSON."""
+
+        params_dict = {}
+        for par_name in self.model.lmfit_pars:
+            par = self.model.lmfit_pars[par_name]
+            params_dict[par_name] = {
+                "value": float(par.value),
+                "vary": bool(par.vary),
+                "min": float(par.min) if par.min is not None else None,
+                "max": float(par.max) if par.max is not None else None,
+                "expr": par.expr or None,
+            }
+        return json.dumps(params_dict, indent=2)
+
+    #
     def _save_hdf5(self, filepath: str, n_data: list[np.ndarray] | None = None) -> None:
         """
         Save data to HDF5 format with proper structure
@@ -1619,14 +1601,7 @@ class Simulator:
 
         with h5py.File(filepath, "w") as f:
             # Save axes at root level
-            f.create_dataset("energy", data=self.model.energy)
-
-            # Handle time axis - check if it exists and has valid data
-            if self.model.time is not None and len(self.model.time) > 0:
-                f.create_dataset("time", data=self.model.time)
-            else:
-                # For 1D simulations, save empty array
-                f.create_dataset("time", data=np.array([]))
+            self._write_axes_hdf5(f)
 
             # Save clean data at root level
             if self.data_clean is not None:
@@ -1647,21 +1622,7 @@ class Simulator:
 
             # Save metadata group at root level
             meta = f.create_group("metadata")
-            meta.attrs["detection"] = self.detection
-
-            # Save detection-specific parameters
-            if self.detection == "analog":
-                meta.attrs["noise_level"] = self.noise_level
-                meta.attrs["noise_type"] = self.noise_type
-            elif self.detection == "photon_counting":
-                meta.attrs["counts_per_delay"] = self.counts_per_delay
-                if self.count_rate is not None:
-                    meta.attrs["count_rate"] = self.count_rate
-                if self.integration_time is not None:
-                    meta.attrs["integration_time"] = self.integration_time
-
-            if self.seed is not None:
-                meta.attrs["seed"] = self.seed
+            self._write_detection_metadata(meta)
 
             # Determine dimensionality from clean data
             if self.data_clean is not None:
@@ -1677,19 +1638,7 @@ class Simulator:
                 meta.attrs["n_datasets"] = 1
 
             # Save model parameters as JSON in metadata
-            params_dict = {}
-            for par_name in self.model.lmfit_pars:
-                par = self.model.lmfit_pars[par_name]
-                params_dict[par_name] = {
-                    "value": float(par.value),
-                    "vary": bool(par.vary),
-                    "min": float(par.min) if par.min is not None else None,
-                    "max": float(par.max) if par.max is not None else None,
-                    "expr": par.expr or None,
-                }
-
-            # Save as JSON string in metadata
-            meta.attrs["model_parameters"] = json.dumps(params_dict, indent=2)
+            meta.attrs["model_parameters"] = self._model_parameters_json()
             meta.attrs["model_name"] = self.model.name
 
     #
@@ -1792,42 +1741,48 @@ class Simulator:
                 f"  Output file: {filepath}\n"
             )
 
-        # Initialize HDF5 file with structure
-        self._initialize_sweep_hdf5(
-            filepath, parameter_sweep, n_realizations, n_configs, dim
-        )
-
-        # Process each configuration
-        for config_idx, param_config in enumerate(parameter_sweep):
-            if show_progress:
-                # Format parameters nicely
-                param_str = ", ".join(f"{k}={v:.3g}" for k, v in param_config.items())
-                print(
-                    f"Processing config {config_idx + 1}/{n_configs}: {{{param_str}}}"
-                )
-
-            # Update model parameters
-            param_names = list(param_config.keys())
-            param_values = list(param_config.values())
-            self.model.update_value(param_values, par_select=param_names)
-
-            # Generate noisy realizations for this config
-            clean, noisy_list, _noise_list = self.simulate_n(
-                n=n_realizations,
-                dim=dim,
-                show_progress=False,  # Don't clutter output
+        # Keep the file open for the whole sweep (per-config open/close is
+        # costly for large sweeps); each config is flushed after appending
+        with h5py.File(filepath, "w") as f:
+            # Initialize HDF5 file with structure
+            self._initialize_sweep_hdf5(
+                f, parameter_sweep, n_realizations, n_configs, dim
             )
 
-            # Append to HDF5 immediately (memory-efficient)
-            self._append_config_to_hdf5(
-                filepath, config_idx, param_config, clean, noisy_list
-            )
+            # Process each configuration
+            for config_idx, param_config in enumerate(parameter_sweep):
+                if show_progress:
+                    # Format parameters nicely
+                    param_str = ", ".join(
+                        f"{k}={v:.3g}" for k, v in param_config.items()
+                    )
+                    print(
+                        f"Processing config {config_idx + 1}/{n_configs}:"
+                        f" {{{param_str}}}"
+                    )
 
-            if show_progress:
-                print(
-                    f"  ✓ Saved config {config_idx + 1}"
-                    f" with {n_realizations} realizations"
+                # Update model parameters
+                param_names = list(param_config.keys())
+                param_values = list(param_config.values())
+                self.model.update_value(param_values, par_select=param_names)
+
+                # Generate noisy realizations for this config
+                clean, noisy_list, _noise_list = self.simulate_n(
+                    n=n_realizations,
+                    dim=dim,
+                    show_progress=False,  # Don't clutter output
                 )
+
+                # Append to HDF5 immediately (memory-efficient)
+                self._append_config_to_hdf5(
+                    f, config_idx, param_config, clean, noisy_list
+                )
+
+                if show_progress:
+                    print(
+                        f"  ✓ Saved config {config_idx + 1}"
+                        f" with {n_realizations} realizations"
+                    )
 
         if show_progress:
             print(
@@ -1842,7 +1797,7 @@ class Simulator:
     #
     def _initialize_sweep_hdf5(
         self,
-        filepath: str,
+        f: h5py.File,
         parameter_sweep: ParameterSweep,
         n_realizations: int,
         n_configs: int,
@@ -1876,8 +1831,8 @@ class Simulator:
 
         Parameters
         ----------
-        filepath : str
-            Path to HDF5 file to create
+        f : h5py.File
+            Freshly created HDF5 file, open for writing
         parameter_sweep : ParameterSweep
             Parameter sweep object (for metadata)
         n_realizations : int
@@ -1888,77 +1843,50 @@ class Simulator:
             Dimensionality of simulated data
         """
 
-        with h5py.File(filepath, "w") as f:
-            # Save axes (same for all configs)
-            f.create_dataset("energy", data=self.model.energy)
-            if self.model.time is not None and len(self.model.time) > 0:
-                f.create_dataset("time", data=self.model.time)
-            else:
-                f.create_dataset("time", data=np.array([]))
+        # Save axes (same for all configs)
+        self._write_axes_hdf5(f)
 
-            # Create groups for organization
-            f.create_group("parameter_configs")
-            f.create_group("simulated_data")
+        # Create groups for organization
+        f.create_group("parameter_configs")
+        f.create_group("simulated_data")
 
-            # Save sweep metadata
-            meta = f.create_group("metadata")
-            meta.attrs["n_configs"] = n_configs
-            meta.attrs["n_realizations_per_config"] = n_realizations
-            meta.attrs["total_datasets"] = n_configs * n_realizations
+        # Save sweep metadata
+        meta = f.create_group("metadata")
+        meta.attrs["n_configs"] = n_configs
+        meta.attrs["n_realizations_per_config"] = n_realizations
+        meta.attrs["total_datasets"] = n_configs * n_realizations
 
-            # Simulator settings
-            meta.attrs["detection"] = self.detection
-            if self.detection == "analog":
-                meta.attrs["noise_level"] = self.noise_level
-                meta.attrs["noise_type"] = self.noise_type
-            elif self.detection == "photon_counting":
-                meta.attrs["counts_per_delay"] = self.counts_per_delay
-                if self.count_rate is not None:
-                    meta.attrs["count_rate"] = self.count_rate
-                if self.integration_time is not None:
-                    meta.attrs["integration_time"] = self.integration_time
+        # Simulator settings
+        self._write_detection_metadata(meta)
 
-            if self.seed is not None:
-                meta.attrs["seed"] = self.seed
+        # Parameter sweep settings
+        meta.attrs["sweep_strategy"] = parameter_sweep.strategy
+        meta.attrs["sweep_seed"] = (
+            "None" if parameter_sweep.seed is None else parameter_sweep.seed
+        )
 
-            # Parameter sweep settings
-            meta.attrs["sweep_strategy"] = parameter_sweep.strategy
-            meta.attrs["sweep_seed"] = (
-                "None" if parameter_sweep.seed is None else parameter_sweep.seed
-            )
+        # Save parameter space definition as JSON
+        param_space = {}
+        for par_name, spec in parameter_sweep.parameter_specs.items():
+            # Convert numpy arrays to lists for JSON serialization
+            spec_copy = spec.copy()
+            if "values" in spec_copy:
+                spec_copy["values"] = spec_copy["values"].tolist()
+            param_space[par_name] = spec_copy
 
-            # Save parameter space definition as JSON
-            param_space = {}
-            for par_name, spec in parameter_sweep.parameter_specs.items():
-                # Convert numpy arrays to lists for JSON serialization
-                spec_copy = spec.copy()
-                if "values" in spec_copy:
-                    spec_copy["values"] = spec_copy["values"].tolist()
-                param_space[par_name] = spec_copy
+        meta.attrs["parameter_space"] = json.dumps(param_space, indent=2)
 
-            meta.attrs["parameter_space"] = json.dumps(param_space, indent=2)
+        # Save full model definition once (static across all configs)
+        meta.attrs["model_parameters"] = self._model_parameters_json()
+        meta.attrs["model_name"] = self.model.name
 
-            # Save full model definition once (static across all configs)
-            model_params = {}
-            for par_name in self.model.lmfit_pars:
-                par = self.model.lmfit_pars[par_name]
-                model_params[par_name] = {
-                    "value": float(par.value),
-                    "vary": bool(par.vary),
-                    "min": float(par.min) if par.min is not None else None,
-                    "max": float(par.max) if par.max is not None else None,
-                    "expr": par.expr or None,
-                }
-            meta.attrs["model_parameters"] = json.dumps(model_params, indent=2)
-            meta.attrs["model_name"] = self.model.name
-
-            # Dimension matches the actual data written, not model capability
-            meta.attrs["dimension"] = dim
+        # Dimension matches the actual data written, not model capability
+        meta.attrs["dimension"] = dim
 
     #
     def _append_config_to_hdf5(
         self,
-        filepath: str,
+        f: h5py.File,
         config_idx: int,
         param_config: dict[str, float],
         clean: np.ndarray,
@@ -1969,8 +1897,8 @@ class Simulator:
 
         Parameters
         ----------
-        filepath : str
-            Path to HDF5 file
+        f : h5py.File
+            Sweep HDF5 file, open for writing
         config_idx : int
             Configuration index (for naming)
         param_config : dict
@@ -1981,28 +1909,30 @@ class Simulator:
             List of noisy realizations
         """
 
-        with h5py.File(filepath, "a") as f:
-            # Create group for this configuration
-            config_name = f"config_{config_idx:06d}"
-            configs_group = require_group(f["parameter_configs"], "parameter_configs")
-            config_group = configs_group.create_group(config_name)
+        # Create group for this configuration
+        config_name = f"config_{config_idx:06d}"
+        configs_group = require_group(f["parameter_configs"], "parameter_configs")
+        config_group = configs_group.create_group(config_name)
 
-            # Save swept parameters as attributes
-            for par_name, value in param_config.items():
-                config_group.attrs[par_name] = float(value)
+        # Save swept parameters as attributes
+        for par_name, value in param_config.items():
+            config_group.attrs[par_name] = float(value)
 
-            # Save all parameter values for this config (full model state)
-            param_values = {
-                par_name: float(self.model.lmfit_pars[par_name].value)
-                for par_name in self.model.lmfit_pars
-            }
-            config_group.attrs["all_parameter_values"] = json.dumps(param_values)
+        # Save all parameter values for this config (full model state)
+        param_values = {
+            par_name: float(self.model.lmfit_pars[par_name].value)
+            for par_name in self.model.lmfit_pars
+        }
+        config_group.attrs["all_parameter_values"] = json.dumps(param_values)
 
-            # Save clean data for this configuration
-            config_group.create_dataset("clean", data=clean)
+        # Save clean data for this configuration
+        config_group.create_dataset("clean", data=clean)
 
-            # Save noisy realizations
-            simulated_group = require_group(f["simulated_data"], "simulated_data")
-            data_group = simulated_group.create_group(config_name)
-            for real_idx, noisy_data in enumerate(noisy_list):
-                data_group.create_dataset(f"{real_idx:06d}", data=noisy_data)
+        # Save noisy realizations
+        simulated_group = require_group(f["simulated_data"], "simulated_data")
+        data_group = simulated_group.create_group(config_name)
+        for real_idx, noisy_data in enumerate(noisy_list):
+            data_group.create_dataset(f"{real_idx:06d}", data=noisy_data)
+
+        # Completed configs stay on disk if the sweep is interrupted
+        f.flush()

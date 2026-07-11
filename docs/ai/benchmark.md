@@ -90,7 +90,7 @@ The report separates the two failure signals:
   reached the same optimum. Nonzero spread here indicates a flat objective
   direction (the parameter is not identifiable from the data) or
   init-dependent machinery: state derived once from initial parameter values
-  and never rebuilt during the fit, such as a convolution-kernel support.
+  and never rebuilt during the fit.
   Parameters above 1% relative spread are flagged `start-sensitive`.
 
 This is a diagnostic, not a pass/fail test — it deliberately lives here rather

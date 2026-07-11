@@ -1,6 +1,7 @@
 # General behavior
 
 - **Confidence Rule:** Do not make changes until you have 95% confidence. Understand the relevant files before editing and ask follow-up questions until you reach this threshold or when tradeoffs are non-obvious.
+- **Commits:** Never commit or rewrite history unless explicitly asked. Always show the exact commit message and wait for approval before committing. Never add AI attribution trailers (`Co-Authored-By` etc.) to commit messages.
 - **Context Discipline:** Monitor context usage. At 60% usage (or if it starts getting tight), summarize progress and prompt me to `/compact` or `/clear`.
 - **Token Efficiency:** Be concise. Reference file paths and line numbers rather than quoting large code blocks.
 - **Subagent Protocol:** Use subagents for repo-wide scans, parallel research, or scanning large directories. Instruct them to return only concise summaries to keep the main context window lean.
@@ -41,7 +42,7 @@
 - **Pattern:** Use plain pytest. Avoid `unittest.TestCase` and fixtures; prefer explicit helper builders named by intent.
 - **API Usage:** Use the public API (`Project`, `File.load_model`, etc.) in tests to avoid masking bugs by skipping validation or setup. Use internals only for pure-math unit tests or explicit invariant checks.
 - **Execution:** Run `pytest -q`. Keep YAML test assets in `tests/models/`.
-- **Plots:** Always suppress plot display in tests: pass `show_plot=False` where available, or `save_img=-2`.
+- **Plots:** Always suppress plot display in tests: pass `show_plot=False` where available, or `save_img=-2`. Exception: figure-inspection tests that assert on the live axes cannot pass `save_img=-2` (it closes the figure); they rely on the module-level Agg backend and must call `plt.close("all")` after the assertions.
 - **Type Guards:** When `assert x is not None` narrows an `X | None` type, add a `# type guard` comment.
 - **Variable Naming:** For variables derived from registry parameters or components, keep original casing (e.g., `SD = 2.0`, `c_Shirley = Component("Shirley")`). Name derived variables as `{par}_{qualifier}` (e.g., `A_early`, `mean_A`).
 

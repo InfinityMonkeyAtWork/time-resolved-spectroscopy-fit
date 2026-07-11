@@ -640,7 +640,16 @@ class Model:
             )
 
         # add Dynamics model and update corresponding parameter
-        target_par.update(dynamics_model)
+        try:
+            target_par.update(dynamics_model)
+        except NameError as e:
+            # lmfit evaluates dynamics expressions in the dynamics model's
+            # own parameter namespace; unknown names surface as NameError
+            raise ValueError(
+                f'Dynamics model for "{dynamics_model.name}" references an '
+                f"unknown parameter ({e}). Expressions in a dynamics model "
+                "can only reference parameters of that same dynamics model."
+            ) from e
         # update model lmfit_par_list, parameter_names and components
         self.update()
 
@@ -987,10 +996,12 @@ class Model:
         if self.time is None or self.energy is None:
             raise ValueError("Model time and energy axes required for 2D evaluation")
 
+        t_start = 0 if t_ind is None else t_ind[0]
         time_slice = self.time if t_ind is None else self.time[t_ind[0] : t_ind[1]]
         self.value_2d = np.empty((len(time_slice), len(self.energy)))
         for ti, _t in enumerate(time_slice):
-            val = self.create_value_1d(t_ind=ti, return_1d=1)
+            # create_value_1d expects an absolute index into self.time
+            val = self.create_value_1d(t_ind=t_start + ti, return_1d=1)
             if val is None:
                 raise RuntimeError("create_value_1d returned None during 2D eval")
             self.value_2d[ti, :] = val
@@ -1617,13 +1628,20 @@ class Component:
             print()
 
     #
-    def create_t_kernel(self) -> np.ndarray:
+    def create_t_kernel(self, *, par_values: list[Any] | None = None) -> np.ndarray:
         """
         Create time axis for convolution kernel.
 
         Convolution kernels need a time axis that extends beyond the data
         time axis to properly handle edge effects. This method creates an
         appropriately sized kernel axis based on the kernel width.
+
+        Parameters
+        ----------
+        par_values : list, optional
+            Current kernel parameter values. Defaults to the initial
+            values from par_dict (model construction). Component.value
+            passes the live values so the support tracks the fitted width.
 
         Returns
         -------
@@ -1632,15 +1650,24 @@ class Component:
         """
 
         # get kernel parameters i.e. component parameters
-        par_k = cast("list[Any]", ulmfit.par_extract(self.par_dict, return_type="list"))
+        if par_values is None:
+            par_values = cast(
+                "list[Any]", ulmfit.par_extract(self.par_dict, return_type="list")
+            )
         # define kernel time axis. Kernel-width helpers may inspect the
         # full parameter list for multi-parameter kernels such as Voigt.
-        kernel_width = getattr(fcts_time, self.fct_str + "_kernel_width")(*par_k)
-        t_range = par_k[0] * kernel_width
-        if self.time is None or len(self.time) < 2:
+        kernel_width = getattr(fcts_time, self.fct_str + "_kernel_width")(*par_values)
+        t_range = par_values[0] * kernel_width
+        if self.time is None:
             raise ValueError(f"time axis of component {self.fct_str} not defined")
+        if len(self.time) < 2:
+            raise ValueError(
+                f"Convolution component {self.fct_str} requires a time axis "
+                f"with at least 2 points to determine the kernel step size, "
+                f"got {len(self.time)}."
+            )
         t_step = self.time[1] - self.time[0]
-        return np.arange(-t_range, t_range + t_step, t_step)
+        return uarr.conv_kernel_support(t_range, t_step)
 
     #
     def value(self, t_ind: int = 0, **kwargs) -> np.ndarray:
@@ -1711,6 +1738,11 @@ class Component:
                 raise ValueError(
                     f"Time axis not defined for component '{self.comp_name}'"
                 )
+            # conv kernels: rebuild the support from the current parameter
+            # values so the axis tracks the fitted width (a frozen support
+            # would truncate the kernel once the width grows past its init)
+            if self.comp_type == "conv":
+                self.time = self.create_t_kernel(par_values=pars)
             if self.subcycle == 0:  # single cycle
                 return np.asarray(self.fct(self.time, *pars, **kwargs))
             # multi-cycle
@@ -2231,8 +2263,10 @@ class Par:
             value = float(base[0] + self.t_model.value_1d[t_ind])
 
         else:
-            value = -1.0
-            print(f't_vary attribute of Par "{self.name}" is not valid')
+            raise RuntimeError(
+                f'Par "{self.name}" has t_vary set but no t_model attached; '
+                "add time dependence via File.add_time_dependence."
+            )
 
         return value
 

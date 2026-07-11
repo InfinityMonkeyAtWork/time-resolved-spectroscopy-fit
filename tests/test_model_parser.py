@@ -231,7 +231,7 @@ class TestTimeParsing:
         # check the components
         assert model.components[0].fct_str == "gaussCONV"
         assert model.components[0].comp_name == "gaussCONV"
-        assert model.components[0].par_dict["SD"] == [5.0e-2, True, 0, 1]
+        assert model.components[0].par_dict["SD"] == [0.4, True, 0, 1]
 
         assert model.components[1].fct_str == "expFun"
         assert model.components[1].comp_name == "expFun_01"
@@ -342,7 +342,7 @@ class Test2DModelParsing:
         td_par_model = model.components[2].pars[1].t_model
         assert td_par_model is not None  # type guard
         assert td_par_model.components[0].comp_name == "gaussCONV"
-        assert td_par_model.components[0].par_dict["SD"] == [5.0e-2, True, 0, 1]
+        assert td_par_model.components[0].par_dict["SD"] == [0.4, True, 0, 1]
         assert td_par_model.components[1].fct_str == "expFun"
         assert td_par_model.components[1].comp_name == "expFun_01"
         assert td_par_model.components[1].par_dict["A"] == [1, True, 0, 5]
@@ -395,6 +395,28 @@ class Test2DModelParsing:
                 target_parameter="GLP_01_A",
                 dynamics_yaml="models/file_time.yaml",
                 dynamics_model=["MonoExpPos"],
+            )
+
+    #
+    def test_dynamics_expression_cross_model_reference_raises(self):
+        """Dynamics expressions cannot reference energy-model parameters.
+
+        The lowered evaluator reads dynamics params as t=0 scalars
+        (eval_2d.resolve_param_traces); that is only exact because rows
+        feeding a dynamics substep are time-constant by construction. This
+        test pins the authoring-time rejection that guarantees it — if
+        cross-model references are ever allowed, the t=0 reads must be
+        revisited.
+        """
+
+        file = self._make_file_with_energy_model(model_energy=["simple_energy"])
+
+        with pytest.raises(ValueError, match="references an unknown parameter"):
+            file.add_time_dependence(
+                target_model="simple_energy",
+                target_parameter="GLP_01_A",
+                dynamics_yaml="models/file_time.yaml",
+                dynamics_model=["CrossModelExpr"],
             )
 
 

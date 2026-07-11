@@ -31,6 +31,38 @@ For each item report one of:
 Work through the checklist in order. Use parallel agent/tool calls where items
 are independent.
 
+## Full-scope protocol
+
+For `full` runs (all of `src/`, ~24k lines — too much for one honest pass),
+split the work as follows:
+
+- **Repo-wide grep checks** — items 3 (broad exceptions), 5 (dead code),
+  6 (typing), 9 (numpy anti-patterns), 10 (float `==`), 11 (ignored
+  warnings), 15 (global state), and 16 (security) run **once globally**
+  in a single grep session, with findings binned by file. They are cheap;
+  chunking them would duplicate work.
+- **Read-the-code checks** — items 1, 2, 4, 7, 8, 12, 13, 14, 18, 19,
+  and 20 run **per chunk** via parallel subagents. Chunks follow the
+  two-layer architecture (see `docs/design/repo_architecture.md`):
+  - A. Authoring layer: `trspecfit.py`, `mcp.py`, `utils/parsing.py`
+  - B. Compiled hot path: `graph_ir.py`, `eval_1d.py`, `eval_2d.py`,
+    `functions/` (checks 18–20 concentrate here)
+  - C. Fitting & bridge: `fitlib.py`, `spectra.py`, `utils/lmfit.py`,
+    `utils/sbs.py`
+  - D. Persistence & results: `utils/fit_io.py`, `fit_results.py`,
+    `utils/hdf5.py`
+  - E. Simulation, plotting, config: `simulator.py`, `utils/sweep.py`,
+    `utils/plot.py`, `utils/arrays.py`, `config/`
+  - F. Tests light pass: check 17 plus CLAUDE.md test-pattern rules
+    (plain pytest, public API usage, `show_plot=False`), and
+    verification that parity coverage claimed in chunk B exists in
+    `tests/test_gir_integration.py`. Runs after B.
+- Each subagent returns only concise findings: file:line, severity
+  (PASS/INFO/WARN/FAIL), one-line description.
+- Findings are collected into a report file (e.g.
+  `docs/design/code-review-<date>.md`) for triage — never fixed inline
+  during the review.
+
 ## 1. Bugs and correctness
 
 Read the code in scope looking for:

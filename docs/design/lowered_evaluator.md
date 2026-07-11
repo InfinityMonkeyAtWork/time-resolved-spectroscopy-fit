@@ -199,7 +199,6 @@ class GraphNode:
                                     #   SUBCYCLE_MASK: {"time_n_sub": array}
                                     #   SUBCYCLE_REMAP: {"time_norm": array}
                                     #   PROFILE_SAMPLE: {"aux_axis": array}
-                                    #   CONVOLUTION: {"kernel_time": array}
                                     # Empty dict for nodes that need no array payload.
                                     # This is graph-level data, not backend-specific --
                                     # the scheduler copies what it needs into the plan.

@@ -344,7 +344,7 @@ class TestMCPDynamics:
         t_mod.add_components([c_irf])
 
         # Support should span the larger of 12*SD and 10*W.
-        assert c_irf.time is not None
+        assert c_irf.time is not None  # type guard
         assert c_irf.time[0] == pytest.approx(-40.0)
         assert c_irf.time[-1] == pytest.approx(40.0)
 

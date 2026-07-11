@@ -28,6 +28,17 @@ _ENERGY_YAML = "models/eval_2d_energy.yaml"
 _TIME_YAML = "models/file_time.yaml"
 _PROFILE_YAML = "models/file_profile.yaml"
 
+# One dynamics model per lowerable convolution kernel.
+_IRF_KERNEL_MODELS = [
+    "MonoExpPosIRF",
+    "MonoExpPosLorentzIRF",
+    "MonoExpPosVoigtIRF",
+    "MonoExpPosExpSymIRF",
+    "MonoExpPosExpDecayIRF",
+    "MonoExpPosExpRiseIRF",
+    "MonoExpPosBoxIRF",
+]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -54,7 +65,7 @@ def _make_2d_model(project, model_info, dynamics_params, *, frequency=None):
     file.time = np.linspace(-10, 100, 51)
     file.load_model(model_yaml=_ENERGY_YAML, model_info=model_info)
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
 
     for target_par, dyn_model in dynamics_params:
         kwargs = {
@@ -88,7 +99,7 @@ def _make_1d_profile_model(project, model_info, profiles):
             profile_model=profile_model,
         )
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
     return file, model
 
 
@@ -121,7 +132,7 @@ def _make_2d_profile_model(project, model_info, dynamics_params, profiles):
         )
 
     model = file.model_active
-    assert model is not None
+    assert model is not None  # type guard
     return file, model
 
 
@@ -217,7 +228,7 @@ class TestGIRDispatch:
         file = File(parent_project=project, energy=np.linspace(80, 90, 101))
         file.load_model(model_yaml=_ENERGY_YAML, model_info=["glp_only"])
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
 
         graph = build_graph(model)
         assert can_lower_1d(graph)
@@ -298,7 +309,7 @@ class TestGIRDispatch:
         file = File(parent_project=project, energy=np.linspace(80, 90, 101))
         file.load_model(model_yaml=_ENERGY_YAML, model_info=["offset_only"])
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
 
         graph = build_graph(model)
         plan = schedule_1d(graph)
@@ -322,7 +333,7 @@ class TestGIRDispatch:
         file = File(parent_project=project, energy=np.linspace(80, 90, 101))
         file.load_model(model_yaml=_ENERGY_YAML, model_info=["glp_only"])
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
 
         par = _extract_par_list(model)
         # Pass (model, dim=1) — no plan → delegates to MCP
@@ -349,7 +360,7 @@ class TestGIRvsInterpreter:
 
         # Generate synthetic data from the model
         model.create_value_2d()
-        assert model.value_2d is not None
+        assert model.value_2d is not None  # type guard
         data = model.value_2d + 0.01  # small offset so residual is non-zero
 
         # Compile GIR path
@@ -421,7 +432,7 @@ class TestGIRvsInterpreter:
         )
 
         model.create_value_2d()
-        assert model.value_2d is not None
+        assert model.value_2d is not None  # type guard
         data = model.value_2d + 0.01
 
         graph = build_graph(model)
@@ -458,18 +469,7 @@ class TestGIRvsInterpreter:
         np.testing.assert_allclose(res_gir, res_mcp, rtol=1e-10, atol=1e-10)
 
     #
-    @pytest.mark.parametrize(
-        "dyn_model",
-        [
-            "MonoExpPosIRF",
-            "MonoExpPosLorentzIRF",
-            "MonoExpPosVoigtIRF",
-            "MonoExpPosExpSymIRF",
-            "MonoExpPosExpDecayIRF",
-            "MonoExpPosExpRiseIRF",
-            "MonoExpPosBoxIRF",
-        ],
-    )
+    @pytest.mark.parametrize("dyn_model", _IRF_KERNEL_MODELS)
     def test_residual_same_gir_vs_mcp_irf(self, dyn_model):
         """residual_fun parity for IRF / CONVOLUTION dynamics across all
         lowerable kernel functions.
@@ -483,7 +483,7 @@ class TestGIRvsInterpreter:
         )
 
         model.create_value_2d()
-        assert model.value_2d is not None
+        assert model.value_2d is not None  # type guard
         data = model.value_2d + 0.01
 
         graph = build_graph(model)
@@ -515,14 +515,15 @@ class TestGIRvsInterpreter:
         np.testing.assert_allclose(res_gir, res_mcp, rtol=1e-10, atol=1e-10)
 
     #
-    def test_compare_mode_irf(self):
+    @pytest.mark.parametrize("dyn_model", _IRF_KERNEL_MODELS)
+    def test_compare_mode_irf(self, dyn_model):
         """fit_model_compare exercises both paths for an IRF 2D fit."""
 
         project = _make_project(spec_fun_str="fit_model_compare")
         file, model = _make_2d_model(
             project,
             ["glp_only"],
-            [("GLP_01_A", ["MonoExpPosIRF"])],
+            [("GLP_01_A", [dyn_model])],
         )
 
         graph = build_graph(model)
@@ -553,7 +554,7 @@ class TestGIRvsInterpreter:
         )
 
         model.create_value_2d()
-        assert model.value_2d is not None
+        assert model.value_2d is not None  # type guard
         data = model.value_2d + 0.01
 
         graph = build_graph(model)
@@ -606,6 +607,178 @@ class TestGIRvsInterpreter:
             file.energy, par, True, plan, theta_indices, model, 2
         )
         assert result.shape == (len(file.time), len(file.energy))
+
+    #
+    @pytest.mark.parametrize(
+        "model_info,target_par",
+        [
+            (["gauss_asym_only"], "GaussAsym_01_A"),
+            (["lorentz_only"], "Lorentz_01_A"),
+            (["voigt_only"], "Voigt_01_A"),
+            (["gls_only"], "GLS_01_A"),
+            (["ds_only"], "DS_01_A"),
+            (["linback_peak"], "GLP_01_A"),
+            (["shirley_peak"], "GLP_01_A"),
+        ],
+    )
+    def test_compare_mode_energy_shapes(self, model_info, target_par):
+        """Every lowerable energy shape matches GIR vs MCP through the
+        compare pipeline (with dynamics attached), not just at the
+        evaluator level.
+        """
+
+        project = _make_project(spec_fun_str="fit_model_compare")
+        file, model = _make_2d_model(
+            project,
+            model_info,
+            [(target_par, ["MonoExpPos"])],
+        )
+
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        name_to_idx = {n: i for i, n in enumerate(model.parameter_names)}
+        theta_indices = np.array(
+            [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
+        )
+        par = _extract_par_list(model)
+
+        result = spectra.fit_model_compare(
+            file.energy, par, True, plan, theta_indices, model, 2
+        )
+        assert result.shape == (len(file.time), len(file.energy))
+
+    #
+    @pytest.mark.parametrize(
+        "dyn_model",
+        ["MonoStep", "MonoSin", "MonoLin", "MonoSinDivX", "MonoErf", "MonoSqrt"],
+    )
+    def test_residual_same_gir_vs_mcp_dynamics(self, dyn_model):
+        """residual_fun parity across all non-exp dynamics functions
+        (only expFun had parity coverage; the others had pure-math tests).
+        """
+
+        project = _make_project()
+        file, model = _make_2d_model(
+            project,
+            ["glp_only"],
+            [("GLP_01_A", [dyn_model])],
+        )
+
+        model.create_value_2d()
+        assert model.value_2d is not None  # type guard
+        data = model.value_2d + 0.01
+
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        name_to_idx = {n: i for i, n in enumerate(model.parameter_names)}
+        theta_indices = np.array(
+            [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
+        )
+
+        par = model.lmfit_pars
+        res_gir = fitlib.residual_fun(
+            par=par,
+            x=file.energy,
+            data=data,
+            fit_fun_str="fit_model_gir",
+            args=(plan, theta_indices, model, 2),
+        )
+        res_mcp = fitlib.residual_fun(
+            par=par,
+            x=file.energy,
+            data=data,
+            fit_fun_str="fit_model_mcp",
+            args=(model, 2),
+        )
+        np.testing.assert_allclose(res_gir, res_mcp, rtol=1e-10, atol=1e-10)
+
+    #
+    def test_residual_same_gir_vs_mcp_multi_substep_single_cycle(self):
+        """Multi-substep dynamics without subcycles (frequency omitted)
+        match through the residual pipeline.
+        """
+
+        project = _make_project()
+        file, model = _make_2d_model(
+            project,
+            ["glp_only"],
+            [("GLP_01_A", ["BiExpSharedT0"])],
+        )
+
+        model.create_value_2d()
+        assert model.value_2d is not None  # type guard
+        data = model.value_2d + 0.01
+
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        assert plan.n_dyn_groups == 1  # two substeps, one group, no subcycle
+        name_to_idx = {n: i for i, n in enumerate(model.parameter_names)}
+        theta_indices = np.array(
+            [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
+        )
+
+        par = model.lmfit_pars
+        res_gir = fitlib.residual_fun(
+            par=par,
+            x=file.energy,
+            data=data,
+            fit_fun_str="fit_model_gir",
+            args=(plan, theta_indices, model, 2),
+        )
+        res_mcp = fitlib.residual_fun(
+            par=par,
+            x=file.energy,
+            data=data,
+            fit_fun_str="fit_model_mcp",
+            args=(model, 2),
+        )
+        np.testing.assert_allclose(res_gir, res_mcp, rtol=1e-10, atol=1e-10)
+
+    #
+    def test_residual_same_gir_vs_mcp_chained_conv(self):
+        """Chained CONVOLUTION nodes (two kernels on one trace) match
+        between GIR and MCP through the residual pipeline.
+        """
+
+        project = _make_project()
+        file, model = _make_2d_model(
+            project,
+            ["glp_only"],
+            [("GLP_01_A", ["MonoExpPosDoubleIRF"])],
+        )
+
+        model.create_value_2d()
+        assert model.value_2d is not None  # type guard
+        data = model.value_2d + 0.01
+
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        assert plan.n_conv_steps == 2  # actually chained, not merged
+        name_to_idx = {n: i for i, n in enumerate(model.parameter_names)}
+        theta_indices = np.array(
+            [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
+        )
+
+        par = model.lmfit_pars
+        res_gir = fitlib.residual_fun(
+            par=par,
+            x=file.energy,
+            data=data,
+            fit_fun_str="fit_model_gir",
+            args=(plan, theta_indices, model, 2),
+        )
+        res_mcp = fitlib.residual_fun(
+            par=par,
+            x=file.energy,
+            data=data,
+            fit_fun_str="fit_model_mcp",
+            args=(model, 2),
+        )
+        np.testing.assert_allclose(res_gir, res_mcp, rtol=1e-10, atol=1e-10)
 
 
 # ---------------------------------------------------------------------------
@@ -679,7 +852,7 @@ class TestFileFit2D:
         fit_file.fit_2d(model_name="single_glp", stages=2, try_ci=0)
 
         # Verify writeback: model_2d.lmfit_pars should match result params
-        assert fit_file.model_2d is not None
+        assert fit_file.model_2d is not None  # type guard
         result_params = fit_file.model_2d.result[1].params
         for name in fit_file.model_2d.parameter_names:
             model_val = fit_file.model_2d.lmfit_pars[name].value
@@ -694,6 +867,61 @@ class TestFileFit2D:
             assert np.isclose(true_val, fit_val, rtol=1e-10, atol=1e-12), (
                 f"{name}: true={true_val:.6f}, fit={fit_val:.6f}"
             )
+
+    #
+    @pytest.mark.slow
+    def test_kernel_width_recovered_when_init_below_truth(self):
+        """Conv kernel width is recovered when initialized well below truth.
+
+        Regression for the frozen-kernel-support bug: the support was
+        sized once from the initial SD, so once the fitted SD grew past
+        its init the kernel was silently truncated and the fit converged
+        to a biased width at any SNR. The support now tracks the current
+        parameter value, so a fit started far below truth must recover it.
+        """
+
+        project = make_project(name="gir_kernel_regrow")
+        SD_name = "GLP_01_A_gaussCONV_SD"
+        SD_truth = 0.4
+
+        energy = np.linspace(83, 87, 30)
+        time = np.linspace(-2, 10, 61)  # dt = 0.2
+        # truth model: MonoExpPosIRF inits SD at the truth value, so the
+        # simulated data carries a correctly sized kernel regardless of
+        # when the support is built
+        truth_file = File(parent_project=project, name="truth")
+        truth_file.energy = energy
+        truth_file.time = time
+        truth_file.dim = 2
+        truth_file.load_model(model_yaml=_FILE_ENERGY_YAML, model_info="single_glp")
+        truth_file.add_time_dependence(
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml=_TIME_YAML,
+            dynamics_model=["MonoExpPosIRF"],
+        )
+        truth_model = truth_file.model_active
+        assert truth_model is not None  # type guard
+        assert truth_model.lmfit_pars[SD_name].value == SD_truth
+        clean = simulate_clean(truth_model)
+
+        # fit model: same shape, but SD inits at 5e-2, 8x below truth --
+        # a frozen ±4*init support could never represent the true kernel
+        fit_file = _make_fit_file(project, clean, energy, time)
+        fit_file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+        fit_file.add_time_dependence(
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml=_TIME_YAML,
+            dynamics_model=["MonoExpPosIRFNarrow"],
+        )
+        fit_file.fit_2d(model_name="single_glp", stages=2, try_ci=0)
+
+        assert fit_file.model_2d is not None  # type guard
+        SD_fit = fit_file.model_2d.result[1].params[SD_name].value
+        assert np.isclose(SD_fit, SD_truth, rtol=2e-2), (
+            f"kernel width not recovered: truth={SD_truth}, fit={SD_fit:.4f}"
+        )
 
     #
     @pytest.mark.slow
@@ -735,11 +963,11 @@ class TestGIR1DvsInterpreter:
         file = File(parent_project=project, energy=np.linspace(80, 90, 101))
         file.load_model(model_yaml=_ENERGY_YAML, model_info=["glp_only"])
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
 
         # Generate synthetic data
         model.create_value_1d()
-        assert model.value_1d is not None
+        assert model.value_1d is not None  # type guard
         data = model.value_1d + 0.01
 
         # Compile GIR 1D path
@@ -781,7 +1009,7 @@ class TestGIR1DvsInterpreter:
         file = File(parent_project=project, energy=np.linspace(80, 90, 101))
         file.load_model(model_yaml=_ENERGY_YAML, model_info=["offset_only"])
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
 
         model.create_value_1d()
         data = model.value_1d + 0.01
@@ -828,7 +1056,7 @@ class TestGIR1DvsInterpreter:
         )
 
         model.create_value_1d()
-        assert model.value_1d is not None
+        assert model.value_1d is not None  # type guard
         data = model.value_1d + 0.01
 
         graph = build_graph(model)
@@ -865,7 +1093,7 @@ class TestGIR1DvsInterpreter:
         file = File(parent_project=project, energy=np.linspace(80, 90, 101))
         file.load_model(model_yaml=_ENERGY_YAML, model_info=["glp_expression"])
         model = file.model_active
-        assert model is not None
+        assert model is not None  # type guard
 
         graph = build_graph(model)
         assert can_lower_1d(graph)
@@ -882,14 +1110,15 @@ class TestGIR1DvsInterpreter:
         assert result.shape == (len(file.energy),)
 
     #
-    def test_compare_mode_profile_1d(self):
+    @pytest.mark.parametrize("profile_model", ["profile_pExpDecay", "profile_pGauss"])
+    def test_compare_mode_profile_1d(self, profile_model):
         """Profile-aware 1D models run through compare mode without mismatch."""
 
         project = _make_project(spec_fun_str="fit_model_compare")
         file, model = _make_1d_profile_model(
             project,
             ["single_gauss"],
-            [("Gauss_01_A", ["profile_pExpDecay"])],
+            [("Gauss_01_A", [profile_model])],
         )
 
         graph = build_graph(model)
@@ -919,7 +1148,7 @@ class TestGIR1DvsInterpreter:
         )
 
         model.create_value_2d()
-        assert model.value_2d is not None
+        assert model.value_2d is not None  # type guard
         data = model.value_2d + 0.01
 
         graph = build_graph(model)
@@ -949,7 +1178,8 @@ class TestGIR1DvsInterpreter:
         np.testing.assert_allclose(res_gir, res_mcp, rtol=1e-10, atol=1e-10)
 
     #
-    def test_compare_mode_profile_2d(self):
+    @pytest.mark.parametrize("profile_model", ["profile_pExpDecay", "profile_pGauss"])
+    def test_compare_mode_profile_2d(self, profile_model):
         """2D profiled models run through compare mode without mismatch."""
 
         project = _make_project(spec_fun_str="fit_model_compare")
@@ -957,7 +1187,7 @@ class TestGIR1DvsInterpreter:
             project,
             ["single_gauss"],
             [("Gauss_01_x0", ["MonoExpPos"])],
-            [("Gauss_01_A", ["profile_pExpDecay"])],
+            [("Gauss_01_A", [profile_model])],
         )
 
         graph = build_graph(model)
@@ -973,6 +1203,49 @@ class TestGIR1DvsInterpreter:
             file.energy, par, True, plan, theta_indices, model, 2
         )
         assert result.shape == (len(file.time), len(file.energy))
+
+    #
+    def test_time_1d_dynamics_model_mcp_fallback(self):
+        """Standalone TIME_1D dynamics models evaluate via the MCP fallback.
+
+        ``can_lower_1d`` rejects the TIME_1D domain (outside lowered-backend
+        scope, see docs/design/supported_models.md), so ``fit_model_gir``
+        called with interpreter args must fall through to MCP and produce
+        the same residual.
+        """
+
+        project = _make_project()
+        file = File(parent_project=project)
+        file.time = np.linspace(-10, 100, 111)
+        dyn = file.load_model(
+            model_yaml=_TIME_YAML,
+            model_info=["MonoExpPos"],
+            par_name="parTEST",
+            model_type="dynamics",
+        )
+
+        graph = build_graph(dyn)
+        assert not can_lower_1d(graph)
+
+        dyn.create_value_1d()
+        assert dyn.value_1d is not None  # type guard
+        data = np.asarray(dyn.value_1d) + 0.01
+
+        res_mcp = fitlib.residual_fun(
+            par=dyn.lmfit_pars,
+            x=file.time,
+            data=data,
+            fit_fun_str="fit_model_mcp",
+            args=(dyn, 1),
+        )
+        res_gir = fitlib.residual_fun(
+            par=dyn.lmfit_pars,
+            x=file.time,
+            data=data,
+            fit_fun_str="fit_model_gir",
+            args=(dyn, 1),
+        )
+        np.testing.assert_allclose(res_gir, res_mcp, rtol=1e-10, atol=1e-10)
 
 
 # ---------------------------------------------------------------------------
@@ -1015,7 +1288,12 @@ class TestFileFitBaseline:
 
     #
     def test_1d_dispatch_args_lower_on_2d_file(self):
-        """1D workflow args compile on a 2D File with a plain energy model."""
+        """1D workflow args compile on a 2D File with a plain energy model.
+
+        Invariant check on the private dispatch-args contract that the
+        fit_baseline/fit_spectrum/fit_slice_by_slice call sites rely on;
+        end-to-end public-path coverage is test_gir_baseline_writes_back.
+        """
 
         project = _make_project()
         energy = np.linspace(83, 87, 50)
@@ -1051,7 +1329,7 @@ class TestFileFitBaseline:
 
         # Tile 1D truth spectrum into 2D data (constant across time)
         truth.model_active.create_value_1d()
-        assert truth.model_active.value_1d is not None
+        assert truth.model_active.value_1d is not None  # type guard
         spectrum_1d = truth.model_active.value_1d.copy()
         data_2d = np.tile(spectrum_1d, (len(truth.time), 1))
 
@@ -1059,7 +1337,7 @@ class TestFileFitBaseline:
         fit_file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
 
         # Verify writeback
-        assert fit_file.model_base is not None
+        assert fit_file.model_base is not None  # type guard
         result_params = fit_file.model_base.result[1].params
         for name in fit_file.model_base.parameter_names:
             model_val = fit_file.model_base.lmfit_pars[name].value
@@ -1166,8 +1444,8 @@ class TestFileFitSliceBySlice:
             model_name="single_glp", stages=1, try_ci=0, n_workers=n_workers
         )
 
-        assert fit_file.model_sbs is not None
-        assert fit_file.model_sbs.args is not None
+        assert fit_file.model_sbs is not None  # type guard
+        assert fit_file.model_sbs.args is not None  # type guard
         assert len(fit_file.model_sbs.args) == 4
         assert isinstance(fit_file.model_sbs.args[0], ScheduledPlan1D)
         assert len(fit_file.results_sbs) == len(truth.time)
@@ -1254,7 +1532,7 @@ class TestFileFitSliceBySlice:
         fit_file = _make_1d_fit_file(project, data_2d, truth.energy, truth.time)
         fit_file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
 
-        assert fit_file.model_base is not None
+        assert fit_file.model_base is not None  # type guard
         expected = ulmfit.par_extract(fit_file.model_base.result[1], return_type="list")
         seed_values = None
 
@@ -1277,7 +1555,7 @@ class TestFileFitSliceBySlice:
             seed_adapt=seed_adapt,
         )
 
-        assert fit_file.model_sbs is not None
+        assert fit_file.model_sbs is not None  # type guard
         for name, expected_value in zip(
             fit_file.model_sbs.parameter_names, expected, strict=True
         ):
