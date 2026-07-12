@@ -235,7 +235,14 @@ def _erfFun(t, A, SD, t0):
 
 #
 def _sqrtFun(t, A, t0):
-    return A * jnp.sqrt(jnp.clip(t - t0, 0))
+    # Double-where instead of sqrt(clip(u, 0)): with a varying t0 the
+    # clip form differentiates as sqrt'(0) * clip'(u<0) = inf * 0 = NaN
+    # on every pre-onset sample, poisoning the whole Jacobian.  The
+    # safe inner argument keeps both branch tangents finite; the outer
+    # where selects 0 pre-onset (values identical to the NumPy path).
+    u = t - t0
+    u_safe = jnp.where(u > 0, u, 1.0)
+    return jnp.where(u > 0, A * jnp.sqrt(u_safe), 0.0)
 
 
 JAX_DYNAMICS_DISPATCH: dict[int, Callable] = {

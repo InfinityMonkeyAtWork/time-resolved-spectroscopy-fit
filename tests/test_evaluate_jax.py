@@ -268,6 +268,20 @@ class TestJaxJacobian:
         plan, model = _make_plan(["voigt_only"], [])
         _assert_jacobian_matches_fd(plan, model)
 
+    #
+    def test_sqrt_with_varying_onset(self):
+        """Regression: sqrt(clip) gave NaN derivatives pre-onset when
+        t0 varies (inf * 0 through the clip chain rule), poisoning the
+        whole Jacobian and failing leastsq with lmfit's non-finite
+        error."""
+
+        plan, model = _make_plan(["glp_only"], [("GLP_01_A", ["MonoSqrtVaryT0"])])
+        _assert_parity(plan, model)
+        jacobian = make_jacobian_2d_jax(plan)
+        jac = jacobian(_extract_theta(plan, model))
+        assert np.all(np.isfinite(jac))
+        _assert_jacobian_matches_fd(plan, model)
+
 
 # ---------------------------------------------------------------------------
 # Plan-level rejection and theta contract
