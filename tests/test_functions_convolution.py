@@ -4,28 +4,35 @@ Each kernel is tested for:
 - Symmetry (where applicable)
 - Peak at center (x=0)
 - Known shape properties
-- kernel_width() returns positive int/float
+
+Edge-mass companions (CONV_EDGE_MASS) are validated against numerical
+integration of the kernel bodies, and both registries are checked for
+completeness so a kernel can never ship without its companion.
 """
 
 import numpy as np
 import pytest
+from scipy.integrate import quad
 
+from trspecfit.functions import time as fcts_time
 from trspecfit.functions.time import (
+    CONV_EDGE_MASS,
     boxCONV,
-    boxCONV_kernel_width,
     expDecayCONV,
-    expDecayCONV_kernel_width,
     expRiseCONV,
-    expRiseCONV_kernel_width,
     expSymCONV,
-    expSymCONV_kernel_width,
     gaussCONV,
-    gaussCONV_kernel_width,
-    lorentzCONV,
-    lorentzCONV_kernel_width,
-    voigtCONV,
-    voigtCONV_kernel_width,
 )
+
+# one representative parameter set per kernel, used by the companion
+# consistency test; extend when adding a kernel
+_KERNEL_TEST_PARAMS = {
+    "gaussCONV": (1.7,),
+    "expSymCONV": (2.3,),
+    "expDecayCONV": (2.3,),
+    "expRiseCONV": (2.3,),
+    "boxCONV": (3.0,),
+}
 
 
 #
@@ -89,115 +96,6 @@ class TestGaussCONV:
         # Left side: increasing toward center
         assert np.all(np.diff(result[:center]) >= -1e-12)
 
-    #
-    def test_kernel_width_positive(self):
-        assert gaussCONV_kernel_width() > 0
-
-
-#
-#
-class TestLorentzCONV:
-    #
-    def test_peak_at_center(self):
-        x_sym = make_kernel_axis()
-        result = lorentzCONV(x_sym, W=2.0)
-        assert np.argmax(result) == len(x_sym) // 2
-
-    #
-    def test_peak_value_is_one(self):
-        x_sym = make_kernel_axis()
-        result = lorentzCONV(x_sym, W=2.0)
-        assert result[len(x_sym) // 2] == pytest.approx(1.0)
-
-    #
-    def test_symmetry(self):
-        x_sym = make_kernel_axis()
-        result = lorentzCONV(x_sym, W=2.0)
-        np.testing.assert_allclose(result, result[::-1], atol=1e-12)
-
-    #
-    def test_half_max_at_half_width(self):
-        """At x = ±W/2, value should be 0.5 (FWHM definition)."""
-
-        x_sym = make_kernel_axis()
-        W = 2.0
-        result = lorentzCONV(x_sym, W=W)
-        idx = np.argmin(np.abs(x_sym - W / 2))
-        assert result[idx] == pytest.approx(0.5, abs=1e-3)
-
-    #
-    def test_decays_monotonically(self):
-        """Should decay monotonically away from center on both sides."""
-
-        x_sym = make_kernel_axis()
-        result = lorentzCONV(x_sym, W=2.0)
-        center = len(x_sym) // 2
-        assert np.all(np.diff(result[center:]) <= 1e-12)
-        assert np.all(np.diff(result[:center]) >= -1e-12)
-
-    #
-    def test_kernel_width_positive(self):
-        assert lorentzCONV_kernel_width() > 0
-
-
-#
-#
-class TestVoigtCONV:
-    #
-    def test_peak_at_center(self):
-        x_sym = make_kernel_axis()
-        result = voigtCONV(x_sym, SD=1.0, W=1.0)
-        assert np.argmax(result) == len(x_sym) // 2
-
-    #
-    def test_peak_normalized_to_one(self):
-        """voigtCONV divides by max, so peak = 1."""
-
-        x_sym = make_kernel_axis()
-        result = voigtCONV(x_sym, SD=1.0, W=1.0)
-        assert result[len(x_sym) // 2] == pytest.approx(1.0, rel=1e-6)
-
-    #
-    def test_symmetry(self):
-        x_sym = make_kernel_axis()
-        result = voigtCONV(x_sym, SD=1.0, W=1.0)
-        np.testing.assert_allclose(result, result[::-1], atol=1e-10)
-
-    #
-    def test_half_max_at_half_width(self):
-        """In the pure Gaussian limit (W→0), FWHM ≈ 2.355*SD."""
-
-        x = np.linspace(-20, 20, 10001)
-        SD = 2.0
-        result = voigtCONV(x, SD=SD, W=1e-10)
-        fwhm_half = np.sqrt(2 * np.log(2)) * SD
-        idx = np.argmin(np.abs(x - fwhm_half))
-        assert result[idx] == pytest.approx(0.5, abs=0.02)
-
-    #
-    def test_pure_gaussian_limit(self):
-        """With W→0, voigtCONV should approach gaussCONV shape."""
-
-        x = np.linspace(-10, 10, 2001)
-        SD = 2.0
-        voigt = voigtCONV(x, SD=SD, W=1e-10)
-        gauss = gaussCONV(x, SD=SD)
-        np.testing.assert_allclose(voigt, gauss, atol=0.02)
-
-    #
-    def test_decays_monotonically(self):
-        """Should decay monotonically away from center on both sides."""
-
-        x = make_kernel_axis()
-        result = voigtCONV(x, SD=1.0, W=1.0)
-        center = len(x) // 2
-        assert np.all(np.diff(result[center:]) <= 1e-10)
-        assert np.all(np.diff(result[:center]) >= -1e-10)
-
-    #
-    def test_kernel_width_positive(self):
-        assert voigtCONV_kernel_width() > 0
-
 
 #
 #
@@ -251,10 +149,6 @@ class TestExpSymCONV:
         assert np.all(np.diff(result[center:]) <= 1e-12)
         assert np.all(np.diff(result[:center]) >= -1e-12)
 
-    #
-    def test_kernel_width_positive(self):
-        assert expSymCONV_kernel_width() > 0
-
 
 #
 #
@@ -290,10 +184,6 @@ class TestExpDecayCONV:
         half_life = tau * np.log(2)
         idx = np.argmin(np.abs(x_sym - half_life))
         assert result[idx] == pytest.approx(0.5, abs=0.01)
-
-    #
-    def test_kernel_width_positive(self):
-        assert expDecayCONV_kernel_width() > 0
 
 
 #
@@ -341,10 +231,6 @@ class TestExpRiseCONV:
         decay = expDecayCONV(x_sym, tau=2.0)
         np.testing.assert_allclose(rise, decay[::-1], atol=1e-12)
 
-    #
-    def test_kernel_width_positive(self):
-        assert expRiseCONV_kernel_width() > 0
-
 
 #
 #
@@ -384,9 +270,86 @@ class TestBoxCONV:
         wide = boxCONV(x_sym, width=3.0)
         assert np.sum(wide > 0.5) > np.sum(narrow > 0.5)
 
+
+#
+#
+class TestConvEdgeMassCompanions:
+    """Edge-mass companions integrate the exact kernel bodies."""
+
     #
-    def test_kernel_width_positive(self):
-        assert boxCONV_kernel_width() > 0
+    @pytest.mark.parametrize("kernel_name", sorted(CONV_EDGE_MASS))
+    def test_masses_match_numerical_integration(self, kernel_name):
+        """Companion masses equal quad integrals of the kernel body.
+
+        M_L(a) must equal the body's integral over [a, inf) and M_R(b)
+        the integral over (-inf, b] — the exterior masses used for
+        edge-value padding. Guards any future companion against a
+        normalization or left/right mismatch with its kernel body.
+        """
+
+        body = getattr(fcts_time, kernel_name)
+        params = _KERNEL_TEST_PARAMS[kernel_name]
+        companion = CONV_EDGE_MASS[kernel_name]
+        # generous finite integration bounds: all kernels are negligible
+        # beyond +-50 for the test parameter values
+        bound = 50.0
+        dt_left = np.array([0.0, 0.3, 2.0, 7.0])
+        dt_right = -dt_left
+        mass_left, mass_right = companion(dt_left, dt_right, *params)
+        for i, a in enumerate(dt_left):
+            expected, _err = quad(
+                lambda x: float(body(np.array([x]), *params)[0]), a, bound
+            )
+            np.testing.assert_allclose(mass_left[i], expected, rtol=1e-6, atol=1e-12)
+        for i, b in enumerate(dt_right):
+            expected, _err = quad(
+                lambda x: float(body(np.array([x]), *params)[0]), -bound, b
+            )
+            np.testing.assert_allclose(mass_right[i], expected, rtol=1e-6, atol=1e-12)
+
+    #
+    @pytest.mark.parametrize("kernel_name", sorted(CONV_EDGE_MASS))
+    @pytest.mark.parametrize("bad_value", [0.0, -1.0, np.nan, np.inf])
+    def test_nonpositive_params_rejected(self, kernel_name, bad_value):
+        """Companions reject nonpositive/non-finite parameters loudly.
+
+        Runtime backstop for expression-driven kernel parameters, which
+        bypass the model-load bound validation: boxCONV(width=0) would
+        otherwise pass every downstream check and silently become the
+        identity operator (the dt=0 diagonal keeps row sums positive).
+        """
+
+        companion = CONV_EDGE_MASS[kernel_name]
+        dt_left = np.array([0.0, 1.0, 4.0])
+        dt_right = -dt_left
+        params = (bad_value, *_KERNEL_TEST_PARAMS[kernel_name][1:])
+        with pytest.raises(ValueError, match="strictly positive"):
+            companion(dt_left, dt_right, *params)
+
+    #
+    def test_every_kernel_has_companion(self):
+        """Registry completeness: kernels and companions stay in lockstep.
+
+        Every discoverable *CONV function needs a CONV_EDGE_MASS entry
+        (mcp path), every entry must reference an existing kernel, and
+        the GIR dispatch tables must cover the same kernel set.
+        """
+
+        from trspecfit.eval_2d import CONV_EDGE_MASS_DISPATCH, CONV_KERNEL_DISPATCH
+
+        conv_kernels = {
+            name
+            for name in dir(fcts_time)
+            if name.endswith("CONV") and not name.startswith("_")
+        }
+        assert conv_kernels == set(CONV_EDGE_MASS)
+        assert set(CONV_KERNEL_DISPATCH) == set(CONV_EDGE_MASS_DISPATCH)
+
+    #
+    def test_test_params_cover_all_companions(self):
+        """_KERNEL_TEST_PARAMS stays in sync with the registry."""
+
+        assert set(_KERNEL_TEST_PARAMS) == set(CONV_EDGE_MASS)
 
 
 if __name__ == "__main__":

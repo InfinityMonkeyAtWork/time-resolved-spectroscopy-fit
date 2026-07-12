@@ -12,7 +12,7 @@ This module provides utilities for:
 
 import math
 from decimal import Decimal
-from typing import Literal, cast, overload
+from typing import Literal, NamedTuple, cast, overload
 
 import numpy as np
 import pandas as pd
@@ -311,38 +311,182 @@ def pad_x_y(
 
 
 #
-def conv_kernel_support(t_range: float, t_step: float) -> NDArray[np.float64]:
-    """
-    Build a symmetric, odd-length time axis for a convolution kernel.
+#
+class ConvOperator(NamedTuple):
+    """Theta-independent part of the kernel-matrix convolution.
 
-    Rebuilt from the current kernel parameter values at every model
-    evaluation so the support tracks the fitted width — a frozen support
-    silently truncates the kernel when the width grows past its initial
-    value.
+    Built once per time axis by ``conv_matrix_operator``; consumed per
+    kernel-parameter set by ``conv_matrix_apply``. The kernel function
+    is evaluated on ``dt_unique`` only (kernels are elementwise, and dt
+    values repeat heavily on uniform or piecewise-uniform axes), then
+    gathered back into the full matrix via ``gather_idx``.
+
+    ``dt_left``/``dt_right`` are the abscissae at which per-kernel
+    edge-mass companions evaluate the exact exterior kernel mass
+    (edge-value padding semantics; see ``conv_matrix_apply``).
+    """
+
+    dt_unique: NDArray[np.float64]  # (n_unique,) sorted unique t_i - t_j
+    gather_idx: NDArray[np.intp]  # (n_t, n_t) index into dt_unique
+    quad_weights: NDArray[np.float64]  # (n_t,) trapezoid weights
+    dt_left: NDArray[np.float64]  # (n_t,) t - t[0], >= 0
+    dt_right: NDArray[np.float64]  # (n_t,) t - t[-1], <= 0
+
+
+#
+def conv_matrix_operator(t: ArrayLike) -> ConvOperator:
+    """
+    Build the theta-independent part of the kernel-matrix convolution.
+
+    The convolution ``y_conv = K @ y`` with
+    ``K[i, j] = g(t_i - t_j; theta) * w_j`` (rows normalized) is exact
+    quadrature on any monotonic axis — the axis enters through the
+    ``dt`` matrix and the weights, so non-uniform sampling is handled
+    correctly. Everything that does not depend on the kernel parameters
+    is built here, once per axis.
+
+    Kernel mass falling outside the data window is handled analytically:
+    the signal is assumed constant beyond the window (edge-value
+    padding), so the exterior contribution of row ``i`` is
+    ``y[0] * M_L(i) + y[-1] * M_R(i)`` where ``M_L(i)`` is the exact
+    integral of the kernel body over ``(-inf, t[0]]`` (an upper-tail
+    mass at ``dt_left[i] = t_i - t[0]``) and ``M_R(i)`` the integral
+    over ``[t[-1], inf)`` (a lower-tail mass at
+    ``dt_right[i] = t_i - t[-1]``). The masses are computed by
+    per-kernel companions (``CONV_EDGE_MASS`` in ``functions/time.py``)
+    and passed to ``conv_matrix_apply`` — no ghost points, no support
+    truncation for any kernel width.
+
+    The ``(n_t, n_t)`` dt matrix is stored deduplicated: kernel
+    functions evaluate on ``dt_unique`` (typically ``O(n_t)`` values on
+    uniform or piecewise-uniform axes instead of ``O(n_t^2)``) and
+    ``conv_matrix_apply`` gathers the values back by index. This is a
+    pure optimization — the gathered matrix is bit-identical to direct
+    evaluation on the full dt matrix.
 
     Parameters
     ----------
-    t_range : float
-        Half-width of the kernel support, typically
-        ``kernel_par * kernel_width(...)`` from the ``*_kernel_width``
-        helpers in trspecfit.functions.time
-    t_step : float
-        Time axis step size (matches the data time axis)
+    t : array_like
+        Strictly increasing time axis, at least 2 samples.
+
+    Returns
+    -------
+    ConvOperator
+        ``(dt_unique, gather_idx, quad_weights, dt_left, dt_right)``.
+    """
+
+    t_arr = np.asarray(t, dtype=np.float64)
+    if t_arr.ndim != 1 or t_arr.size < 2:
+        raise ValueError(
+            "Convolution requires a 1D time axis with at least 2 points, "
+            f"got shape {t_arr.shape}"
+        )
+    if not np.all(np.isfinite(t_arr)):
+        raise ValueError("Convolution time axis contains non-finite values")
+    if np.any(np.diff(t_arr) <= 0):
+        raise ValueError(
+            "Convolution time axis must be strictly increasing; "
+            "sort the axis (and data) before fitting."
+        )
+
+    # True trapezoid weights: half-cells at both window edges (the
+    # exterior beyond the half-cells is covered exactly by the analytic
+    # edge masses; np.gradient would give full end cells and
+    # double-count against them).
+    steps = np.diff(t_arr)
+    quad_weights = np.empty_like(t_arr)
+    quad_weights[0] = steps[0] / 2
+    quad_weights[-1] = steps[-1] / 2
+    quad_weights[1:-1] = (t_arr[2:] - t_arr[:-2]) / 2
+
+    dt = t_arr[:, np.newaxis] - t_arr[np.newaxis, :]
+    dt_unique, inverse = np.unique(dt, return_inverse=True)
+    gather_idx = inverse.reshape(dt.shape).astype(np.intp, copy=False)
+    dt_left = t_arr - t_arr[0]
+    dt_right = t_arr - t_arr[-1]
+    return ConvOperator(dt_unique, gather_idx, quad_weights, dt_left, dt_right)
+
+
+#
+def conv_matrix_apply(
+    operator: ConvOperator,
+    kernel_values: NDArray[np.float64],
+    edge_mass_left: NDArray[np.float64],
+    edge_mass_right: NDArray[np.float64],
+    y: ArrayLike,
+) -> NDArray[np.float64]:
+    """
+    Apply the kernel-matrix convolution for one set of kernel parameters.
+
+    Consumes the kernel evaluated elementwise on ``operator.dt_unique``
+    plus the analytic exterior masses evaluated at ``operator.dt_left``
+    / ``operator.dt_right`` (edge-value padding semantics: the signal
+    is assumed constant beyond the window). Each row is normalized so a
+    constant signal is preserved exactly.
+
+    Parameters
+    ----------
+    operator : ConvOperator
+        Precomputed operator from ``conv_matrix_operator``.
+    kernel_values : ndarray
+        ``(n_unique,)`` kernel evaluated on ``operator.dt_unique``
+        (unnormalized).
+    edge_mass_left, edge_mass_right : ndarray
+        ``(n_t,)`` exterior kernel masses per row, from the kernel's
+        ``CONV_EDGE_MASS`` companion (same normalization as the body).
+    y : array_like
+        ``(n_t,)`` signal to convolve.
 
     Returns
     -------
     ndarray
-        Kernel time axis ``[-n*t_step, ..., 0, ..., n*t_step]`` with
-        ``n = max(1, ceil(|t_range| / t_step))``, guaranteed symmetric
-        and odd-length so ``mode='same'`` convolution stays centered
+        Convolved signal, same length as ``y``.
     """
 
-    if not np.isfinite(t_range):
-        raise ValueError(f"Kernel support range is not finite: {t_range}")
-    if not np.isfinite(t_step) or t_step <= 0:
-        raise ValueError(f"Kernel time step must be positive: {t_step}")
-    n = max(1, int(np.ceil(abs(t_range) / t_step)))
-    return np.arange(-n, n + 1, dtype=np.float64) * t_step
+    y_arr = np.asarray(y, dtype=np.float64)
+    n_t = operator.gather_idx.shape[0]
+    if (
+        y_arr.shape != (n_t,)
+        or edge_mass_left.shape != (n_t,)
+        or edge_mass_right.shape != (n_t,)
+        or kernel_values.shape != operator.dt_unique.shape
+    ):
+        raise ValueError(
+            "Convolution inputs have wrong shapes: kernel_values "
+            f"{kernel_values.shape} (expected {operator.dt_unique.shape}), "
+            f"edge masses {edge_mass_left.shape} / {edge_mass_right.shape} "
+            f"and signal y {y_arr.shape} (all expected ({n_t},))."
+        )
+    # Signed errors can cancel inside row sums, so validate sign and
+    # finiteness of the raw ingredients (O(n) against the O(n^2) matmul).
+    if np.any(kernel_values < 0) or not np.all(np.isfinite(kernel_values)):
+        raise ValueError(
+            "Convolution kernel values must be finite and nonnegative; "
+            "the kernel parameters are likely invalid (NaN or negative "
+            "width)."
+        )
+    if (
+        np.any(edge_mass_left < 0)
+        or np.any(edge_mass_right < 0)
+        or not np.all(np.isfinite(edge_mass_left))
+        or not np.all(np.isfinite(edge_mass_right))
+    ):
+        raise ValueError(
+            "Convolution edge masses must be finite and nonnegative; "
+            "the kernel's edge-mass companion or its parameters are "
+            "likely invalid."
+        )
+
+    interior = kernel_values[operator.gather_idx] * operator.quad_weights
+    row_sums = interior.sum(axis=1) + edge_mass_left + edge_mass_right
+    if np.any(row_sums <= 0):
+        raise ValueError(
+            "Convolution kernel matrix has non-positive row sums; the "
+            "kernel parameters are likely invalid (zero width)."
+        )
+    y_conv = interior @ y_arr + edge_mass_left * y_arr[0]
+    y_conv += edge_mass_right * y_arr[-1]
+    return cast("NDArray[np.float64]", y_conv / row_sums)
 
 
 #

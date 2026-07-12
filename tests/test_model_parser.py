@@ -231,7 +231,7 @@ class TestTimeParsing:
         # check the components
         assert model.components[0].fct_str == "gaussCONV"
         assert model.components[0].comp_name == "gaussCONV"
-        assert model.components[0].par_dict["SD"] == [0.4, True, 0, 1]
+        assert model.components[0].par_dict["SD"] == [0.4, True, 1e-06, 1]
 
         assert model.components[1].fct_str == "expFun"
         assert model.components[1].comp_name == "expFun_01"
@@ -342,7 +342,7 @@ class Test2DModelParsing:
         td_par_model = model.components[2].pars[1].t_model
         assert td_par_model is not None  # type guard
         assert td_par_model.components[0].comp_name == "gaussCONV"
-        assert td_par_model.components[0].par_dict["SD"] == [0.4, True, 0, 1]
+        assert td_par_model.components[0].par_dict["SD"] == [0.4, True, 1e-06, 1]
         assert td_par_model.components[1].fct_str == "expFun"
         assert td_par_model.components[1].comp_name == "expFun_01"
         assert td_par_model.components[1].par_dict["A"] == [1, True, 0, 5]

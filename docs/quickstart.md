@@ -79,7 +79,7 @@ model_name:
 - **Peaks**: `Gauss`, `GaussAsym`, `Lorentz`, `Voigt`, `GLP`, `GLS`, `DS`
 - **Backgrounds**: `LinBack`, `Shirley`, `Offset`
 - **Time dynamics**: `linFun`, `expFun`, `sinFun`, `sinDivX`, `erfFun`, `sqrtFun`
-- **Convolution kernels**: `gaussCONV`, `lorentzCONV`, `expDecayCONV`, `expRiseCONV`
+- **Convolution kernels**: `gaussCONV`, `expSymCONV`, `expDecayCONV`, `expRiseCONV`, `boxCONV`
 - **Profile functions**: `pExpDecay`, `pLinear`, `pGauss`
 
 See the [API Reference](api/index.rst) for all function signatures and

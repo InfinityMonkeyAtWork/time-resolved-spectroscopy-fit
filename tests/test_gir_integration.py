@@ -31,8 +31,6 @@ _PROFILE_YAML = "models/file_profile.yaml"
 # One dynamics model per lowerable convolution kernel.
 _IRF_KERNEL_MODELS = [
     "MonoExpPosIRF",
-    "MonoExpPosLorentzIRF",
-    "MonoExpPosVoigtIRF",
     "MonoExpPosExpSymIRF",
     "MonoExpPosExpDecayIRF",
     "MonoExpPosExpRiseIRF",

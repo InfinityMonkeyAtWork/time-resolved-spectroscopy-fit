@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking: IRF convolution is now a quadrature-weighted kernel-matrix operator** (`conv_matrix_operator` / `conv_matrix_apply` in `utils/arrays.py`), replacing the sampled-1D-kernel convolution (`my_conv` + per-theta kernel support) on both the mcp and compiled (GIR) evaluation paths. Consequences:
+  - **Non-uniform time axes are convolved correctly.** The axis enters through the time-difference matrix and trapezoid quadrature weights, so measured fine-around-t0 + coarse-tail delay axes no longer produce silently biased fits (the old sample-index convolution deviated by up to ~7% of the trace maximum on example 21's stepped axis). Uniform axes agree with the previous path within its documented kernel-truncation tolerance.
+  - **Exact edge handling for any kernel width**: kernel mass beyond the time window contributes through the edge samples (edge-value padding semantics), computed analytically per kernel via edge-mass companions (`functions/time.py::CONV_EDGE_MASS`, cancellation-safe erfc/exp/clip tail forms). No support truncation at any width or axis spacing; a kernel without a registered companion is rejected at model validation (mcp) and scheduling (GIR).
+  - **Kernel parameters must be strictly positive**: widths/timescales with a non-positive initial value or lower bound — or varying without an explicit lower bound — are rejected at model load with a clear error (previously a fit could propose width = 0 and fail mid-fit). The edge-mass companions additionally reject nonpositive/non-finite parameter values at evaluation time, as a backstop for expression-driven kernel parameters (`boxCONV` with width 0 would otherwise silently become the identity operator). Example/test model YAMLs updated from `0` to `1.0E-6` lower bounds.
+  - **Non-monotonic time axes are rejected** at model construction with a clear error (previously accepted and silently misconvolved).
+  - **A kernel far narrower than the local step now degrades to identity** instead of raising a zero-sum-kernel error (the dt=0 diagonal keeps every row sum positive).
+  - **Static array shapes per evaluation**: the theta-independent operator — interior-only `(n_t, n_t)` deduplicated dt matrix, true trapezoid weights, edge-mass abscissae — is precomputed once per axis (`ScheduledPlan2D.conv_operator`, numeric kernel ids only; cached on the mcp `Component`), removing the theta-dependent kernel-shape blocker for the JAX track and the SciPy convolution utilities from the lowered conv path (the Gaussian edge masses still use `scipy.special.erfc`, which has a `jax.scipy.special` equivalent).
+  - **API removals**: `conv_kernel_support`, `Component.create_t_kernel`, and the `*_kernel_width` registry helpers are gone; kernel functions must be elementwise in their first argument and ship a `CONV_EDGE_MASS` companion. Conv components keep the model time axis instead of a private kernel-support axis.
+  - Example 21's data was regenerated through the new operator (the old operator's artifact was baked into the CSVs).
+
+### Fixed
+
+- Function-name discovery (`config/functions.py`) now only accepts functions defined in the `functions/` modules themselves. Imported helpers (`erf`, `erfc`, `wofz`, `Callable`) no longer leak into `all_functions()` / `time_functions()`, so a malformed YAML component naming one of them fails function-name validation upfront instead of erroring mid-evaluation.
+
+### Removed
+
+- **Breaking: `voigtCONV` and `lorentzCONV` convolution kernels.** Neither has a physical basis as a *time-domain* instrument response (Voigt and Lorentzian are energy-domain lineshape profiles, which the energy layer provides); no example used them. Voigt additionally has no closed-form CDF, which blocked the exact analytic edge handling above, and its removal retires `scipy.special.wofz` from `functions/time.py`. Remaining kernels: `gaussCONV`, `expSymCONV`, `expDecayCONV`, `expRiseCONV`, `boxCONV`. Model YAMLs referencing the removed kernels fail validation with an unknown-function error.
+
 ## [0.10.2] - 2026-07-10
 
 ### Added

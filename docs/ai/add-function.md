@@ -13,7 +13,7 @@ This guide covers both:
 
 - Format: `<function_name> <module>`
 - `function_name`: the Python function name
-  (e.g. `GLP`, `expFun`, `pGauss`, `lorentzCONV`)
+  (e.g. `GLP`, `expFun`, `pGauss`, `gaussCONV`)
 - `module`: one of `energy`, `time`, `profile`
 
 ## Module mapping
@@ -53,8 +53,22 @@ Read the source file and find the function. Verify:
 - [ ] `#\n` before function definition
 - [ ] No underscores in function name (enforced by guard test)
 - [ ] Profile functions start with `p` prefix
-- [ ] Convolution kernels end with `CONV` suffix and have a companion
-      `<name>_kernel_width()` function returning an int
+- [ ] Convolution kernels end with `CONV` suffix and are elementwise in
+      their first argument (they are evaluated on the 2D dt matrix of
+      the kernel-matrix convolution operator)
+- [ ] Convolution kernels have a private edge-mass companion
+      `_<name>_edge_mass(dt_left, dt_right, *params)` registered in
+      `CONV_EDGE_MASS` (in `functions/time.py`). It must return the
+      exact analytic integrals of the kernel body — *including its
+      normalization* — over `(-inf, t[0]]` and `[t[-1], inf)`, using
+      cancellation-safe tail forms (erfc / direct exp / clip, never
+      `G(inf) - G(x)` CDF differences). Companions must validate their
+      parameters via `_validate_kernel_par` (strictly positive, finite)
+      — they are the runtime backstop for expression-driven kernel
+      parameters that bypass model-load bound checks. A kernel without
+      a companion fails model validation (mcp) and scheduling (GIR).
+      Kernels whose body has no closed-form antiderivative do not fit
+      this contract (this is why `voigtCONV` was removed).
 
 Note: these functions do NOT use `*` for keyword-only args because the
 framework calls them via `self.fct(x, **parameters)`.
@@ -73,7 +87,12 @@ Registration notes:
 - Background functions are manually listed in
   `src/trspecfit/config/functions.py::background_functions()`.
 - Convolution kernels are discovered dynamically by their `CONV` suffix in
-  `config/functions.py`; they do not require a separate manual registry there.
+  `config/functions.py` (no manual registry there), but additionally
+  require two manual entries: the `CONV_EDGE_MASS` companion registry in
+  `functions/time.py` (mcp path; missing entry fails model validation)
+  and, for GIR support, `CONV_EDGE_MASS_DISPATCH` in `eval_2d.py`
+  alongside `CONV_KERNEL_DISPATCH` (missing entry fails scheduling).
+  A completeness test asserts kernels and companions stay in lockstep.
 
 Module-specific guidance:
 
@@ -140,12 +159,17 @@ Convolution kernels:
 - [ ] Add the kernel to the convolution enum/name mapping in
       `src/trspecfit/graph_ir.py`.
 - [ ] Add runtime dispatch in `src/trspecfit/eval_2d.py`
-      (`CONV_KERNEL_DISPATCH`).
-- [ ] Verify kernel-width handling still works with the new kernel.
+      (`CONV_KERNEL_DISPATCH` **and** `CONV_EDGE_MASS_DISPATCH` — the
+      edge-mass companion, keyed by the same enum; scheduling fails
+      without it).
+- [ ] Verify the kernel is elementwise in its first argument (it is
+      evaluated on the deduplicated dt values; no shape assumptions, no
+      normalization requirements — the operator row-normalizes; the
+      edge-mass companion must match the body's normalization though).
 - [ ] Verify unsupported kernels still fall back cleanly to MCP.
 - [ ] If lowering fails, recommend a kernel signature and behavior compatible
-      with the current compiled path (pure kernel function, explicit parameter
-      list, companion `<name>_kernel_width(...)`, no hidden state).
+      with the current compiled path (pure elementwise kernel function,
+      explicit parameter list, no hidden state).
 
 Profile functions:
 
@@ -245,8 +269,14 @@ test_half_max_at_half_width -- FWHM check using independent property, NOT formul
 test_zero_for_negative_x    -- (causal kernels only: expDecayCONV)
 test_zero_for_positive_x    -- (anti-causal kernels only: expRiseCONV)
 test_decays_monotonically   -- monotonic decay away from peak
-test_kernel_width_positive  -- companion kernel_width() > 0
 ```
+
+Additionally, register the kernel in `_KERNEL_TEST_PARAMS` in
+`tests/test_functions_convolution.py`: the parametrized
+`TestConvEdgeMassCompanions` suite iterates `CONV_EDGE_MASS` and checks
+every companion against `scipy.integrate.quad` of the kernel body, plus
+registry/dispatch completeness — verify the new kernel is picked up
+(the sync test fails until the params entry exists).
 
 **Profile functions**:
 

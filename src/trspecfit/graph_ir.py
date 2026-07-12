@@ -27,6 +27,8 @@ import numpy as np
 
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import profile as fcts_profile
+from trspecfit.functions import time as fcts_time
+from trspecfit.utils.arrays import ConvOperator, conv_matrix_operator
 
 if TYPE_CHECKING:
     from trspecfit.mcp import Component, Model, Par
@@ -178,18 +180,14 @@ class ConvKernelKind(IntEnum):
     """
 
     GAUSSCONV = 0
-    LORENTZCONV = 1
-    VOIGTCONV = 2
-    EXPSYMCONV = 3
-    EXPDECAYCONV = 4
-    EXPRISECONV = 5
-    BOXCONV = 6
+    EXPSYMCONV = 1
+    EXPDECAYCONV = 2
+    EXPRISECONV = 3
+    BOXCONV = 4
 
 
 _FUNCTION_NAME_TO_CONV_KERNEL: dict[str, ConvKernelKind] = {
     "gaussCONV": ConvKernelKind.GAUSSCONV,
-    "lorentzCONV": ConvKernelKind.LORENTZCONV,
-    "voigtCONV": ConvKernelKind.VOIGTCONV,
     "expSymCONV": ConvKernelKind.EXPSYMCONV,
     "expDecayCONV": ConvKernelKind.EXPDECAYCONV,
     "expRiseCONV": ConvKernelKind.EXPRISECONV,
@@ -518,15 +516,19 @@ class ScheduledPlan2D:
     # --- Resolved-trace convolution program ---
     # Each conv step rewrites a trace row in-place after its PARAM_PLUS_TRACE
     # is fully resolved.  Chained CONVOLUTION nodes emit multiple steps
-    # targeting the same row, executed in order.  Kernel values and the
-    # kernel support are recomputed per theta from conv_param_rows, so the
-    # support tracks the fitted width.  Only ``package == "time"`` kernels
-    # are lowered.
+    # targeting the same row, executed in order.  The kernel-matrix
+    # operator (conv_operator) is theta-independent and shared by all
+    # steps; per theta only the elementwise kernel evaluation on the
+    # deduplicated dt values, the analytic edge masses (resolved via
+    # CONV_EDGE_MASS_DISPATCH by conv_func_ids -- no callables stored
+    # here), and a matmul remain, so all array shapes are static.
+    # Only ``package == "time"`` kernels are lowered.
     n_conv_steps: int
     conv_target_rows: np.ndarray  # (n_conv_steps,) int -- trace row rewritten
     conv_func_ids: np.ndarray  # (n_conv_steps,) int -- kernel function registry id
     conv_param_indptr: np.ndarray  # (n_conv_steps + 1,) int -- CSR row pointers
     conv_param_rows: np.ndarray  # (total_conv_params,) int -- kernel param trace rows
+    conv_operator: ConvOperator | None  # None when n_conv_steps == 0
 
     # --- Profile-varying parameter groups (fixed aux_axis shape) ---
     n_aux: int
@@ -2375,9 +2377,9 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     n_conv_steps = len(conv_nodes_topo)
     if n_conv_steps > 0 and n_time < 2:
         raise ValueError(
-            "Convolution requires a time axis with at least 2 points "
-            f"to determine the kernel step size, got {n_time}."
+            f"Convolution requires a time axis with at least 2 points, got {n_time}."
         )
+    conv_operator = conv_matrix_operator(graph.time) if n_conv_steps > 0 else None
 
     conv_target_rows_list: list[int] = []
     conv_func_ids_list: list[int] = []
@@ -2389,6 +2391,13 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         kernel_kind = _FUNCTION_NAME_TO_CONV_KERNEL.get(conv_node.function_name)
         if kernel_kind is None:
             raise ValueError(f"Unknown convolution kernel: {conv_node.function_name!r}")
+        if conv_node.function_name not in fcts_time.CONV_EDGE_MASS:
+            raise ValueError(
+                f"Convolution kernel '{conv_node.function_name}' has no "
+                "edge-mass companion in functions.time.CONV_EDGE_MASS; "
+                "register one (exact exterior masses of the kernel body) "
+                "before scheduling."
+            )
         conv_func_ids_list.append(int(kernel_kind))
 
         target_row = _resolve_convolution_target_row(
@@ -2514,7 +2523,6 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
 
     resolve_param_traces(
         param_traces_init,
-        graph.time,
         resolution_kinds,
         resolution_indices,
         dyn_group_target_row,
@@ -2531,6 +2539,7 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         conv_func_ids,
         conv_param_indptr,
         conv_param_rows,
+        conv_operator,
     )
 
     # ------------------------------------------------------------------ #
@@ -2649,6 +2658,7 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         conv_func_ids=conv_func_ids,
         conv_param_indptr=conv_param_indptr,
         conv_param_rows=conv_param_rows,
+        conv_operator=conv_operator,
     )
 
 

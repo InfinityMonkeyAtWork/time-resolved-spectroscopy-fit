@@ -5,7 +5,7 @@
 # global element 0: Gaussian instrument response, convolves all time traces
 IRF:
     gaussCONV:
-        SD: [0.15, True]
+        SD: [0.15, True, 1.0E-6, 1]
 
 # subcycle 1: negative shift, decays back to 0 on its local clock
 MonoExpNeg:

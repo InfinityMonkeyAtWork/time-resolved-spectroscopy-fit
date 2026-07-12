@@ -270,7 +270,7 @@ class TestMCPDynamics:
 
         # Define instrument response function
         c_IRF = Component("gaussCONV", fcts_time)
-        c_IRF.add_pars({"SD": [80, True, 0, 1e4]})
+        c_IRF.add_pars({"SD": [80, True, 1e-6, 1e4]})
 
         # Define decay components
         c_td1 = Component("expFun", fcts_time)
@@ -327,26 +327,76 @@ class TestMCPDynamics:
         assert t_mod.components[0].par_dict["tau"] == [2.5, True, 1, 10]
 
     #
-    def test_voigt_kernel_axis_uses_both_width_parameters(self):
-        """Voigt kernel support widens when Lorentzian tails dominate."""
+    def test_conv_component_keeps_model_time_axis(self):
+        """Conv components share the model time axis (no kernel-support rebind).
 
-        t_mod = Model("test_voigt_irf")
+        The kernel-matrix operator replaced the per-theta 1D kernel
+        support: the component keeps the model axis, and the operator
+        (dt matrix, quadrature weights, edge-mass abscissae) is built
+        and validated at add_components time.
+        """
+
+        t_mod = Model("test_gauss_irf")
         t_mod.time = np.arange(-5, 6, 1.0)
 
-        c_irf = Component("voigtCONV", fcts_time)
-        c_irf.add_pars(
-            {
-                "SD": [0.1, True, 0.01, 1],
-                "W": [4.0, True, 0.01, 10],
-            }
-        )
+        c_irf = Component("gaussCONV", fcts_time)
+        c_irf.add_pars({"SD": [0.4, True, 0.01, 1]})
 
         t_mod.add_components([c_irf])
 
-        # Support should span the larger of 12*SD and 10*W.
-        assert c_irf.time is not None  # type guard
-        assert c_irf.time[0] == pytest.approx(-40.0)
-        assert c_irf.time[-1] == pytest.approx(40.0)
+        assert c_irf.time is t_mod.time
+        operator = c_irf.conv_operator()
+        n_time = t_mod.time.size
+        assert operator.gather_idx.shape == (n_time, n_time)
+        assert operator.quad_weights.shape == (n_time,)
+        assert operator.dt_left.shape == (n_time,)
+        assert operator.dt_right.shape == (n_time,)
+
+    #
+    def test_conv_kernel_nonpositive_bounds_rejected(self):
+        """Kernel widths must be strictly positive, enforced at model load.
+
+        A zero lower bound lets the optimizer propose width = 0, which
+        only fails deep inside a fit; add_components rejects it upfront
+        with a clear error.
+        """
+
+        t_mod = Model("test_bad_bounds")
+        t_mod.time = np.arange(-5, 6, 1.0)
+
+        c_irf = Component("gaussCONV", fcts_time)
+        c_irf.add_pars({"SD": [0.4, True, 0, 1]})
+
+        with pytest.raises(ValueError, match="strictly positive"):
+            t_mod.add_components([c_irf])
+
+    #
+    def test_conv_kernel_missing_lower_bound_rejected(self):
+        """Varying kernel widths require an explicit positive lower bound.
+
+        The unbound two-element form [value, True] creates an lmfit
+        parameter with min=-inf, letting the optimizer propose invalid
+        widths mid-fit; add_components rejects it upfront. A fixed
+        parameter ([value, False]) stays valid without bounds.
+        """
+
+        t_mod = Model("test_missing_bounds")
+        t_mod.time = np.arange(-5, 6, 1.0)
+
+        c_irf = Component("gaussCONV", fcts_time)
+        c_irf.add_pars({"SD": [0.4, True]})
+
+        with pytest.raises(ValueError, match="lower bound"):
+            t_mod.add_components([c_irf])
+
+        t_mod_fixed = Model("test_fixed_no_bounds")
+        t_mod_fixed.time = np.arange(-5, 6, 1.0)
+
+        c_irf_fixed = Component("gaussCONV", fcts_time)
+        c_irf_fixed.add_pars({"SD": [0.4, False]})
+
+        t_mod_fixed.add_components([c_irf_fixed])
+        assert c_irf_fixed.par_dict["SD"] == [0.4, False]
 
 
 #

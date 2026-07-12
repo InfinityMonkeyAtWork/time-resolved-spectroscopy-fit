@@ -434,7 +434,7 @@ class Model:
         - energy/time axes from model
         - parent_model reference (for finding other parameters)
         - subcycle time axis (for multi-cycle Dynamics)
-        - kernel time axis (for convolution components)
+        - kernel-matrix convolution operator (for convolution components)
 
         **Model Updates:**
         After adding components, the model's lmfit_pars and parameter_names
@@ -454,7 +454,6 @@ class Model:
             self.peak_fcts.append(comp.fct)
             # Share axis references (not copies) with components.
             # Contract: parent must not rebind these after propagation.
-            # Exception: conv components get a kernel time axis below.
             comp.energy = self.energy
             comp.time = self.time
             comp.aux_axis = self.aux_axis
@@ -465,9 +464,35 @@ class Model:
                 if self.time is None:
                     raise ValueError("Model time axis required for Dynamics components")
                 comp.time_n_sub = np.ones(len(self.time))  # initialize all active
-            # if comp should be convoluted it will be defined on a t_kernel axis
-            if comp.comp_type == "conv":
-                comp.time = Component.create_t_kernel(comp)
+            # conv components: build (and validate) the kernel-matrix
+            # operator now so a bad time axis, a kernel without an
+            # edge-mass companion, or non-positive/missing width bounds
+            # fail at model construction instead of mid-fit
+            if comp.comp_type == "conv" and comp.package == fcts_time:
+                for par_name, par_info in comp.par_dict.items():
+                    if isinstance(par_info[0], str):
+                        continue  # expressions: companions validate at eval
+                    init_val = par_info[0]
+                    vary_level = (
+                        ulmfit.vary_to_level(par_info[1])
+                        if len(par_info) >= 2
+                        else "file"
+                    )
+                    lower = par_info[2] if len(par_info) >= 4 else None
+                    if (
+                        init_val <= 0
+                        or (lower is not None and lower <= 0)
+                        or (vary_level != "static" and lower is None)
+                    ):
+                        raise ValueError(
+                            f"Convolution kernel parameter '{par_name}' of "
+                            f"'{comp.fct_str}' must be strictly positive: got "
+                            f"init={init_val}, min={lower}. Kernel widths and "
+                            "timescales require positive values, and varying "
+                            "parameters require an explicit positive lower "
+                            "bound (e.g. [0.4, True, 1e-6, 1])."
+                        )
+                comp.conv_operator()
             # populate pars attribute in the component
             comp.create_pars(prefix=prefix)
 
@@ -865,18 +890,11 @@ class Model:
         # convolute component with existing spectrum
         if comp.comp_type == "conv":
             if comp.package == fcts_energy:
-                x_axis = comp.energy
-                print("convolution of spectral components not defined")
-            elif comp.package == fcts_time:
-                x_axis = comp.time
-            else:
-                x_axis = None
-            #
-            if x_axis is None:
                 raise ValueError(
-                    f"Convolution axis not defined for component '{comp.name}'"
+                    f"Convolution of spectral (energy) components is not "
+                    f"supported (component '{comp.comp_name}')."
                 )
-            return uarr.my_conv(x=x_axis, y=value, kernel=np.asarray(comp.value(t_ind)))
+            return comp.convolve(value, t_ind)
         raise ValueError(f"Unknown component type: {comp.comp_type}")
 
     #
@@ -1287,6 +1305,9 @@ class Component:
         self.aux_axis: np.ndarray | None = None
         # parent model reference
         self.parent_model: Model | None = None
+        # lazy kernel-matrix convolution operator: (axis_ref, operator);
+        # rebuilt if the time axis is rebound
+        self._conv_cache: tuple[np.ndarray, uarr.ConvOperator] | None = None
 
     #
     def __repr__(self) -> str:
@@ -1307,6 +1328,9 @@ class Component:
         state = self.__dict__.copy()
         state["package"] = self.package.__name__
         state["parent_model"] = None
+        # drop the conv-operator cache: it holds an identity reference to
+        # the time axis that pickling would sever; it rebuilds lazily
+        state["_conv_cache"] = None
         return state
 
     #
@@ -1315,6 +1339,7 @@ class Component:
 
         package_name = state.pop("package")
         self.__dict__.update(state)
+        self.__dict__.setdefault("_conv_cache", None)
         self.package = importlib.import_module(package_name)
 
     # [automatic] create self.fct attribute that will update if either
@@ -1628,46 +1653,77 @@ class Component:
             print()
 
     #
-    def create_t_kernel(self, *, par_values: list[Any] | None = None) -> np.ndarray:
+    def conv_operator(self) -> uarr.ConvOperator:
         """
-        Create time axis for convolution kernel.
+        Kernel-matrix convolution operator for this component's time axis.
 
-        Convolution kernels need a time axis that extends beyond the data
-        time axis to properly handle edge effects. This method creates an
-        appropriately sized kernel axis based on the kernel width.
+        Builds the theta-independent operator (deduplicated ``dt``
+        values, gather indices, quadrature weights, edge-mass abscissae)
+        via ``uarr.conv_matrix_operator`` and caches it. The cache is
+        keyed on the identity of ``self.time`` so a rebound axis
+        triggers a rebuild. Also validates that the kernel has an
+        edge-mass companion registered in ``CONV_EDGE_MASS``.
+
+        Returns
+        -------
+        ConvOperator
+            Precomputed operator for ``uarr.conv_matrix_apply``.
+        """
+
+        if self.time is None:
+            raise ValueError(f"time axis of component {self.fct_str} not defined")
+        if self.fct_str not in fcts_time.CONV_EDGE_MASS:
+            raise ValueError(
+                f"Convolution kernel '{self.fct_str}' has no edge-mass "
+                "companion in functions.time.CONV_EDGE_MASS; register "
+                "one (exact exterior masses of the kernel body) to use "
+                "this kernel."
+            )
+        if self._conv_cache is None or self._conv_cache[0] is not self.time:
+            if len(self.time) < 2:
+                raise ValueError(
+                    f"Convolution component {self.fct_str} requires a time "
+                    f"axis with at least 2 points, got {len(self.time)}."
+                )
+            self._conv_cache = (self.time, uarr.conv_matrix_operator(self.time))
+        return self._conv_cache[1]
+
+    #
+    def convolve(self, y: np.ndarray, t_ind: int = 0) -> np.ndarray:
+        """
+        Convolve a signal with this kernel component.
+
+        Evaluates the kernel function elementwise on the precomputed
+        time-difference values at the current parameter values, computes
+        the exact analytic exterior masses via the kernel's
+        ``CONV_EDGE_MASS`` companion, and applies the
+        quadrature-weighted, row-normalized kernel matrix. Exact on any
+        strictly increasing time axis (uniform or not); kernel mass
+        beyond the axis contributes through the edge samples
+        (edge-value padding semantics, no support truncation).
 
         Parameters
         ----------
-        par_values : list, optional
-            Current kernel parameter values. Defaults to the initial
-            values from par_dict (model construction). Component.value
-            passes the live values so the support tracks the fitted width.
+        y : ndarray
+            Signal sampled on this component's time axis.
+        t_ind : int, default=0
+            Time index for parameter evaluation (kernel parameters are
+            time-constant, but expression machinery expects an index).
 
         Returns
         -------
         ndarray
-            Kernel time axis, centered at 0 and extending ±(width * kernel_parameter)
+            Convolved signal, same length as ``y``.
         """
 
-        # get kernel parameters i.e. component parameters
-        if par_values is None:
-            par_values = cast(
-                "list[Any]", ulmfit.par_extract(self.par_dict, return_type="list")
-            )
-        # define kernel time axis. Kernel-width helpers may inspect the
-        # full parameter list for multi-parameter kernels such as Voigt.
-        kernel_width = getattr(fcts_time, self.fct_str + "_kernel_width")(*par_values)
-        t_range = par_values[0] * kernel_width
-        if self.time is None:
-            raise ValueError(f"time axis of component {self.fct_str} not defined")
-        if len(self.time) < 2:
-            raise ValueError(
-                f"Convolution component {self.fct_str} requires a time axis "
-                f"with at least 2 points to determine the kernel step size, "
-                f"got {len(self.time)}."
-            )
-        t_step = self.time[1] - self.time[0]
-        return uarr.conv_kernel_support(t_range, t_step)
+        pars = [p.value(t_ind, update_t_model=t_ind == 0) for p in self.pars]
+        operator = self.conv_operator()
+        # companion first: it validates the parameters, so the kernel
+        # body never sees a nonpositive width
+        edge_mass = fcts_time.CONV_EDGE_MASS[self.fct_str]
+        mass_left, mass_right = edge_mass(operator.dt_left, operator.dt_right, *pars)
+        kernel_values = np.asarray(self.fct(operator.dt_unique, *pars), np.float64)
+        return uarr.conv_matrix_apply(operator, kernel_values, mass_left, mass_right, y)
 
     #
     def value(self, t_ind: int = 0, **kwargs) -> np.ndarray:
@@ -1738,11 +1794,10 @@ class Component:
                 raise ValueError(
                     f"Time axis not defined for component '{self.comp_name}'"
                 )
-            # conv kernels: rebuild the support from the current parameter
-            # values so the axis tracks the fitted width (a frozen support
-            # would truncate the kernel once the width grows past its init)
-            if self.comp_type == "conv":
-                self.time = self.create_t_kernel(par_values=pars)
+            # conv kernels evaluate on the model time axis here (kernel
+            # centered at t=0) — used for plotting/inspection only; the
+            # convolution itself goes through Component.convolve, which
+            # evaluates the kernel on the dt matrix
             if self.subcycle == 0:  # single cycle
                 return np.asarray(self.fct(self.time, *pars, **kwargs))
             # multi-cycle

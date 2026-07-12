@@ -216,9 +216,15 @@ Dynamics and convolution kernels. Dynamics functions (e.g. `expFun`,
 `func(t, par1, ..., t0)` with the invariant `f(t < t0) = 0`; constant
 offsets are their own additive component (`stepFun`, or `erfFun` for a
 broadened onset) rather than a `y0` parameter on every function.
-Convolution kernels are named `funcCONV` (e.g. `gaussCONV`) with a
-companion `funcCONV_kernel_width(...)` returning the kernel-width multiplier.
-Add new time-domain behavior or IRF kernels here.
+Convolution kernels are named `funcCONV` (e.g. `gaussCONV`) and must be
+elementwise in their first argument: the kernel-matrix convolution
+evaluates them on a 2D matrix of time differences
+(`utils.arrays.conv_matrix_operator`). Every kernel additionally
+registers a private edge-mass companion in `CONV_EDGE_MASS` (exact
+analytic exterior masses of the kernel body, for edge-value padding);
+kernels without one are rejected at model validation and scheduling.
+Add new time-domain behavior or IRF kernels here (see
+`docs/ai/add-function.md` for the full checklist).
 
 ### `functions/profile.py`
 
@@ -233,11 +239,15 @@ shapes here.
 
 ### `utils/arrays.py`
 
-Array/numeric helpers. Notably `my_conv` (used by the 2D evaluator for
-IRF convolution), `format_float_scientific` (fixed-width scientific
-notation), `oom` (order-of-magnitude), running averages, sign-change
-detection, angular normalization. Use `my_conv` rather than rolling your
-own `scipy.signal.convolve` wrapper.
+Array/numeric helpers. Notably the kernel-matrix convolution pair
+`conv_matrix_operator` / `conv_matrix_apply` (used by both the mcp and
+GIR evaluators for IRF convolution — exact on non-uniform time axes,
+static shapes per theta, exterior kernel mass handled analytically via
+per-kernel edge-mass companions), `my_conv` (padded 1D convolution, now only
+backing `running_mean`), `format_float_scientific` (fixed-width
+scientific notation), `oom` (order-of-magnitude), running averages,
+sign-change detection, angular normalization. Use these rather than
+rolling your own `scipy.signal.convolve` wrapper.
 
 ### `utils/hdf5.py`
 

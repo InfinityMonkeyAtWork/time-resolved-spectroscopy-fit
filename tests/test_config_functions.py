@@ -9,7 +9,11 @@ import inspect
 
 import pytest
 
-from trspecfit.config.functions import get_function_parameters
+from trspecfit.config.functions import (
+    _module_functions,
+    all_functions,
+    get_function_parameters,
+)
 from trspecfit.functions import energy, profile, time
 
 
@@ -70,8 +74,8 @@ class TestGetFunctionParameters:
     def test_gaussCONV(self):
         assert get_function_parameters("gaussCONV") == ["SD"]
 
-    def test_voigtCONV(self):
-        assert get_function_parameters("voigtCONV") == ["SD", "W"]
+    def test_expDecayCONV(self):
+        assert get_function_parameters("expDecayCONV") == ["tau"]
 
     #
     # profile functions — first arg (x) stripped
@@ -99,25 +103,18 @@ class TestNoUnderscoresInNames:
     """
 
     MODULES = [energy, time, profile]
-    INTERNAL_SUFFIXES = ("_kernel_width",)
 
     #
     def _public_callables(self):
-        """Yield (module, name, func) for every public callable."""
+        """Yield (module, name, func) for every discovered registry function."""
 
         for mod in self.MODULES:
-            for name in dir(mod):
-                if name.startswith("_"):
-                    continue
-                obj = getattr(mod, name)
-                if callable(obj):
-                    yield mod, name, obj
+            for name in _module_functions(mod):
+                yield mod, name, getattr(mod, name)
 
     #
     def test_no_underscore_in_function_names(self):
         for mod, name, _func in self._public_callables():
-            if any(name.endswith(s) for s in self.INTERNAL_SUFFIXES):
-                continue
             assert "_" not in name, f"{mod.__name__}.{name} contains an underscore"
 
     #
@@ -130,14 +127,34 @@ class TestNoUnderscoresInNames:
     #
     def test_no_underscore_in_parameter_names(self):
         for mod, name, func in self._public_callables():
-            if any(name.endswith(s) for s in self.INTERNAL_SUFFIXES):
-                continue
             sig = inspect.signature(func)
             for par_name in sig.parameters:
                 assert "_" not in par_name, (
                     f"{mod.__name__}.{name}() parameter '{par_name}' "
                     "contains an underscore"
                 )
+
+
+#
+#
+class TestRegistryExcludesImports:
+    """Function discovery only accepts functions defined in the modules.
+
+    Imported helpers (scipy.special functions, typing constructs) are
+    public module attributes; if discovery accepted them, a malformed
+    YAML component named e.g. 'erfc' would pass function-name validation
+    and only fail during evaluation.
+    """
+
+    #
+    def test_imported_names_not_discovered(self):
+        discovered = set(all_functions())
+        assert {"erf", "erfc", "wofz", "Callable"}.isdisjoint(discovered)
+
+    #
+    def test_registry_functions_still_discovered(self):
+        discovered = set(all_functions())
+        assert {"GLP", "expFun", "gaussCONV", "pGauss", "none"} <= discovered
 
 
 if __name__ == "__main__":

@@ -1,0 +1,290 @@
+---
+orphan: true
+---
+
+# Kernel-Matrix Convolution
+
+> **Status: implemented** (2026-07, `conv-kernel-matrix` branch). The
+> operator lives in `utils/arrays.py` (`conv_matrix_operator` /
+> `conv_matrix_apply`, bundled as the `ConvOperator` NamedTuple:
+> `dt_unique`, `gather_idx`, `quad_weights`, `dt_left`, `dt_right`);
+> the mcp path consumes it via `Component.conv_operator()` /
+> `Component.convolve()` (cached per `Component.time` identity) and the
+> GIR path via the `ScheduledPlan2D.conv_operator` plan field (numeric
+> kernel ids only — companions resolve via enum-keyed dispatch, so the
+> plan stays serializable).
+>
+> **Edge handling (revised 2026-07-11):** the note below proposed edge
+> policy (b) via a ghost-point extension of the quadrature grid. That
+> was implemented first, then replaced: its coverage (`n_t` ghost
+> samples per side continuing the boundary step) silently truncated
+> kernels broader than `n_t x boundary_step`, and row normalization hid
+> the loss — worst exactly on fine-boundary axes (user-reported). The
+> final implementation computes the exterior masses **analytically**:
+> each kernel registers a private edge-mass companion in
+> `functions/time.py::CONV_EDGE_MASS` returning the exact integrals of
+> the kernel body over `(-inf, t[0]]` and `[t[-1], inf)`
+> (cancellation-safe tail forms: erfc / exp / clip). No ghost points,
+> no coverage limit, no truncation for any theta; the dt matrix is
+> interior-only `(n_t, n_t)` with true trapezoid weights (half-cells at
+> the window edges). This is what made dropping `voigtCONV` (no
+> closed-form CDF) and `lorentzCONV` (no time-domain physical basis)
+> part of this change; it also retired `wofz` from `functions/time.py`.
+> Kernels without a companion are rejected at model validation (mcp)
+> and scheduling (GIR); kernel parameters must be strictly positive
+> with positive lower bounds, enforced at model load.
+>
+> Other deviations from the plan below:
+>
+> 1. a kernel far narrower than the local step now degrades to identity
+>    (the dt=0 diagonal keeps row sums positive) instead of raising the
+>    old zero-sum-kernel error;
+> 2. the kernel is evaluated only on the **unique** dt values
+>    (`dt_unique` + `gather_idx` reconstruction) rather than the full
+>    matrix — a naive elementwise evaluation was a 2.6x GIR regression;
+>    the dedup makes the new path faster than the old 1D convolution.
+>
+> **Measured results** (2026-07-11, ghost-scheme state; see changelog
+> for the final edge-mass numbers):
+>
+> - *Accuracy on example 21's non-uniform axis* (steps 0.5 → 2.0, truth
+>   parameters): worst-case deviation from the exact continuous
+>   convolution dropped from ~7% of trace max (old sample-index
+>   convolution) to ~4% (residual O(h) sampling at the ``expFun`` jump).
+> - *Performance, example 01* (the conv GIR path, 481x400 grid,
+>   `benchmark_gir.py --example 1 --calls 200`): 2.95 ms/call GIR
+>   (interior-only matrix + analytic edge masses; was 8.4 ms/call with
+>   the ghost scheme, ~11 ms/call with the original 1D kernel); 6.5x vs
+>   the interpreter per-call.
+> - *Parity*: mcp and GIR paths agree to 4.4e-14 (max |diff|).
+>
+> The next section records the final design decisions (folded from the
+> implementation plan when it was cleared); the rest of this note is
+> the original planning note, kept for the rationale and the measured
+> defect it fixed.
+
+## Final design decisions (2026-07-11)
+
+- **Kernel drop rationale.** `voigtCONV` and `lorentzCONV` were removed
+  on physics grounds: neither has a basis as a *time-domain* IRF (Voigt
+  and Lorentzian are energy-domain lineshape stories, already covered by
+  the energy layer), and no example used them; pre-1.0 is the time to
+  remove names. Voigt's missing closed-form CDF is what blocked the
+  exact-edge design; Lorentz has an elementary CDF
+  (`(W/2)(atan(2x/W) + pi/2)` for our body), so its removal was the
+  physics/API call, not a technical necessity.
+- **Companions return masses, not CDFs.**
+  `_<name>CONV_edge_mass(dt_left, dt_right, *params) -> (M_L, M_R)`,
+  where `M_L(i)` is the integral of the kernel body over `(-inf, t[0]]`
+  (upper tail at `dt_left[i] = t_i - t[0]`) and `M_R(i)` the integral
+  over `[t[-1], inf)` (lower tail at `dt_right[i] = t_i - t[-1]`).
+  Returning masses lets each kernel use its natural well-conditioned
+  form — `erfc` for gauss, direct `exp` for the exponentials, `clip`
+  for box — and removes any `G(inf)`/`np.inf`-evaluation convention.
+  (Plain `G(inf) - G(x)` subtraction would already be fine in
+  *absolute* terms — masses join O(1) row sums — but the direct forms
+  are cleaner and free.) Companions must integrate the body with its
+  exact normalization: the gauss body is peak-1, so
+  `M = SD*sqrt(pi/2)*erfc(x/(sqrt(2)*SD))`; expDecay/expRise are
+  `tau`-scaled one-sided exponentials with one of the two masses
+  identically 0; expSym is piecewise; box uses the `clip` form.
+- **Quadrature weights are true trapezoid** — half-cells at both window
+  ends, NOT `np.gradient`, whose endpoint weights are full cells and
+  would double-count against the analytic edge masses.
+- **Layering.** `utils/arrays.py` stays kernel-agnostic:
+  `conv_matrix_apply(operator, kernel_values, edge_mass_left,
+  edge_mass_right, y)`; callers compute the masses via the registry.
+- **Companions are private** (`_gaussCONV_edge_mass`, ...), exposed
+  through the single public registry dict `CONV_EDGE_MASS` — one source
+  of truth for both evaluation paths, and the private names keep them
+  out of registry introspection (no INTERNAL_SUFFIXES resurrection in
+  the guard tests).
+- **No callables on the plan.** `ScheduledPlan2D` keeps numeric
+  kernel-kind ids; the evaluator resolves companions via
+  `CONV_EDGE_MASS_DISPATCH`, keyed by the same `ConvKernelKind` enum as
+  `CONV_KERNEL_DISPATCH`; `schedule_2d` only validates the entry
+  exists. This keeps the plan serializable / JAX-friendly. A missing
+  companion is a loud validation error at `add_components` /
+  `schedule_2d` time, not a silent fallback.
+- **Validation split per the two-layer design.** Authoring layer: conv
+  kernel parameters must be strictly positive, and varying parameters
+  must carry an explicit positive lower bound (the unbound
+  `[value, True]` form would give lmfit `min=-inf`), enforced at model
+  load with a clear error. The edge-mass companions validate their
+  parameters (strictly positive, finite) on every evaluation as the
+  backstop for expression-driven kernel parameters (`boxCONV` with
+  width 0 would otherwise silently become the identity operator). Hot
+  path: cheap O(n) finite/nonnegative checks on `kernel_values`, both
+  mass vectors, and all input shapes in `conv_matrix_apply` (a row-sum
+  check alone lets signed errors cancel). All of these are host-side
+  checks, outside any future jit boundary.
+- **Related registry cleanup** in the same change: function discovery
+  in `config/functions.py` was restricted to functions defined in the
+  `functions/` modules, so imported helpers (`erf`, `erfc`, `wofz`,
+  `Callable`) no longer leak into the function registry.
+- **Released as 0.11.0, not 0.10.3**: public names were removed (two
+  kernels, `conv_kernel_support`, the `*_kernel_width` helpers) and the
+  convolution semantics changed.
+
+## Summary
+
+Replace the 1D-kernel-array convolution
+([`my_conv`](../../../src/trspecfit/utils/arrays.py) plus the per-theta
+`conv_kernel_support` rebuild) with a quadrature-weighted kernel-matrix
+operator, on both the mcp and GIR paths, in one branch. Two motivations:
+
+1. **Correctness.** Sample-index convolution is silently wrong on
+   non-uniform time axes. Measured on example 21's axis
+   (steps 0.5 → 2.0) with its truth parameters (2026-07-10): up to ~7% of
+   the trace maximum versus the exact continuous convolution, worst just
+   past the step change.
+2. **Architecture.** It removes theta-dependent kernel array shapes — the
+   main jit blocker for the JAX track
+   ([jax-planning.md](../jax-planning.md)) — and retires the SciPy
+   convolution dependency in the lowered path.
+
+The mcp and GIR changes cannot be split across branches: parity tests
+assert the two paths agree to 1e-10, so the convolution semantics must
+change everywhere at once.
+
+
+## The defect today
+
+- Kernels are sampled at `t_step = time[1] - time[0]`
+  ([`Component.create_t_kernel`](../../../src/trspecfit/mcp.py),
+  `resolve_param_traces` in
+  [`eval_2d.py`](../../../src/trspecfit/eval_2d.py), and the schedule-time
+  trace init in [`graph_ir.py`](../../../src/trspecfit/graph_ir.py)).
+- `my_conv` convolves by sample index; the axis itself never enters the
+  computation. On a non-uniform axis the effective IRF width scales with
+  the local step (4x wider in example 21's coarse region), and points
+  near the step change see a blend of both regimes.
+- Nothing guards against this: a non-uniform time axis flows into the
+  convolution path silently.
+- The shipped example is self-consistent — its data was generated through
+  the same operator, so parameter recovery round-trips. Real measured
+  data on a fine-around-t0 + coarse-tail axis would produce biased fits,
+  concentrated in the IRF width and everything near the step change.
+
+
+## The operator
+
+For a monotonic time axis `t` (length `n_t`) and kernel function `g`
+with fitted parameters `theta_k`:
+
+- `dt[i, j] = t_i - t_j` — theta-independent, built once.
+- `w_j` = trapezoid quadrature weights (`np.gradient(t)`) —
+  theta-independent, built once.
+- Per evaluation: `K[i, j] = g(dt[i, j]; theta_k) * w_j`, rows
+  normalized to sum to 1; then `y_conv = K @ y`.
+
+Properties:
+
+- Exact on any monotonic axis; on a uniform axis the weights cancel in
+  the row normalization and the result matches the current path up to
+  the (small) truncation of the current finite support.
+- Static shapes, no support truncation at all — this supersedes the
+  dynamic-support machinery from the `fix-conv-kernels` branch rather
+  than layering on top of it.
+- Differentiable and jit-friendly: per-theta work is an elementwise
+  kernel evaluation plus a matmul.
+- O(n_t^2) per convolution node per evaluation. At the current
+  n_t ~ hundreds this is sub-millisecond; see the benchmark gate below.
+
+
+## Generality: one operator for 1D and 2D
+
+Call-site inventory — every convolution in the package acts on a 1D
+trace sampled on the time axis:
+
+- **mcp (single site).** `Model._combine_component` in
+  [`mcp.py`](../../../src/trspecfit/mcp.py) handles `comp_type == "conv"`
+  for standalone `TIME_1D` models and for dynamics traces inside 2D
+  models alike — parameter time dependence evaluates via
+  `par.t_model.create_value_1d()`, i.e. the 2D case reuses the 1D
+  time-trace evaluator. Replacing this one site covers both.
+- **GIR (two sites).** The `kind == 2` branch of
+  `resolve_param_traces` in
+  [`eval_2d.py`](../../../src/trspecfit/eval_2d.py), and the schedule-time
+  trace initialization in
+  [`graph_ir.py`](../../../src/trspecfit/graph_ir.py). The plan gains the
+  precomputed `dt` matrix and weights; the per-theta support recompute
+  disappears.
+- **Future.** The 1D time-trace fitting item in `TODO.md` inherits
+  correct convolution on measured (typically non-uniform) delay axes
+  automatically — the matrix operator is an enabler for that feature,
+  not just compatible with it.
+- Energy-domain convolution remains undefined (explicitly rejected in
+  `_combine_component`); out of scope here, though the same helper
+  would apply if it is ever defined.
+
+
+## Design decisions
+
+1. **Edge policy.** `my_conv` pads the signal with edge values
+   (`mode="edge"`), convolves, and crops. Matrix equivalents:
+   (a) row normalization only — kernel mass falling outside the window
+   is renormalized over interior samples; or (b) edge-mass
+   accumulation — kernel mass beyond each end of the axis is added to
+   the first/last column, reproducing edge-padding semantics.
+   Recommendation: (b). It matches current behavior on uniform axes
+   (signal assumed constant beyond the window — the right assumption
+   for saturating or decaying traces) and minimizes golden-value churn.
+   Decide before implementation and test both edge rows explicitly.
+2. **Kernel bodies evaluate on `dt` directly.** Registry kernel
+   functions (`gaussCONV`, …) are elementwise in their first argument,
+   so they apply to the `dt` matrix unchanged; no new numeric bodies.
+   The `*_kernel_width` helpers and `conv_kernel_support` existed only
+   to size the 1D support and are removed together with the
+   dynamic-support recompute and its tests.
+3. **Normalization.** Per-row, generalizing the current
+   kernel-divided-by-sum normalization to non-uniform sampling.
+4. **Validation.** Keep a monotonic-axis check at the authoring layer;
+   non-uniform spacing stops being a (silent) error condition and
+   becomes supported.
+
+
+## Implementation order and blast radius
+
+1. `utils/arrays.py`: matrix-convolution helper (theta-independent
+   builder + per-theta apply), unit-tested against an analytic
+   Gaussian-times-exponential reference, uniform-axis agreement with
+   the current path within truncation tolerance, and a dense
+   continuous-convolution reference on a non-uniform axis.
+2. mcp path: `_combine_component` and the `Component` kernel handling
+   (`create_t_kernel` path).
+3. GIR: plan fields (`dt`, weights; kernel function ids stay), the
+   `kind == 2` branch of `resolve_param_traces`, and the schedule-time
+   init convolution.
+4. Parity: mcp vs GIR tests keep asserting 1e-10 — both paths must
+   consume the same helper.
+5. Regenerate example 21's data (`generate_data.ipynb`; the old
+   operator's artifact is baked into the CSVs) and re-run affected
+   examples per `docs/ai/check-example.md`. Update roundtrip/golden
+   values once.
+6. Benchmark before/after per `docs/ai/benchmark.md`. The O(n_t^2)
+   cost is expected to be noise at current sizes; if long time axes
+   ever make it matter, the escape hatch is a banded matrix with a
+   static support cap derived from parameter bounds (shapes stay
+   static).
+
+
+## Relationship to the JAX track
+
+Land this before Phase B/C of [jax-planning.md](../jax-planning.md). It
+removes two blockers listed there: the SciPy convolution utilities in
+the lowered path, and the theta-dependent kernel shapes introduced by
+the dynamic-support fix. After this change, porting convolution to JAX
+is an elementwise kernel evaluation plus a matmul.
+
+
+## Success criteria
+
+- Non-uniform-axis convolution matches a dense continuous-convolution
+  reference to floating-point tolerance.
+- Uniform-axis results match the previous path within the documented
+  truncation tolerance; examples and golden values updated exactly once.
+- mcp/GIR parity retained at 1e-10.
+- No per-theta array shapes remain anywhere in the convolution path.
+- Benchmarks show no regression beyond noise, or document the banded
+  fallback and its trigger.
