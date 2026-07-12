@@ -166,7 +166,7 @@ class PlotConfig:
     waterfall: float = 0
     vlines: list[float] | None = None
     hlines: list[float] | None = None
-    refline_color: str = "#808080"
+    refline_color: str = "#000000"
     refline_style: str = ":"
     ticksize: float | None = None
 
