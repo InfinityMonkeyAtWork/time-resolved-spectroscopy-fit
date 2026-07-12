@@ -81,6 +81,15 @@ MonoSqrt:
         A: [0.2, True, 0, 5]
         t0: [0, False, 0, 1]
 
+# sqrtFun with a *varying* onset: regression fixture for the JAX
+# Jacobian (the sqrt(clip) form produced NaN derivatives on every
+# pre-onset sample when t0 varies). t0 sits off the shared test grid
+# so finite differences stay well-defined near the onset.
+MonoSqrtVaryT0:
+    sqrtFun:
+        A: [0.2, True, 0, 5]
+        t0: [0.5, True, -2, 5]
+
 # SD ~ 0.8*dt of the shared test time axis: wide enough that the width is
 # identifiable from the data, narrow enough not to bury the expFun dynamics
 MonoExpPosIRF:

@@ -289,6 +289,31 @@ def bench_per_call(file, *, n_warmup=5, n_calls=200):
     slow = spectra.fit_model_mcp(energy, par, True, model, 2)
     max_diff = np.max(np.abs(fast - slow))
 
+    # --- JAX path (optional [jax] extra) ---
+    jax_per_call = None
+    jax_compile = None
+    jax_diff = None
+    jax_note = None
+    try:
+        from trspecfit.eval_jax import make_evaluator_2d_jax
+
+        theta = np.asarray(par, dtype=np.float64)[theta_indices]
+        t0 = time.perf_counter()
+        evaluate_jax = make_evaluator_2d_jax(plan)
+        jax_result = evaluate_jax(theta)  # first call includes XLA compile
+        jax_compile = time.perf_counter() - t0
+        jax_diff = np.max(np.abs(jax_result - fast))
+        for _ in range(n_warmup):
+            evaluate_jax(theta)
+        t0 = time.perf_counter()
+        for _ in range(n_calls):
+            evaluate_jax(theta)
+        jax_per_call = (time.perf_counter() - t0) / n_calls
+    except ImportError:
+        jax_note = "jax not installed (pip install -e '.[jax]')"
+    except ValueError as exc:
+        jax_note = f"plan not JAX-supported ({exc})"
+
     print("=" * 60)
     print("PER-CALL EVALUATION BENCHMARK")
     print(f"  Grid:       {len(file.time)} time x {len(file.energy)} energy")
@@ -297,6 +322,14 @@ def bench_per_call(file, *, n_warmup=5, n_calls=200):
     print(f"  Interpreter:{mcp_per_call * 1e3:8.2f} ms/call")
     print(f"  Speedup:    {mcp_per_call / gir_per_call:8.2f}x")
     print(f"  Max |diff|: {max_diff:.2e}")
+    if jax_per_call is not None:
+        print(f"  JAX:        {jax_per_call * 1e3:8.2f} ms/call")
+        print(f"    vs GIR:   {gir_per_call / jax_per_call:8.2f}x")
+        print(f"    vs MCP:   {mcp_per_call / jax_per_call:8.2f}x")
+        print(f"    compile:  {jax_compile * 1e3:8.0f} ms (once per plan)")
+        print(f"    max |diff| vs GIR: {jax_diff:.2e}")
+    else:
+        print(f"  JAX:        skipped -- {jax_note}")
     print("=" * 60)
 
     return gir_per_call, mcp_per_call
@@ -608,16 +641,28 @@ def capture_par_variability(example_num, *, n_starts=4):
 
 #
 def bench_fit(example_num, dynamics_calls, *, n_reps=3):
-    """Time a complete fit_2d for both paths."""
+    """Time a complete fit_2d for both paths (+ JAX when installed).
 
-    gir_times = []
-    mcp_times = []
+    The JAX column runs ``spec_fun_str="fit_model_jax"`` -- the jitted
+    evaluator plus the analytic Jacobian for the leastsq stage. Each
+    rep rebuilds the file, so every JAX rep pays its own XLA compile
+    (the realistic single-fit cost, not a warm-cache best case).
+    """
+
+    try:
+        import jax  # noqa: F401
+
+        have_jax = True
+    except ImportError:
+        have_jax = False
+
+    backends = [("fit_model_gir", "GIR"), ("fit_model_mcp", "MCP")]
+    if have_jax:
+        backends.append(("fit_model_jax", "JAX"))
+    times: dict[str, list] = {label: [] for _, label in backends}
 
     for i in range(n_reps):
-        for fun_str, times_list in [
-            ("fit_model_gir", gir_times),
-            ("fit_model_mcp", mcp_times),
-        ]:
+        for fun_str, label in backends:
             file, _, _ = load_example(example_num, add_dynamics=False)
             file.define_baseline(
                 time_start=0, time_stop=10, time_type="ind", show_plot=False
@@ -628,17 +673,15 @@ def bench_fit(example_num, dynamics_calls, *, n_reps=3):
             file.p.spec_fun_str = fun_str
             t0 = time.perf_counter()
             file.fit_2d(model_name="2D", stages=2, try_ci=0)
-            times_list.append(time.perf_counter() - t0)
+            times[label].append(time.perf_counter() - t0)
 
         print(
             f"  Rep {i + 1}/{n_reps}: "
-            f"GIR={gir_times[-1]:.2f}s  MCP={mcp_times[-1]:.2f}s"
+            + "  ".join(f"{label}={times[label][-1]:.2f}s" for _, label in backends)
         )
 
-    gir_med = np.median(gir_times)
-    mcp_med = np.median(mcp_times)
-    formatted_gir_times = [f"{t:.2f}" for t in gir_times]
-    formatted_mcp_times = [f"{t:.2f}" for t in mcp_times]
+    gir_med = np.median(times["GIR"])
+    mcp_med = np.median(times["MCP"])
 
     print()
     print("=" * 60)
@@ -647,8 +690,15 @@ def bench_fit(example_num, dynamics_calls, *, n_reps=3):
     print(f"  GIR:        {gir_med:8.2f} s (median)")
     print(f"  Interpreter:{mcp_med:8.2f} s (median)")
     print(f"  Speedup:    {mcp_med / gir_med:8.2f}x")
-    print(f"  GIR all:    {formatted_gir_times}")
-    print(f"  MCP all:    {formatted_mcp_times}")
+    if have_jax:
+        jax_med = np.median(times["JAX"])
+        print(f"  JAX+Dfun:   {jax_med:8.2f} s (median, incl. XLA compile)")
+        print(f"    vs GIR:   {gir_med / jax_med:8.2f}x")
+    else:
+        print("  JAX+Dfun:   skipped -- jax not installed")
+    for _, label in backends:
+        formatted = [f"{t:.2f}" for t in times[label]]
+        print(f"  {label} all:    {formatted}")
     print("=" * 60)
 
 

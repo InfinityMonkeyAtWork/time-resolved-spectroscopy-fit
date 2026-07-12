@@ -1,7 +1,7 @@
 # General behavior
 
 - **Confidence Rule:** Do not make changes until you have 95% confidence. Understand the relevant files before editing and ask follow-up questions until you reach this threshold or when tradeoffs are non-obvious.
-- **Commits:** Never commit or rewrite history unless explicitly asked. Always show the exact commit message and wait for approval before committing. Never add AI attribution trailers (`Co-Authored-By` etc.) to commit messages.
+- **Commits:** Never commit or rewrite history unless explicitly asked. Always show the exact commit message and wait for approval before committing. Never add AI attribution trailers (`Co-Authored-By` etc.) to commit messages. When suggesting a commit message, check whether `version` in `pyproject.toml` has already been incremented relative to `main`; if not, suggest an appropriate increment alongside the message.
 - **Context Discipline:** Monitor context usage. At 60% usage (or if it starts getting tight), summarize progress and prompt me to `/compact` or `/clear`.
 - **Token Efficiency:** Be concise. Reference file paths and line numbers rather than quoting large code blocks.
 - **Subagent Protocol:** Use subagents for repo-wide scans, parallel research, or scanning large directories. Instruct them to return only concise summaries to keep the main context window lean.

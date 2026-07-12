@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trspecfit"
-version = "0.11.0"
+version = "0.12.0"
 authors = [
     {name = "Johannes Mahl", email = "infinitymonkeyatwork@gmail.com"},
 ]
@@ -66,6 +66,13 @@ dev = [
   "ruff==0.15.20",
   "build==1.5.0",
   "twine==6.2.0",
+]
+
+# Experimental JAX evaluator backend (CPU wheel; see
+# docs/design/jax-planning.md). Tests that exercise it skip when
+# jax is not installed.
+jax = [
+  "jax>=0.4.35",
 ]
 
 # Optional notebook/visualization support
@@ -131,6 +138,7 @@ optional_dependencies_dev_groups = ["dev"]
 # confidence interval estimation needs to work with standard install
 # keep these as runtime deps even though used indirectly via lmfit
 # py-spy is a CLI tool invoked via shell (see benchmark skill), not imported
+# jax is the optional [jax] extra, imported behind a TYPE_CHECKING/try guard
 [tool.deptry.per_rule_ignores]
 DEP002 = [
   "numdifftools",
@@ -140,6 +148,7 @@ DEP002 = [
   "jupyterlab",
   "graphviz",
   "py-spy",
+  "jax",
 ]
 # scripts/normalize_notebooks.py is dev-only tooling (pre-commit hook),
 # so its dev-dep imports are intentional. deptry treats anything outside

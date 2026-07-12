@@ -4,6 +4,12 @@ orphan: true
 
 # Planning Note: JAX Backend, Jacobians, and Optimizer
 
+> **Status (2026-07-11):** Phases A–D of this plan are implemented
+> (`eval_jax.py`, `can_lower_jax_2d`, `fit_model_jax` + `Dfun`
+> plumbing); Phase E (optimizer replacement) is deferred for lack of
+> evidence that lmfit is the bottleneck. This note is preserved as the
+> planning-time rationale.
+
 ## Summary
 
 The current NumPy GIR backend is ready to be treated as complete for the

@@ -202,6 +202,50 @@ def fit_model_gir(
 
 
 #
+def fit_model_jax(
+    x: Sequence[float] | np.ndarray,
+    par: Sequence[float] | np.ndarray,
+    plot_sum: bool,
+    *args: Any,
+) -> np.ndarray | list[np.ndarray]:
+    """Generate spectrum using a compiled JAX evaluator when available.
+
+    When the first element of *args* is a callable it is the jitted
+    evaluator from ``eval_jax.make_evaluator_2d_jax``; otherwise the
+    call is forwarded to :func:`fit_model_gir` (NumPy compiled plan or
+    interpreter fallback).
+
+    Parameters
+    ----------
+    x : array-like
+        Independent variable axis (energy or time).
+    par : array-like
+        Full parameter vector (all params, fixed + varying).
+    plot_sum : bool
+        Component return mode (2D JAX path always returns the sum).
+    *args
+        ``(evaluator, jacobian, theta_indices, model, dim)`` for the
+        JAX path — *jacobian* is carried for ``fitlib.jacobian_fun``
+        (lmfit ``Dfun``), not used here.  Otherwise the
+        :func:`fit_model_gir` conventions apply.
+
+    Notes
+    -----
+    The evaluator/jacobian entries are per-plan closures and do not
+    pickle; MCMC via ``lmfit.emcee`` with ``workers > 1`` is not
+    supported on this path (single-worker MCMC works).
+    """
+
+    if callable(args[0]):
+        evaluator = args[0]
+        theta_indices: np.ndarray = args[2]
+        par_arr = np.asarray(par, dtype=np.float64)
+        return np.asarray(evaluator(par_arr[theta_indices]))
+
+    return fit_model_gir(x, par, plot_sum, *args)
+
+
+#
 def fit_model_compare(
     x: Sequence[float] | np.ndarray,
     par: Sequence[float] | np.ndarray,

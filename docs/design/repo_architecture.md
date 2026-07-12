@@ -77,6 +77,18 @@ dispatch tables live here (`DYNAMICS_DISPATCH`, `CONV_KERNEL_DISPATCH`).
 **Performance-critical — prefer array operations, avoid Python-level
 branching on model structure (the plan already captured it).**
 
+### `eval_jax.py` — experimental JAX backend (optional `[jax]` extra)
+
+Jitted mirror of the 2D evaluator plus an analytic Jacobian
+(`make_evaluator_2d_jax`, `make_jacobian_2d_jax`), compiled per plan by
+trace-time unrolling of the schedule arrays. Gated by
+`graph_ir.can_lower_jax_2d` (at most as wide as `can_lower_2d`, so
+rejected graphs fall back to the compiled NumPy path, never straight to
+the interpreter). Selected via `Project.spec_fun_str = "fit_model_jax"`;
+the Jacobian reaches lmfit's leastsq through `fitlib.jacobian_fun`
+(`Dfun`). Voigt uses a Weideman rational `wofz` approximation instead
+of SciPy's.
+
 ### `spectra.py` — evaluator bridge
 
 Thin module that the fitting engine calls on every residual evaluation.

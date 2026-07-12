@@ -1,10 +1,16 @@
-# Benchmark GIR vs Interpreter
+# Benchmark GIR vs Interpreter (vs JAX)
 
 Shared source of truth for benchmarking the compiled GIR evaluator against the
 interpreter (MCP) path.
 
 Run `benchmark_gir.py` to compare the compiled and interpreter evaluation paths
-on an example fitting workflow.
+on an example fitting workflow. When the optional `[jax]` extra is installed
+(`.venv/bin/pip install -e ".[jax]"`), the per-call benchmark adds a JAX
+column (jitted evaluator; reports per-call time, speedup vs both paths, the
+one-time XLA compile cost, and max |diff| vs GIR) and `--fit` adds a
+`fit_model_jax` run (jitted residuals + analytic Jacobian on the leastsq
+stage; each rep pays its own compile). Without jax both report
+"skipped".
 
 ## Available examples
 
@@ -50,9 +56,10 @@ Run:
 .venv/bin/python .claude/skills/benchmark/benchmark_gir.py --example <N> --calls 200 [--fit] [-n <N>]
 ```
 
-Report the results to the user. Highlight the speedup ratio, the
-`Max |diff|` correctness check, and note which GIR path the example exercises
-(convolution / subcycle / profile / plain).
+Report the results to the user. Highlight the speedup ratios, the
+`Max |diff|` correctness checks, and note which GIR path the example exercises
+(convolution / subcycle / profile / plain). When the JAX column is present,
+mention the compile cost separately — it is paid once per plan, not per call.
 
 ## Fit-count and planning-cost modes
 

@@ -84,6 +84,41 @@ def _extract_theta(plan, model):
     )
 
 
+try:
+    import jax as _jax  # noqa: F401
+
+    _HAVE_JAX = True
+except ImportError:  # pragma: no cover - CI min-versions job has no jax
+    _HAVE_JAX = False
+
+# plan id -> (plan, jitted evaluator); the plan reference keeps the id
+# from being recycled after garbage collection
+_jax_evaluator_cache: dict = {}
+
+
+#
+def _assert_jax_parity(plan, theta, reference):
+    """Assert the JAX evaluator matches the NumPy GIR result.
+
+    Piggybacks on every evaluator-vs-interpreter comparison so the
+    whole 2D matrix (including regression fixtures) covers the JAX
+    backend.  No-op without jax installed.  If the JAX gate ever
+    narrows below can_lower_2d again, unsupported plans raise
+    ValueError here — split the affected test rather than skipping
+    silently.
+    """
+
+    if not _HAVE_JAX:
+        return
+    key = id(plan)
+    if key not in _jax_evaluator_cache:
+        from trspecfit.eval_jax import make_evaluator_2d_jax
+
+        _jax_evaluator_cache[key] = (plan, make_evaluator_2d_jax(plan))
+    _, evaluate_jax = _jax_evaluator_cache[key]
+    np.testing.assert_allclose(evaluate_jax(theta), reference, rtol=1e-12, atol=1e-12)
+
+
 #
 def _compare_evaluator_vs_interpreter(model, plan, *, rtol=1e-10):
     """Run evaluate_2d and interpreter, assert they match."""
@@ -93,6 +128,7 @@ def _compare_evaluator_vs_interpreter(model, plan, *, rtol=1e-10):
     model.create_value_2d()
     slow = model.value_2d
     np.testing.assert_allclose(fast, slow, rtol=rtol, atol=1e-10)
+    _assert_jax_parity(plan, theta, fast)
     return theta
 
 
@@ -111,6 +147,7 @@ def _perturb_theta(plan, model, theta, indices, deltas):
     model.create_value_2d()
     slow = model.value_2d
     np.testing.assert_allclose(fast, slow, rtol=1e-10, atol=1e-10)
+    _assert_jax_parity(plan, theta_new, fast)
 
 
 # ---------------------------------------------------------------------------
