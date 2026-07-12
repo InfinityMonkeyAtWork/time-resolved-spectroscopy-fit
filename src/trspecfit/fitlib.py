@@ -1216,7 +1216,7 @@ def plt_fit_res_1d(
     title : str, default=''
         Plot title. Use for file/model identification.
     fit_lim : list of int, optional
-        Fit limit indices [start, stop) to show as vertical dashed lines.
+        Fit limit indices [start, stop) to show as grey dashed vertical lines.
         Visualizes which data region was used for optimization.
     config : PlotConfig, optional
         Plot configuration object. If None, uses defaults.
@@ -1543,7 +1543,7 @@ def plt_fit_res_2d(
         + str(f"{np.max(res_cut):.3E}")
         + "]"
         + "\n"
-        + "total residual (sum within black dotted lines): "
+        + "total residual (sum within fit-limit lines): "
         + str(f"{res_sum:.3E}")
         + "\n"
         + "per spectrum: "
@@ -1562,25 +1562,33 @@ def plt_fit_res_2d(
     # Draw horizontal and vertical lines showing fit limits
     if y_lim is not None:
         axs["bottom"].axhline(
-            y=float(y_arr[y_lim[0]]), xmin=0, xmax=1, color="#000000", linestyle=":"
+            y=float(y_arr[y_lim[0]]),
+            xmin=0,
+            xmax=1,
+            color=config.refline_color,
+            linestyle=config.refline_style,
         )
         axs["bottom"].axhline(
             y=float(y_arr[y_lim[1] - 1]),
             xmin=0,
             xmax=1,
-            color="#000000",
-            linestyle=":",
+            color=config.refline_color,
+            linestyle=config.refline_style,
         )
     if x_lim is not None:
         axs["bottom"].axvline(
-            x=float(x_arr[x_lim[0]]), ymin=0, ymax=1, color="#000000", linestyle=":"
+            x=float(x_arr[x_lim[0]]),
+            ymin=0,
+            ymax=1,
+            color=config.refline_color,
+            linestyle=config.refline_style,
         )
         axs["bottom"].axvline(
             x=float(x_arr[x_lim[1] - 1]),
             ymin=0,
             ymax=1,
-            color="#000000",
-            linestyle=":",
+            color=config.refline_color,
+            linestyle=config.refline_style,
         )
 
     # Apply axis settings to all three plots
