@@ -2,6 +2,8 @@
 Test MCP (Model/Component/Parameter) library functionality
 """
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -516,7 +518,9 @@ class TestMCPNormalization:
         """Test exact values for 2-subcycle normalization (freq=10, subcycles=2)."""
 
         time = np.array([0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3])
-        t_norm, n_sub, n_counter = self._normalize(time, frequency=10, subcycles=2)
+        # samples sit exactly on boundaries, so the knife-edge warning fires
+        with pytest.warns(UserWarning, match="subcycle boundary"):
+            t_norm, n_sub, n_counter = self._normalize(time, frequency=10, subcycles=2)
 
         # norm = 1/(10*2) = 0.05, so subcycle boundaries at 0, 0.05, 0.10, ...
         assert len(t_norm) == len(time)
@@ -531,7 +535,7 @@ class TestMCPNormalization:
     def test_negative_times_are_zero(self):
         """Negative times produce zero for all output arrays."""
 
-        time = np.array([-0.1, -0.05, -0.001, 0.0, 0.05])
+        time = np.array([-0.1, -0.05, -0.001, 0.0, 0.03])
         t_norm, n_sub, n_counter = self._normalize(time, frequency=10, subcycles=2)
 
         assert np.allclose(t_norm[:3], 0.0)
@@ -549,7 +553,9 @@ class TestMCPNormalization:
         freq, nsub = 30, 3
         norm = 1.0 / freq / nsub
         time = np.array([0, norm, 2 * norm, 3 * norm, 4 * norm, 5 * norm])
-        t_norm, n_sub, _ = self._normalize(time, frequency=freq, subcycles=nsub)
+        # samples sit exactly on boundaries, so the knife-edge warning fires
+        with pytest.warns(UserWarning, match="subcycle boundary"):
+            t_norm, n_sub, _ = self._normalize(time, frequency=freq, subcycles=nsub)
 
         assert np.allclose(t_norm, 0.0, atol=1e-12)
         assert np.allclose(n_sub, [1, 2, 3, 1, 2, 3])
@@ -564,6 +570,41 @@ class TestMCPNormalization:
         assert np.allclose(t_norm, time)
         assert np.allclose(n_sub, 0.0)
         assert np.allclose(n_counter, 0.0)
+
+    #
+    def test_boundary_warning_near_boundary(self):
+        """A sample perturbed off a boundary by text round-trip error warns."""
+
+        # emulate a %.6e save/reload of a boundary sample (rel error ~1e-7)
+        time = np.array([0.02, 0.05 * (1 + 1e-7)])
+        with pytest.warns(UserWarning, match="subcycle boundary"):
+            self._normalize(time, frequency=10, subcycles=2)
+
+    #
+    def test_no_boundary_warning_clean_samples(self):
+        """Interior samples, t=0, and negative times do not warn."""
+
+        time = np.array([-0.05, 0.0, 0.02, 0.07, 0.11])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            self._normalize(time, frequency=10, subcycles=2)
+
+    #
+    def test_boundary_eps_scales_with_elapsed_subcycles(self):
+        """Tolerance is relative to elapsed subcycles: the same absolute
+        distance to a boundary warns late in a long series, not early on."""
+
+        norm = 0.05  # subcycle duration for frequency=10, subcycles=2
+        offset = 0.01  # distance to nearest boundary in subcycle units
+        # threshold at 1e6 elapsed subcycles = 1e-6 * 1e6 = 1 > offset
+        late = np.array([(1e6 + offset) * norm])
+        with pytest.warns(UserWarning, match="subcycle boundary"):
+            self._normalize(late, frequency=10, subcycles=2)
+        # threshold at 2 elapsed subcycles ~ 2e-6 < offset
+        early = np.array([(2 + offset) * norm])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            self._normalize(early, frequency=10, subcycles=2)
 
     #
     def test_many_parameter_combinations(self):

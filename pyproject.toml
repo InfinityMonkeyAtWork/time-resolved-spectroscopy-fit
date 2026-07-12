@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trspecfit"
-version = "0.12.0"
+version = "0.12.1"
 authors = [
     {name = "Johannes Mahl", email = "infinitymonkeyatwork@gmail.com"},
 ]
@@ -118,6 +118,9 @@ testpaths = ["tests"]
 addopts = "-m 'not slow'"
 markers = ["slow: long-running round-trip tests (skipped by default, use -m slow)"]
 filterwarnings = [
+    # test fixtures often sample exactly on subcycle boundaries (integer-step
+    # axes); the knife-edge warning is asserted explicitly via pytest.warns
+    "ignore:.*subcycle boundary:UserWarning",
     "ignore:FigureCanvasAgg is non-interactive:UserWarning",
     "ignore:invalid value encountered in scalar divide:RuntimeWarning:lmfit",
     "ignore:This process .* use of fork\\(\\) may lead to deadlocks in the child\\.:DeprecationWarning",
