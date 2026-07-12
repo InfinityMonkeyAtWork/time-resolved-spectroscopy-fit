@@ -78,6 +78,14 @@ Working branch: `jax-backend`.
 - `can_lower_jax_2d` now spans the full `can_lower_2d` surface (the
   separate sets remain so future NumPy widening doesn't silently imply
   JAX support).
+- Test coverage (2026-07-11): every evaluator-vs-interpreter comparison
+  in `test_evaluate_2d.py` also asserts JAX parity when jax is
+  importable (`_assert_jax_parity`), so the full 2D matrix including
+  regression fixtures runs three-way; `test_evaluate_jax.py` keeps only
+  JAX-specific tests (gate, Jacobian, wofz, chained conv, e2e fit).
+  The main CI job installs `.[dev,jax]`; the min-versions job stays
+  jax-free (jax needs numpy>=2.0, incompatible with the numpy==1.26
+  floor world) and JAX tests skip there.
 - Timing (per call): profiled x0 n_aux=50 175x280: 10.6 ms vs 27.2 ms;
   gaussCONV 212x1131: 1.0 ms vs 5.0 ms; Voigt+dynamics 212x1131:
   0.63 ms vs 44.0 ms.
@@ -116,7 +124,10 @@ Working branch: `jax-backend`.
 
 ## Phase E (optional, decide after D): JAX-native optimizer
 
-Only if measurements show lmfit itself is the bottleneck. Not scoped here.
+Deferred (2026-07-11). The Phase D benchmarks show the evaluator and
+Jacobian — not lmfit — dominate fit wall time at current model sizes,
+so replacing the optimizer stack is not justified by evidence. Revisit
+only if profiling a real workload shows lmfit overhead dominating.
 
 ## Success criteria (from the design note)
 

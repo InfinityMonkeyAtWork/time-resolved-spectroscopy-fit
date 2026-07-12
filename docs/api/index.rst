@@ -18,3 +18,4 @@ This section contains the auto-generated API documentation.
    graph_ir
    eval_1d
    eval_2d
+   eval_jax
