@@ -32,15 +32,27 @@ Working branch: `jax-backend`.
 
 ## Phase B: first JAX evaluator slice (file-level 2D fits)
 
-- [ ] Decide packaging: optional `[jax]` extra; import guarded.
-- [ ] JAX capability gate (`can_lower_jax_2d` + function/node-kind sets).
-- [ ] Functional-style JAX 2D evaluator covering: static component ops,
-      dynamics groups, arithmetic expressions.
-      Excluded for now: profiles, convolution, subcycles, Voigt.
-- [ ] Dispatch strategy: trace-time unrolling over scheduled ops (or
-      explicit JAX control flow) replacing `OP_DISPATCH` etc.
-- [ ] Host-side shape checks / exceptions stay outside the jitted region.
-- [ ] Parity tests vs. the NumPy GIR evaluator (not only MCP).
+- [x] Packaging: optional `[jax]` extra; `eval_jax.py` guards the import
+      and raises a helpful ImportError; tests skip without jax.
+      Importing `eval_jax` enables `jax_enable_x64` (float64 parity).
+- [x] JAX capability gate: `can_lower_jax_2d` composes with
+      `can_lower_2d`, so JAX-rejected graphs land on the compiled NumPy
+      path by construction. Voigt / profiles / convolution / subcycles
+      excluded.
+- [x] Functional JAX 2D evaluator (`make_evaluator_2d_jax`): static
+      component ops, dynamics groups, arithmetic expressions; jnp kernel
+      mirrors of the functions/ bodies (LinBack drops its host-side
+      ordering ValueError — untraceable; fit bounds must keep order).
+- [x] Dispatch strategy: trace-time unrolling — one jitted XLA program
+      per plan, no dispatch inside the compiled path.
+- [x] Host-side checks outside jit (theta shape; plan-level feature
+      check in `_check_plan_supported`).
+- [x] Parity tests vs. the NumPy GIR evaluator (tests/test_evaluate_jax.py,
+      33 tests, rtol/atol 1e-12): all 9 static ops, all 7 dynamics kinds,
+      multi-substep + expression-valued dynamics, gate/rejection cases.
+- Timing sanity (212x1131 grid, glp + 2 dynamics): JAX jit 0.78 ms/call
+  vs NumPy GIR 7.6 ms/call (~9.8x); compile ~230 ms once per plan;
+  max |diff| 1.4e-13.
 
 ## Phase C: widen JAX coverage to the existing GIR surface
 

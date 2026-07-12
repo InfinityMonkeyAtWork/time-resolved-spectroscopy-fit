@@ -1671,6 +1671,55 @@ def can_lower_2d(graph: GraphIR) -> bool:
     return True
 
 
+# ---------------------------------------------------------------------------
+# can_lower_jax_2d
+# ---------------------------------------------------------------------------
+
+# JAX backend, Phase B slice (docs/design/jax-planning.md): static
+# component ops, dynamics groups, and arithmetic expressions.  Profiles,
+# convolution, and subcycle dynamics are excluded until the JAX
+# evaluator widens (Phase C); Voigt is additionally excluded because
+# jax.scipy.special has no wofz.
+_LOWERABLE_JAX_2D_FUNCTIONS: frozenset[str] = _LOWERABLE_2D_FUNCTIONS - frozenset(
+    {"Voigt"}
+)
+
+_NON_LOWERABLE_JAX_2D_NODE_KINDS: frozenset[NodeKind] = _NON_LOWERABLE_NODE_KINDS_BASE
+
+
+#
+def can_lower_jax_2d(graph: GraphIR) -> bool:
+    """Check whether the experimental 2D JAX backend can compile this graph.
+
+    Strictly narrower than :func:`can_lower_2d` by construction, so a
+    graph that fails this gate but passes ``can_lower_2d`` falls back to
+    the compiled NumPy evaluator (never straight to the interpreter).
+
+    Parameters
+    ----------
+    graph : GraphIR
+        The model graph to check.
+
+    Returns
+    -------
+    bool
+        True if the JAX evaluator supports this graph.
+    """
+
+    if not can_lower_2d(graph):
+        return False
+
+    for node in graph.nodes:
+        if node.kind in _NON_LOWERABLE_JAX_2D_NODE_KINDS:
+            return False
+
+        if node.kind in (NodeKind.COMPONENT_EVAL, NodeKind.SPECTRUM_FED_OP):
+            if node.function_name not in _LOWERABLE_JAX_2D_FUNCTIONS:
+                return False
+
+    return True
+
+
 # Node kinds that are never valid in 1D energy models.  1D models have
 # no time axis, so DYNAMICS_TRACE / PARAM_PLUS_TRACE should not appear.
 # Start from the 2D blocklist so future unsupported node kinds propagate
