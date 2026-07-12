@@ -1,4 +1,13 @@
-"""JAX evaluator backend: gate behavior and parity vs the NumPy GIR path.
+"""JAX evaluator backend: gate, Jacobian, wofz accuracy, and e2e fit.
+
+Broad evaluator parity is NOT here: every evaluator-vs-interpreter
+comparison in ``test_evaluate_2d.py`` also asserts JAX parity (via
+``_assert_jax_parity``), so the full 2D matrix — including regression
+fixtures — covers the JAX backend without duplication.  This module
+keeps only JAX-specific coverage: the capability gate, the analytic
+Jacobian, the Weideman wofz approximation, the chained-convolution
+fixture (absent from the 2D matrix), error contracts, and an
+end-to-end ``File.fit_2d`` run on ``spec_fun_str="fit_model_jax"``.
 
 Parity target is ``evaluate_2d`` (the compiled NumPy evaluator), not the
 interpreter — the JAX backend's contract is bit-level agreement with the
@@ -121,152 +130,7 @@ class TestJaxGate:
 
 
 # ---------------------------------------------------------------------------
-# Parity: static component ops
-# ---------------------------------------------------------------------------
-
-
-#
-#
-class TestJaxParityStatic:
-    """Every supported OpKind, all-static parameters."""
-
-    _STATIC_MODELS = [
-        ["gauss_only"],
-        ["gauss_asym_only"],
-        ["lorentz_only"],
-        ["voigt_only"],
-        ["gls_only"],
-        ["glp_only"],
-        ["ds_only"],
-        ["offset_only"],
-        ["linback_peak"],
-        ["shirley_peak"],
-    ]
-
-    #
-    @pytest.mark.parametrize(
-        "model_info", _STATIC_MODELS, ids=[m[0] for m in _STATIC_MODELS]
-    )
-    def test_static_parity(self, model_info):
-        plan, model = _make_plan(model_info, [])
-        _assert_parity(plan, model)
-
-    #
-    def test_constant_component_caching(self):
-        """Constant ops are served from the cached arrays, not re-evaluated."""
-
-        plan, model = _make_plan(["cached_shirley_peak"], [])
-        _assert_parity(plan, model)
-
-
-# ---------------------------------------------------------------------------
-# Parity: dynamics groups
-# ---------------------------------------------------------------------------
-
-
-#
-#
-class TestJaxParityDynamics:
-    """Every DynFuncKind through a dynamics group on GLP_01_A."""
-
-    _DYN_MODELS = [
-        "MonoExpPos",
-        "MonoExpNeg",
-        "MonoStep",
-        "MonoSin",
-        "MonoLin",
-        "MonoSinDivX",
-        "MonoErf",
-        "MonoSqrt",
-    ]
-
-    #
-    @pytest.mark.parametrize("dyn_model", _DYN_MODELS)
-    def test_single_dynamics_parity(self, dyn_model):
-        plan, model = _make_plan(["glp_only"], [("GLP_01_A", [dyn_model])])
-        _assert_parity(plan, model)
-
-    #
-    def test_multi_substep_group(self):
-        """Bi-exponential: two substeps summed into one dynamics group.
-
-        The second expFun's t0 is an expression (``expFun_01_t0``), so
-        this also covers expression-valued dynamics parameters.
-        """
-
-        plan, model = _make_plan(["glp_only"], [("GLP_01_A", ["BiExpSharedT0"])])
-        _assert_parity(plan, model)
-
-    #
-    def test_two_dynamic_parameters(self):
-        """Independent dynamics groups on two parameters."""
-
-        plan, model = _make_plan(
-            ["glp_only"],
-            [("GLP_01_A", ["MonoExpPos"]), ("GLP_01_x0", ["MonoSin"])],
-        )
-        _assert_parity(plan, model)
-
-
-# ---------------------------------------------------------------------------
-# Parity: arithmetic expressions
-# ---------------------------------------------------------------------------
-
-
-#
-#
-class TestJaxParityExpressions:
-    """Compiled RPN expressions, static and interleaved with dynamics."""
-
-    #
-    def test_static_expression(self):
-        plan, model = _make_plan(["glp_expression"], [])
-        _assert_parity(plan, model)
-
-    #
-    def test_expression_reads_resolved_trace(self):
-        """Expression referencing a time-dependent (resolved) parameter."""
-
-        plan, model = _make_plan(
-            ["glp_expression"],
-            [("GLP_01_A", ["MonoExpPos"])],
-        )
-        _assert_parity(plan, model)
-
-
-# ---------------------------------------------------------------------------
-# Parity: subcycle dynamics
-# ---------------------------------------------------------------------------
-
-
-#
-#
-class TestJaxParitySubcycles:
-    """Subcycle time axes / masks (compiled schedule data) in parity."""
-
-    #
-    def test_two_subcycles(self):
-        plan, model = _make_plan(
-            ["glp_only"],
-            [("GLP_01_A", ["ModelNone", "MonoExpNeg"])],
-            frequency=10,
-        )
-        _assert_parity(plan, model)
-
-    #
-    def test_three_subcycles_with_expressions(self):
-        """Cross-subcycle expression refs (MonoExpPosExpr <- MonoExpNeg)."""
-
-        plan, model = _make_plan(
-            ["glp_only"],
-            [("GLP_01_A", ["ModelNone", "MonoExpNeg", "MonoExpPosExpr"])],
-            frequency=10,
-        )
-        _assert_parity(plan, model)
-
-
-# ---------------------------------------------------------------------------
-# Parity: profile-varying parameters
+# Profile-model plan helper (used by the Jacobian tests)
 # ---------------------------------------------------------------------------
 
 
@@ -281,83 +145,15 @@ def _make_profile_plan(model_info, dynamics_params, profiles, **kwargs):
     return plan, model
 
 
-#
-#
-class TestJaxParityProfiles:
-    """Profiled amplitude (linear) and position (nonlinear), exprs, Shirley."""
-
-    #
-    def test_profiled_amplitude_with_dynamics(self):
-        plan, model = _make_profile_plan(
-            ["single_gauss"],
-            [("Gauss_01_x0", ["MonoExpPos"])],
-            [("Gauss_01_A", ["profile_pExpDecay"])],
-        )
-        _assert_parity(plan, model)
-
-    #
-    def test_two_profiles_same_component(self):
-        """Profiled x0 (nonlinear) + profiled A on one component."""
-
-        plan, model = _make_profile_plan(
-            ["single_gauss"],
-            [("Gauss_01_SD", ["MonoExpPos"])],
-            [
-                ("Gauss_01_x0", ["roundtrip_pLinear_x0"]),
-                ("Gauss_01_A", ["roundtrip_pExpDecay_A"]),
-            ],
-        )
-        _assert_parity(plan, model)
-
-    #
-    def test_profile_expr_with_time_dep_ref(self):
-        """Per-sample expression reading a profiled and a resolved param."""
-
-        plan, model = _make_profile_plan(
-            ["two_glp_mixed_profile_dynamics"],
-            [("GLP_01_x0", ["MonoExpPos"])],
-            [("GLP_01_A", ["profile_pLinear"])],
-        )
-        _assert_parity(plan, model)
-
-    #
-    def test_profiled_shirley(self):
-        """Profiled spectrum-fed op (Shirley background)."""
-
-        plan, model = _make_profile_plan(
-            ["shirley_peak"],
-            [("GLP_01_A", ["MonoExpPos"])],
-            [("Shirley_pShirley", ["profile_pLinear"])],
-            model_yaml="models/eval_2d_energy.yaml",
-            energy=np.linspace(80, 90, 101),
-        )
-        model.lmfit_pars["Shirley_pShirley_pLinear_01_m"].value = 1.0e-5
-        _assert_parity(plan, model)
-
-
 # ---------------------------------------------------------------------------
-# Parity: resolved-trace convolution (kernel-matrix)
+# Parity: chained convolution (fixture absent from the 2D matrix)
 # ---------------------------------------------------------------------------
 
 
 #
 #
-class TestJaxParityConvolution:
-    """Every lowered conv kernel, plus a chained double IRF."""
-
-    _IRF_MODELS = [
-        "MonoExpPosIRF",
-        "MonoExpPosExpSymIRF",
-        "MonoExpPosExpDecayIRF",
-        "MonoExpPosExpRiseIRF",
-        "MonoExpPosBoxIRF",
-    ]
-
-    #
-    @pytest.mark.parametrize("dyn_model", _IRF_MODELS)
-    def test_kernel_parity(self, dyn_model):
-        plan, model = _make_plan(["glp_only"], [("GLP_01_A", [dyn_model])])
-        _assert_parity(plan, model)
+class TestJaxParityChainedConvolution:
+    """MonoExpPosDoubleIRF is not exercised by test_evaluate_2d."""
 
     #
     def test_chained_convolution(self):

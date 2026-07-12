@@ -28,10 +28,14 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install package + dev tools
+        # [jax] included so the JAX-backend parity tests run here; the
+        # min-versions job stays jax-free (jax needs numpy>=2.0, which
+        # cannot exist in the numpy==1.26 floor world) and those tests
+        # skip there via pytest.importorskip.
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/pip install -e ".[dev]"
+          .venv/bin/pip install -e ".[dev,jax]"
 
       - name: Run tests
         run: .venv/bin/pytest -q -m ""
