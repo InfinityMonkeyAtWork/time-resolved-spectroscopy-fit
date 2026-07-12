@@ -1675,25 +1675,23 @@ def can_lower_2d(graph: GraphIR) -> bool:
 # can_lower_jax_2d
 # ---------------------------------------------------------------------------
 
-# JAX backend, Phase B slice (docs/design/jax-planning.md): static
-# component ops, dynamics groups, and arithmetic expressions.  Profiles,
-# convolution, and subcycle dynamics are excluded until the JAX
-# evaluator widens (Phase C); Voigt is additionally excluded because
-# jax.scipy.special has no wofz.
-_LOWERABLE_JAX_2D_FUNCTIONS: frozenset[str] = _LOWERABLE_2D_FUNCTIONS - frozenset(
-    {"Voigt"}
-)
+# JAX backend (docs/design/jax-planning.md, Phases B + C): covers the
+# full lowered 2D surface, including profiles, convolution, subcycle
+# dynamics, and Voigt (Weideman wofz approximation in eval_jax).  The
+# sets exist so future NumPy-side widening does not silently imply JAX
+# support — carve out here first, widen JAX after kernels land.
+_LOWERABLE_JAX_2D_FUNCTIONS: frozenset[str] = _LOWERABLE_2D_FUNCTIONS
 
-_NON_LOWERABLE_JAX_2D_NODE_KINDS: frozenset[NodeKind] = _NON_LOWERABLE_NODE_KINDS_BASE
+_NON_LOWERABLE_JAX_2D_NODE_KINDS: frozenset[NodeKind] = _NON_LOWERABLE_2D_NODE_KINDS
 
 
 #
 def can_lower_jax_2d(graph: GraphIR) -> bool:
     """Check whether the experimental 2D JAX backend can compile this graph.
 
-    Strictly narrower than :func:`can_lower_2d` by construction, so a
-    graph that fails this gate but passes ``can_lower_2d`` falls back to
-    the compiled NumPy evaluator (never straight to the interpreter).
+    At most as wide as :func:`can_lower_2d` by construction, so a graph
+    that fails this gate but passes ``can_lower_2d`` falls back to the
+    compiled NumPy evaluator (never straight to the interpreter).
 
     Parameters
     ----------

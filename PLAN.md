@@ -56,13 +56,31 @@ Working branch: `jax-backend`.
 
 ## Phase C: widen JAX coverage to the existing GIR surface
 
-- [ ] Profile-varying parameters.
-- [ ] Subcycle-aware dynamics.
-- [ ] Resolved-trace convolution (kernel-matrix form; shapes are already
-      theta-independent).
-- [ ] Voigt via a JAX-implementable `wofz` approximation, with parity
-      tests against the SciPy `wofz` path.
-- [ ] Each widening step ships with direct NumPy-GIR parity tests.
+- [x] Profile-varying parameters: sample groups, per-sample profile
+      expressions (broadcast virtual rows), profiled ops vectorized
+      over aux + averaged (the NumPy path loops per aux point; under
+      XLA the fused form is simpler and still 2.6x faster at n_aux=50).
+- [x] Subcycle-aware dynamics: free after scheduling — subcycle info is
+      pure data (`dyn_sub_time_axes`/`dyn_sub_masks`); gate carve-out
+      plus parity tests only.
+- [x] Resolved-trace convolution: kernel-matrix apply in jnp (gather,
+      quadrature weights, matmul, analytic edge masses via
+      `jax.scipy.special.erfc`). The NumPy path's runtime value checks
+      (kernel positivity, row sums) are untraceable and omitted.
+- [x] Voigt via Weideman (1994) rational `wofz` approximation, 64
+      terms, coefficients precomputed at import (host-side FFT);
+      accuracy vs scipy `wofz` < 1e-12 rel over the physical domain
+      (tested). ~69x faster than the NumPy/scipy path at 212x1131.
+- [x] Parity tests vs NumPy GIR for every widening step (44 tests
+      total): all conv kernels + chained double IRF, 2- and 3-subcycle
+      models with cross-subcycle expressions, profiled amplitude /
+      position / Shirley / mixed profile-dynamics expressions, Voigt.
+- `can_lower_jax_2d` now spans the full `can_lower_2d` surface (the
+  separate sets remain so future NumPy widening doesn't silently imply
+  JAX support).
+- Timing (per call): profiled x0 n_aux=50 175x280: 10.6 ms vs 27.2 ms;
+  gaussCONV 212x1131: 1.0 ms vs 5.0 ms; Voigt+dynamics 212x1131:
+  0.63 ms vs 44.0 ms.
 
 ## Phase D: analytic Jacobian (keep lmfit)
 

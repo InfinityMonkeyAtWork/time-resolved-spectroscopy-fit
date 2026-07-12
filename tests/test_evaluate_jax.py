@@ -74,47 +74,34 @@ def _assert_parity(plan, model, *, rtol=1e-12, atol=1e-12):
 #
 #
 class TestJaxGate:
-    """can_lower_jax_2d accepts the Phase B slice, rejects the rest."""
+    """can_lower_jax_2d covers the lowered 2D surface, rejects 1D/MCP-only."""
 
-    #
-    def test_static_model_passes(self):
-        _file, model = _make_2d_model(["cached_shirley_peak"], [])
-        assert can_lower_jax_2d(build_graph(model))
-
-    #
-    def test_dynamics_model_passes(self):
-        _file, model = _make_2d_model(["glp_only"], [("GLP_01_A", ["MonoExpPos"])])
-        assert can_lower_jax_2d(build_graph(model))
-
-    #
-    def test_voigt_rejected_but_numpy_lowerable(self):
-        """Voigt fails the JAX gate yet stays on the compiled NumPy path."""
-
-        _file, model = _make_2d_model(["voigt_only"], [])
-        graph = build_graph(model)
-        assert can_lower_2d(graph)
-        assert not can_lower_jax_2d(graph)
-
-    #
-    def test_convolution_rejected_but_numpy_lowerable(self):
-        _file, model = _make_2d_model(["glp_only"], [("GLP_01_A", ["MonoExpPosIRF"])])
-        graph = build_graph(model)
-        assert can_lower_2d(graph)
-        assert not can_lower_jax_2d(graph)
-
-    #
-    def test_subcycle_rejected_but_numpy_lowerable(self):
-        _file, model = _make_2d_model(
+    _COVERED = [
+        (["cached_shirley_peak"], [], {}),
+        (["glp_only"], [("GLP_01_A", ["MonoExpPos"])], {}),
+        (["voigt_only"], [], {}),
+        (["glp_only"], [("GLP_01_A", ["MonoExpPosIRF"])], {}),
+        (
             ["glp_only"],
             [("GLP_01_A", ["ModelNone", "MonoExpNeg"])],
-            frequency=10,
-        )
-        graph = build_graph(model)
-        assert can_lower_2d(graph)
-        assert not can_lower_jax_2d(graph)
+            {"frequency": 10},
+        ),
+    ]
 
     #
-    def test_profile_rejected_but_numpy_lowerable(self):
+    @pytest.mark.parametrize(
+        "model_info,dynamics,kwargs",
+        _COVERED,
+        ids=["static", "dynamics", "voigt", "convolution", "subcycle"],
+    )
+    def test_lowered_surface_passes(self, model_info, dynamics, kwargs):
+        _file, model = _make_2d_model(model_info, dynamics, **kwargs)
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        assert can_lower_jax_2d(graph)
+
+    #
+    def test_profile_model_passes(self):
         _file, model = _make_2d_profile_model(
             ["single_gauss"],
             [("Gauss_01_x0", ["MonoExpPos"])],
@@ -122,7 +109,7 @@ class TestJaxGate:
         )
         graph = build_graph(model)
         assert can_lower_2d(graph)
-        assert not can_lower_jax_2d(graph)
+        assert can_lower_jax_2d(graph)
 
     #
     def test_1d_graph_rejected(self):
@@ -144,6 +131,7 @@ class TestJaxParityStatic:
         ["gauss_only"],
         ["gauss_asym_only"],
         ["lorentz_only"],
+        ["voigt_only"],
         ["gls_only"],
         ["glp_only"],
         ["ds_only"],
@@ -244,6 +232,165 @@ class TestJaxParityExpressions:
 
 
 # ---------------------------------------------------------------------------
+# Parity: subcycle dynamics
+# ---------------------------------------------------------------------------
+
+
+#
+#
+class TestJaxParitySubcycles:
+    """Subcycle time axes / masks (compiled schedule data) in parity."""
+
+    #
+    def test_two_subcycles(self):
+        plan, model = _make_plan(
+            ["glp_only"],
+            [("GLP_01_A", ["ModelNone", "MonoExpNeg"])],
+            frequency=10,
+        )
+        _assert_parity(plan, model)
+
+    #
+    def test_three_subcycles_with_expressions(self):
+        """Cross-subcycle expression refs (MonoExpPosExpr <- MonoExpNeg)."""
+
+        plan, model = _make_plan(
+            ["glp_only"],
+            [("GLP_01_A", ["ModelNone", "MonoExpNeg", "MonoExpPosExpr"])],
+            frequency=10,
+        )
+        _assert_parity(plan, model)
+
+
+# ---------------------------------------------------------------------------
+# Parity: profile-varying parameters
+# ---------------------------------------------------------------------------
+
+
+#
+def _make_profile_plan(model_info, dynamics_params, profiles, **kwargs):
+    _file, model = _make_2d_profile_model(
+        model_info, dynamics_params, profiles, **kwargs
+    )
+    graph = build_graph(model)
+    assert can_lower_jax_2d(graph)
+    plan = schedule_2d(graph)
+    return plan, model
+
+
+#
+#
+class TestJaxParityProfiles:
+    """Profiled amplitude (linear) and position (nonlinear), exprs, Shirley."""
+
+    #
+    def test_profiled_amplitude_with_dynamics(self):
+        plan, model = _make_profile_plan(
+            ["single_gauss"],
+            [("Gauss_01_x0", ["MonoExpPos"])],
+            [("Gauss_01_A", ["profile_pExpDecay"])],
+        )
+        _assert_parity(plan, model)
+
+    #
+    def test_two_profiles_same_component(self):
+        """Profiled x0 (nonlinear) + profiled A on one component."""
+
+        plan, model = _make_profile_plan(
+            ["single_gauss"],
+            [("Gauss_01_SD", ["MonoExpPos"])],
+            [
+                ("Gauss_01_x0", ["roundtrip_pLinear_x0"]),
+                ("Gauss_01_A", ["roundtrip_pExpDecay_A"]),
+            ],
+        )
+        _assert_parity(plan, model)
+
+    #
+    def test_profile_expr_with_time_dep_ref(self):
+        """Per-sample expression reading a profiled and a resolved param."""
+
+        plan, model = _make_profile_plan(
+            ["two_glp_mixed_profile_dynamics"],
+            [("GLP_01_x0", ["MonoExpPos"])],
+            [("GLP_01_A", ["profile_pLinear"])],
+        )
+        _assert_parity(plan, model)
+
+    #
+    def test_profiled_shirley(self):
+        """Profiled spectrum-fed op (Shirley background)."""
+
+        plan, model = _make_profile_plan(
+            ["shirley_peak"],
+            [("GLP_01_A", ["MonoExpPos"])],
+            [("Shirley_pShirley", ["profile_pLinear"])],
+            model_yaml="models/eval_2d_energy.yaml",
+            energy=np.linspace(80, 90, 101),
+        )
+        model.lmfit_pars["Shirley_pShirley_pLinear_01_m"].value = 1.0e-5
+        _assert_parity(plan, model)
+
+
+# ---------------------------------------------------------------------------
+# Parity: resolved-trace convolution (kernel-matrix)
+# ---------------------------------------------------------------------------
+
+
+#
+#
+class TestJaxParityConvolution:
+    """Every lowered conv kernel, plus a chained double IRF."""
+
+    _IRF_MODELS = [
+        "MonoExpPosIRF",
+        "MonoExpPosExpSymIRF",
+        "MonoExpPosExpDecayIRF",
+        "MonoExpPosExpRiseIRF",
+        "MonoExpPosBoxIRF",
+    ]
+
+    #
+    @pytest.mark.parametrize("dyn_model", _IRF_MODELS)
+    def test_kernel_parity(self, dyn_model):
+        plan, model = _make_plan(["glp_only"], [("GLP_01_A", [dyn_model])])
+        _assert_parity(plan, model)
+
+    #
+    def test_chained_convolution(self):
+        """Two CONVOLUTION nodes on one trace, applied in order."""
+
+        plan, model = _make_plan(["glp_only"], [("GLP_01_A", ["MonoExpPosDoubleIRF"])])
+        _assert_parity(plan, model)
+
+
+# ---------------------------------------------------------------------------
+# wofz approximation accuracy
+# ---------------------------------------------------------------------------
+
+
+#
+#
+class TestWofzAccuracy:
+    """Weideman wofz matches scipy over the physical Voigt domain."""
+
+    #
+    def test_against_scipy(self):
+        from scipy.special import wofz as scipy_wofz
+
+        from trspecfit.eval_jax import _wofz
+
+        # z = (dx + i W/2) / (SD sqrt(2)): wide dx range, W/SD from
+        # Lorentzian-dominated to Gaussian-dominated
+        dx = np.linspace(-200.0, 200.0, 2001)
+        for im in [1e-3, 1e-1, 1.0, 10.0, 100.0]:
+            z = dx + 1j * im
+            got = np.asarray(_wofz(z))
+            ref = scipy_wofz(z)
+            np.testing.assert_allclose(got.real, ref.real, rtol=1e-12, atol=1e-15)
+
+
+# ---------------------------------------------------------------------------
 # Plan-level rejection and theta contract
 # ---------------------------------------------------------------------------
 
@@ -251,32 +398,7 @@ class TestJaxParityExpressions:
 #
 #
 class TestJaxEvaluatorErrors:
-    """make_evaluator_2d_jax raises on unsupported plans and bad theta."""
-
-    #
-    def test_voigt_plan_raises(self):
-        _file, model = _make_2d_model(["voigt_only"], [])
-        plan = schedule_2d(build_graph(model))
-        with pytest.raises(ValueError, match="VOIGT"):
-            make_evaluator_2d_jax(plan)
-
-    #
-    def test_convolution_plan_raises(self):
-        _file, model = _make_2d_model(["glp_only"], [("GLP_01_A", ["MonoExpPosIRF"])])
-        plan = schedule_2d(build_graph(model))
-        with pytest.raises(ValueError, match="convolution"):
-            make_evaluator_2d_jax(plan)
-
-    #
-    def test_profile_plan_raises(self):
-        _file, model = _make_2d_profile_model(
-            ["single_gauss"],
-            [("Gauss_01_x0", ["MonoExpPos"])],
-            [("Gauss_01_A", ["profile_pExpDecay"])],
-        )
-        plan = schedule_2d(build_graph(model))
-        with pytest.raises(ValueError, match="profile"):
-            make_evaluator_2d_jax(plan)
+    """make_evaluator_2d_jax rejects bad theta shapes."""
 
     #
     def test_theta_length_mismatch_raises(self):
