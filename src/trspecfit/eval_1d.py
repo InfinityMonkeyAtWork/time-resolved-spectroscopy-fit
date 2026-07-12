@@ -60,7 +60,10 @@ def evaluate_1d(plan: ScheduledPlan1D, theta: np.ndarray) -> np.ndarray:
     # 1c. Resolve expressions in topological order
     for i in range(plan.n_expressions):
         target = int(plan.expr_target_indices[i])
-        values[target] = _eval_expr_scalar(plan.expr_programs[i], values)
+        values[target] = _eval_expr_scalar(
+            plan.expr_instructions[plan.expr_indptr[i] : plan.expr_indptr[i + 1]],
+            values,
+        )
 
     profile_sample_values = _evaluate_profile_sample_values(
         plan.aux_axis,
@@ -75,7 +78,8 @@ def evaluate_1d(plan: ScheduledPlan1D, theta: np.ndarray) -> np.ndarray:
         values,
         profile_sample_values,
         plan.n_params,
-        plan.profile_expr_programs,
+        plan.profile_expr_instructions,
+        plan.profile_expr_indptr,
     )
 
     # 2. Component evaluation

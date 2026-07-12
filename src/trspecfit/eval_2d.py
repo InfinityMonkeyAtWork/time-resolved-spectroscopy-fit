@@ -20,7 +20,6 @@ from trspecfit.graph_ir import (
     ConvKernelKind,
     DynFuncKind,
     ExprNodeKind,
-    ExprProgram,
     ParamSourceKind,
     ScheduledPlan2D,
 )
@@ -72,10 +71,10 @@ CONV_EDGE_MASS_DISPATCH: dict[int, Callable] = {
 
 #
 def eval_expr_program(
-    program: ExprProgram,
+    instructions: np.ndarray,
     traces: np.ndarray,
 ) -> np.ndarray:
-    """Evaluate an RPN ExprProgram against the trace matrix.
+    """Evaluate a compiled RPN program against the trace matrix.
 
     Works for both plan initialization and hot-path evaluation.
     Each PARAM_REF pushes a *view* of its ``(n_time,)`` trace row and
@@ -85,8 +84,9 @@ def eval_expr_program(
 
     Parameters
     ----------
-    program
-        Compiled RPN instruction array.
+    instructions
+        Compiled RPN instruction array (one program's slice of the
+        packed ``expr_instructions``).
     traces
         ``(n_params, n_time)`` trace matrix (current state).
 
@@ -98,7 +98,7 @@ def eval_expr_program(
 
     n_time = traces.shape[1]
     stack: list[np.ndarray | np.float64] = []
-    instr = program.instructions
+    instr = instructions
     n_instr = len(instr) // 2
 
     for i in range(n_instr):
@@ -160,7 +160,8 @@ def resolve_param_traces(
     dyn_sub_time_axes: np.ndarray,
     dyn_sub_masks: np.ndarray,
     expr_target_rows: np.ndarray,
-    expr_programs: list[ExprProgram],
+    expr_instructions: np.ndarray,
+    expr_indptr: np.ndarray,
     conv_target_rows: np.ndarray,
     conv_func_ids: np.ndarray,
     conv_param_indptr: np.ndarray,
@@ -204,7 +205,10 @@ def resolve_param_traces(
                 )
         elif kind == 1:  # expression
             target = int(expr_target_rows[idx])
-            traces[target, :] = eval_expr_program(expr_programs[idx], traces)
+            traces[target, :] = eval_expr_program(
+                expr_instructions[expr_indptr[idx] : expr_indptr[idx + 1]],
+                traces,
+            )
         else:  # kind == 2: resolved-trace convolution
             assert conv_operator is not None  # type guard: set when steps exist
             target = int(conv_target_rows[idx])
@@ -285,7 +289,8 @@ def _evaluate_profile_expr_values_2d(
     traces: np.ndarray,
     profile_sample_values: np.ndarray,
     n_params: int,
-    profile_expr_programs: list[ExprProgram],
+    profile_expr_instructions: np.ndarray,
+    profile_expr_indptr: np.ndarray,
 ) -> np.ndarray:
     """Evaluate lowered per-sample profile expressions over (n_time, n_aux).
 
@@ -293,7 +298,7 @@ def _evaluate_profile_expr_values_2d(
     so the standard RPN evaluator can be reused unchanged.
     """
 
-    n_exprs = len(profile_expr_programs)
+    n_exprs = len(profile_expr_indptr) - 1
     if n_exprs == 0:
         n_time = traces.shape[1]
         n_aux = profile_sample_values.shape[2] if profile_sample_values.size else 0
@@ -314,8 +319,12 @@ def _evaluate_profile_expr_values_2d(
         virtual[n_params:, :] = profile_sample_values.reshape(n_groups, n_cols)
 
     expr_values = np.empty((n_exprs, n_time, n_aux), dtype=np.float64)
-    for expr_idx, program in enumerate(profile_expr_programs):
-        result = eval_expr_program(program, virtual)  # (n_time*n_aux,)
+    for expr_idx in range(n_exprs):
+        start = int(profile_expr_indptr[expr_idx])
+        end = int(profile_expr_indptr[expr_idx + 1])
+        result = eval_expr_program(
+            profile_expr_instructions[start:end], virtual
+        )  # (n_time*n_aux,)
         expr_values[expr_idx] = result.reshape(n_time, n_aux)
 
     return expr_values
@@ -436,7 +445,8 @@ def evaluate_2d(plan: ScheduledPlan2D, theta: np.ndarray) -> np.ndarray:
         plan.dyn_sub_time_axes,
         plan.dyn_sub_masks,
         plan.expr_target_rows,
-        plan.expr_programs,
+        plan.expr_instructions,
+        plan.expr_indptr,
         plan.conv_target_rows,
         plan.conv_func_ids,
         plan.conv_param_indptr,
@@ -458,7 +468,8 @@ def evaluate_2d(plan: ScheduledPlan2D, theta: np.ndarray) -> np.ndarray:
         traces,
         profile_sample_values,
         plan.n_params,
-        plan.profile_expr_programs,
+        plan.profile_expr_instructions,
+        plan.profile_expr_indptr,
     )
 
     # 2. Component evaluation

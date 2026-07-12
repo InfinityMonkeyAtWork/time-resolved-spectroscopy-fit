@@ -489,7 +489,7 @@ class OpKind(IntEnum):
 class ScheduledPlan2D:
     """Compiled 2D execution schedule.
 
-    No Python objects in the hot path (except ``expr_programs``).
+    No Python objects in the hot path.
     """
 
     energy: np.ndarray              # (n_energy,)
@@ -522,9 +522,12 @@ class ScheduledPlan2D:
     dyn_sub_n_params: np.ndarray      # (n_substeps,) int
 
     # --- Expression evaluation ---
+    # Packed RPN programs, CSR-style: program i occupies
+    # expr_instructions[expr_indptr[i]:expr_indptr[i + 1]].
     n_expressions: int
     expr_target_rows: np.ndarray    # (n_expressions,) int -- which row to write
-    expr_programs: list["ExprProgram"]  # compiled RPN programs
+    expr_instructions: np.ndarray   # (total_expr_words,) int64
+    expr_indptr: np.ndarray         # (n_expressions + 1,) int
 
     # --- Interleaved parameter resolution schedule ---
     # Dynamics groups and expressions may depend on each other
@@ -532,7 +535,7 @@ class ScheduledPlan2D:
     # dynamics parameter). These arrays encode the correct topological
     # execution order:
     #   kind=0 -> dynamics group step, index into dyn_group_* arrays
-    #   kind=1 -> expression step, index into expr_* arrays / expr_programs
+    #   kind=1 -> expression step, index into expr_* arrays
     resolution_kinds: np.ndarray    # (n_dyn_groups + n_expressions,) int8
     resolution_indices: np.ndarray  # (n_dyn_groups + n_expressions,) int
 
@@ -569,15 +572,14 @@ class ExprNodeKind(IntEnum):
     POW = 7         # pop 2, push power
 
 
-@dataclass(frozen=True)
-class ExprProgram:
-    """Compiled expression: flat int array encoding an RPN program."""
-
-    # Encoding: pairs of (node_kind, operand).
-    # CONST: operand is float bits (np.float64.view(np.int64))
-    # PARAM_REF: operand is row index into trace matrix
-    # Operators: operand is 0 (unused)
-    instructions: np.ndarray        # (2 * n_instructions,) int64
+# Each compiled expression is a flat int64 instruction array; all
+# programs are concatenated into the plan's packed expr_instructions,
+# with expr_indptr marking per-program offsets (CSR-style).
+#
+# Encoding: pairs of (node_kind, operand).
+# CONST: operand is float bits (np.float64.view(np.int64))
+# PARAM_REF: operand is row index into trace matrix
+# Operators: operand is 0 (unused)
 ```
 
 All values flowing through the RPN evaluator are `(n_time,)` arrays
@@ -1011,9 +1013,9 @@ Once `evaluate_2d(plan, theta) -> spectrum` exists as a pure function:
 
 **Numba:** `@njit` on the component eval dispatch loop. Most of the
 plan (int index arrays, CSR param maps, dense trace matrix) is
-Numba-compatible. The expression programs (`list[ExprProgram]`) would
-need flattening to a CSR-style encoding first -- this is noted in the
-plan as a v1 simplification that can be tightened later.
+Numba-compatible. The expression programs are stored as packed
+CSR-style instruction arrays (`expr_instructions` + `expr_indptr`),
+so no Python-object flattening step remains.
 
 **JAX:** Replace `np` with `jnp` in the evaluator. The plan's array
 structure maps directly to JAX arrays. Key wins:

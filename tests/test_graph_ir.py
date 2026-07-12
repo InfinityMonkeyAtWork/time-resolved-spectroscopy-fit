@@ -2123,7 +2123,7 @@ class TestSchedule2DExpressions:
 
         plan, _graph, _model = self._make_plan()
         assert plan.n_expressions == 4
-        assert len(plan.expr_programs) == 4
+        assert len(plan.expr_indptr) == 5
 
     #
     def test_expression_target_rows_valid(self):
@@ -2140,8 +2140,8 @@ class TestSchedule2DExpressions:
 
         plan, _graph, _model = self._make_plan()
 
-        for prog in plan.expr_programs:
-            assert len(prog.instructions) > 0
+        for i in range(plan.n_expressions):
+            assert plan.expr_indptr[i + 1] > plan.expr_indptr[i]
 
     #
     def test_expression_a_reads_resolved(self):
@@ -2180,7 +2180,9 @@ class TestSchedule2DExpressions:
         assert expr_target_idx is not None  # type guard
 
         # Check that the program contains a PARAM_REF to the resolved row
-        prog = plan.expr_programs[expr_target_idx]
+        prog = plan.expr_instructions[
+            plan.expr_indptr[expr_target_idx] : plan.expr_indptr[expr_target_idx + 1]
+        ]
         resolved_row = _find_row_for_name(graph, plan, resolved_node.name)
         _assert_program_references_row(prog, resolved_row)
 
@@ -2517,17 +2519,16 @@ def _find_row_for_name(graph, plan, param_name):
 
 
 #
-def _assert_program_references_row(program, expected_row):
-    """Assert that an ExprProgram contains a PARAM_REF to the given row."""
+def _assert_program_references_row(instructions, expected_row):
+    """Assert that an RPN program contains a PARAM_REF to the given row."""
 
-    instr = program.instructions
-    n_instr = len(instr) // 2
+    n_instr = len(instructions) // 2
     for i in range(n_instr):
-        kind = ExprNodeKind(instr[2 * i])
-        operand = instr[2 * i + 1]
+        kind = ExprNodeKind(instructions[2 * i])
+        operand = instructions[2 * i + 1]
         if kind == ExprNodeKind.PARAM_REF and operand == expected_row:
             return
-    raise AssertionError(f"ExprProgram does not reference row {expected_row}")
+    raise AssertionError(f"RPN program does not reference row {expected_row}")
 
 
 # ===================================================================== #

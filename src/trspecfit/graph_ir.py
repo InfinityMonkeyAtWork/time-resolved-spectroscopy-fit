@@ -444,26 +444,10 @@ class GraphIR:
 #
 #
 @dataclass(frozen=True)
-class ExprProgram:
-    """Compiled expression: flat int array encoding an RPN program.
-
-    Encoding: pairs of ``(node_kind, operand)``.
-
-    - ``CONST``: operand is float bits (``np.float64.view(np.int64)``)
-    - ``PARAM_REF``: operand is row index into trace matrix
-    - Operators: operand is 0 (unused)
-    """
-
-    instructions: np.ndarray  # (2 * n_instructions,) int64
-
-
-#
-#
-@dataclass(frozen=True)
 class ScheduledPlan2D:
     """Compiled 2D execution schedule.
 
-    No Python objects in the hot path (except ``expr_programs``).
+    No Python objects in the hot path.
     """
 
     energy: np.ndarray  # (n_energy,)
@@ -497,9 +481,16 @@ class ScheduledPlan2D:
     dyn_sub_masks: np.ndarray  # (n_substeps, n_time) float64
 
     # --- Expression evaluation ---
+    # Packed RPN programs, CSR-style: program ``i`` occupies
+    # ``expr_instructions[expr_indptr[i]:expr_indptr[i + 1]]``.
+    # Instructions are ``(node_kind, operand)`` int64 pairs:
+    #   CONST     -> operand is float bits (np.float64.view(np.int64))
+    #   PARAM_REF -> operand is row index into the trace matrix
+    #   operators -> operand is 0 (unused)
     n_expressions: int
     expr_target_rows: np.ndarray  # (n_expressions,) int
-    expr_programs: list[ExprProgram]
+    expr_instructions: np.ndarray  # (total_expr_words,) int64
+    expr_indptr: np.ndarray  # (n_expressions + 1,) int
 
     # --- Interleaved parameter resolution schedule ---
     # Dynamics groups, expressions, and convolution steps may depend on
@@ -508,7 +499,7 @@ class ScheduledPlan2D:
     # resolution_kinds / resolution_indices arrays encode the correct
     # topological execution order:
     #   kind=0 -> dynamics group step, index into dyn_group_* arrays
-    #   kind=1 -> expression step, index into expr_* arrays / expr_programs
+    #   kind=1 -> expression step, index into expr_* arrays
     #   kind=2 -> convolution step, index into conv_* arrays
     resolution_kinds: np.ndarray  # (n_dyn_groups + n_expressions + n_conv_steps,) int8
     resolution_indices: np.ndarray  # (n_dyn_groups + n_expressions + n_conv_steps,) int
@@ -539,8 +530,12 @@ class ScheduledPlan2D:
     profile_component_func_ids: np.ndarray  # (n_profile_components,) int
     profile_component_param_indptr: np.ndarray  # (n_profile_components + 1,) int
     profile_component_param_rows: np.ndarray  # (total_profile_component_params,) int
+    # Packed per-sample profile expressions (same encoding as
+    # expr_instructions; PARAM_REF operands >= n_params index profile
+    # sample groups).
     n_profile_exprs: int
-    profile_expr_programs: list[ExprProgram]
+    profile_expr_instructions: np.ndarray  # (total_profile_expr_words,) int64
+    profile_expr_indptr: np.ndarray  # (n_profile_exprs + 1,) int
 
     # --- Scheduled component ops ---
     n_ops: int
@@ -577,9 +572,12 @@ class ScheduledPlan1D:
     opt_param_names: list[str]  # (n_opt,) canonical optimizer param names
 
     # --- Expression evaluation (topological order, no dynamics) ---
+    # Packed RPN programs, CSR-style (see ScheduledPlan2D for the
+    # encoding); PARAM_REF operands index the scalar parameter vector.
     n_expressions: int
     expr_target_indices: np.ndarray  # (n_expressions,) int
-    expr_programs: list[ExprProgram]
+    expr_instructions: np.ndarray  # (total_expr_words,) int64
+    expr_indptr: np.ndarray  # (n_expressions + 1,) int
 
     # --- Profile-varying parameter groups (fixed aux_axis shape) ---
     n_aux: int
@@ -591,7 +589,8 @@ class ScheduledPlan1D:
     profile_component_param_indptr: np.ndarray  # (n_profile_components + 1,) int
     profile_component_param_indices: np.ndarray  # (total_profile_component_params,) int
     n_profile_exprs: int
-    profile_expr_programs: list[ExprProgram]
+    profile_expr_instructions: np.ndarray  # (total_profile_expr_words,) int64
+    profile_expr_indptr: np.ndarray  # (n_profile_exprs + 1,) int
 
     # --- Scheduled component ops ---
     n_ops: int
@@ -1778,7 +1777,7 @@ class SymbolicRPN:
 
     This is the *frontend* output of the expression compiler.
     ``schedule_2d`` binds names to trace-matrix row indices and
-    produces the final ``ExprProgram``.
+    produces the final packed instruction array.
 
     Each instruction is a ``(ExprNodeKind, operand)`` pair:
 
@@ -1888,8 +1887,8 @@ def compile_expr_symbolic(expr_string: str) -> SymbolicRPN:
 def _bind_expr_to_rows(
     symbolic: SymbolicRPN,
     name_to_row: dict[str, int],
-) -> ExprProgram:
-    """Convert a symbolic RPN program to a row-bound ExprProgram.
+) -> np.ndarray:
+    """Convert a symbolic RPN program to a row-bound instruction array.
 
     Parameters
     ----------
@@ -1900,8 +1899,10 @@ def _bind_expr_to_rows(
 
     Returns
     -------
-    ExprProgram
-        Row-bound RPN program ready for the evaluator.
+    np.ndarray
+        ``(2 * n_instructions,)`` int64 array of ``(node_kind, operand)``
+        pairs ready for the evaluator (see ``ScheduledPlan2D`` for the
+        operand encoding).
     """
 
     flat: list[int] = []
@@ -1915,7 +1916,31 @@ def _bind_expr_to_rows(
             flat.append(name_to_row[operand])
         else:
             flat.append(0)
-    return ExprProgram(instructions=np.array(flat, dtype=np.int64))
+    return np.array(flat, dtype=np.int64)
+
+
+#
+def _pack_expr_programs(
+    programs: list[np.ndarray],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Concatenate row-bound RPN programs into CSR-style packed arrays.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        ``(instructions, indptr)``: flat int64 instruction words plus
+        ``(n_programs + 1,)`` offsets; program ``i`` occupies
+        ``instructions[indptr[i]:indptr[i + 1]]``.
+    """
+
+    indptr = np.zeros(len(programs) + 1, dtype=np.intp)
+    for i, program in enumerate(programs):
+        indptr[i + 1] = indptr[i] + len(program)
+    if programs:
+        instructions = np.concatenate(programs)
+    else:
+        instructions = np.zeros(0, dtype=np.int64)
+    return instructions, indptr
 
 
 # ---------------------------------------------------------------------------
@@ -2327,7 +2352,7 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         expr_ref_maps[expr_node.id] = ref_map
 
     # Compile and bind expressions
-    expr_programs: list[ExprProgram] = []
+    expr_programs: list[np.ndarray] = []
     expr_target_rows_list: list[int] = []
     for expr_node in expr_nodes_topo:
         assert expr_node.expr_string is not None
@@ -2347,6 +2372,7 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         )
 
     expr_target_rows = np.array(expr_target_rows_list, dtype=np.intp)
+    expr_instructions, expr_indptr = _pack_expr_programs(expr_programs)
 
     # Build resolution schedule: map DYNAMICS_TRACE node ids to their
     # group index, and emit each group exactly once (on the *last* trace
@@ -2480,7 +2506,8 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
     profile_component_param_indptr = profiles.component_param_indptr
     profile_component_param_rows = profiles.component_param_indices
     n_profile_exprs = profiles.n_exprs
-    profile_expr_programs_2d = profiles.expr_programs
+    profile_expr_instructions_2d = profiles.expr_instructions
+    profile_expr_indptr_2d = profiles.expr_indptr
 
     # ------------------------------------------------------------------ #
     # 5. Schedule component ops                                            #
@@ -2534,7 +2561,8 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         dyn_sub_time_axes,
         dyn_sub_masks,
         expr_target_rows,
-        expr_programs,
+        expr_instructions,
+        expr_indptr,
         conv_target_rows,
         conv_func_ids,
         conv_param_indptr,
@@ -2564,7 +2592,8 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         param_traces_init,
         profile_sample_values_init,
         n_params,
-        profile_expr_programs_2d,
+        profile_expr_instructions_2d,
+        profile_expr_indptr_2d,
     )
 
     energy = graph.energy[np.newaxis, :]
@@ -2628,7 +2657,8 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         dyn_sub_masks=dyn_sub_masks,
         n_expressions=n_expressions,
         expr_target_rows=expr_target_rows,
-        expr_programs=expr_programs,
+        expr_instructions=expr_instructions,
+        expr_indptr=expr_indptr,
         resolution_kinds=resolution_kinds,
         resolution_indices=resolution_indices,
         n_aux=n_aux,
@@ -2640,7 +2670,8 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
         profile_component_param_indptr=profile_component_param_indptr,
         profile_component_param_rows=profile_component_param_rows,
         n_profile_exprs=n_profile_exprs,
-        profile_expr_programs=profile_expr_programs_2d,
+        profile_expr_instructions=profile_expr_instructions_2d,
+        profile_expr_indptr=profile_expr_indptr_2d,
         n_ops=n_ops,
         op_schedule=op_schedule,
         op_kinds=op_kinds,
@@ -2668,13 +2699,14 @@ def schedule_2d(graph: GraphIR) -> ScheduledPlan2D:
 
 
 #
-def _eval_expr_scalar(program: ExprProgram, values: np.ndarray) -> float:
-    """Evaluate an RPN ExprProgram against a scalar parameter vector.
+def _eval_expr_scalar(instructions: np.ndarray, values: np.ndarray) -> float:
+    """Evaluate a compiled RPN program against a scalar parameter vector.
 
     Parameters
     ----------
-    program
-        Compiled RPN instruction array.
+    instructions
+        Compiled RPN instruction array (one program's slice of the
+        packed ``expr_instructions``).
     values
         ``(n_params,)`` scalar parameter vector.
 
@@ -2685,7 +2717,7 @@ def _eval_expr_scalar(program: ExprProgram, values: np.ndarray) -> float:
     """
 
     stack: list[float] = []
-    instr = program.instructions
+    instr = instructions
     n_instr = len(instr) // 2
 
     for i in range(n_instr):
@@ -2797,7 +2829,8 @@ class _CompiledProfileGroups(NamedTuple):
     sample_is_constant: np.ndarray
     sample_group_idx: dict[str, int]
     n_exprs: int
-    expr_programs: list[ExprProgram]
+    expr_instructions: np.ndarray
+    expr_indptr: np.ndarray
     expr_is_constant: np.ndarray
     expr_group_idx: dict[str, int]
 
@@ -2950,7 +2983,7 @@ def _compile_profile_groups(
             group_name = _profile_group_name(node.name, "profile_expr")
             profile_expr_groups.setdefault(group_name, []).append(node)
 
-    expr_programs: list[ExprProgram] = []
+    expr_programs: list[np.ndarray] = []
     expr_is_constant_list: list[bool] = []
     expr_group_idx: dict[str, int] = {}
     for group_name, p_expr_nodes in profile_expr_groups.items():
@@ -3015,6 +3048,8 @@ def _compile_profile_groups(
         expr_is_constant_list.append(is_constant)
         expr_group_idx[group_name] = len(expr_programs) - 1
 
+    expr_instructions, expr_indptr = _pack_expr_programs(expr_programs)
+
     return _CompiledProfileGroups(
         aux_axis=plan_aux_axis,
         n_aux=n_aux,
@@ -3027,7 +3062,8 @@ def _compile_profile_groups(
         sample_is_constant=sample_is_constant,
         sample_group_idx=sample_group_idx,
         n_exprs=len(expr_programs),
-        expr_programs=expr_programs,
+        expr_instructions=expr_instructions,
+        expr_indptr=expr_indptr,
         expr_is_constant=np.array(expr_is_constant_list, dtype=np.bool_),
         expr_group_idx=expr_group_idx,
     )
@@ -3270,12 +3306,12 @@ def _schedule_component_ops(
 
 
 #
-def _eval_expr_vector(program: ExprProgram, traces: np.ndarray) -> np.ndarray:
-    """Evaluate an RPN ExprProgram against an aux-resolved trace matrix."""
+def _eval_expr_vector(instructions: np.ndarray, traces: np.ndarray) -> np.ndarray:
+    """Evaluate a compiled RPN program against an aux-resolved trace matrix."""
 
     from trspecfit.eval_2d import eval_expr_program
 
-    return eval_expr_program(program, traces)
+    return eval_expr_program(instructions, traces)
 
 
 #
@@ -3322,11 +3358,12 @@ def _evaluate_profile_expr_values(
     scalar_values: np.ndarray,
     profile_sample_values: np.ndarray,
     n_params: int,
-    profile_expr_programs: list[ExprProgram],
+    profile_expr_instructions: np.ndarray,
+    profile_expr_indptr: np.ndarray,
 ) -> np.ndarray:
     """Evaluate lowered per-sample profile expressions over the aux axis."""
 
-    n_exprs = len(profile_expr_programs)
+    n_exprs = len(profile_expr_indptr) - 1
     if n_exprs == 0:
         n_aux = profile_sample_values.shape[1] if profile_sample_values.size else 0
         return np.zeros((0, n_aux), dtype=np.float64)
@@ -3340,8 +3377,12 @@ def _evaluate_profile_expr_values(
         traces[n_params:, :] = profile_sample_values
 
     expr_values = np.empty((n_exprs, n_aux), dtype=np.float64)
-    for expr_idx, program in enumerate(profile_expr_programs):
-        expr_values[expr_idx, :] = _eval_expr_vector(program, traces)
+    for expr_idx in range(n_exprs):
+        start = int(profile_expr_indptr[expr_idx])
+        end = int(profile_expr_indptr[expr_idx + 1])
+        expr_values[expr_idx, :] = _eval_expr_vector(
+            profile_expr_instructions[start:end], traces
+        )
 
     return expr_values
 
@@ -3486,7 +3527,7 @@ def schedule_1d(graph: GraphIR) -> ScheduledPlan1D:
         if id_to_node[nid].kind == NodeKind.EXPRESSION
         and not _is_profile_expr_node(id_to_node[nid])
     ]
-    expr_programs: list[ExprProgram] = []
+    expr_programs: list[np.ndarray] = []
     expr_target_indices_list: list[int] = []
     for expr_node in expr_nodes_topo:
         assert expr_node.expr_string is not None
@@ -3513,6 +3554,7 @@ def schedule_1d(graph: GraphIR) -> ScheduledPlan1D:
 
     n_expressions = len(expr_programs)
     expr_target_indices = np.array(expr_target_indices_list, dtype=np.intp)
+    expr_instructions, expr_indptr = _pack_expr_programs(expr_programs)
 
     # ------------------------------------------------------------------ #
     # 4. Compile profile groups (samples + expressions)                    #
@@ -3536,7 +3578,8 @@ def schedule_1d(graph: GraphIR) -> ScheduledPlan1D:
     profile_component_param_indptr = profiles.component_param_indptr
     profile_component_param_indices = profiles.component_param_indices
     n_profile_exprs = profiles.n_exprs
-    profile_expr_programs = profiles.expr_programs
+    profile_expr_instructions = profiles.expr_instructions
+    profile_expr_indptr = profiles.expr_indptr
 
     # ------------------------------------------------------------------ #
     # 5. Schedule component ops                                            #
@@ -3574,7 +3617,8 @@ def schedule_1d(graph: GraphIR) -> ScheduledPlan1D:
     for i in range(n_expressions):
         target_idx = int(expr_target_indices[i])
         param_values_init[target_idx] = _eval_expr_scalar(
-            expr_programs[i], param_values_init
+            expr_instructions[expr_indptr[i] : expr_indptr[i + 1]],
+            param_values_init,
         )
 
     profile_sample_values_init = _evaluate_profile_sample_values(
@@ -3590,7 +3634,8 @@ def schedule_1d(graph: GraphIR) -> ScheduledPlan1D:
         param_values_init,
         profile_sample_values_init,
         n_params,
-        profile_expr_programs,
+        profile_expr_instructions,
+        profile_expr_indptr,
     )
 
     # ------------------------------------------------------------------ #
@@ -3634,7 +3679,8 @@ def schedule_1d(graph: GraphIR) -> ScheduledPlan1D:
         opt_param_names=opt_param_names,
         n_expressions=n_expressions,
         expr_target_indices=expr_target_indices,
-        expr_programs=expr_programs,
+        expr_instructions=expr_instructions,
+        expr_indptr=expr_indptr,
         n_aux=n_aux,
         aux_axis=plan_aux_axis,
         n_profile_samples=n_profile_samples,
@@ -3644,7 +3690,8 @@ def schedule_1d(graph: GraphIR) -> ScheduledPlan1D:
         profile_component_param_indptr=profile_component_param_indptr,
         profile_component_param_indices=profile_component_param_indices,
         n_profile_exprs=n_profile_exprs,
-        profile_expr_programs=profile_expr_programs,
+        profile_expr_instructions=profile_expr_instructions,
+        profile_expr_indptr=profile_expr_indptr,
         n_ops=n_ops,
         op_kinds=op_kinds,
         op_param_indptr=op_param_indptr,
