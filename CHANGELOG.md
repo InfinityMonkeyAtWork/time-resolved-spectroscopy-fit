@@ -7,10 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
-## [Unreleased]
+## [0.12.0] - 2026-07-11
+
+### Added
+
+- **Experimental JAX evaluator backend for 2D fits**: set `Project.spec_fun_str = "fit_model_jax"` (requires the optional extra: `pip install "trspecfit[jax]"`). The jitted evaluator covers the full compiled 2D model surface — dynamics, expressions, subcycle dynamics, parameter profiles, IRF convolution, and every lineshape — with measured per-call speedups of 2.4–70x over the compiled NumPy evaluator (largest for `Voigt`). Models the JAX gate rejects fall back to the compiled NumPy path automatically; 1D fits always use the NumPy path.
+- **Analytic Jacobians on the JAX backend**: `File.fit_2d` derives the model Jacobian with `jax.jacfwd` and wires it into lmfit's `leastsq` stages (`Dfun`), cutting residual evaluations roughly 4x at identical optima — a full Voigt 2D fit dropped from 25.3 s to 7.1 s end to end. Pass `fit_2d(..., jac_fun=None)` to disable.
+- `Voigt` on the JAX path evaluates the Faddeeva function via a Weideman rational approximation, matching `scipy.special.wofz` to better than 1e-12 relative over the physical parameter domain.
+- The benchmark workflow (`/benchmark`) reports a JAX column (per-call and `--fit`) whenever the `[jax]` extra is installed.
 
 ### Changed
 
+- **JAX backend caveats to be aware of** (documented in `eval_jax.py`): parameter-value checks that require host access are skipped on traced values (`LinBack` ordering, convolution-kernel positivity — keep fit bounds ordered and widths positive), `lmfit.emcee` with `workers > 1` is not supported on this path, and importing the backend enables JAX 64-bit mode globally.
+- `ScheduledPlan1D`/`ScheduledPlan2D` store compiled expressions as packed CSR instruction arrays (`expr_instructions` + `expr_indptr`) instead of a list of `ExprProgram` objects (which is gone); execution plans are now fully array-native. Internal module, but breaking for code that inspected plan internals.
+
+## [0.11.0] - 2026-07-11
+
+### Changed
+
+- **Reference lines default to black** (`refline_color`: grey `#808080` -> black `#000000`) for better contrast on 2D colormaps, and 2D fit-result limit lines now honor `refline_color`/`refline_style` from `project.yaml`/`PlotConfig` instead of being hardcoded.
 - **Breaking: IRF convolution is now a quadrature-weighted kernel-matrix operator** (`conv_matrix_operator` / `conv_matrix_apply` in `utils/arrays.py`), replacing the sampled-1D-kernel convolution (`my_conv` + per-theta kernel support) on both the mcp and compiled (GIR) evaluation paths. Consequences:
   - **Non-uniform time axes are convolved correctly.** The axis enters through the time-difference matrix and trapezoid quadrature weights, so measured fine-around-t0 + coarse-tail delay axes no longer produce silently biased fits (the old sample-index convolution deviated by up to ~7% of the trace maximum on example 21's stepped axis). Uniform axes agree with the previous path within its documented kernel-truncation tolerance.
   - **Exact edge handling for any kernel width**: kernel mass beyond the time window contributes through the edge samples (edge-value padding semantics), computed analytically per kernel via edge-mass companions (`functions/time.py::CONV_EDGE_MASS`, cancellation-safe erfc/exp/clip tail forms). No support truncation at any width or axis spacing; a kernel without a registered companion is rejected at model validation (mcp) and scheduling (GIR).
