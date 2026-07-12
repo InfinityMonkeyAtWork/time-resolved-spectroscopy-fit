@@ -84,10 +84,35 @@ Working branch: `jax-backend`.
 
 ## Phase D: analytic Jacobian (keep lmfit)
 
-- [ ] Theta-level residual function.
-- [ ] JAX-derived Jacobian wired into `lmfit.Minimizer` (`Dfun` plumbing
-      in `fitlib.py`).
-- [ ] Fit-level benchmarks (not just per-call evaluator speed).
+- [x] `make_jacobian_2d_jax(plan)`: `jax.jit(jax.jacfwd(...))` over the
+      shared traced evaluator -> `(n_time, n_energy, n_opt)`. Forward
+      mode (theta is short, output grid large). Caveats documented:
+      boxCONV width derivative is 0 a.e.; step-like `where` switches
+      give subgradient zeros at the exact switching point.
+- [x] `spec_fun_str = "fit_model_jax"`: 2D fits run residuals on the
+      jitted evaluator (`spectra.fit_model_jax`); JAX-rejected graphs
+      fall back to the compiled NumPy plan; 1D fits lower to the NumPy
+      plan (JAX backend is 2D-only). Evaluator/jacobian are per-plan
+      closures — `lmfit.emcee` with `workers > 1` will not pickle them.
+- [x] `Dfun` plumbing: `fitlib.jacobian_fun` mirrors `residual_fun`'s
+      signature (lmfit calls Dfun with the same fcn_args), negates the
+      windowed model Jacobian, and reorders columns to lmfit's varying-
+      parameter order; `fit_wrapper(jac_fun=...)` forwards it as
+      `Dfun`/`col_deriv=0` for leastsq stages only (auto-set by
+      `File.fit_2d` on the JAX path; pass `jac_fun=None` to disable).
+- [x] Jacobian validated against central finite differences of
+      `evaluate_2d` (the NumPy backend — cross-backend check) for
+      dynamics/expressions, convolution, subcycles, profiles, Voigt;
+      plus an internal-space check against lmfit's own FD at a real
+      fit's start point (exact match), and a slow e2e fit test.
+- [x] Fit-level benchmarks: leastsq stage nfev 22 -> 4 (simple GLP
+      model, same optimum); Voigt 2D fit (212x1131, stages=2, 1%
+      noise): 25.3 s -> 7.1 s wall (~3.6x, JAX time includes compiles),
+      identical redchi, leastsq nfev 8 -> 2.
+- Note: from aggressively perturbed starts, plain leastsq lands in
+  different local minima with analytic vs FD Jacobians (nonconvex
+  objective, not a defect) — the default two-stage workflow (Nelder
+  first) is the intended guard, unchanged.
 
 ## Phase E (optional, decide after D): JAX-native optimizer
 

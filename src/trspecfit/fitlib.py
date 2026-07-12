@@ -23,7 +23,7 @@ import copy
 import math
 import pathlib
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, cast
 
 import corner
@@ -288,6 +288,70 @@ def residual_fun(
 
 
 #
+def jacobian_fun(
+    par: Any,
+    x: ArrayLike,
+    data: np.ndarray,
+    fit_fun_str: str,
+    unpack: int = 0,
+    e_lim: list[int] | None = None,
+    t_lim: list[int] | None = None,
+    res_type: str = "lmfit",
+    args: Sequence[Any] | None = None,
+) -> np.ndarray:
+    """Analytic Jacobian of :func:`residual_fun` for lmfit's ``Dfun``.
+
+    The signature mirrors ``residual_fun`` because lmfit calls the
+    Jacobian with the same ``fcn_args``.  Requires the
+    ``fit_model_jax`` dispatch convention:
+    ``args = (evaluator, jacobian, theta_indices, model, dim)`` with
+    *jacobian* from ``eval_jax.make_jacobian_2d_jax``.
+
+    Returns
+    -------
+    ndarray
+        ``d(residual)/d(varying params)``, shape
+        ``(n_residuals, n_varys)``, columns in lmfit varying-parameter
+        order (``col_deriv=0``).  Residual is ``data - fit``, so this
+        is the negated model Jacobian over the fit window.
+    """
+
+    if e_lim is None:
+        e_lim = []
+    if t_lim is None:
+        t_lim = []
+    if args is None or not callable(args[1]):
+        raise ValueError(
+            "jacobian_fun requires the fit_model_jax dispatch args "
+            "(evaluator, jacobian, theta_indices, model, dim)."
+        )
+    jacobian = args[1]
+    theta_indices: np.ndarray = args[2]
+    model = args[3]
+
+    par_values = np.asarray(
+        ulmfit.par_extract(par, return_type="list"), dtype=np.float64
+    )
+    # (n_time, n_energy, n_opt)
+    jac = np.asarray(jacobian(par_values[theta_indices]), dtype=np.float64)
+
+    window = _fit_window_slices(2, e_lim, t_lim)
+    n_opt = jac.shape[-1]
+    d_res = -jac[window].reshape(-1, n_opt)
+
+    # Column order: plan opt order -> lmfit varying-parameter order.
+    opt_names = [model.parameter_names[int(i)] for i in theta_indices]
+    var_names = [name for name in par if par[name].vary]
+    if sorted(opt_names) != sorted(var_names):
+        raise RuntimeError(
+            "JAX Jacobian column mismatch: plan optimizer parameters "
+            f"{opt_names} do not match lmfit varying parameters {var_names}."
+        )
+    columns = [opt_names.index(name) for name in var_names]
+    return d_res[:, columns]
+
+
+#
 def time_display(
     t_start: float, print_str: str = "", *, return_delta_seconds: bool = False
 ) -> float | None:
@@ -451,6 +515,7 @@ def fit_wrapper(
     mc_settings: ulmfit.MC | None = None,
     fit_alg_1: str = "Nelder",
     fit_alg_2: str = "leastsq",
+    jac_fun: Callable[..., np.ndarray] | None = None,
     show_output: int = 0,
     save_output: int = 0,
     save_path: PathLike = "",
@@ -523,6 +588,11 @@ def fit_wrapper(
     fit_alg_2 : str, default='leastsq'
         Second optimization method (stages=2 only).
         Typically 'leastsq' for accurate local optimization and error bars.
+    jac_fun : callable, optional
+        Analytic Jacobian with the same signature as ``residual_fun``
+        (e.g. :func:`jacobian_fun` on the JAX backend).  Passed to
+        lmfit as ``Dfun`` for stages whose method is ``'leastsq'``;
+        ignored for gradient-free methods.
     show_output : {0, 1}, default=0
         Output mode:
 
@@ -678,13 +748,20 @@ def fit_wrapper(
 
     # construct lmfit minimizer
     mini = lmfit.Minimizer(residual_fun, par_ini, fcn_args=(*const, "lmfit", args))
+
+    # analytic Jacobian: only lmfit's leastsq accepts a Dfun
+    def _method_kws(method: str) -> dict[str, Any]:
+        if jac_fun is not None and method == "leastsq":
+            return {"Dfun": jac_fun, "col_deriv": 0}
+        return {}
+
     # perform fit(s)
     if show_output >= 1:
         t_ini = time.time()
         print(f"\nTime initialize: {t_ini - t_0} s")
     #
     if stages == 1:  # one fit only
-        par_fin = mini.minimize(method=fit_alg_1)
+        par_fin = mini.minimize(method=fit_alg_1, **_method_kws(fit_alg_1))
         par_fin_params = _result_params(par_fin)
         if show_output >= 1:
             print(f"\nResults fit (method={fit_alg_1}): ")
@@ -693,7 +770,7 @@ def fit_wrapper(
             print(f"Time fit: {t_fit - t_ini} s")
     #
     if stages == 2:  # find global minimum + local optimization
-        par_fin_gm = mini.minimize(method=fit_alg_1)
+        par_fin_gm = mini.minimize(method=fit_alg_1, **_method_kws(fit_alg_1))
         par_fin_gm_params = _result_params(par_fin_gm)
         if show_output >= 1:
             print(f"\nResults global minumum fit (method={fit_alg_1}): ")
@@ -701,7 +778,9 @@ def fit_wrapper(
             t_fit0 = time.time()
             print(f"Time fit (global minimum): {t_fit0 - t_ini} s")
         #
-        par_fin = mini.minimize(method=fit_alg_2, params=par_fin_gm_params)
+        par_fin = mini.minimize(
+            method=fit_alg_2, params=par_fin_gm_params, **_method_kws(fit_alg_2)
+        )
         par_fin_params = _result_params(par_fin)
         if show_output >= 1:
             print(f"\nResults local optimization fit (method={fit_alg_2}): ")

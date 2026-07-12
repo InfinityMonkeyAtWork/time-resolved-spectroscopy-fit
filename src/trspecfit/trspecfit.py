@@ -176,7 +176,11 @@ class Project:
           save plots and data
     spec_fun_str : str
         Name of fitting function in ``trspecfit.spectra`` (e.g.
-        ``'fit_model_gir'``, ``'fit_model_mcp'``, ``'fit_model_compare'``)
+        ``'fit_model_gir'``, ``'fit_model_mcp'``, ``'fit_model_compare'``,
+        ``'fit_model_jax'``).  ``'fit_model_jax'`` runs 2D fits on the
+        experimental JAX backend with an analytic Jacobian for leastsq
+        stages (requires the ``[jax]`` extra); models the JAX gate
+        rejects fall back to the compiled NumPy path.
 
     Notes
     -----
@@ -3738,9 +3742,12 @@ class File:
         runtime still evaluates against the original model object.
         """
 
-        if fit_fun_str not in ("fit_model_gir", "fit_model_compare"):
+        if fit_fun_str not in ("fit_model_gir", "fit_model_compare", "fit_model_jax"):
             return (model, 1)
 
+        # fit_model_jax lowers 1D to the compiled NumPy plan (the JAX
+        # backend is 2D-only); fit_model_jax delegates plan args to
+        # fit_model_gir.
         from trspecfit.graph_ir import build_graph, can_lower_1d, schedule_1d
 
         model_1d = copy.copy(model)
@@ -3996,8 +4003,13 @@ class File:
         # --- dispatch: GIR fast path vs interpreter ---
         _fun_str = self.p.spec_fun_str
 
-        if _fun_str in ("fit_model_gir", "fit_model_compare"):
-            from trspecfit.graph_ir import build_graph, can_lower_2d, schedule_2d
+        if _fun_str in ("fit_model_gir", "fit_model_compare", "fit_model_jax"):
+            from trspecfit.graph_ir import (
+                build_graph,
+                can_lower_2d,
+                can_lower_jax_2d,
+                schedule_2d,
+            )
 
             _graph = build_graph(self.model_2d)
             if can_lower_2d(_graph):
@@ -4015,6 +4027,23 @@ class File:
                     self.model_2d,
                     2,
                 )
+                if _fun_str == "fit_model_jax" and can_lower_jax_2d(_graph):
+                    from trspecfit.eval_jax import (
+                        make_evaluator_2d_jax,
+                        make_jacobian_2d_jax,
+                    )
+
+                    _args = (
+                        make_evaluator_2d_jax(_plan),
+                        make_jacobian_2d_jax(_plan),
+                        _theta_indices,
+                        self.model_2d,
+                        2,
+                    )
+                    # Analytic Jacobian for leastsq stages (lmfit Dfun)
+                    fit_wrapper_kwargs.setdefault("jac_fun", fitlib.jacobian_fun)
+                # JAX-non-lowerable stays on the compiled NumPy plan:
+                # fit_model_jax delegates plan args to fit_model_gir.
             else:
                 # Not lowerable — fit_model_gir delegates to fit_model_mcp
                 _args = (self.model_2d, 2)

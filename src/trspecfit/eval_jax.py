@@ -440,34 +440,12 @@ def _check_plan_supported(plan: ScheduledPlan2D) -> None:
 
 
 #
-def make_evaluator_2d_jax(
-    plan: ScheduledPlan2D,
-) -> Callable[[np.ndarray], np.ndarray]:
-    """Compile a jitted JAX evaluator for a 2D scheduled plan.
+def _build_evaluate_2d(plan: ScheduledPlan2D) -> Callable:
+    """Build the pure traced function ``theta -> (n_time, n_energy)``.
 
-    Parameters
-    ----------
-    plan : ScheduledPlan2D
-        Compiled 2D execution schedule (from ``schedule_2d``).  The
-        source graph must pass ``can_lower_jax_2d``.
-
-    Returns
-    -------
-    Callable[[np.ndarray], np.ndarray]
-        ``evaluate(theta) -> (n_time, n_energy)`` with the same theta
-        contract as ``evaluate_2d(plan, theta)``.  The first call
-        triggers XLA compilation; subsequent calls reuse it.
-
-    Raises
-    ------
-    ImportError
-        If jax is not installed.
-    ValueError
-        If the plan uses features outside the JAX slice.
+    Shared by ``make_evaluator_2d_jax`` (jit) and
+    ``make_jacobian_2d_jax`` (jit of jacfwd).
     """
-
-    _require_jax()
-    _check_plan_supported(plan)
 
     n_opt = len(plan.opt_indices)
     n_time = plan.n_time
@@ -627,11 +605,15 @@ def make_evaluator_2d_jax(
 
         return result
 
-    jitted = jax.jit(_evaluate)
+    return _evaluate
+
+
+#
+def _wrap_jitted(jitted: Callable, n_opt: int) -> Callable[[np.ndarray], np.ndarray]:
+    """Host-side wrapper: theta validation outside the jitted region."""
 
     #
     def evaluate(theta: np.ndarray) -> np.ndarray:
-        # Host-side checks stay outside the jitted region.
         theta_arr = np.asarray(theta, dtype=np.float64)
         if theta_arr.shape != (n_opt,):
             raise ValueError(
@@ -641,3 +623,78 @@ def make_evaluator_2d_jax(
         return np.asarray(jitted(theta_arr))
 
     return evaluate
+
+
+#
+def make_evaluator_2d_jax(
+    plan: ScheduledPlan2D,
+) -> Callable[[np.ndarray], np.ndarray]:
+    """Compile a jitted JAX evaluator for a 2D scheduled plan.
+
+    Parameters
+    ----------
+    plan : ScheduledPlan2D
+        Compiled 2D execution schedule (from ``schedule_2d``).  The
+        source graph must pass ``can_lower_jax_2d``.
+
+    Returns
+    -------
+    Callable[[np.ndarray], np.ndarray]
+        ``evaluate(theta) -> (n_time, n_energy)`` with the same theta
+        contract as ``evaluate_2d(plan, theta)``.  The first call
+        triggers XLA compilation; subsequent calls reuse it.
+
+    Raises
+    ------
+    ImportError
+        If jax is not installed.
+    ValueError
+        If the plan uses features outside the JAX slice.
+    """
+
+    _require_jax()
+    _check_plan_supported(plan)
+    return _wrap_jitted(jax.jit(_build_evaluate_2d(plan)), len(plan.opt_indices))
+
+
+#
+def make_jacobian_2d_jax(
+    plan: ScheduledPlan2D,
+) -> Callable[[np.ndarray], np.ndarray]:
+    """Compile a jitted analytic Jacobian of the 2D model output.
+
+    Forward-mode (``jax.jacfwd``): the optimizer vector is short and the
+    output grid is large, so one JVP pass per theta entry is the right
+    direction.
+
+    Derivative caveats (all measure-zero or by-construction flat):
+    ``boxCONV``'s derivative w.r.t. its width is 0 almost everywhere
+    (hard edges), and step-like ``where`` branches (stepFun onset,
+    GaussAsym at x0) contribute subgradient-style zeros at the exact
+    switching point.
+
+    Parameters
+    ----------
+    plan : ScheduledPlan2D
+        Compiled 2D execution schedule (from ``schedule_2d``).  The
+        source graph must pass ``can_lower_jax_2d``.
+
+    Returns
+    -------
+    Callable[[np.ndarray], np.ndarray]
+        ``jacobian(theta) -> (n_time, n_energy, n_opt)`` — derivative
+        of the model spectrum w.r.t. each optimizer parameter, columns
+        in ``plan.opt_param_names`` order.
+
+    Raises
+    ------
+    ImportError
+        If jax is not installed.
+    ValueError
+        If the plan uses features outside the JAX slice.
+    """
+
+    _require_jax()
+    _check_plan_supported(plan)
+    jitted = jax.jit(jax.jacfwd(_build_evaluate_2d(plan)))
+    return _wrap_jitted(jitted, len(plan.opt_indices))

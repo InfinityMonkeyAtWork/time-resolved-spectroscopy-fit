@@ -20,7 +20,10 @@ from test_evaluate_2d import (  # noqa: E402
 )
 
 from trspecfit.eval_2d import evaluate_2d  # noqa: E402
-from trspecfit.eval_jax import make_evaluator_2d_jax  # noqa: E402
+from trspecfit.eval_jax import (  # noqa: E402
+    make_evaluator_2d_jax,
+    make_jacobian_2d_jax,
+)
 from trspecfit.graph_ir import (  # noqa: E402
     build_graph,
     can_lower_2d,
@@ -391,6 +394,86 @@ class TestWofzAccuracy:
 
 
 # ---------------------------------------------------------------------------
+# Analytic Jacobian vs central finite differences of evaluate_2d
+# ---------------------------------------------------------------------------
+
+
+#
+def _assert_jacobian_matches_fd(plan, model):
+    """Compare make_jacobian_2d_jax against central differences.
+
+    Finite differences run through ``evaluate_2d`` (the NumPy
+    reference), so this cross-validates the Jacobian against the other
+    backend, not against the JAX evaluator differentiating itself.
+    Central differences carry O(h^2) truncation error scaling with the
+    derivative magnitude and O(eps_machine/h) cancellation error
+    scaling with the *model* magnitude, so the bound uses both scales
+    (elementwise rtol on near-zero entries is meaningless).
+    """
+
+    jacobian = make_jacobian_2d_jax(plan)
+    theta = _extract_theta(plan, model)
+    jac = jacobian(theta)
+    assert jac.shape == (len(plan.time), len(plan.energy), len(theta))
+
+    f_scale = np.max(np.abs(evaluate_2d(plan, theta)))
+    for i in range(len(theta)):
+        h = 1e-6 * max(1.0, abs(theta[i]))
+        theta_plus = theta.copy()
+        theta_plus[i] += h
+        theta_minus = theta.copy()
+        theta_minus[i] -= h
+        fd = (evaluate_2d(plan, theta_plus) - evaluate_2d(plan, theta_minus)) / (2 * h)
+        tol = 1e-5 * np.max(np.abs(fd)) + 1e-8 * f_scale
+        max_err = np.max(np.abs(jac[:, :, i] - fd))
+        assert max_err <= tol, (
+            f"Jacobian column {i} ({plan.opt_param_names[i]}): "
+            f"max |analytic - fd| = {max_err:.3e} exceeds {tol:.3e}"
+        )
+
+
+#
+#
+class TestJaxJacobian:
+    """Analytic Jacobian across the lowered feature surface."""
+
+    #
+    def test_dynamics_and_expression(self):
+        plan, model = _make_plan(["glp_expression"], [("GLP_01_A", ["MonoExpPos"])])
+        _assert_jacobian_matches_fd(plan, model)
+
+    #
+    def test_convolution(self):
+        plan, model = _make_plan(["glp_only"], [("GLP_01_A", ["MonoExpPosIRF"])])
+        _assert_jacobian_matches_fd(plan, model)
+
+    #
+    def test_subcycles(self):
+        plan, model = _make_plan(
+            ["glp_only"],
+            [("GLP_01_A", ["ModelNone", "MonoExpNeg"])],
+            frequency=10,
+        )
+        _assert_jacobian_matches_fd(plan, model)
+
+    #
+    def test_profiled_parameter(self):
+        plan, model = _make_profile_plan(
+            ["single_gauss"],
+            [("Gauss_01_x0", ["MonoExpPos"])],
+            [("Gauss_01_A", ["profile_pExpDecay"])],
+        )
+        _assert_jacobian_matches_fd(plan, model)
+
+    #
+    def test_voigt(self):
+        """Differentiates through the complex Weideman wofz."""
+
+        plan, model = _make_plan(["voigt_only"], [])
+        _assert_jacobian_matches_fd(plan, model)
+
+
+# ---------------------------------------------------------------------------
 # Plan-level rejection and theta contract
 # ---------------------------------------------------------------------------
 
@@ -407,3 +490,73 @@ class TestJaxEvaluatorErrors:
         theta = _extract_theta(plan, model)
         with pytest.raises(ValueError, match="theta shape"):
             evaluate_jax(np.append(theta, 1.0))
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: File.fit_2d on the JAX backend with analytic Jacobian
+# ---------------------------------------------------------------------------
+
+
+#
+#
+class TestJaxFit2D:
+    """spec_fun_str='fit_model_jax' fits through the public API."""
+
+    #
+    @pytest.mark.slow
+    def test_fit_recovers_truth_with_analytic_jacobian(self):
+        """Two-stage fit (Nelder + leastsq/Dfun) recovers clean-data truth."""
+
+        from _utils import extract_truth_pars, make_project, simulate_clean
+
+        from trspecfit import File
+
+        project = make_project(name="jax_e2e", spec_fun_str="fit_model_jax")
+
+        energy = np.linspace(83, 87, 30)
+        time = np.linspace(-2, 10, 24)
+        truth_file = File(parent_project=project, name="truth")
+        truth_file.energy = energy
+        truth_file.time = time
+        truth_file.dim = 2
+        truth_file.load_model(
+            model_yaml="models/file_energy.yaml", model_info="single_glp"
+        )
+        truth_file.add_time_dependence(
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml="models/file_time.yaml",
+            dynamics_model=["MonoExpPos"],
+        )
+        truth_pars = extract_truth_pars(truth_file.model_active)
+        clean = simulate_clean(truth_file.model_active)
+
+        fit_file = File(
+            parent_project=project,
+            name="fit",
+            data=clean,
+            energy=energy.copy(),
+            time=time.copy(),
+        )
+        fit_file.load_model(
+            model_yaml="models/file_energy.yaml", model_info="single_glp"
+        )
+        fit_file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+        fit_file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+        fit_file.add_time_dependence(
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml="models/file_time.yaml",
+            dynamics_model=["MonoExpPos"],
+        )
+        fit_file.fit_2d(model_name="single_glp", stages=2, try_ci=0)
+
+        assert fit_file.model_2d is not None  # type guard
+        result_params = fit_file.model_2d.result[1].params
+        for name, true_val in truth_pars.items():
+            fit_val = result_params[name].value
+            assert np.isclose(true_val, fit_val, rtol=1e-8, atol=1e-10), (
+                f"{name}: true={true_val:.6f}, fit={fit_val:.6f}"
+            )
