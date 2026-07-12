@@ -1,6 +1,6 @@
 ---
 name: benchmark
-description: 'Benchmark GIR compiled evaluator vs interpreter. Args: example number (default: 2), `--fit` for full fit, `-n N` for repetitions, `--nfev` for residual-evaluation counts, `--plan-time` for planning vs fit wall time, `--par-variability` for fit robustness vs perturbed initial guesses (`--starts N`).'
+description: 'Benchmark GIR compiled evaluator vs interpreter (and the JAX backend when the [jax] extra is installed). Args: example number (default: 2), `--fit` for full fit, `-n N` for repetitions, `--nfev` for residual-evaluation counts, `--plan-time` for planning vs fit wall time, `--par-variability` for fit robustness vs perturbed initial guesses (`--starts N`).'
 argument-hint: '[example_num] [--fit] [-n N] [--nfev] [--plan-time] [--par-variability] [--starts N]'
 disable-model-invocation: true
 allowed-tools: Bash(.venv/bin/python .claude/skills/benchmark/benchmark_gir.py *)
