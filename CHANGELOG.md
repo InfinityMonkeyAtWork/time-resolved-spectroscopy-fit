@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [0.13.0] - 2026-07-13
+
+### Added
+
+- **Project-level shared fits run on the JAX backend**: with `Project.spec_fun_str = "fit_model_jax"`, `Project.fit_2d()` evaluates all files through one fused jitted program with a joint analytic Jacobian (`jax.jacfwd`) wired into the `leastsq` stages — shared (project-vary) parameter columns span all files exactly instead of via numeric differencing. Measured end-to-end speedup over the interpreter path grows with file count: 2.6x at 2 files to 17x at 8 files (50x60 grid per file), with XLA compile staying under ~0.4 s. Files with different grids fuse fine. If any file's model fails the JAX gate — or jax is not installed — the whole project falls back to the interpreter path (no mixed backends); `show_output >= 1` reports which backend ran. Same caveats as single-file JAX fits: no parallel-worker MCMC, traced-value checks skipped.
+- `Simulator.sigma_data` property: the constant per-point sigma implied by an analog-detection Gaussian simulation, aligned with the fit-side noise schema (`File.set_sigma`), and stored in saved HDF5 metadata (per config group in parameter sweeps, surfaced by `SweepDataset`).
+- A pre-1.0 stability and deprecation policy page in the docs.
+- `AGENTS.md` (repo development) and `llms.txt` (library usage) orientation docs for AI coding agents.
+- `normalize_time` warns when time samples coincide with subcycle boundaries, where the cycle assignment is ambiguous.
+
+### Changed
+
+- **Breaking: `File.create_model_path()` is now `File.model_path()`** and no longer creates directories as a side effect of computing a path — result directories are created on write, so `auto_export=False` runs leave no empty directory trees behind.
+- MCMC (`lmfit.emcee`) with `workers > 1` now runs on a spawn-based process pool instead of the deprecated fork-based default, avoiding deadlocks in multithreaded processes.
+- Simulator noise semantics (`detection` / `noise_type` / `noise_level`) are documented precisely, with per-type sigma formulas.
+
+### Fixed
+
+- JAX-backend Jacobian returned NaN for `sqrtFun` dynamics with a varying onset `t0`.
+
 ## [0.12.0] - 2026-07-11
 
 ### Added

@@ -20,7 +20,8 @@ analytic Jacobian, wired into `Project.fit_2d()`
 - [x] Phase 3 — wiring into `Project.fit_2d()` (dispatch + gating
   helper + whole-project fallback)
 - [x] Phase 4 — tests (`TestProjectFitJax`, 4 tests)
-- [ ] Phase 5 — benchmark & docs
+- [x] Phase 5 — benchmark & docs (2.6-17x measured; changelog,
+  design/architecture docs, version 0.13.0)
 
 ## Phase 0 — recon & decisions (DONE 2026-07-13)
 
@@ -164,10 +165,19 @@ data; `_make_truth_file` gained grid kwargs).
   tau + per-file amplitudes.
 - [x] `pytest.importorskip("jax")` on the two fused-path tests only.
 
-## Phase 5 — benchmark & docs
+## Phase 5 — benchmark & docs (DONE 2026-07-13)
 
-- [ ] Benchmark vs interpreter path (docs/ai/benchmark recipe);
-  measure compile time growth with file count (open question in
-  design doc).
-- [ ] Changelog entry; update `docs/design/repo_architecture.md` and
-  the design note; bump version (minor -> 0.13.0) before release.
+- [x] Benchmark (standalone scratch script — the `/benchmark` harness
+  does not support multi-file examples): GLP + mono-exp dynamics,
+  50x60 grid/file, shared tau, 2-stage fit. Fit speedup JAX vs
+  interpreter: 2.6x (2 files), 7.6x (4), 17x (8). Compile-time open
+  question resolved: eval jit 0.09 -> 0.14 s, jacfwd jit 0.12 ->
+  0.25 s from 2 -> 8 files (sub-linear, negligible). Full table in
+  `docs/design/project-level-fits.md`.
+- [x] Changelog 0.13.0 (covers everything since 0.12.0);
+  `repo_architecture.md` (eval_jax + spectra sections) and the design
+  note updated (implementation status + measured results); version
+  bumped to 0.13.0. Sphinx `-W` build clean.
+- [ ] Optional follow-up (not in scope): one-line note in example
+  `21_multi_file_shared_fit` that `spec_fun_str: fit_model_jax`
+  accelerates the joint fit.
