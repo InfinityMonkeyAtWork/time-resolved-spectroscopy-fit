@@ -11,6 +11,7 @@ A Python library for fitting multi-component spectral models to time-resolved sp
    quickstart
    examples/index
    design/supported_models
+   stability
 
 .. toctree::
    :maxdepth: 2
