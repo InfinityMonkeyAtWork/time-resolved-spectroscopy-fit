@@ -19,7 +19,7 @@ analytic Jacobian, wired into `Project.fit_2d()`
   dispatch entries + 6 tests)
 - [x] Phase 3 — wiring into `Project.fit_2d()` (dispatch + gating
   helper + whole-project fallback)
-- [ ] Phase 4 — tests
+- [x] Phase 4 — tests (`TestProjectFitJax`, 4 tests)
 - [ ] Phase 5 — benchmark & docs
 
 ## Phase 0 — recon & decisions (DONE 2026-07-13)
@@ -145,14 +145,24 @@ Decisions:
 - [x] Same constraints as single-file JAX: no parallel-worker MCMC
   (closures don't pickle), runtime value checks absent.
 
-## Phase 4 — tests
+## Phase 4 — tests (DONE 2026-07-13)
 
-- [ ] Parity: project fit via JAX path vs current MCP path on a small
-  multi-file project (shared + per-file params), tolerances per
-  existing JAX parity tests in `tests/test_evaluate_2d.py`.
-- [ ] Fallback: project with one non-lowerable file uses MCP path.
-- [ ] Heterogeneous files (different grids) still fuse (no vmap).
-- [ ] `pytest.importorskip("jax")` so min-versions CI stays green.
+`tests/test_project_fit.py::TestProjectFitJax` + shared builder
+`_make_shared_tau_project` (2 files, shared tau, per-file A, noiseless
+data; `_make_truth_file` gained grid kwargs).
+
+- [x] Parity: full final-parameter agreement JAX vs interpreter
+  (rtol 1e-6) on a 2-stage fit with per-file windows on one file;
+  backend asserted via the `show_output` dispatch line (capsys).
+- [x] Fallback: one file failing `can_lower_jax_2d` (gate
+  monkeypatched — the JAX slice covers the full lowered 2D surface,
+  so no public YAML builds a non-lowerable 2D model) sends the whole
+  project to the interpreter; fit still recovers tau.
+- [x] Fallback: factory raising ImportError (jax missing) falls back;
+  both fallback tests run without jax installed.
+- [x] Heterogeneous grids (30x24 vs 37x19) fuse and recover shared
+  tau + per-file amplitudes.
+- [x] `pytest.importorskip("jax")` on the two fused-path tests only.
 
 ## Phase 5 — benchmark & docs
 

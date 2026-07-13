@@ -17,16 +17,20 @@ from trspecfit import File
 
 
 #
-def _make_truth_file(*, amplitude=20.0, x0_shift=3.0, tau=5.0):
+def _make_truth_file(
+    *, amplitude=20.0, x0_shift=3.0, tau=5.0, energy=None, time_ax=None
+):
     """Create a file with known parameters for data generation.
 
     Uses a throwaway project so truth files don't pollute the fit project.
+    Pass ``energy``/``time_ax`` to override the default grids (used by
+    heterogeneous-grid tests).
     """
 
     truth_project = make_project(name="truth")
 
-    energy = np.linspace(83, 87, 30)
-    time_ax = np.linspace(-2, 10, 24)
+    energy = np.linspace(83, 87, 30) if energy is None else energy
+    time_ax = np.linspace(-2, 10, 24) if time_ax is None else time_ax
 
     file = File(parent_project=truth_project)
     file.energy = energy
@@ -784,3 +788,160 @@ class TestPackProjectTheta:
             assert len(local_tau) == 1
             opt_pos = plan.opt_param_names.index(local_tau[0])
             assert plan_gathers[file_idx][opt_pos] == tau_slot
+
+
+#
+def _make_shared_tau_project(*, spec_fun_str, grids=None, show_output=0):
+    """Build a ready-to-fit 2-file project with shared tau, per-file A.
+
+    Simulates noiseless data from two truth files (differing amplitudes,
+    identical tau) and assembles fit files via the real workflow.
+    ``grids`` optionally gives per-file ``(energy, time_ax)`` pairs for
+    heterogeneous-grid tests. ``show_output`` is applied after setup so
+    baseline fits stay silent.
+    """
+
+    if grids is None:
+        grids = [(None, None), (None, None)]
+    amplitudes = [20.0, 14.0]
+    seeds = [42, 43]
+
+    project = make_project(
+        name=f"jax_project_{spec_fun_str}",
+        spec_fun_str=spec_fun_str,
+        auto_export=False,
+    )
+    for i, ((energy, time_ax), amplitude, seed) in enumerate(
+        zip(grids, amplitudes, seeds, strict=True)
+    ):
+        truth = _make_truth_file(amplitude=amplitude, energy=energy, time_ax=time_ax)
+        data = simulate_clean(truth.model_active, seed=seed)
+        _make_fit_file(project, data, truth.energy, truth.time, name=f"file_{i}")
+    project.show_output = show_output
+    return project
+
+
+#
+#
+class TestProjectFitJax:
+    """Project.fit_2d dispatch: fused JAX backend and interpreter fallback.
+
+    The fallback tests monkeypatch the gate/factory seams because the
+    JAX slice currently covers the full lowered 2D surface — no public
+    YAML construct builds a 2D model that fails ``can_lower_jax_2d``.
+    They run without jax installed; only the tests that execute the
+    fused path importorskip.
+    """
+
+    TRUE_TAU = 5.0
+
+    #
+    def test_jax_parity_with_interpreter(self, capsys):
+        """Both backends converge to the same parameters on clean data."""
+
+        pytest.importorskip("jax")
+
+        results = {}
+        for spec_fun_str in ("fit_model_gir", "fit_model_jax"):
+            project = _make_shared_tau_project(spec_fun_str=spec_fun_str, show_output=1)
+            # exercise per-file fit windows on one file
+            project.files[0].e_lim = [2, 28]
+            project.files[0].t_lim = [1, 23]
+            project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
+
+            backend = "JAX" if spec_fun_str == "fit_model_jax" else "interpreter"
+            assert f"({backend} backend)" in capsys.readouterr().out
+
+            per_file = []
+            for f in project.files:
+                m = f.select_model("project_glp")
+                assert m is not None  # type guard
+                per_file.append({n: m.lmfit_pars[n].value for n in m.parameter_names})
+            results[spec_fun_str] = per_file
+
+        for file_idx, (pars_gir, pars_jax) in enumerate(
+            zip(results["fit_model_gir"], results["fit_model_jax"], strict=True)
+        ):
+            for name, value in pars_gir.items():
+                assert np.isclose(pars_jax[name], value, rtol=1e-6, atol=1e-9), (
+                    f"file {file_idx} par {name}: gir={value!r} jax={pars_jax[name]!r}"
+                )
+
+        tau_jax = results["fit_model_jax"][0]["GLP_01_x0_expFun_01_tau"]
+        assert np.isclose(tau_jax, self.TRUE_TAU, atol=0.01)
+
+    #
+    def test_heterogeneous_grids_fuse(self, capsys):
+        """Files with different energy/time grids fit on the fused path."""
+
+        pytest.importorskip("jax")
+
+        grids = [
+            (np.linspace(83, 87, 30), np.linspace(-2, 10, 24)),
+            (np.linspace(83.2, 86.8, 37), np.linspace(-1.5, 9, 19)),
+        ]
+        project = _make_shared_tau_project(
+            spec_fun_str="fit_model_jax", grids=grids, show_output=1
+        )
+        project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
+        assert "(JAX backend)" in capsys.readouterr().out
+
+        m0 = project.files[0].select_model("project_glp")
+        m1 = project.files[1].select_model("project_glp")
+        assert m0 is not None  # type guard
+        assert m1 is not None  # type guard
+        tau_0 = m0.lmfit_pars["GLP_01_x0_expFun_01_tau"].value
+        tau_1 = m1.lmfit_pars["GLP_01_x0_expFun_01_tau"].value
+        assert tau_0 == tau_1  # project-shared
+        assert np.isclose(tau_0, self.TRUE_TAU, atol=0.05)
+        A_0 = m0.lmfit_pars["GLP_01_A"].value
+        A_1 = m1.lmfit_pars["GLP_01_A"].value
+        assert np.isclose(A_0, 20.0, atol=0.1)
+        assert np.isclose(A_1, 14.0, atol=0.1)
+
+    #
+    def test_fallback_when_one_file_not_jax_lowerable(self, monkeypatch, capsys):
+        """One file failing the JAX gate sends the whole project to MCP."""
+
+        from trspecfit import graph_ir
+
+        project = _make_shared_tau_project(spec_fun_str="fit_model_jax", show_output=1)
+
+        # First file passes the real gate, second is rejected.
+        real_gate = graph_ir.can_lower_jax_2d
+        gate_calls: list[bool] = []
+
+        def fail_from_second_call(graph):
+            gate_calls.append(True)
+            if len(gate_calls) >= 2:
+                return False
+            return real_gate(graph)
+
+        monkeypatch.setattr(
+            "trspecfit.graph_ir.can_lower_jax_2d", fail_from_second_call
+        )
+
+        project.fit_2d(model_name="project_glp", stages=1, try_ci=0)
+        assert "(interpreter backend)" in capsys.readouterr().out
+        assert len(gate_calls) >= 2
+
+        # The interpreter path still recovers the shared tau.
+        m = project.files[0].select_model("project_glp")
+        assert m is not None  # type guard
+        tau_fit = m.lmfit_pars["GLP_01_x0_expFun_01_tau"].value
+        assert np.isclose(tau_fit, self.TRUE_TAU, atol=0.05)
+
+    #
+    def test_fallback_when_jax_unavailable(self, monkeypatch, capsys):
+        """Factory raising ImportError (jax missing) falls back to MCP."""
+
+        def raise_import_error(*args, **kwargs):
+            raise ImportError("jax is not installed")
+
+        project = _make_shared_tau_project(spec_fun_str="fit_model_jax", show_output=1)
+        monkeypatch.setattr(
+            "trspecfit.eval_jax.make_project_evaluator_2d_jax", raise_import_error
+        )
+
+        project.fit_2d(model_name="project_glp", stages=1, try_ci=0)
+        assert "(interpreter backend)" in capsys.readouterr().out
