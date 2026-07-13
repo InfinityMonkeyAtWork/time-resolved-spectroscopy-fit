@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trspecfit"
-version = "0.12.7"
+version = "0.12.8"
 authors = [
     {name = "Johannes Mahl", email = "infinitymonkeyatwork@gmail.com"},
 ]
@@ -106,12 +106,29 @@ warn_unused_configs = true
 ignore_missing_imports = true
 
 [tool.pyright]
-include = ["src"]
+include = ["src", "tests"]
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.12"
 reportMissingImports = true
 typeCheckingMode = "basic"
+
+# Tests run at reduced strictness: File/Model attributes are `X | None` until
+# a fit populates them, and tests access them post-fit constantly — narrowing
+# every site would mean hundreds of asserts. Optional-driven rules are off;
+# the remaining rules are warnings (real annotation gaps, tracked in TODO.md)
+# so they stay visible in editors without failing CI/pre-commit.
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+reportOptionalMemberAccess = "none"
+reportOptionalSubscript = "none"
+reportOptionalOperand = "none"
+reportOptionalIterable = "none"
+reportArgumentType = "none"
+reportCallIssue = "none"
+reportAttributeAccessIssue = "warning"
+reportOperatorIssue = "warning"
+reportIndexIssue = "warning"
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "tests"]

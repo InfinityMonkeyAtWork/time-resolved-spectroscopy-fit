@@ -26,7 +26,7 @@
 
 ## Testing
 
-- [ ] **Pylance/Pyright `| None` noise in tests**: several hundred Pyright errors across tests, mostly from accessing `File`/`Model` attributes typed as `ndarray | None` (`[tool.pyright]` only includes `src`, so these surface in editors, not CI). Current `# type guard` asserts (~110) are inconsistent and don't propagate through helper methods. Find a cleaner pattern (e.g. `TypeGuard`, narrowing wrapper, or Pyright config) and apply consistently.
+- [ ] **Burn down the ~25 pyright warnings in tests**: tests are now type-checked at reduced strictness (`[tool.pyright]` executionEnvironments, 2026-07-13) — the `| None` noise is gone, and the residual warnings point at real annotation gaps, mostly in src return types: `File.load_model` annotated `Model` but returning `Dynamics` for `model_type="dynamics"` (test_graph_ir.py `set_frequency` warning), a `list[ndarray]`-annotated return used as an array (test_gir_integration.py `.shape` warnings), a `float`-annotated return with `.shape` access (test_file.py), an `ndarray`-annotated return used as a DataFrame (test_fit_history.py `.iloc`). Fix the annotations in src (or the call sites where the test is wrong), then consider promoting the three warning-level rules back to errors.
 
 ## User and AI ergonomics
 
