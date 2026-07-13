@@ -952,6 +952,8 @@ def fit_wrapper(
     # optional save (figures are saved above)
     # [if statements check for empty list/dataframe]
     if abs(save_output) == 1:
+        # save_path is a file prefix; make sure its directory exists
+        pathlib.Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         # par_ini (pandas DataFrame) as csv file
         df_par_ini.to_csv(
             str(save_path) + "_par_ini.csv",
@@ -1103,6 +1105,7 @@ def results_to_df(
             save_array.append(-2)
 
     if do_save:
+        pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
         # save the dataframe (index, x axis, parameter1, parameter2, ...
         df.to_csv(
             pathlib.Path(save_path) / "fit_pars.csv",
@@ -1234,6 +1237,7 @@ def results_to_fit_2d(
     fit_2d = np.asarray(lst)
     #
     if abs(save_2d) == 1:
+        pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
         np.savetxt(
             pathlib.Path(save_path) / "fit_2d.csv", fit_2d, fmt=num_fmt, delimiter=delim
         )

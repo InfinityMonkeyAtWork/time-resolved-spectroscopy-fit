@@ -870,7 +870,8 @@ def img_save(save_path: PathLike, dpi: int = 300) -> None:
     Save current matplotlib figure with sensible defaults.
 
     Wrapper around plt.savefig with tight bounding box to minimize whitespace,
-    small padding (0.05 inches), white background, auto edge color.
+    small padding (0.05 inches), white background, auto edge color. Creates
+    the parent directory if it does not exist.
 
     Parameters
     ----------
@@ -880,6 +881,7 @@ def img_save(save_path: PathLike, dpi: int = 300) -> None:
         Resolution in dots per inch
     """
 
+    pathlib.Path(save_path).parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(
         save_path,
         dpi=dpi,

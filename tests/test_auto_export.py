@@ -106,8 +106,9 @@ class TestAutoExportFalseSuppressesSideEffects:
         assert len(project._fit_history) == 1
         assert project._fit_history[0].fit_type == "baseline"
 
-        # No CSV / PNG hit disk (create_model_path makes empty dirs only).
-        assert _list_files(tmp_path / "auto") == set()
+        # Nothing hit disk — not even empty directories (model_path only
+        # computes paths; dirs are created at the actual write sites).
+        assert not (tmp_path / "auto").exists()
 
     #
     def test_2d_writes_nothing(self, tmp_path):
@@ -124,7 +125,7 @@ class TestAutoExportFalseSuppressesSideEffects:
         assert file.model_2d.result is not None
         assert file.model_2d.result[1] != []
         assert any(slot.fit_type == "2d" for slot in project._fit_history)
-        assert _list_files(tmp_path / "auto") == set()
+        assert not (tmp_path / "auto").exists()
 
 
 #
@@ -150,7 +151,7 @@ class TestExplicitPathsStillWrite:
         file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
 
         # Auto path stayed silent.
-        assert _list_files(tmp_path / "auto") == set()
+        assert not (tmp_path / "auto").exists()
 
         # Explicit CSV/PNG export still writes.
         explicit_root = tmp_path / "explicit_csv"
@@ -319,7 +320,7 @@ class TestVerboseDisplayWithoutExport:
 
         # Display branch ran (maps shown) but nothing hit disk.
         assert mock_2d.call_count == 1
-        assert _list_files(tmp_path / "auto") == set()
+        assert not (tmp_path / "auto").exists()
 
     #
     def test_2d_displays_but_writes_nothing(self, tmp_path, monkeypatch):
@@ -337,4 +338,4 @@ class TestVerboseDisplayWithoutExport:
         file.fit_2d("single_glp", stages=1, try_ci=0)
 
         assert mock_2d.call_count == 1
-        assert _list_files(tmp_path / "auto") == set()
+        assert not (tmp_path / "auto").exists()

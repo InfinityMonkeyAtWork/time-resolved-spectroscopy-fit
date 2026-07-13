@@ -1075,8 +1075,7 @@ class Project:
             images = []
             for f in self.files:
                 img_path = (
-                    f.create_model_path(model_name, fit_type="baseline")
-                    / "base_fit.png"
+                    f.model_path(model_name, fit_type="baseline") / "base_fit.png"
                 )
                 if img_path.exists():
                     images.append(mpimg.imread(str(img_path)))
@@ -1421,7 +1420,7 @@ class Project:
             try:
                 for f in self.files:
                     if f.model_2d is not None:
-                        path_2d = f.create_model_path(model_name, fit_type="2d")
+                        path_2d = f.model_path(model_name, fit_type="2d")
                         f._save_2d_fit_legacy(save_path=path_2d)
             finally:
                 self.show_output = saved
@@ -1437,8 +1436,7 @@ class Project:
             images = []
             for f in self.files:
                 img_path = (
-                    f.create_model_path(model_name, fit_type="2d")
-                    / "2D_data_fit_res.png"
+                    f.model_path(model_name, fit_type="2d") / "2D_data_fit_res.png"
                 )
                 if img_path.exists():
                     images.append(mpimg.imread(str(img_path)))
@@ -2173,18 +2171,18 @@ class File:
         )
 
     #
-    def create_model_path(
+    def model_path(
         self,
         model_name: str,
         *,
         fit_type: Literal["baseline", "spectrum", "sbs", "2d"],
-        subfolders: list[str] | None = None,
     ) -> pathlib.Path:
         """
-        Create directory structure for saving model fit results.
+        Build the path where model fit results are saved.
 
         Layout: ``{Project.path_results}/{File.name}/{fit_type}/{model_name}/``.
-        Creates directories if they don't exist.
+        Only computes the path — directories are created by the write sites
+        when a file is actually saved.
 
         Parameters
         ----------
@@ -2192,8 +2190,6 @@ class File:
             Name of model (must exist in self.models)
         fit_type : {"baseline", "spectrum", "sbs", "2d"}
             Fit type segment in the output path.
-        subfolders : list of str, default=[]
-            Additional subdirs to create (e.g., ['slices'] for Slice-by-Slice fits)
 
         Returns
         -------
@@ -2201,14 +2197,7 @@ class File:
             Path to model results directory
         """
 
-        path_model = self.p.path_results / self.name / fit_type / model_name
-        path_model.mkdir(parents=True, exist_ok=True)
-        if subfolders is None:
-            subfolders = []
-        for subfolder in subfolders:
-            (path_model / subfolder).mkdir(parents=True, exist_ok=True)
-
-        return path_model
+        return self.p.path_results / self.name / fit_type / model_name
 
     #
     def _apply_corrections(self) -> None:
@@ -2604,8 +2593,8 @@ class File:
         initial_guess = ulmfit.par_extract(
             self.model_base.lmfit_pars, return_type="list"
         )
-        # define (and create) path where basline fit results will be saved to
-        path_base_results = self.create_model_path(model_name, fit_type="baseline")
+        # define path where baseline fit results will be saved to
+        path_base_results = self.model_path(model_name, fit_type="baseline")
 
         # const = (x, data, package, fnctn string, unpack, energy limits, time limits)
         _fun_str = self.p.spec_fun_str
@@ -2705,6 +2694,7 @@ class File:
         }
         for comp, arr in zip(model.components, model.component_spectra, strict=True):
             columns[comp.name] = np.asarray(arr)
+        pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
         pd.DataFrame(columns).to_csv(
             pathlib.Path(save_path) / "fit_1d.csv",
             index=False,
@@ -2836,8 +2826,8 @@ class File:
         initial_guess = ulmfit.par_extract(
             self.model_spec.lmfit_pars, return_type="list"
         )
-        # define (and create) path where spectrum fit results will be saved to
-        path_spec_results = self.create_model_path(model_name, fit_type="spectrum")
+        # define path where spectrum fit results will be saved to
+        path_spec_results = self.model_path(model_name, fit_type="spectrum")
 
         # const = (x, data, fnctn string, unpack, energy limits, time limits)
         _fun_str = self.p.spec_fun_str
@@ -3152,14 +3142,8 @@ class File:
                 "run define_baseline() first or use seed_adapt=None."
             )
 
-        # define (and create) path where SbS fit results will be saved to
-        path_sbs_results = self.create_model_path(
-            model_name,
-            fit_type="sbs",
-            subfolders=[
-                "slices",
-            ],
-        )
+        # define path where SbS fit results will be saved to
+        path_sbs_results = self.model_path(model_name, fit_type="sbs")
 
         if seed_source == "model":
             seed_template = ulmfit.par_extract(
@@ -4018,8 +4002,8 @@ class File:
         if self.energy is None or self.time is None or self.data is None:
             raise ValueError("Data/axes missing; cannot run 2D fit.")
 
-        # define (and create) path where 2D fit results will be saved to
-        path_2d_results = self.create_model_path(model_name, fit_type="2d")
+        # define path where 2D fit results will be saved to
+        path_2d_results = self.model_path(model_name, fit_type="2d")
 
         # set all fixed 2D fit parameters equal to baseline model results
         base_df = ulmfit.par_to_df(self.model_base.lmfit_pars, col_type="min")

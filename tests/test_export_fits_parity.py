@@ -68,7 +68,7 @@ def _make_parity_fit_file(*, name: str, tmp_path: Path, spec_fun_str: str):
     """Build a fit-side project + file with auto-save redirected into ``tmp_path``.
 
     Setting ``path_results`` after construction reroutes the legacy
-    auto-save (``create_model_path`` builds paths under
+    auto-save (``model_path`` builds paths under
     ``project.path_results``) into the test-scoped ``tmp_path / "legacy"``
     tree, so the test has full control over both outputs and the source
     repo stays untouched.
