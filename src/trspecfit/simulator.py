@@ -85,17 +85,32 @@ class Simulator:
         Model instance from trspecfit.mcp with defined components and parameters.
         Must have energy and time axes set before simulation.
     detection : {'analog', 'photon_counting'}, default='analog'
-        Detection technique to simulate:
-        - 'analog': Continuous signal with additive noise
-        - 'photon_counting': Discrete photon events with Poisson statistics
+        Detection technique to simulate — selects the noise pathway:
+
+        - 'analog': continuous clean signal plus additive noise; the
+          distribution is set by noise_type, the amplitude by noise_level
+        - 'photon_counting': discrete photon sampling under a count budget
+          (counts_per_delay, or count_rate x integration_time);
+          noise_level and noise_type are ignored
     noise_level : float, default=0.05
-        Noise amplitude for analog detectors (0.0-1.0 for relative noise).
+        Dimensionless noise amplitude for the analog pathway.
         Larger values = more noise. Ignored for photon_counting.
+
+        - 'gaussian': constant sigma = noise_level * max(abs(clean_data)),
+          i.e. the noise-to-peak ratio; exposed as ``sigma_data``
+        - 'poisson': the clean signal is scaled by 1/noise_level,
+          Poisson-sampled, and scaled back, giving per-pixel
+          sigma = sqrt(noise_level * abs(signal)) — the relative noise
+          therefore depends on the absolute model amplitudes
     noise_type : {'poisson', 'gaussian', 'none'}, default='poisson'
-        Type of noise for analog detectors:
-        - 'poisson': Shot noise (realistic for low light)
-        - 'gaussian': White noise (simpler, faster)
+        Noise distribution (random generator) for the analog pathway:
+
+        - 'poisson': signal-dependent shot-like noise added to the
+          continuous signal (unlike detection='photon_counting', which
+          samples actual photon counts)
+        - 'gaussian': white noise with constant sigma
         - 'none': No noise (testing and debugging)
+
         Ignored for photon_counting (always Poisson).
     counts_per_delay : int, optional
         Total photon count per time delay (photon_counting only).
@@ -155,11 +170,15 @@ class Simulator:
 
     **Noise Level Selection:**
 
-    For analog detectors, noise_level is relative to signal:
+    For analog gaussian noise, noise_level is the noise-to-peak ratio:
     - 0.01 (1%): Very clean, ideal conditions
     - 0.05 (5%): Typical good data
     - 0.10 (10%): Moderate noise, still fittable
     - 0.20 (20%): Challenging, may need averaging
+
+    For analog poisson noise, the per-pixel sigma is signal-dependent
+    (sqrt(noise_level * abs(signal))), so the same noise_level values
+    give stronger relative noise unless model amplitudes are large.
 
     For photon counting, SNR set by counts_per_delay:
     - 100 counts: SNR ~ 10 (marginal)
@@ -923,7 +942,8 @@ class Simulator:
         Parameters
         ----------
         noise_level : float
-            Standard deviation of Gaussian noise (absolute units).
+            Dimensionless noise amplitude, relative to the clean signal
+            (see the class docstring for per-noise_type semantics).
         """
 
         if self.detection != "analog":
@@ -1003,6 +1023,38 @@ class Simulator:
                 "integration_time must be set to calculate"
                 " counts_per_delay from count_rate"
             )
+
+    #
+    def _constant_sigma(self, clean_data: np.ndarray) -> float | None:
+        """
+        Constant per-pixel sigma for clean_data under the current noise
+        settings: noise_level * max(abs(clean_data)) for analog gaussian
+        noise, None otherwise (poisson and photon-counting sigmas are
+        signal-dependent; 'none' has no noise).
+        """
+
+        if self.detection != "analog" or self.noise_type != "gaussian":
+            return None
+        return float(self.noise_level * np.max(np.abs(clean_data)))
+
+    #
+    @property
+    def sigma_data(self) -> float | None:
+        """
+        Constant noise sigma implied by the most recent simulation.
+
+        Only analog detection with ``noise_type='gaussian'`` has a constant
+        per-pixel sigma: ``noise_level * max(abs(data_clean))``. Returns
+        None for other noise settings or before any data was simulated.
+        Pass the value to ``File.set_sigma`` when fitting simulated data so
+        chi-square and derived uncertainties use the true noise scale.
+        Evaluated from the current noise settings, so re-simulate (or
+        re-read) after changing ``noise_level``.
+        """
+
+        if self.data_clean is None:
+            return None
+        return self._constant_sigma(self.data_clean)
 
     #
     def set_seed(self, seed: int | None) -> None:
@@ -1418,6 +1470,9 @@ class Simulator:
                 ├── detection       ('analog' or 'photon_counting')
                 ├── noise_level     (analog noise level)
                 ├── noise_type      (analog noise type)
+                ├── sigma_data      ([optional] constant noise sigma,
+                │                    analog gaussian only — pass to
+                │                    File.set_sigma when fitting)
                 ├── counts_per_delay (photon counting counts)
                 ├── count_rate      ([optional] photon counting rate)
                 ├── integration_time      ([optional] photon counting integration time)
@@ -1552,7 +1607,14 @@ class Simulator:
 
     #
     def _write_detection_metadata(self, meta: h5py.Group) -> None:
-        """Write detection/noise settings and seed as metadata attributes."""
+        """
+        Write detection/noise settings and seed as metadata attributes.
+
+        The derived ``sigma_data`` is intentionally not written here: it
+        depends on the clean data, so it is written where that data is
+        known — the metadata group for single saves, the per-config groups
+        for parameter sweeps.
+        """
 
         meta.attrs["detection"] = self.detection
         if self.detection == "analog":
@@ -1623,6 +1685,8 @@ class Simulator:
             # Save metadata group at root level
             meta = f.create_group("metadata")
             self._write_detection_metadata(meta)
+            if (sigma_data := self.sigma_data) is not None:
+                meta.attrs["sigma_data"] = sigma_data
 
             # Determine dimensionality from clean data
             if self.data_clean is not None:
@@ -1818,6 +1882,7 @@ class Simulator:
         │   ├── config_000000/ (group)
         │   │   ├── attrs: GLP_01_A, GLP_01_x0, ...
         │   │   ├── attrs: all_parameter_values (JSON)
+        │   │   ├── attrs: sigma_data     # Analog gaussian only
         │   │   └── clean (dataset)       # Clean data for this config
         │   ├── config_000001/ (group)
         │   └── ...
@@ -1924,6 +1989,11 @@ class Simulator:
             for par_name in self.model.lmfit_pars
         }
         config_group.attrs["all_parameter_values"] = json.dumps(param_values)
+
+        # Constant noise sigma for this config (analog gaussian only) —
+        # per config because it derives from each config's clean data
+        if (sigma_data := self._constant_sigma(clean)) is not None:
+            config_group.attrs["sigma_data"] = sigma_data
 
         # Save clean data for this configuration
         config_group.create_dataset("clean", data=clean)

@@ -6,7 +6,6 @@
 
 ## Noise and simulation
 
-- [ ] **Simulator noise-language cleanup**: align simulator docs/metadata with the fit-results noise schema. Keep simulator `noise_type` meaning "noise distribution / random generator" (`gaussian`, `poisson`, `none`), not sigma shape (the stale `set_noise_type` docstring mentioning `uniform` was fixed and the setter validated, 2026-07-10). Clarify `detection` vs. `noise_type` vs. `noise_level`; and, for analog Gaussian simulations, consider saving the derived `sigma_data = noise_level * max(abs(clean_data))` alongside existing metadata. For parameter sweeps, store derived `sigma_data` per configuration when it depends on each clean dataset.
 - [ ] **Future `sigma_type` expansion in FitResults**: the constant, user-supplied sigma schema has landed (`SIGMA_TYPE_CONSTANT` in [fit_io.py](src/trspecfit/utils/fit_io.py) ~L54; `validate_noise_metadata` hard-locks `sigma_type` to `"constant"`), so this is now unblocked: extend uncertainty handling beyond scalar `sigma_data`. Keep `noise_type` for the statistical assumption/distribution and use `sigma_type` for sigma shape: initially `constant`, later `per_spectrum` and `per_point`. Add HDF5 storage, validation, baseline/SBS/2D alignment, `compare_models()` behavior, and tests for vector/matrix sigma. Defer automatic Poisson-derived sigma until residual-space variance propagation is explicit.
 
 ## Performance & architecture

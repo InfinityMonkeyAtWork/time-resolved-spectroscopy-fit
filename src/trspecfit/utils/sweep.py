@@ -566,11 +566,12 @@ class SweepDataset:
                     configs_group[config_name], f"parameter_configs/{config_name}"
                 )
 
-                # Get swept parameters (exclude 'all_parameters')
+                # Get swept parameters (exclude the derived attributes)
                 parameters = {
                     key: value
                     for key, value in config_group.attrs.items()
-                    if key not in ("all_parameters", "all_parameter_values")
+                    if key
+                    not in ("all_parameters", "all_parameter_values", "sigma_data")
                 }
                 param_data.append(parameters)
 
@@ -605,6 +606,8 @@ class SweepDataset:
             Dictionary with keys:
             - parameters: Dict of swept parameter values
             - all_parameter_values: Dict of all model parameter values (if available)
+            - sigma_data: Constant noise sigma for this config's clean data
+              (analog gaussian simulations only; pass to File.set_sigma)
             - clean: Clean data (if load_clean=True)
             - noisy: List of noisy realizations (if load_noisy=True)
 
@@ -626,13 +629,19 @@ class SweepDataset:
                 configs_group[config_name], f"parameter_configs/{config_name}"
             )
 
-            # Get swept parameters (all attributes except 'all_parameters')
+            # Get swept parameters (all attributes except the derived ones)
             parameters = {
                 key: value
                 for key, value in config_group.attrs.items()
-                if key not in ("all_parameters", "all_parameter_values")
+                if key not in ("all_parameters", "all_parameter_values", "sigma_data")
             }
             result["parameters"] = parameters
+
+            # Derived constant noise sigma (analog gaussian sims only)
+            if "sigma_data" in config_group.attrs:
+                result["sigma_data"] = float(
+                    cast("float", config_group.attrs["sigma_data"])
+                )
 
             # Get all parameter values (JSON)
             if "all_parameter_values" in config_group.attrs:

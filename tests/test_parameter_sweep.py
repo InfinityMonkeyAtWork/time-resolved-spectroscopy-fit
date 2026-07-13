@@ -301,6 +301,119 @@ class TestSimulatorNoiseType:
 
 #
 #
+class TestSimulatorSigmaData:
+    """sigma_data: derived constant sigma for analog gaussian simulations."""
+
+    #
+    def _make_model(self):
+        """Minimal 1D energy model for sigma tests.
+
+        The energy axis covers the model's peaks (x0 = 84.5/88.1) so that
+        the peak amplitude drives max(abs(clean)).
+        """
+
+        project = make_project(name="test")
+        file = File(
+            parent_project=project,
+            energy=np.arange(80, 95, 0.5),
+            time=np.arange(-10, 100, 5),
+        )
+        file.load_model(
+            model_yaml="models/file_energy.yaml", model_info="simple_energy"
+        )
+        assert file.model_active is not None  # type guard
+        return file.model_active
+
+    #
+    def _make_simulator(self, **kwargs):
+        defaults = {
+            "detection": "analog",
+            "noise_level": 0.1,
+            "noise_type": "gaussian",
+            "seed": 42,
+        }
+        return Simulator(model=self._make_model(), **{**defaults, **kwargs})
+
+    #
+    def test_gaussian_sigma_matches_definition(self):
+        sim = self._make_simulator()
+        clean, _noisy, _noise = sim.simulate_1d()
+        assert sim.sigma_data == pytest.approx(0.1 * np.max(np.abs(clean)))
+
+    #
+    def test_sigma_none_before_simulation(self):
+        sim = self._make_simulator()
+        assert sim.sigma_data is None
+
+    #
+    def test_sigma_none_for_non_constant_noise(self):
+        for kwargs in (
+            {"noise_type": "poisson"},
+            {"noise_type": "none"},
+            {"detection": "photon_counting", "counts_per_delay": 1000},
+        ):
+            sim = self._make_simulator(**kwargs)
+            sim.simulate_1d()
+            assert sim.sigma_data is None
+
+    #
+    def test_saved_metadata_contains_sigma(self, tmp_path, monkeypatch):
+        sim = self._make_simulator()
+        clean, _noisy, _noise = sim.simulate_1d()
+        # save_data always writes below cwd/simulated_data
+        monkeypatch.chdir(tmp_path)
+        sim.save_data(filepath="gaussian.h5", show_output=0)
+        with h5py.File(tmp_path / "simulated_data" / "gaussian.h5", "r") as f:
+            sigma_saved = f["metadata"].attrs["sigma_data"]
+        assert sigma_saved == pytest.approx(0.1 * np.max(np.abs(clean)))
+
+    #
+    def test_saved_metadata_omits_sigma_for_poisson(self, tmp_path, monkeypatch):
+        sim = self._make_simulator(noise_type="poisson")
+        sim.simulate_1d()
+        monkeypatch.chdir(tmp_path)
+        sim.save_data(filepath="poisson.h5", show_output=0)
+        with h5py.File(tmp_path / "simulated_data" / "poisson.h5", "r") as f:
+            assert "sigma_data" not in f["metadata"].attrs
+
+    #
+    def test_sweep_saves_sigma_per_config(self, tmp_path):
+        # sweeping the peak amplitude changes max(abs(clean)), so each
+        # config must get its own sigma_data
+        sweep = ParameterSweep(strategy="grid", seed=42)
+        sweep.add_range("GLP_01_A", [10, 20])
+
+        sim = self._make_simulator()
+        filepath = tmp_path / "sweep_sigma.h5"
+        sim.simulate_parameter_sweep(
+            parameter_sweep=sweep,
+            n_realizations=1,
+            dim=1,
+            filepath=str(filepath),
+            show_progress=False,
+        )
+
+        sigma_per_config = []
+        with h5py.File(filepath, "r") as f:
+            assert "sigma_data" not in f["metadata"].attrs
+            for config_name in ("config_000000", "config_000001"):
+                config_group = f["parameter_configs"][config_name]
+                clean = config_group["clean"][:]
+                sigma_saved = config_group.attrs["sigma_data"]
+                assert sigma_saved == pytest.approx(0.1 * np.max(np.abs(clean)))
+                sigma_per_config.append(float(sigma_saved))
+        assert sigma_per_config[0] != sigma_per_config[1]
+
+        # loader surfaces sigma_data as its own key, not as a parameter
+        dataset = SweepDataset(str(filepath))
+        config = dataset.load_config(0)
+        assert config["sigma_data"] == pytest.approx(sigma_per_config[0])
+        assert "sigma_data" not in config["parameters"]
+        assert "sigma_data" not in dataset.get_parameter_summary().columns
+
+
+#
+#
 class TestSimulatorParameterSweep:
     """Test Simulator.simulate_parameter_sweep() integration"""
 
