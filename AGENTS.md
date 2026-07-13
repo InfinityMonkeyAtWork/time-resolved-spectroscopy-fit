@@ -1,8 +1,10 @@
 # Agent Orientation
 
 Orientation for AI coding agents working on this repository — developing
-`trspecfit` itself, not using it for analysis. If your tool does not load
-these files automatically, read them before making changes.
+`trspecfit` itself, not using it for analysis. If you want to *use*
+`trspecfit` inside notebooks or scripts, read [llms.txt](llms.txt) instead.
+If your tool does not load these files automatically, read them before
+making changes.
 
 - [CLAUDE.md](CLAUDE.md) — authoritative: behavior rules, architecture
   guardrails, code style, and testing conventions. Follow it even if you

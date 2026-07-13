@@ -42,6 +42,9 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 # -- Options for HTML output -------------------------------------------------
 html_theme = "sphinx_rtd_theme"
 html_static_path = []
+# serve the repo-root llms.txt (agent/LLM orientation for package users)
+# at the root of the built docs site
+html_extra_path = ["../llms.txt"]
 
 # -- Extension configuration -------------------------------------------------
 

@@ -1,0 +1,122 @@
+# trspecfit
+
+> Python package for fitting 1D energy-resolved and 2D time-and-energy-resolved
+> spectroscopy data. Models are composed from named components (peaks,
+> backgrounds, convolution kernels) declared in YAML; parameters can be linked
+> by expressions, evolve in time (dynamics), or vary along an auxiliary axis
+> (profiles). Fitting builds on lmfit, with confidence intervals and optional
+> MCMC. Install: `pip install trspecfit` (Python >= 3.12).
+
+This file orients AI agents (and humans in a hurry) who want to *use*
+trspecfit for analysis. If you are developing the package itself, read
+`AGENTS.md` in the repository root instead.
+
+## Core workflow
+
+```python
+from trspecfit import Project, File
+
+project = Project(path='my_project', name='my_experiment')
+file = File(parent_project=project, path='my_dataset',
+            data=data2d, energy=energy_axis, time=time_axis)
+
+# 1) fit a static "baseline" model on the pre-trigger region
+file.define_baseline(time_start=0, time_stop=3)      # absolute time values
+file.load_model('models_energy.yaml', 'base')
+file.set_fit_limits(energy_limits=[...], time_limits=[...])
+file.fit_baseline('base')
+
+# 2) fit the full 2D dataset with time-dependent parameters
+file.load_model('models_energy.yaml', '2D')
+file.add_time_dependence('2D', 'GLP_01_x0', 'models_time.yaml', 'shift')
+file.fit_2d('2D')
+
+# 3) inspect results
+df = file.get_fit_results(fit_type='2d')             # pandas DataFrame
+file.save_fit(...)                                   # HDF5 fit archive
+```
+
+Simulation mirrors this: build a model the same way, then use
+`trspecfit.Simulator` (`simulate_1d`, `simulate_2d`, `simulate_n`) to
+generate clean or noisy synthetic data from it.
+
+## YAML model format
+
+One file holds multiple named models; each model lists components in order,
+each component lists its parameters:
+
+```yaml
+base:
+    LinBack:
+      m: [1E-2, True, -1, 1]     # [value, vary, min, max]
+      b: [0, False]              # fixed parameter (short form)
+      xStart: [0, False]
+      xStop: [20, False]
+    GLP:
+      A: [10, True, 5, 15]
+      x0: [8, True, 5, 15]
+      F: [1.5, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+    GLP:
+      A: ["3/4*GLP_01_A"]        # expression: linked to first GLP
+      x0: ["GLP_01_x0 + 3.67"]   # fixed energy splitting
+      F: ["GLP_01_F"]
+      m: ["GLP_01_m"]
+```
+
+Component types (see the API reference for signatures):
+
+- Peaks: `Gauss`, `GaussAsym`, `Lorentz`, `Voigt`, `GLP`, `GLS`, `DS`
+- Backgrounds: `LinBack`, `Shirley`, `Offset`
+- Time dynamics: `linFun`, `expFun`, `sinFun`, `sinDivX`, `erfFun`, `sqrtFun`
+- Convolution kernels: `gaussCONV`, `expSymCONV`, `expDecayCONV`,
+  `expRiseCONV`, `boxCONV`
+- Profile functions (auxiliary axis, always `p`-prefixed): `pExpDecay`,
+  `pLinear`, `pGauss`
+
+## Naming and composition rules
+
+- Repeated components are auto-numbered in YAML order: `GLP_01`, `GLP_02`.
+  Full parameter names join with underscores — `GLP_01_x0` — which is why
+  function and parameter names themselves never contain underscores.
+- Attached dynamics/profile parameters extend the chain:
+  `GLP_01_A_expFun_01_tau` is the `tau` of the `expFun` dynamics on the `A`
+  of the first `GLP`. Use these full names in expressions and results.
+- Supported composition: base parameter -> profile, then profile parameter
+  -> dynamics. Disallowed: profile + dynamics on the same base parameter,
+  and expression chains that pass through a time-dependent parameter.
+- The full composition contract lives in the Supported Models page below —
+  treat it as the source of truth.
+
+## Pitfalls for scripted / headless use
+
+- Fit and plot methods display figures by default. Pass `show_plot=False`
+  where available, or `save_img=-1` (save without display; `0` = display,
+  `1` = both) when running outside a notebook.
+- Time axes for multi-cycle dynamics should not sample exactly on subcycle
+  boundaries — assignment there flips with floating-point representation,
+  and `trspecfit` warns when it detects this.
+- Pre-1.0, any API may change between minor releases; pin a minor version
+  (e.g. `trspecfit>=0.12,<0.13`) and read the changelog before upgrading.
+
+## Docs
+
+- [Quick start](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/quickstart.html):
+  install, first notebook, the typical workflow step by step
+- [Examples](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/examples/index.html):
+  runnable notebooks — basic fitting, linked parameters, multi-cycle
+  dynamics, profiles, model comparison, save/load, uncertainty/MCMC,
+  multi-file workspaces, synthetic data
+- [Supported models](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/design/supported_models.html):
+  source of truth for model combinations, expressions, and compositions
+- [API reference](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/api/index.html):
+  all public classes and component-function signatures
+- [Stability policy](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/stability.html):
+  what can change before/after v1.0.0
+
+## Optional
+
+- [Repository](https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/):
+  source, issues, and Q&A discussions
+- [Architecture](https://time-resolved-spectroscopy-fit.readthedocs.io/en/latest/design/repo_architecture.html):
+  module map, only needed when reading the source
