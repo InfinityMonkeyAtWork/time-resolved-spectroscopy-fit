@@ -140,6 +140,30 @@ class TestAutoExportTrueWritesFiles:
         # At least one CSV/PNG should be auto-written by the baseline path.
         assert outputs, "expected at least one auto-written file"
 
+    #
+    def test_2d_legacy_saver_creates_its_directory(self, tmp_path):
+        """Regression: the 2D legacy saver writes np.savetxt sidecars into a
+        directory that must be created on write (dirs are no longer
+        pre-created at path computation). File.fit_2d masks this — its
+        fit_wrapper CSVs create the dir first — but Project.fit_2d's
+        per-file save loop and the save_2d_fit wrapper reach the saver
+        with a fresh directory."""
+
+        project, file = _baseline_setup(tmp_path, auto_export=True)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        file.add_time_dependence(
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml="models/file_time.yaml",
+            dynamics_model=["MonoExpPos"],
+        )
+        file.fit_2d("single_glp", stages=1, try_ci=0)
+
+        fresh = tmp_path / "fresh_export"
+        with pytest.warns(DeprecationWarning):
+            file.save_2d_fit(fresh)
+        assert (fresh / "fit_2d.csv").exists()
+
 
 #
 class TestExplicitPathsStillWrite:

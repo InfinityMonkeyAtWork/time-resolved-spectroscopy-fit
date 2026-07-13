@@ -3377,6 +3377,7 @@ class File:
                 "Slice-by-Slice model const/args missing; cannot reconstruct 2D fit."
             )
         if save_files:
+            pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
             # axis sidecars (one value per row); paired with fit_2d.csv
             np.savetxt(
                 pathlib.Path(save_path) / "energy.csv",
@@ -4144,6 +4145,7 @@ class File:
                 "2D model evaluation did not produce value_2d; nothing to save."
             )
         if save_files:
+            pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
             # save 2D fit map as CSV (rows=time, cols=energy), mirroring save_sbs_fit
             np.savetxt(
                 pathlib.Path(save_path) / "fit_2d.csv",
