@@ -628,3 +628,159 @@ class TestProjectFitLifecycle:
         assert fit_1d_lines[0].startswith("energy;sum;")
         energy_field = fit_1d_lines[1].split(";")[0]
         assert "." in energy_field and "e" not in energy_field.lower(), energy_field
+
+
+#
+#
+class TestPackProjectTheta:
+    """Test spectra.pack_project_theta index-array assembly."""
+
+    #
+    def _stub_plan(self, opt_param_names):
+        import types
+
+        return types.SimpleNamespace(opt_param_names=opt_param_names)
+
+    #
+    def test_synthetic_shared_and_file_params(self):
+        """Shared param gathers to one theta_c slot; plan order preserved."""
+
+        mapping = [
+            ("tau", 0, "tau"),
+            ("file00_A", 0, "A"),
+            ("file00_F", 0, "F"),
+            ("tau", 1, "tau"),
+            ("file01_A", 1, "A"),
+            ("file01_F", 1, "F"),
+        ]
+        par_names = ["tau", "file00_A", "file00_F", "file01_A", "file01_F"]
+        var_names = ["tau", "file00_A", "file01_A"]
+        # opt order differs between the plans on purpose
+        plans = [self._stub_plan(["A", "tau"]), self._stub_plan(["tau", "A"])]
+
+        from trspecfit import spectra
+
+        theta_c_indices, plan_gathers = spectra.pack_project_theta(
+            plans,
+            mapping=mapping,
+            par_names=par_names,
+            var_names=var_names,
+        )
+
+        assert theta_c_indices.tolist() == [0, 1, 3]
+        assert plan_gathers[0].tolist() == [1, 0]
+        assert plan_gathers[1].tolist() == [0, 2]
+
+        # end-to-end gather: full combined vector -> per-plan theta
+        par_full = np.array([5.0, 20.0, 0.1, 30.0, 0.2])
+        theta_c = par_full[theta_c_indices]
+        assert theta_c[plan_gathers[0]].tolist() == [20.0, 5.0]
+        assert theta_c[plan_gathers[1]].tolist() == [5.0, 30.0]
+
+    #
+    def test_missing_mapping_entry_raises(self):
+        """Plan opt param without a mapping entry is an internal error."""
+
+        from trspecfit import spectra
+
+        with pytest.raises(RuntimeError, match="no combined-parameter mapping"):
+            spectra.pack_project_theta(
+                [self._stub_plan(["GLP_01_A"])],
+                mapping=[],
+                par_names=[],
+                var_names=[],
+            )
+
+    #
+    def test_non_varying_counterpart_raises(self):
+        """Plan opt param mapping to a static combined param is an error."""
+
+        from trspecfit import spectra
+
+        with pytest.raises(RuntimeError, match="not\\s+varying"):
+            spectra.pack_project_theta(
+                [self._stub_plan(["GLP_01_F"])],
+                mapping=[("file00_GLP_01_F", 0, "GLP_01_F")],
+                par_names=["file00_GLP_01_F"],
+                var_names=[],
+            )
+
+    #
+    def test_unconsumed_varying_param_raises(self):
+        """A varying combined param feeding no plan is an error."""
+
+        from trspecfit import spectra
+
+        with pytest.raises(RuntimeError, match="feed no plan"):
+            spectra.pack_project_theta(
+                [self._stub_plan(["GLP_01_A"])],
+                mapping=[("file00_GLP_01_A", 0, "GLP_01_A")],
+                par_names=["file00_GLP_01_A", "orphan"],
+                var_names=["file00_GLP_01_A", "orphan"],
+            )
+
+    #
+    def test_real_models_roundtrip(self):
+        """Packing built from real plans reproduces name-based distribution."""
+
+        from trspecfit import spectra
+        from trspecfit.graph_ir import build_graph, can_lower_2d, schedule_2d
+
+        project = make_project(name="project_fit")
+
+        for i in range(2):
+            f = File(parent_project=project, name=f"file_{i}")
+            f.energy = np.linspace(83, 87, 10)
+            f.time = np.linspace(-2, 10, 10)
+            f.dim = 2
+            f.load_model(
+                model_yaml="models/project_energy.yaml",
+                model_info="project_glp",
+            )
+            f.add_time_dependence(
+                target_model="project_glp",
+                target_parameter="GLP_01_x0",
+                dynamics_yaml="models/project_time.yaml",
+                dynamics_model=["MonoExpProject"],
+            )
+
+        combined, info = project._build_fit_params(model_name="project_glp")
+        par_names = info["par_names"]
+        var_names = [n for n in par_names if combined[n].vary]
+
+        plans = []
+        for model in info["models"]:
+            graph = build_graph(model)
+            assert can_lower_2d(graph)
+            plans.append(schedule_2d(graph))
+
+        theta_c_indices, plan_gathers = spectra.pack_project_theta(
+            plans,
+            mapping=info["mapping"],
+            par_names=par_names,
+            var_names=var_names,
+        )
+
+        # gathered values must equal the name-based lookup per file
+        remaps = [{}, {}]
+        for combined_name, file_idx, local_name in info["mapping"]:
+            remaps[file_idx][local_name] = combined_name
+        par_full = np.array([combined[n].value for n in par_names])
+        theta_c = par_full[theta_c_indices]
+        for file_idx, plan in enumerate(plans):
+            expected = [
+                combined[remaps[file_idx][local]].value
+                for local in plan.opt_param_names
+            ]
+            assert theta_c[plan_gathers[file_idx]].tolist() == expected
+
+        # shared tau lands on the same theta_c slot for both files
+        tau_name = "GLP_01_x0_expFun_01_tau"
+        tau_slot = var_names.index(tau_name)
+        for file_idx, plan in enumerate(plans):
+            local_tau = [
+                local for local, comb in remaps[file_idx].items() if comb == tau_name
+            ]
+            assert len(local_tau) == 1
+            opt_pos = plan.opt_param_names.index(local_tau[0])
+            assert plan_gathers[file_idx][opt_pos] == tau_slot

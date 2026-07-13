@@ -24,7 +24,7 @@ it.
 JAX is an optional dependency: ``pip install "trspecfit[jax]"``.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -705,3 +705,141 @@ def make_jacobian_2d_jax(
     _check_plan_supported(plan)
     jitted = jax.jit(jax.jacfwd(_build_evaluate_2d(plan)))
     return _wrap_jitted(jitted, len(plan.opt_indices))
+
+
+#
+def _build_project_fused_2d(
+    plans: Sequence[ScheduledPlan2D],
+    *,
+    plan_gathers: Sequence[np.ndarray],
+    windows: Sequence[tuple[slice, slice]],
+    n_theta: int,
+) -> Callable:
+    """Build the fused traced function ``theta_c -> concat residual grid``.
+
+    Evaluates every plan from its gathered slice of the combined
+    optimizer vector, applies the per-file fit window as static
+    slices, flattens, and concatenates — one traceable program over
+    all files. Shared by the fused evaluator (jit) and fused Jacobian
+    (jit of jacfwd).
+    """
+
+    builders = [_build_evaluate_2d(plan) for plan in plans]
+    gathers = [np.asarray(g, dtype=np.intp) for g in plan_gathers]
+    for file_idx, (plan, gather) in enumerate(zip(plans, gathers, strict=True)):
+        if len(gather) != len(plan.opt_indices):
+            raise ValueError(
+                f"plan_gathers[{file_idx}] has length {len(gather)}, "
+                f"expected {len(plan.opt_indices)} (plan opt params)."
+            )
+        if len(gather) and (gather.min() < 0 or gather.max() >= n_theta):
+            raise ValueError(
+                f"plan_gathers[{file_idx}] indexes outside the combined "
+                f"theta vector (n_theta={n_theta})."
+            )
+
+    #
+    def _fused(theta_c):
+        pieces = []
+        for build, gather, window in zip(builders, gathers, windows, strict=True):
+            out = build(theta_c[gather])
+            pieces.append(out[window].reshape(-1))
+        return jnp.concatenate(pieces)
+
+    return _fused
+
+
+#
+def make_project_evaluator_2d_jax(
+    plans: Sequence[ScheduledPlan2D],
+    *,
+    plan_gathers: Sequence[np.ndarray],
+    windows: Sequence[tuple[slice, slice]],
+    n_theta: int,
+) -> Callable[[np.ndarray], np.ndarray]:
+    """Compile a fused jitted evaluator over all files of a project fit.
+
+    Parameters
+    ----------
+    plans : sequence of ScheduledPlan2D
+        One compiled plan per file, in project file order. Every
+        source graph must pass ``can_lower_jax_2d``.
+    plan_gathers : sequence of ndarray
+        Per file, positions within the combined optimizer vector of
+        that plan's opt params (from ``spectra.pack_project_theta``).
+    windows : sequence of tuple of slice
+        Per file ``(time_slice, energy_slice)`` fit window, applied to
+        the evaluated grid before flattening (static — no dynamic
+        shapes inside the trace).
+    n_theta : int
+        Length of the combined optimizer vector ``theta_c``.
+
+    Returns
+    -------
+    Callable[[np.ndarray], np.ndarray]
+        ``evaluate(theta_c) -> 1D array``: the windowed, flattened,
+        concatenated model prediction across all files — the fit
+        counterpart of the concatenated data vector assembled by
+        ``Project.fit_2d``.
+
+    Raises
+    ------
+    ImportError
+        If jax is not installed.
+    ValueError
+        If a plan uses features outside the JAX slice, or gathers are
+        inconsistent with the plans.
+    """
+
+    _require_jax()
+    for plan in plans:
+        _check_plan_supported(plan)
+    fused = _build_project_fused_2d(
+        plans, plan_gathers=plan_gathers, windows=windows, n_theta=n_theta
+    )
+    return _wrap_jitted(jax.jit(fused), n_theta)
+
+
+#
+def make_project_jacobian_2d_jax(
+    plans: Sequence[ScheduledPlan2D],
+    *,
+    plan_gathers: Sequence[np.ndarray],
+    windows: Sequence[tuple[slice, slice]],
+    n_theta: int,
+) -> Callable[[np.ndarray], np.ndarray]:
+    """Compile a fused jitted joint Jacobian for a project fit.
+
+    Forward-mode over the fused multi-file function: shared-parameter
+    columns (which cut across every file's rows) come out exactly; the
+    block sparsity of file-level columns is left to XLA. Derivative
+    caveats match ``make_jacobian_2d_jax``.
+
+    Parameters
+    ----------
+    plans, plan_gathers, windows, n_theta
+        As for ``make_project_evaluator_2d_jax``.
+
+    Returns
+    -------
+    Callable[[np.ndarray], np.ndarray]
+        ``jacobian(theta_c) -> (n_residuals_total, n_theta)`` —
+        derivative of the concatenated windowed prediction w.r.t. each
+        combined optimizer parameter, columns in ``theta_c`` order.
+
+    Raises
+    ------
+    ImportError
+        If jax is not installed.
+    ValueError
+        If a plan uses features outside the JAX slice, or gathers are
+        inconsistent with the plans.
+    """
+
+    _require_jax()
+    for plan in plans:
+        _check_plan_supported(plan)
+    fused = _build_project_fused_2d(
+        plans, plan_gathers=plan_gathers, windows=windows, n_theta=n_theta
+    )
+    return _wrap_jitted(jax.jit(jax.jacfwd(fused)), n_theta)
