@@ -17,7 +17,8 @@ analytic Jacobian, wired into `Project.fit_2d()`
   `TestPackProjectTheta`, 5 tests)
 - [x] Phase 2 — fused JAX residual + joint Jacobian (factories +
   dispatch entries + 6 tests)
-- [ ] Phase 3 — wiring into `Project.fit_2d()`
+- [x] Phase 3 — wiring into `Project.fit_2d()` (dispatch + gating
+  helper + whole-project fallback)
 - [ ] Phase 4 — tests
 - [ ] Phase 5 — benchmark & docs
 
@@ -117,13 +118,31 @@ Decisions:
 - [x] `vmap` batching for homogeneous series deferred (already a
   TODO.md follow-on).
 
-## Phase 3 — wiring into `Project.fit_2d()`
+## Phase 3 — wiring into `Project.fit_2d()` (DONE 2026-07-13)
 
-- [ ] Project variant of `fit_model_jax`; selection logic mirrors the
-  single-file backend choice (opt-in/auto per existing convention).
-- [ ] Whole-project fallback path when any file fails
-  `can_lower_jax_2d` or jax is not installed.
-- [ ] Same constraints as single-file JAX: no parallel-worker MCMC
+- [x] `Project._build_project_jax_args(combined_pars,
+  project_fit_info, windows)` gating helper: per-file `build_graph`
+  -> `can_lower_2d` + `can_lower_jax_2d` (any miss -> None), plans
+  via `schedule_2d`, `pack_project_theta`, fused factories wrapped in
+  `try/except ImportError` (jax missing -> None). Returns the
+  `fit_project_jax` args tuple or None.
+- [x] Dispatch in `Project.fit_2d`: fused path only when
+  `self.spec_fun_str == "fit_model_jax"` and the helper returns args;
+  sets `fit_fun_str = "fit_project_jax"` and
+  `fit_wrapper_kwargs.setdefault("jac_fun",
+  fitlib.jacobian_fun_project)`. Otherwise interpreter const
+  (`fit_project_mcp`) unchanged. `show_output` line now reports the
+  backend (`JAX` / `interpreter`).
+- [x] Data slicing now uses `fitlib._fit_window_slices` and the same
+  `windows` list feeds the fused evaluator — data and prediction
+  vectors provably share windows.
+- [x] Result distribution / slot lifecycle untouched (per-file slots
+  still re-evaluate via `fit_model_mcp`).
+- [x] Sanity-checked end-to-end (scratch script): 2-file project,
+  shared tau, per-file windows on one file, `stages=2` — MCP vs JAX
+  final params agree (rtol 1e-6), tau recovered, both backend prints
+  observed.
+- [x] Same constraints as single-file JAX: no parallel-worker MCMC
   (closures don't pickle), runtime value checks absent.
 
 ## Phase 4 — tests
