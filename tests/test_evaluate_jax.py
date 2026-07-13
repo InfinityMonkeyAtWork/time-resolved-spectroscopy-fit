@@ -184,7 +184,7 @@ class TestWofzAccuracy:
         dx = np.linspace(-200.0, 200.0, 2001)
         for im in [1e-3, 1e-1, 1.0, 10.0, 100.0]:
             z = dx + 1j * im
-            got = np.asarray(_wofz(z))
+            got = np.asarray(_wofz(z), dtype=np.complex128)
             ref = scipy_wofz(z)
             np.testing.assert_allclose(got.real, ref.real, rtol=1e-12, atol=1e-15)
 

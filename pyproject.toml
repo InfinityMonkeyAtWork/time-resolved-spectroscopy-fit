@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trspecfit"
-version = "0.12.0"
+version = "0.12.11"
 authors = [
     {name = "Johannes Mahl", email = "infinitymonkeyatwork@gmail.com"},
 ]
@@ -62,6 +62,7 @@ dev = [
   "nbformat==5.10.4",      # used by scripts/normalize_notebooks.py (pre-commit hook)
   "nbstripout==0.9.1",
   "pytest==9.1.1",
+  "pytest-xdist==3.8.0",
   "pyright==1.1.411",
   "ruff==0.15.20",
   "build==1.5.0",
@@ -105,22 +106,39 @@ warn_unused_configs = true
 ignore_missing_imports = true
 
 [tool.pyright]
-include = ["src"]
+include = ["src", "tests"]
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.12"
 reportMissingImports = true
 typeCheckingMode = "basic"
 
+# Tests run at reduced strictness: File/Model attributes are `X | None` until
+# a fit populates them, and tests access them post-fit constantly — narrowing
+# every site would mean hundreds of asserts. Only Optional-driven rules are
+# off; everything else stays at basic-mode severity.
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+reportOptionalMemberAccess = "none"
+reportOptionalSubscript = "none"
+reportOptionalOperand = "none"
+reportOptionalIterable = "none"
+reportArgumentType = "none"
+reportCallIssue = "none"
+
 [tool.pytest.ini_options]
 pythonpath = ["src", "tests"]
 testpaths = ["tests"]
-addopts = "-m 'not slow'"
+# parallel by default (pytest-xdist); tests/conftest.py pins BLAS to one
+# thread per worker. For a sequential run (e.g. --pdb debugging) pass -n 0.
+addopts = "-m 'not slow' -n auto --dist worksteal"
 markers = ["slow: long-running round-trip tests (skipped by default, use -m slow)"]
 filterwarnings = [
+    # test fixtures often sample exactly on subcycle boundaries (integer-step
+    # axes); the knife-edge warning is asserted explicitly via pytest.warns
+    "ignore:.*subcycle boundary:UserWarning",
     "ignore:FigureCanvasAgg is non-interactive:UserWarning",
     "ignore:invalid value encountered in scalar divide:RuntimeWarning:lmfit",
-    "ignore:This process .* use of fork\\(\\) may lead to deadlocks in the child\\.:DeprecationWarning",
 ]
 
 [tool.ruff]

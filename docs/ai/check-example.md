@@ -102,9 +102,8 @@ notebook's actual topic — say so.
 Artifact severity: **committed** CSV/PNG/`.fit.h5` fit outputs FAIL (they
 pollute the repo). **Untracked/gitignored** outputs are reported INFO, not a
 failure — they are transient (left by a local run, or expected for the export
-demos) as long as they are gitignored. Empty `*_fits/` directory trees from
-`create_model_path` are the known eager-mkdir quirk (see TODO.md) and are
-ignored entirely. `data/*.csv` inputs are never counted as artifacts.
+demos) as long as they are gitignored. `data/*.csv` inputs are never counted
+as artifacts.
 
 ## 5. One main message, why-driven narrative & roadmap-as-TOC
 

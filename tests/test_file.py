@@ -795,12 +795,14 @@ class TestFitLimitsSlicing:
             file.t_lim if file.time is not None else [],
         )
         args = (model, dim)
-        return fitlib.residual_fun(
+        residual = fitlib.residual_fun(
             model.lmfit_pars,
             *const,
             res_type=res_type,
             args=args,
         )
+        assert isinstance(residual, np.ndarray)  # type guard
+        return residual
 
     #
     def test_residual_no_limits_full_shape_1d(self):

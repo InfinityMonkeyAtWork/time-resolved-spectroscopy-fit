@@ -66,7 +66,7 @@ Utility Methods
    Most users won't need to call these directly.
 
 .. automethod:: trspecfit.trspecfit.File.model_list_to_name
-.. automethod:: trspecfit.trspecfit.File.create_model_path
+.. automethod:: trspecfit.trspecfit.File.model_path
 .. automethod:: trspecfit.trspecfit.File.get_fit_results
 .. automethod:: trspecfit.trspecfit.File.save_sbs_fit
 .. automethod:: trspecfit.trspecfit.File.save_2d_fit

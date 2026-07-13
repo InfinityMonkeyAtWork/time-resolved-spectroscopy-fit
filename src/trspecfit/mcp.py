@@ -2621,7 +2621,13 @@ class Dynamics(Model):
             # parameter level uses index to refer to par.t_model=Dynamics
 
     #
-    def normalize_time(self, time_unit: int = 0, *, show_plot: bool = False) -> None:
+    def normalize_time(
+        self,
+        time_unit: int = 0,
+        *,
+        boundary_eps: float = 1e-6,
+        show_plot: bool = False,
+    ) -> None:
         """
         Normalize time axis for multi-cycle dynamics with subcycles.
 
@@ -2633,8 +2639,24 @@ class Dynamics(Model):
         ----------
         time_unit : int, default=0
             Power of 10 for time units (currently unused)
+        boundary_eps : float, default=1e-6
+            Relative tolerance for the subcycle-boundary warning (see Warns).
+            Measured in subcycle units, scaled by the number of subcycles
+            elapsed at each sample, so it is independent of the absolute
+            time scale (fs vs. us).
         show_plot : bool, default=False
             If True, plot normalized time arrays
+
+        Warns
+        -----
+        UserWarning
+            If any time sample t > 0 lies within ``boundary_eps`` (relative)
+            of a subcycle boundary. Subcycle assignment switches discretely
+            at boundaries, so the model prediction for such samples is
+            sensitive to the floating-point representation of the time axis
+            (it can silently change when the axis is written to text and
+            reloaded). It also flags the physically ambiguous case of
+            sampling exactly at the switching instant.
 
         Examples
         --------
@@ -2711,6 +2733,36 @@ class Dynamics(Model):
             self.time_norm = np.where(mask, t - n_temp * norm, 0.0)
             self.n_sub = np.where(mask, np.floor(n_temp % self.subcycles) + 1, 0.0)
             self.n_counter = np.where(mask, n_temp + 1, 0.0)
+
+            # subcycle_pos = number of subcycles elapsed at t (dimensionless,
+            # so the check is independent of the time unit); floor() switches
+            # subcycle assignment at integer values, making samples near a
+            # boundary sensitive to the float representation of the time axis
+            subcycle_pos = t / norm
+            dist = np.abs(subcycle_pos - np.round(subcycle_pos))
+            # relative eps: representation error in t scales with |t|;
+            # t=0 is exempt (exactly representable, assignment is stable)
+            knife_edge = (t > 0) & (
+                dist < boundary_eps * np.maximum(np.abs(subcycle_pos), 1.0)
+            )
+            if np.any(knife_edge):
+                import warnings
+
+                idx = np.flatnonzero(knife_edge)
+                shown = ", ".join(f"{t[i]:g}" for i in idx[:5])
+                if len(idx) > 5:
+                    shown += ", ..."
+                warnings.warn(
+                    f"{len(idx)} time sample(s) lie within a relative "
+                    f"tolerance of {boundary_eps:g} of a subcycle boundary "
+                    f"(t = {shown}). Subcycle assignment switches discretely "
+                    "there, so the model prediction for these samples can "
+                    "silently change with the floating-point representation "
+                    "of the time axis (e.g. after saving it to text and "
+                    "reloading). Shift these samples off the boundaries or "
+                    "sample strictly inside subcycles.",
+                    stacklevel=2,
+                )
 
         if show_plot:
             legends = ["normalized time", "subcycle counter", "cummulative counter"]

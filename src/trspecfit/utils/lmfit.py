@@ -502,7 +502,9 @@ class MC:
     ntemps : int, default=1
         Number of temperatures for parallel tempering
     workers : int, default=1
-        Number of parallel workers (1 = serial)
+        Number of parallel workers (1 = serial). Workers > 1 run the
+        sampling in a spawn-backed process pool (safe in multithreaded
+        processes, unlike fork), costing ~1-2 s of pool startup per fit.
     is_weighted : bool, default=False
         Whether to use weighted samples
     sigma_ini : float, default=0.1
@@ -554,7 +556,8 @@ class MC:
     - burn-in needed if starting point far from optimum
       (set burn=0 if starting from fit)
     - thin > 1 reduces autocorrelation in samples
-    - workers > 1 enables parallel sampling (requires multiprocessing support)
+    - workers > 1 enables parallel sampling in a spawn-backed process pool
+      (not supported on the JAX evaluator path)
 
     See Also
     --------

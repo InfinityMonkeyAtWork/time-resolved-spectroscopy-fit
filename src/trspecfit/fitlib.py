@@ -21,6 +21,7 @@ plt_fit_res_2d : Plot 2D fit results with residual maps
 
 import copy
 import math
+import multiprocessing
 import pathlib
 import time
 from collections.abc import Callable, Sequence
@@ -842,17 +843,27 @@ def fit_wrapper(
             )
         # burn necessary if starting point not close to max(probability distribution)
         # i.e. not close to the optimized parameter set, so burn=0 is ok here!
-        emcee_fin = mini.emcee(
-            params=par_fin_params,
-            steps=mc_settings.steps,
-            nwalkers=mc_settings.nwalkers,
-            burn=mc_settings.burn,
-            thin=mc_settings.thin,
-            ntemps=mc_settings.ntemps,
-            workers=mc_settings.workers,
-            is_weighted=mc_settings.is_weighted,
-            progress=show_output >= 1,
-        )
+        emcee_kwargs: dict[str, Any] = {
+            "params": par_fin_params,
+            "steps": mc_settings.steps,
+            "nwalkers": mc_settings.nwalkers,
+            "burn": mc_settings.burn,
+            "thin": mc_settings.thin,
+            "ntemps": mc_settings.ntemps,
+            "is_weighted": mc_settings.is_weighted,
+            "progress": show_output >= 1,
+        }
+        if isinstance(mc_settings.workers, int) and mc_settings.workers > 1:
+            # lmfit would build a default-context Pool, which fork()s on
+            # Linux < 3.14 — deadlock-prone in multithreaded processes.
+            # Supply a spawn-backed pool instead (lmfit hands any object
+            # with .map to emcee), matching the slice-by-slice executor.
+            ctx = multiprocessing.get_context("spawn")
+            with ctx.Pool(mc_settings.workers) as pool:
+                # lmfit annotates workers as int but accepts pool-likes
+                emcee_fin = mini.emcee(workers=cast("int", pool), **emcee_kwargs)
+        else:
+            emcee_fin = mini.emcee(workers=mc_settings.workers, **emcee_kwargs)
         emcee_fin_params = _result_params(emcee_fin)
         emcee_flatchain = cast(
             "pd.DataFrame", getattr(emcee_fin, "flatchain", pd.DataFrame())
@@ -941,6 +952,8 @@ def fit_wrapper(
     # optional save (figures are saved above)
     # [if statements check for empty list/dataframe]
     if abs(save_output) == 1:
+        # save_path is a file prefix; make sure its directory exists
+        pathlib.Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         # par_ini (pandas DataFrame) as csv file
         df_par_ini.to_csv(
             str(save_path) + "_par_ini.csv",
@@ -1092,6 +1105,7 @@ def results_to_df(
             save_array.append(-2)
 
     if do_save:
+        pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
         # save the dataframe (index, x axis, parameter1, parameter2, ...
         df.to_csv(
             pathlib.Path(save_path) / "fit_pars.csv",
@@ -1223,6 +1237,7 @@ def results_to_fit_2d(
     fit_2d = np.asarray(lst)
     #
     if abs(save_2d) == 1:
+        pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
         np.savetxt(
             pathlib.Path(save_path) / "fit_2d.csv", fit_2d, fmt=num_fmt, delimiter=delim
         )

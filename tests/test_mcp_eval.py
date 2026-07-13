@@ -554,6 +554,7 @@ class TestEvaluation:
         # t_ind=0 (before t0): dynamics=0, slope = base (-0.5)
         spec_early = model.create_value_1d(t_ind=0, return_1d=1)
         assert spec_early is not None  # type guard
+        assert profile.value_1d is not None  # type guard
         A1_eff_early = 20.0 + profile.value_1d
         expected_early = GLP(file.energy, np.mean(A1_eff_early), 85.0, 1.0, 0.3) + GLP(
             file.energy, np.mean(A1_eff_early * 0.5), 87.0, 1.0, 0.3
@@ -563,6 +564,7 @@ class TestEvaluation:
         # t_ind=15 (after t0): slope changed by dynamics
         spec_late = model.create_value_1d(t_ind=15, return_1d=1)
         assert spec_late is not None  # type guard
+        assert profile.value_1d is not None  # type guard
         A1_eff_late = 20.0 + profile.value_1d
         expected_late = GLP(file.energy, np.mean(A1_eff_late), 85.0, 1.0, 0.3) + GLP(
             file.energy, np.mean(A1_eff_late * 0.5), 87.0, 1.0, 0.3

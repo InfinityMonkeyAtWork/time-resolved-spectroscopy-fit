@@ -28,7 +28,7 @@ The fitting workflow is:
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal, overload
 
 import numpy as np
 
@@ -39,6 +39,25 @@ from trspecfit.mcp import Model
 
 
 #
+# plot_sum=True always returns the summed spectrum; only plot_sum=False
+# (1D component extraction) returns a list. Mirrored by the other
+# fit_model_* overloads below.
+@overload
+def fit_model_mcp(
+    x: Sequence[float] | np.ndarray,
+    par: Sequence[float] | np.ndarray,
+    plot_sum: Literal[True],
+    model: Model,
+    dim: int,
+) -> np.ndarray: ...
+@overload
+def fit_model_mcp(
+    x: Sequence[float] | np.ndarray,
+    par: Sequence[float] | np.ndarray,
+    plot_sum: bool,
+    model: Model,
+    dim: int,
+) -> np.ndarray | list[np.ndarray]: ...
 def fit_model_mcp(
     x: Sequence[float] | np.ndarray,
     par: Sequence[float] | np.ndarray,
@@ -151,6 +170,20 @@ def fit_model_mcp(
 
 
 #
+@overload
+def fit_model_gir(
+    x: Sequence[float] | np.ndarray,
+    par: Sequence[float] | np.ndarray,
+    plot_sum: Literal[True],
+    *args: Any,
+) -> np.ndarray: ...
+@overload
+def fit_model_gir(
+    x: Sequence[float] | np.ndarray,
+    par: Sequence[float] | np.ndarray,
+    plot_sum: bool,
+    *args: Any,
+) -> np.ndarray | list[np.ndarray]: ...
 def fit_model_gir(
     x: Sequence[float] | np.ndarray,
     par: Sequence[float] | np.ndarray,
@@ -202,6 +235,20 @@ def fit_model_gir(
 
 
 #
+@overload
+def fit_model_jax(
+    x: Sequence[float] | np.ndarray,
+    par: Sequence[float] | np.ndarray,
+    plot_sum: Literal[True],
+    *args: Any,
+) -> np.ndarray: ...
+@overload
+def fit_model_jax(
+    x: Sequence[float] | np.ndarray,
+    par: Sequence[float] | np.ndarray,
+    plot_sum: bool,
+    *args: Any,
+) -> np.ndarray | list[np.ndarray]: ...
 def fit_model_jax(
     x: Sequence[float] | np.ndarray,
     par: Sequence[float] | np.ndarray,
@@ -246,6 +293,20 @@ def fit_model_jax(
 
 
 #
+@overload
+def fit_model_compare(
+    x: Sequence[float] | np.ndarray,
+    par: Sequence[float] | np.ndarray,
+    plot_sum: Literal[True],
+    *args: Any,
+) -> np.ndarray: ...
+@overload
+def fit_model_compare(
+    x: Sequence[float] | np.ndarray,
+    par: Sequence[float] | np.ndarray,
+    plot_sum: bool,
+    *args: Any,
+) -> np.ndarray | list[np.ndarray]: ...
 def fit_model_compare(
     x: Sequence[float] | np.ndarray,
     par: Sequence[float] | np.ndarray,

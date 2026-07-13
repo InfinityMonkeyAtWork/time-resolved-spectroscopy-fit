@@ -106,8 +106,9 @@ class TestAutoExportFalseSuppressesSideEffects:
         assert len(project._fit_history) == 1
         assert project._fit_history[0].fit_type == "baseline"
 
-        # No CSV / PNG hit disk (create_model_path makes empty dirs only).
-        assert _list_files(tmp_path / "auto") == set()
+        # Nothing hit disk — not even empty directories (model_path only
+        # computes paths; dirs are created at the actual write sites).
+        assert not (tmp_path / "auto").exists()
 
     #
     def test_2d_writes_nothing(self, tmp_path):
@@ -124,7 +125,7 @@ class TestAutoExportFalseSuppressesSideEffects:
         assert file.model_2d.result is not None
         assert file.model_2d.result[1] != []
         assert any(slot.fit_type == "2d" for slot in project._fit_history)
-        assert _list_files(tmp_path / "auto") == set()
+        assert not (tmp_path / "auto").exists()
 
 
 #
@@ -139,6 +140,30 @@ class TestAutoExportTrueWritesFiles:
         # At least one CSV/PNG should be auto-written by the baseline path.
         assert outputs, "expected at least one auto-written file"
 
+    #
+    def test_2d_legacy_saver_creates_its_directory(self, tmp_path):
+        """Regression: the 2D legacy saver writes np.savetxt sidecars into a
+        directory that must be created on write (dirs are no longer
+        pre-created at path computation). File.fit_2d masks this — its
+        fit_wrapper CSVs create the dir first — but Project.fit_2d's
+        per-file save loop and the save_2d_fit wrapper reach the saver
+        with a fresh directory."""
+
+        project, file = _baseline_setup(tmp_path, auto_export=True)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        file.add_time_dependence(
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml="models/file_time.yaml",
+            dynamics_model=["MonoExpPos"],
+        )
+        file.fit_2d("single_glp", stages=1, try_ci=0)
+
+        fresh = tmp_path / "fresh_export"
+        with pytest.warns(DeprecationWarning):
+            file.save_2d_fit(fresh)
+        assert (fresh / "fit_2d.csv").exists()
+
 
 #
 class TestExplicitPathsStillWrite:
@@ -150,7 +175,7 @@ class TestExplicitPathsStillWrite:
         file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
 
         # Auto path stayed silent.
-        assert _list_files(tmp_path / "auto") == set()
+        assert not (tmp_path / "auto").exists()
 
         # Explicit CSV/PNG export still writes.
         explicit_root = tmp_path / "explicit_csv"
@@ -319,7 +344,7 @@ class TestVerboseDisplayWithoutExport:
 
         # Display branch ran (maps shown) but nothing hit disk.
         assert mock_2d.call_count == 1
-        assert _list_files(tmp_path / "auto") == set()
+        assert not (tmp_path / "auto").exists()
 
     #
     def test_2d_displays_but_writes_nothing(self, tmp_path, monkeypatch):
@@ -337,4 +362,4 @@ class TestVerboseDisplayWithoutExport:
         file.fit_2d("single_glp", stages=1, try_ci=0)
 
         assert mock_2d.call_count == 1
-        assert _list_files(tmp_path / "auto") == set()
+        assert not (tmp_path / "auto").exists()
