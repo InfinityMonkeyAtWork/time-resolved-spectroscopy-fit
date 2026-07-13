@@ -61,7 +61,7 @@ import time
 import types
 import warnings
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 # TYPE_CHECKING is False at runtime so this import is skipped during execution.
 # Exists only for type checkers (mypy/pyright) to resolve types.ModuleType annotations.
@@ -1846,6 +1846,32 @@ class File:
         self.model_active = self.select_model(model_info)
 
     #
+    # the overloads map model_type to the concrete subclass returned at
+    # runtime, so e.g. Dynamics-only methods type-check at call sites
+    @overload
+    def load_model(
+        self,
+        model_yaml: PathLike,
+        model_info: str | list[str],
+        par_name: str = ...,
+        model_type: Literal["energy"] = ...,
+    ) -> mcp.Model: ...
+    @overload
+    def load_model(
+        self,
+        model_yaml: PathLike,
+        model_info: str | list[str],
+        par_name: str = ...,
+        model_type: Literal["dynamics"] = ...,
+    ) -> mcp.Dynamics: ...
+    @overload
+    def load_model(
+        self,
+        model_yaml: PathLike,
+        model_info: str | list[str],
+        par_name: str = ...,
+        model_type: Literal["profile"] = ...,
+    ) -> mcp.Profile: ...
     def load_model(
         self,
         model_yaml: PathLike,

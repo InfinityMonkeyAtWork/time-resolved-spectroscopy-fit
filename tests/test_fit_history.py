@@ -867,7 +867,7 @@ class TestFitResultsCompareModels:
         assert len(sbs_rows) == 2
         assert list(sbs_rows["slice_index"]) == [0, 1]
         assert sbs_rows["aic"].tolist() == [10.0, 20.0]
-        baseline_rows = df[df["model"] == "m_base"]
+        baseline_rows = df.loc[df["model"] == "m_base"]
         assert len(baseline_rows) == 1
         assert pd.isna(baseline_rows["slice_index"].iloc[0])
 

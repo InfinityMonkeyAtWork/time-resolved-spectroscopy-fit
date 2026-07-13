@@ -125,7 +125,7 @@ def test_sbs_export_parity(tmp_path):
     # extra unnamed leading column. Strip "Unnamed: 0" before comparing
     # so the parity check focuses on the meaningful columns.
     legacy_fp = pd.read_csv(legacy_dir / "fit_pars.csv")
-    if legacy_fp.columns[0].startswith("Unnamed"):
+    if str(legacy_fp.columns[0]).startswith("Unnamed"):
         legacy_fp = legacy_fp.drop(columns=legacy_fp.columns[0])
     new_fp = pd.read_csv(new_dir / "fit_pars.csv")
     assert list(legacy_fp.columns) == list(new_fp.columns), (

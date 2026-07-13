@@ -4,6 +4,7 @@ Test parameter sweep functionality for ML dataset generation.
 
 import tempfile
 from pathlib import Path
+from typing import cast
 
 import h5py
 import numpy as np
@@ -396,9 +397,10 @@ class TestSimulatorSigmaData:
         sigma_per_config = []
         with h5py.File(filepath, "r") as f:
             assert "sigma_data" not in f["metadata"].attrs
+            configs = cast("h5py.Group", f["parameter_configs"])
             for config_name in ("config_000000", "config_000001"):
-                config_group = f["parameter_configs"][config_name]
-                clean = config_group["clean"][:]
+                config_group = cast("h5py.Group", configs[config_name])
+                clean = cast("h5py.Dataset", config_group["clean"])[:]
                 sigma_saved = config_group.attrs["sigma_data"]
                 assert sigma_saved == pytest.approx(0.1 * np.max(np.abs(clean)))
                 sigma_per_config.append(float(sigma_saved))
