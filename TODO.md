@@ -36,7 +36,6 @@
 - [ ] **Revisit default `Project.name` for saving examples**: `Project.name` defaults to `"test"` ([trspecfit.py](src/trspecfit/trspecfit.py) ~L202), so a bare `save_fit()` / `save_fits()` with no path writes `./fit_results/test.fit.h5`. The example `project.yaml` files set no `name:`. When working through the saving notebooks (`11_save_load_export`, `20_multi_file_independent_fit`), decide on a convention — set a meaningful `name:` per example so the default archive path is self-describing, and/or keep using explicit content-named paths (`comparison.fit.h5`, `batch.fit.h5`). Pick one and apply consistently.
 - [ ] **Add minimal runnable workflow examples**: supplement notebooks with small script-like examples or docs snippets for the canonical public workflows: load data, load a model, set limits, fit baseline, fit 2D, inspect results, simulate data, and run a parameter sweep.
 - [ ] **Improve public validation errors**: YAML parsing and model loading already meet the bar — `ModelValidationError` messages carry model/component/parameter context plus hints (verified 2026-07-06). Remaining scope: audit fit setup and unsupported-model fallback paths and bring them to the same standard (state what failed, where, and what to change next).
-- [ ] **Document fast verification slices**: add focused pytest commands for common edits (public workflow/API, YAML parser, functions, GIR/evaluator, plotting) so contributors and agents can validate changes quickly before running the full suite.
 
 ## Road to v1.0.0 & first adopters
 
