@@ -2,6 +2,7 @@
 Test MCP (Model/Component/Parameter) library functionality
 """
 
+import threading
 import warnings
 
 import numpy as np
@@ -1063,6 +1064,42 @@ class TestMCPPickling:
             if "pickle" in str(e) or "module" in str(e):
                 pytest.fail(f"MCMC workers=2 hit a pickle error: {e}")
             raise
+
+    #
+    @pytest.mark.slow
+    def test_mcmc_workers_2_does_not_fork(self):
+        """lmfit.emcee(workers=2) must not fork() a multithreaded process.
+
+        CPython 3.12 deprecated fork() in multithreaded processes because
+        the child can deadlock on locks held by threads that do not
+        survive the fork, so the MCMC worker pool must use the spawn
+        start method (like the slice-by-slice executor). The live helper
+        thread makes the fork warning deterministic. The warning must be
+        *recorded*, not escalated: CPython emits it after the fork already
+        succeeded and swallows a raised exception, so filterwarnings
+        ("error") can never catch it.
+        """
+
+        from trspecfit.utils.lmfit import MC
+
+        file = self._make_fittable_file()
+        mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1, workers=2)
+
+        stop = threading.Event()
+        helper = threading.Thread(target=stop.wait)
+        helper.start()
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                file.fit_baseline(
+                    model_name="single_glp", stages=1, try_ci=0, mc_settings=mc
+                )
+        finally:
+            stop.set()
+            helper.join()
+
+        forked = [w for w in caught if "use of fork" in str(w.message)]
+        assert not forked, "MCMC worker pool fork()ed a multithreaded process"
 
     #
     def test_mc_sigma_settings_validate(self):
