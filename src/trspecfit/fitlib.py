@@ -40,6 +40,7 @@ from trspecfit import spectra
 from trspecfit.config.plot import PlotConfig
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import plot as uplt
+from trspecfit.utils import spawn as uspawn
 
 # Define a type alias for file paths
 type PathLike = str | pathlib.Path
@@ -917,8 +918,14 @@ def fit_wrapper(
             # Linux < 3.14 — deadlock-prone in multithreaded processes.
             # Supply a spawn-backed pool instead (lmfit hands any object
             # with .map to emcee), matching the slice-by-slice executor.
+            # sanitized_spawn_main keeps the spawn workers from re-running a
+            # non-.py __main__ (e.g. a notebook executed via %run), the same
+            # guard the SbS executor uses.
             ctx = multiprocessing.get_context("spawn")
-            with ctx.Pool(mc_settings.workers) as pool:
+            with (
+                uspawn.sanitized_spawn_main(),
+                ctx.Pool(mc_settings.workers) as pool,
+            ):
                 # lmfit annotates workers as int but accepts pool-likes
                 emcee_fin = mini.emcee(workers=cast("int", pool), **emcee_kwargs)
         else:

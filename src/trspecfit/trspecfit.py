@@ -90,6 +90,7 @@ from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import parsing as uparsing
 from trspecfit.utils import plot as uplt
 from trspecfit.utils import sbs as usbs
+from trspecfit.utils import spawn as uspawn
 
 PathLike = str | pathlib.Path
 ModelRef = str | int | list[str]
@@ -3363,7 +3364,7 @@ class File:
             ctx = multiprocessing.get_context("spawn")
             by_id: dict[int, list[Any]] = {}
             with (
-                usbs.sanitized_spawn_main(),
+                uspawn.sanitized_spawn_main(),
                 concurrent.futures.ProcessPoolExecutor(
                     max_workers=n_workers,
                     mp_context=ctx,

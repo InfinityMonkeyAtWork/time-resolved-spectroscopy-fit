@@ -12,9 +12,7 @@ path (``extract_sbs_seed_template``, ``prepare_sbs_model_for_slice``).
 
 from __future__ import annotations
 
-import contextlib
 import pathlib
-import sys
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -105,36 +103,6 @@ def prepare_sbs_model_for_slice(
     model.const = (energy, s, fit_fun_str, 0, e_lim, [])
     model.args = dispatch_args
     return initial_guess
-
-
-#
-@contextlib.contextmanager
-def sanitized_spawn_main():
-    """Hide a non-importable ``__main__.__file__`` from spawn workers.
-
-    When a notebook is executed via IPython's ``%run example.ipynb``,
-    ``__main__.__file__`` points at the notebook JSON; multiprocessing's
-    spawn ``prepare()`` would re-run that path via ``runpy`` in every
-    worker and crash (the JSON is not Python). SbS workers never need
-    ``__main__`` content — everything they use is installed by
-    ``sbs_worker_init`` from trspecfit modules — so drop the attribute
-    for the pool's lifetime and restore it afterwards. A regular
-    ``python script.py`` main keeps its ``.py`` ``__file__`` untouched.
-    """
-
-    main_mod = sys.modules.get("__main__")
-    if main_mod is None:
-        yield
-        return
-    main_file = getattr(main_mod, "__file__", None)
-    sanitize = main_file is not None and not str(main_file).endswith(".py")
-    if sanitize:
-        del main_mod.__file__
-    try:
-        yield
-    finally:
-        if sanitize:
-            main_mod.__file__ = main_file
 
 
 #
