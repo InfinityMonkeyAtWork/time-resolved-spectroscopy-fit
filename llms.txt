@@ -90,9 +90,15 @@ Component types (see the API reference for signatures):
 
 ## Pitfalls for scripted / headless use
 
-- Fit and plot methods display figures by default. Pass `show_plot=False`
-  where available, or `save_img=-1` (save without display; `0` = display,
-  `1` = both) when running outside a notebook.
+- Fits display figures and write CSV/PNG side effects by default. To run
+  headless, set the Project knobs `project.show_output = 0` (suppress
+  display) and `project.auto_export = False` (suppress automatic export).
+  These govern the `fit_baseline` / `fit_spectrum` / `fit_slice_by_slice` /
+  `fit_2d` calls; those methods do not accept `save_img` (passing it raises
+  `TypeError`).
+- The low-level plot and setup helpers instead take their own arguments:
+  pass `show_plot=False` where available, or `save_img=-1` (save without
+  display; `0` = display, `1` = both) when running outside a notebook.
 - Time axes for multi-cycle dynamics should not sample exactly on subcycle
   boundaries — assignment there flips with floating-point representation,
   and `trspecfit` warns when it detects this.
