@@ -8,7 +8,8 @@ Forward-looking note (2026-07-11). Captures the design direction for
 the "Project-level fit backend" TODO item, written just after the JAX
 backend landed (see [jax-planning.md](jax-planning.md) and the
 `eval_jax.py` section of [repo_architecture.md](repo_architecture.md)).
-Nothing here is implemented.
+**Implemented 2026-07-13** as designed — see the implementation status
+and measured results at the end of this note.
 
 ## Current state
 
@@ -86,3 +87,40 @@ evaluates the plans, and the shared-fit workload is where JAX's
   are absent.
 - Weighted residuals (`sigma_type` expansion, tracked in `TODO.md`)
   should be designed in from the start if it lands first.
+
+## Implementation status and measured results (2026-07-13)
+
+Landed exactly per the sketch above (v0.13.0):
+
+- `spectra.pack_project_theta` packs the combined-parameter mapping
+  into gather index arrays at fit setup.
+- `eval_jax.make_project_evaluator_2d_jax` /
+  `make_project_jacobian_2d_jax` build one fused jitted program over
+  all per-file plans (windowed static slices, flatten, concatenate;
+  `jacfwd` for the joint Jacobian).
+- `spectra.fit_project_jax` + `fitlib.jacobian_fun_project` follow the
+  single-file dispatch conventions; `Project.fit_2d` gates via
+  `Project._build_project_jax_args` (every file must pass
+  `can_lower_2d` + `can_lower_jax_2d`, jax importable) and falls back
+  whole-project to `fit_project_mcp` otherwise — no mixed backends,
+  as recommended.
+- Heterogeneous grids fuse without `vmap` (unrolled per-file traces);
+  `vmap` batching for homogeneous series remains a TODO follow-on.
+
+Benchmark (GLP + mono-exponential x0 dynamics, 50x60 grid per file,
+shared tau, 2-stage fit with analytic `Dfun` on the leastsq stage,
+noiseless synthetic data, CPU):
+
+| files | opt params | eval jit | jac jit | jac call | fit JAX | fit MCP | speedup |
+|------:|-----------:|---------:|--------:|---------:|--------:|--------:|--------:|
+| 2     | 7          | 0.09 s   | 0.12 s  | 0.17 ms  | 0.25 s  | 0.65 s  | 2.6x    |
+| 4     | 13         | 0.10 s   | 0.16 s  | 0.38 ms  | 0.63 s  | 4.8 s   | 7.6x    |
+| 8     | 25         | 0.14 s   | 0.25 s  | 0.88 ms  | 3.7 s   | 63 s    | 17x     |
+
+This resolves the compile-time open question: XLA compile grows
+sub-linearly with file count and stays well under a second at 8 files
+— negligible against the fit itself. The speedup grows with file
+count because the interpreter path pays numeric differencing (one
+full multi-file evaluation per combined theta entry) while the fused
+Jacobian shares the forward pass across all columns, exactly the
+scaling argument above.

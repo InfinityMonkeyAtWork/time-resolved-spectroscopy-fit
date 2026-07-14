@@ -87,7 +87,11 @@ rejected graphs fall back to the compiled NumPy path, never straight to
 the interpreter). Selected via `Project.spec_fun_str = "fit_model_jax"`;
 the Jacobian reaches lmfit's leastsq through `fitlib.jacobian_fun`
 (`Dfun`). Voigt uses a Weideman rational `wofz` approximation instead
-of SciPy's.
+of SciPy's. For project-level shared fits, `make_project_evaluator_2d_jax`
+/ `make_project_jacobian_2d_jax` fuse all per-file plans into one jitted
+program (windowed, flattened, concatenated; `jacfwd` for the joint
+Jacobian) — see
+[project-level-fits.md](project-level-fits.md).
 
 ### `spectra.py` — evaluator bridge
 
@@ -97,7 +101,11 @@ Thin module that the fitting engine calls on every residual evaluation.
 falls back to `fit_model_mcp` — the mcp reference evaluator — when the
 model is not lowerable or when 1D component-wise spectra are requested
 for plotting. Users can swap in a custom spectrum function via
-`Project.spec_fun_str`.
+`Project.spec_fun_str`. Project-level shared fits evaluate through
+`fit_project_mcp` (interpreter, name-based parameter distribution) or
+`fit_project_jax` (fused jitted evaluator; `pack_project_theta`
+converts the combined-parameter mapping into gather index arrays at
+fit setup).
 
 ### `fitlib.py` — lmfit wrappers, CI, MCMC, plotting
 

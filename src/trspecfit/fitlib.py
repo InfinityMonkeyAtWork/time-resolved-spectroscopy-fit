@@ -353,6 +353,65 @@ def jacobian_fun(
 
 
 #
+def jacobian_fun_project(
+    par: Any,
+    x: ArrayLike,
+    data: np.ndarray,
+    fit_fun_str: str,
+    unpack: int = 0,
+    e_lim: list[int] | None = None,
+    t_lim: list[int] | None = None,
+    res_type: str = "lmfit",
+    args: Sequence[Any] | None = None,
+) -> np.ndarray:
+    """Analytic joint Jacobian for project-level fits (lmfit ``Dfun``).
+
+    Project counterpart of :func:`jacobian_fun`. Requires the
+    ``fit_project_jax`` dispatch convention:
+    ``args = (evaluator, jacobian, theta_c_indices, var_names, dim)``
+    with *jacobian* from ``eval_jax.make_project_jacobian_2d_jax``.
+    Per-file fit windows are applied inside the fused jacobian, so no
+    window slicing happens here (``e_lim``/``t_lim`` are empty for
+    project fits).
+
+    Returns
+    -------
+    ndarray
+        ``d(residual)/d(varying params)``, shape
+        ``(n_residuals_total, n_varys)``, columns in lmfit
+        varying-parameter order (``col_deriv=0``). Residual is
+        ``data - fit``, so this is the negated fused model Jacobian.
+    """
+
+    if args is None or not callable(args[1]):
+        raise ValueError(
+            "jacobian_fun_project requires the fit_project_jax dispatch "
+            "args (evaluator, jacobian, theta_c_indices, var_names, dim)."
+        )
+    jacobian = args[1]
+    theta_c_indices: np.ndarray = args[2]
+    theta_names: list[str] = list(args[3])
+
+    par_values = np.asarray(
+        ulmfit.par_extract(par, return_type="list"), dtype=np.float64
+    )
+    # (n_residuals_total, n_opt), columns in theta_c order
+    jac = np.asarray(jacobian(par_values[theta_c_indices]), dtype=np.float64)
+    d_res = -jac
+
+    # Column order: theta_c order -> lmfit varying-parameter order.
+    var_names = [name for name in par if par[name].vary]
+    if sorted(theta_names) != sorted(var_names):
+        raise RuntimeError(
+            "Project JAX Jacobian column mismatch: combined optimizer "
+            f"parameters {theta_names} do not match lmfit varying "
+            f"parameters {var_names}."
+        )
+    columns = [theta_names.index(name) for name in var_names]
+    return d_res[:, columns]
+
+
+#
 def time_display(
     t_start: float, print_str: str = "", *, return_delta_seconds: bool = False
 ) -> float | None:

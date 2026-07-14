@@ -1244,6 +1244,86 @@ class Project:
         return combined_pars, project_fit_info
 
     #
+    def _build_project_jax_args(
+        self,
+        *,
+        combined_pars: lmfit.Parameters,
+        project_fit_info: dict,
+        windows: list[tuple[slice, ...]],
+    ) -> tuple[Any, ...] | None:
+        """
+        Build the fused-JAX dispatch args for a project fit, or None.
+
+        Gates the fused fast path: every file's graph must lower to a
+        scheduled 2D plan inside the JAX slice, and jax must be
+        importable. Any miss returns None and the whole project falls
+        back to the interpreter path (no mixed backends).
+
+        Parameters
+        ----------
+        combined_pars : lmfit.Parameters
+            Combined optimizer parameters from ``_build_fit_params``.
+        project_fit_info : dict
+            Context dict from ``_build_fit_params``.
+        windows : list of tuple of slice
+            Per-file ``(time_slice, energy_slice)`` fit windows.
+
+        Returns
+        -------
+        tuple or None
+            ``(evaluator, jacobian, theta_c_indices, var_names, 2)``
+            following the ``spectra.fit_project_jax`` args convention,
+            or None when the project cannot use the fused path.
+        """
+
+        from trspecfit import spectra
+        from trspecfit.graph_ir import (
+            build_graph,
+            can_lower_2d,
+            can_lower_jax_2d,
+            schedule_2d,
+        )
+
+        plans = []
+        for model in project_fit_info["models"]:
+            graph = build_graph(model)
+            if not (can_lower_2d(graph) and can_lower_jax_2d(graph)):
+                return None
+            plans.append(schedule_2d(graph))
+
+        par_names = project_fit_info["par_names"]
+        var_names = [name for name in par_names if combined_pars[name].vary]
+        theta_c_indices, plan_gathers = spectra.pack_project_theta(
+            plans,
+            mapping=project_fit_info["mapping"],
+            par_names=par_names,
+            var_names=var_names,
+        )
+
+        try:
+            from trspecfit.eval_jax import (
+                make_project_evaluator_2d_jax,
+                make_project_jacobian_2d_jax,
+            )
+
+            evaluator = make_project_evaluator_2d_jax(
+                plans,
+                plan_gathers=plan_gathers,
+                windows=cast("list[tuple[slice, slice]]", windows),
+                n_theta=len(var_names),
+            )
+            jacobian = make_project_jacobian_2d_jax(
+                plans,
+                plan_gathers=plan_gathers,
+                windows=cast("list[tuple[slice, slice]]", windows),
+                n_theta=len(var_names),
+            )
+        except ImportError:
+            return None
+
+        return (evaluator, jacobian, theta_c_indices, var_names, 2)
+
+    #
     def fit_2d(
         self,
         *,
@@ -1300,32 +1380,42 @@ class Project:
             model_name=model_name,
         )
 
-        # Build concatenated data array (sliced per file)
+        # Build concatenated data array (sliced per file); the same
+        # windows feed the fused JAX evaluator so data and prediction
+        # vectors align element-for-element.
+        windows = [fitlib._fit_window_slices(2, f.e_lim, f.t_lim) for f in self.files]
         data_slices: list[np.ndarray] = []
-        for f in self.files:
+        for f, window in zip(self.files, windows, strict=True):
             assert f.data is not None  # type guard
-            d = f.data
-            if f.e_lim and f.t_lim:
-                d = d[f.t_lim[0] : f.t_lim[1], f.e_lim[0] : f.e_lim[1]]
-            elif f.e_lim:
-                d = d[:, f.e_lim[0] : f.e_lim[1]]
-            elif f.t_lim:
-                d = d[f.t_lim[0] : f.t_lim[1], :]
-            data_slices.append(d.flatten())
+            data_slices.append(f.data[window].flatten())
         concat_data = np.concatenate(data_slices)
 
-        # const: (x, data, package, fit_fun_str, unpack, e_lim, t_lim)
-        # e_lim and t_lim are empty — slicing is handled inside
-        # fit_project_mcp
+        # --- dispatch: fused JAX fast path vs interpreter ---
+        fit_fun_str = "fit_project_mcp"
+        args: tuple[Any, ...] = (project_fit_info, 2)
+        if self.spec_fun_str == "fit_model_jax":
+            jax_args = self._build_project_jax_args(
+                combined_pars=combined_pars,
+                project_fit_info=project_fit_info,
+                windows=windows,
+            )
+            if jax_args is not None:
+                fit_fun_str = "fit_project_jax"
+                args = jax_args
+                # Analytic joint Jacobian for leastsq stages (lmfit Dfun)
+                fit_wrapper_kwargs.setdefault("jac_fun", fitlib.jacobian_fun_project)
+
+        # const: (x, data, fit_fun_str, unpack, e_lim, t_lim)
+        # e_lim and t_lim are empty — per-file windows are applied
+        # inside fit_project_mcp / the fused evaluator.
         const: tuple[Any, ...] = (
-            np.array([]),  # x — unused by fit_project_mcp
+            np.array([]),  # x — unused by the project fit functions
             concat_data,
-            "fit_project_mcp",
+            fit_fun_str,
             0,
             [],  # no additional e_lim slicing
             [],  # no additional t_lim slicing
         )
-        args = (project_fit_info, 2)
 
         par_names = project_fit_info["par_names"]
 
@@ -1341,10 +1431,11 @@ class Project:
                 if p.vary and p.name.startswith("file")
             )
             n_static = sum(1 for p in combined_pars.values() if not p.vary)
+            backend = "JAX" if fit_fun_str == "fit_project_jax" else "interpreter"
             print(
                 f"Project fit: {len(self.files)} files, "
                 f"{n_project} project-vary, {n_file} file-vary, "
-                f"{n_static} static params"
+                f"{n_static} static params ({backend} backend)"
             )
 
         result = fitlib.fit_wrapper(
@@ -1399,8 +1490,9 @@ class Project:
                 pd.DataFrame(),
             ]
             # const/args mirror File.fit_2d so _append_2d_slot can evaluate
-            # the per-file fit grid via fitlib.residual_fun. Project fits
-            # always go through the MCP path.
+            # the per-file fit grid via fitlib.residual_fun. Per-file
+            # re-evaluation always uses the interpreter — the fused JAX
+            # closures cover the whole project, not single files.
             model.const = (f.energy, f.data, "fit_model_mcp", 0, f.e_lim, f.t_lim)
             model.args = (model, 2)
 

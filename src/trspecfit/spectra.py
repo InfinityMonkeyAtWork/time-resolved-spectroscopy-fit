@@ -423,3 +423,143 @@ def fit_project_mcp(
         slices.append(fit_2d.flatten())
 
     return np.concatenate(slices)
+
+
+#
+def pack_project_theta(
+    plans: Sequence[ScheduledPlan2D],
+    *,
+    mapping: list[tuple[str, int, str]],
+    par_names: list[str],
+    var_names: list[str],
+) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Pack the combined-parameter mapping into gather index arrays.
+
+    Converts the name-based parameter distribution of project-level
+    fitting (``project_fit_info["mapping"]`` from
+    ``Project._build_fit_params``) into integer index arrays so the
+    fused evaluator can scatter the combined optimizer vector to
+    per-file plan thetas with plain array gathers — no name lookups
+    per residual call.
+
+    Parameters
+    ----------
+    plans : sequence of ScheduledPlan2D
+        One compiled plan per file, in project file order. Each plan's
+        ``opt_param_names`` are local (per-file) parameter names.
+    mapping : list of tuple
+        ``(combined_name, file_idx, local_name)`` triples from
+        ``Project._build_fit_params``.
+    par_names : list of str
+        All combined parameter names, in combined-vector order.
+    var_names : list of str
+        Varying combined parameter names, ordered as in ``par_names``.
+        Defines the combined theta vector ``theta_c``.
+
+    Returns
+    -------
+    theta_c_indices : ndarray
+        Positions of ``var_names`` within ``par_names``:
+        ``theta_c = par_full[theta_c_indices]``.
+    plan_gathers : list of ndarray
+        Per file, positions within ``theta_c`` of that plan's opt
+        params: ``theta_f = theta_c[plan_gathers[file_idx]]`` yields
+        the plan's theta in ``opt_param_names`` order.
+
+    Raises
+    ------
+    RuntimeError
+        If a plan opt param has no combined counterpart, its
+        counterpart is not varying, or a varying combined param feeds
+        no plan — all indicate plans built with vary flags that do not
+        match the combined parameter set.
+    """
+
+    remaps: list[dict[str, str]] = [{} for _ in plans]
+    for combined_name, file_idx, local_name in mapping:
+        remaps[file_idx][local_name] = combined_name
+
+    full_pos = {name: i for i, name in enumerate(par_names)}
+    var_pos = {name: i for i, name in enumerate(var_names)}
+    theta_c_indices = np.array([full_pos[name] for name in var_names], dtype=np.intp)
+
+    consumed: set[str] = set()
+    plan_gathers: list[np.ndarray] = []
+    for file_idx, plan in enumerate(plans):
+        remap = remaps[file_idx]
+        gather: list[int] = []
+        for local_name in plan.opt_param_names:
+            mapped_name = remap.get(local_name)
+            if mapped_name is None:
+                raise RuntimeError(
+                    f"Plan opt param '{local_name}' (file {file_idx}) has "
+                    f"no combined-parameter mapping entry."
+                )
+            pos = var_pos.get(mapped_name)
+            if pos is None:
+                raise RuntimeError(
+                    f"Plan opt param '{local_name}' (file {file_idx}) maps "
+                    f"to combined param '{mapped_name}', which is not "
+                    f"varying."
+                )
+            gather.append(pos)
+            consumed.add(mapped_name)
+        plan_gathers.append(np.array(gather, dtype=np.intp))
+
+    leftover = [name for name in var_names if name not in consumed]
+    if leftover:
+        raise RuntimeError(
+            f"Varying combined params feed no plan: {leftover}. "
+            f"Plans were likely built with stale vary flags."
+        )
+
+    return theta_c_indices, plan_gathers
+
+
+#
+def fit_project_jax(
+    x: Sequence[float] | np.ndarray,
+    par: Sequence[float] | np.ndarray,
+    plot_sum: bool,
+    *args: Any,
+) -> np.ndarray:
+    """Generate concatenated multi-file prediction via the fused JAX evaluator.
+
+    Project-fit counterpart of :func:`fit_model_jax`. The fused
+    evaluator applies per-file fit windows, flattens, and concatenates
+    internally, so the return value aligns element-for-element with
+    the concatenated data vector assembled by ``Project.fit_2d`` — no
+    slicing in ``fitlib.residual_fun`` (empty ``e_lim``/``t_lim``).
+
+    Unlike ``fit_model_jax`` there is no fallback branch: ``Project``
+    dispatches here only when every file's graph passed the JAX gate;
+    otherwise the const carries ``fit_project_mcp``.
+
+    Parameters
+    ----------
+    x : array-like
+        Unused (kept for fit-function signature compatibility).
+    par : array-like
+        Full combined parameter vector (varying + static + expr), in
+        ``project_fit_info["par_names"]`` order.
+    plot_sum : bool
+        Unused (the fused path always returns the sum).
+    *args
+        ``(evaluator, jacobian, theta_c_indices, var_names, dim)`` —
+        *evaluator*/*jacobian* from
+        ``eval_jax.make_project_evaluator_2d_jax`` /
+        ``make_project_jacobian_2d_jax``; *jacobian* and *var_names*
+        are carried for ``fitlib.jacobian_fun_project`` (lmfit
+        ``Dfun``), not used here.
+
+    Notes
+    -----
+    The evaluator/jacobian entries are fused closures and do not
+    pickle; MCMC via ``lmfit.emcee`` with ``workers > 1`` is not
+    supported on this path (single-worker MCMC works).
+    """
+
+    evaluator = args[0]
+    theta_c_indices: np.ndarray = args[2]
+    par_arr = np.asarray(par, dtype=np.float64)
+    return np.asarray(evaluator(par_arr[theta_c_indices]))
