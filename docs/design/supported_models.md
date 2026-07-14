@@ -45,8 +45,14 @@ The sections above describe model semantics. The graph intermediate representati
 - Expression parameters lower only when the expression is arithmetic-only.
   Function calls, attribute access, subscripts, and other non-arithmetic AST
   forms fall back to MCP.
-- Project-level fitting is still wired through ``fit_project_mcp`` even when
-  the underlying per-file models are lowerable.
+- Project-level fitting compiles to the fused JAX backend when
+  ``Project.spec_fun_str == "fit_model_jax"`` and every file's model passes
+  ``can_lower_2d`` + ``can_lower_jax_2d``; any miss — or jax not installed —
+  falls back to ``fit_project_mcp`` for the whole project (no mixed
+  backends). There is no project-level NumPy-plan (GIR) path: with the
+  default ``fit_model_gir``, project fits evaluate through
+  ``fit_project_mcp`` even when the underlying per-file models are
+  lowerable.
 
 ## Notes
 

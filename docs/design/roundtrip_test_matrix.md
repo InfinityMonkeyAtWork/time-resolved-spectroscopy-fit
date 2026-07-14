@@ -95,13 +95,20 @@ Scope: `SF` (single-file)
 
 Scope: `P` (`Project.fit_2d()`)
 
-Project-level fitting should be tracked separately because it is currently
-wired through `fit_project_mcp`, so the single-file GIR/MCP expectations do not
-apply cleanly yet.
+Project-level fitting should be tracked separately because its backend axis
+differs from the single-file one: with `spec_fun_str = "fit_model_jax"` (and
+every file passing the JAX gate) `Project.fit_2d()` runs the fused JAX path;
+everything else — including the default `fit_model_gir` — evaluates through
+`fit_project_mcp`. There is no project-level GIR path, so the single-file
+`G`/`C` expectations do not apply. Project-scope backend letters:
+
+- `J`: force the fused JAX path and recover truth
+- `CJ`: assert the MCP and JAX project fits agree (end-to-end final
+  parameters)
 
 | Family | 2D | Notes |
 | --- | --- | --- |
-| `PF1` Shared plain dynamics across files | `M` | Current core project roundtrip surface |
+| `PF1` Shared plain dynamics across files | `M/J/CJ` | Core project surface; `J` includes fallback-gating and heterogeneous-grid variants (`TestProjectFitJax`) |
 | `PF2` Project-level expressions | `M` | Includes file/project prefix rewriting and shared refs |
 | `PF3` Shared dynamics with IRF | `M` | Covered with `BiExpProject` + `gaussCONV` |
 | `PF4` Shared subcycle dynamics | `M` | Add once project fixtures exist |
@@ -204,10 +211,16 @@ table above.
   - focused MCMC checks for `MC1`, `MC2`, expression-sensitive `MC2`, and 2D `MC2`
   - focused `W2` coverage for plain and profile-bearing `fit_slice_by_slice()`
   - project-level `M` roundtrips for `PF1`, `PF2`, and `PF3`
+  - project-level `J`/`CJ` for `PF1` (parity, fallback gating, heterogeneous
+    grids in `TestProjectFitJax`); the fused evaluator/Jacobian factories
+    additionally have plan-level unit parity including expressions
+    (`TestProjectFused`)
 
 - Thin or missing today:
   - project-level `PF4` shared subcycle dynamics
-  - project-level `G/C` coverage, because project fitting is still MCP-only
+  - project-level `J`/`CJ` for `PF2` and `PF3` — no end-to-end project JAX
+    roundtrip with expressions or IRF yet (expressions are covered at plan
+    level only)
   - expression-heavy `W2` coverage for `fit_slice_by_slice()`
   - MCMC assertions beyond no-crash / process-boundary coverage
   - exhaustive noisy coverage, intentionally kept out of the main matrix
@@ -221,7 +234,9 @@ The original single-file matrix is implemented. Highest-value next steps:
    up beyond the existing plain/profile cases.
 3. Add lightweight recovery or constraint-preservation assertions to focused
    MCMC tests when runtime allows.
-4. Upgrade project-level cells from `M` to `M/G/C` if project-level GIR lands.
+4. Extend project-level `J`/`CJ` to `PF2` and `PF3`; `G`/`C` stay
+   inapplicable at project scope (the whole-project fallback is the
+   interpreter by design).
 
 ## Non-goals
 
