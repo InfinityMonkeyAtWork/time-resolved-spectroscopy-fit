@@ -599,7 +599,7 @@ class TestProjectFitLifecycle:
 
     #
     @pytest.mark.slow
-    def test_num_fmt_and_delim_propagate_to_csv_outputs(self):
+    def test_num_fmt_and_delim_propagate_to_csv_outputs(self, tmp_path):
         """Custom num_fmt/delim on the Project flow into fit-CSV writes.
 
         Covers two pandas ``to_csv`` paths exercised by fit_baseline:
@@ -607,7 +607,10 @@ class TestProjectFitLifecycle:
         - save_baseline_fit -> ``fit_1d.csv``
         """
 
-        project = make_project(name="num_fmt_test")
+        # the exported CSVs are this test's subject, so opt into auto-export
+        # and redirect the output tree into tmp_path for xdist isolation
+        project = make_project(name="num_fmt_test", auto_export=True)
+        project.path_results = tmp_path
         project.num_fmt = "%.3f"
         project.delim = ";"
 

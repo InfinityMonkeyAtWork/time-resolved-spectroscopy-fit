@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 from _utils import make_project, simulate_noisy
 
-from trspecfit import File, fitlib
+from trspecfit import File, Project, fitlib
 from trspecfit.utils.lmfit import MC
 
 
@@ -79,9 +79,9 @@ class TestProjectDefault:
 
     #
     def test_default_is_true(self):
-        project = make_project(name="default")
-        # _utils.make_project respects its kwarg default, which mirrors the
-        # production default declared in Project._set_defaults.
+        # make_project defaults to auto_export=False for test isolation, so
+        # assert the *production* default directly on a bare Project.
+        project = Project(path="tests", name="default")
         assert project.auto_export is True
 
     #

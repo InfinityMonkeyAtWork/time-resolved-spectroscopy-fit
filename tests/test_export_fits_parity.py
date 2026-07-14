@@ -75,7 +75,8 @@ def _make_parity_fit_file(*, name: str, tmp_path: Path, spec_fun_str: str):
     """
 
     data = _truth_2d_data()
-    project = make_project(name=name, spec_fun_str=spec_fun_str)
+    # export parity is this test's subject, so opt back into auto-export
+    project = make_project(name=name, spec_fun_str=spec_fun_str, auto_export=True)
     project.path_results = tmp_path / "legacy"
     file = File(
         parent_project=project,
