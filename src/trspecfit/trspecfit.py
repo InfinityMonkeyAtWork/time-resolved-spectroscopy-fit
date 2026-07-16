@@ -3484,19 +3484,47 @@ class File:
                 fmt=self.p.num_fmt,
                 delimiter=self.p.delim,
             )
-        # convert results, specifically par_fin to dataframe; this also plots
-        # the varied parameters as a function of time. save_df follows the
-        # standard convention: save+show / save-only when writing files, else
-        # show-only (save_df=0) so the varied-parameter curves appear inline.
         df_sbs = fitlib.results_to_df(
             results=self.results_sbs,
             x=self.time,
             index=np.arange(0, len(self.time)),
             config=self.plot_config,
-            save_df=(-1 if self.p.show_output == 0 else 1) if save_files else 0,
+        )
+        if save_files:
+            # save the dataframe (index, x axis, parameter1, parameter2, ...)
+            df_sbs.to_csv(
+                pathlib.Path(save_path) / "fit_pars.csv",
+                float_format=self.p.num_fmt,
+                sep=self.p.delim,
+            )
+
+        # Per-parameter curves vs time. Only varied parameters are shown;
+        # every parameter PNG is written when saving (save_img convention:
+        # 1 save+show, -1 save+close, 0 show only, -2 neither).
+        do_show = self.p.show_output >= 1 if save_files else True
+        vary_flags = ulmfit.par_to_df(
+            lmfit_params=self.results_sbs[0][1].params, col_type="min"
+        )["vary"]
+        save_array = []
+        for vary in vary_flags:
+            show_this = do_show and bool(vary)
+            if save_files and show_this:
+                save_array.append(1)
+            elif save_files:
+                save_array.append(-1)
+            elif show_this:
+                save_array.append(0)
+            else:
+                save_array.append(-2)
+        par_cols = [
+            c for c in df_sbs.columns if c not in ("index", self.plot_config.y_label)
+        ]
+        fitlib.plt_fit_res_pars(
+            df=df_sbs.loc[:, par_cols],
+            x=self.time,
+            config=self.plot_config,
+            save_img=save_array,
             save_path=save_path,
-            num_fmt=self.p.num_fmt,
-            delim=self.p.delim,
         )
 
         # get slice-by-slice fit spectra as a 2D map (write CSV only when saving)
@@ -3505,11 +3533,14 @@ class File:
             parameter_names=self.model_sbs.parameter_names,
             const=self.model_sbs.const,
             args=self.model_sbs.args,
-            num_fmt=self.p.num_fmt,
-            delim=self.p.delim,
-            save_2d=(-1 if self.p.show_output == 0 else 1) if save_files else 0,
-            save_path=save_path,
         )
+        if save_files:
+            np.savetxt(
+                pathlib.Path(save_path) / "fit_2d.csv",
+                fit_2d_sbs,
+                fmt=self.p.num_fmt,
+                delimiter=self.p.delim,
+            )
 
         # plot data, fit, and residual 2D maps (save only when writing files)
         fitlib.plt_fit_res_2d(

@@ -78,15 +78,19 @@ decisions 2026-07-14.
       kwarg); stages=2 default → leastsq covar → correl present. Full
       notebook re-run deferred to the Phase 6 docs/examples pass.
 
-## Phase 3 — Purify the conversion layer (fitlib)
+## Phase 3 — Purify the conversion layer (fitlib) — DONE
 
-- [ ] `results_to_df`: strip CSV writing and plotting → pure
-      results-list → DataFrame conversion (drop `save_df`/`save_path`/plot
-      args). Its only caller today is `_save_sbs_fit_legacy` (dies in Phase 4).
-- [ ] `results_to_fit_2d`: strip `save_2d` CSV writing → pure reconstruction.
-      (Slot already stores the `fit` array; exporter doesn't need this.)
-- [ ] `plt_fit_res_1d` / `plt_fit_res_2d` / `plt_fit_res_pars` remain the
-      pure renderers (already flag-driven via `_save_img_flag`).
+- [x] `results_to_df`: stripped CSV writing and plotting → pure
+      results-list → DataFrame conversion (dropped `save_df`/`save_path`/
+      `num_fmt`/`delim`; kept `config` only for the `y_label` column name).
+- [x] `results_to_fit_2d`: stripped `save_2d` CSV writing → pure
+      reconstruction (slot already stores the `fit` array).
+- [x] `_save_sbs_fit_legacy` compensates inline (CSV writes + the
+      varied-only `plt_fit_res_pars` flag logic) — byte-identical output,
+      pinned by the slow export-parity tests; the whole block dies in
+      Phase 4.
+- [x] `plt_fit_res_1d` / `plt_fit_res_2d` / `plt_fit_res_pars` remain the
+      pure renderers (flag-driven via `_save_img_flag`).
 
 ## Phase 4 — Route auto-export through slots; delete legacy path
 

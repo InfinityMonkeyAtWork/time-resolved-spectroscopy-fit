@@ -1083,17 +1083,14 @@ def results_to_df(
     x: ArrayLike | None = None,
     index: ArrayLike | None = None,
     config: PlotConfig | None = None,
-    save_df: int = -2,
-    save_path: PathLike = "",
-    num_fmt: str = "%.6e",
-    delim: str = ",",
 ) -> pd.DataFrame:
     """
-    Convert Slice-by-Slice fit results to DataFrame with parameter plots.
+    Convert Slice-by-Slice fit results to a DataFrame.
 
-    Transforms list of fit results (from slice-by-slice fitting) into
-    a pandas DataFrame with time/index as rows and parameters as columns.
-    Optionally creates individual plots for each parameter vs. time.
+    Pure conversion: transforms a list of fit results (from slice-by-slice
+    fitting) into a pandas DataFrame with time/index as rows and parameters
+    as columns. Saving and plotting are the caller's responsibility
+    (``df.to_csv`` / ``plt_fit_res_pars``).
 
     Parameters
     ----------
@@ -1105,24 +1102,8 @@ def results_to_df(
     index : array-like, optional
         Index values (e.g., slice numbers). If provided, included as column.
     config : PlotConfig, optional
-        Plot configuration. If None, uses defaults.
-    save_df : {-2, -1, 0, 1}, default=-2
-        Output mode (standard ``_finalize_plot`` convention):
-
-        - -2: neither save nor show (do nothing)
-        - -1: save ``fit_pars.csv`` + parameter PNGs, do not display
-        - 0: display only (no files written)
-        - 1: save ``fit_pars.csv`` + parameter PNGs and display
-
-        Only *varied* (not fixed) parameters are ever displayed; when saving,
-        every parameter PNG is written regardless of vary state.
-    save_path : str or Path, default=''
-        Directory path for saving files (not full filename) (created if not exists).
-        Files saved: 'fit_pars.csv', '{param_name}.png' for each parameter
-    num_fmt : str, default='%.6e'
-        Float format applied to ``fit_pars.csv`` (pandas ``float_format``).
-    delim : str, default=','
-        Delimiter applied to ``fit_pars.csv`` (pandas ``sep``).
+        Supplies the label of the ``x`` column (``config.y_label``).
+        If None, uses defaults.
 
     Returns
     -------
@@ -1139,54 +1120,12 @@ def results_to_df(
 
     # transform lmfit_wrapper results to dataframe
     df = ulmfit.list_of_par_to_df(results)
-    # get columns names for plot before adding x/index
-    cols_plt = df.columns
 
     # insert x (time) and index data if passed
     if x is not None:
         df.insert(0, config.y_label, x)
     if index is not None:
         df.insert(0, "index", index)
-
-    # get par_fin([1]) of first slice(index=0)
-    # (their "vary" attribute is the same for all)
-    df_par_fin_slice0 = ulmfit.par_to_df(
-        lmfit_params=results[0][1].params, col_type="min"
-    )
-    # Map save_df onto per-parameter save_img flags using the standard
-    # convention (1 save+show, -1 save+close, 0 show only, -2 neither). Only
-    # varied parameters are ever shown; every parameter is saved when saving.
-    do_save = abs(save_df) == 1
-    do_show = save_df >= 0
-    save_array = []
-    for vary in df_par_fin_slice0["vary"]:
-        show_this = do_show and bool(vary)
-        if do_save and show_this:
-            save_array.append(1)
-        elif do_save:
-            save_array.append(-1)
-        elif show_this:
-            save_array.append(0)
-        else:
-            save_array.append(-2)
-
-    if do_save:
-        pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
-        # save the dataframe (index, x axis, parameter1, parameter2, ...
-        df.to_csv(
-            pathlib.Path(save_path) / "fit_pars.csv",
-            float_format=num_fmt,
-            sep=delim,
-        )
-    if do_save or do_show:
-        # plot individual parameters as a function of time (s)
-        plt_fit_res_pars(
-            df=df.loc[:, list(cols_plt)],
-            x=x,
-            config=config,
-            save_img=save_array,
-            save_path=save_path,
-        )
 
     return df
 
@@ -1197,17 +1136,16 @@ def results_to_fit_2d(
     const: tuple[Any, ...],
     args: tuple[Any, ...],
     parameter_names: list[str] | None = None,
-    num_fmt: str = "%.6e",
-    delim: str = ",",
-    save_2d: int = 0,
-    save_path: PathLike = "",
 ) -> np.ndarray:
     """
     Reconstruct 2D fit spectrum from Slice-by-Slice fit results.
 
-    Takes individual 1D fit results (one per time slice) and stacks them
-    into a complete 2D fit array. This allows visualization and comparison
-    with the measured 2D data for Slice-by-Slice fitting.
+    Pure reconstruction: takes individual 1D fit results (one per time
+    slice) and stacks them into a complete 2D fit array. This allows
+    visualization and comparison with the measured 2D data for
+    Slice-by-Slice fitting. Saving is the caller's responsibility
+    (``np.savetxt``); note that completed SbS fits already persist this
+    array as ``SavedFitSlot.fit``.
 
     Parameters
     ----------
@@ -1221,7 +1159,7 @@ def results_to_fit_2d(
     parameter_names : list of str, optional
         For DataFrame results: select and order these columns as the
         parameter vector before evaluation. Pass when the DataFrame may
-        carry extra non-parameter columns (e.g. the metrics columns in
+        carry extra non-parameter columns (e.g. the index/time columns in
         ``results_to_df`` output); extra columns are otherwise passed to
         the fit function as parameters. If None, all columns are used in
         DataFrame order. Ignored for list results.
@@ -1233,20 +1171,6 @@ def results_to_fit_2d(
     args : tuple
         Arguments for fit function (model, dim).
         Passed to residual_fun for spectrum generation.
-    num_fmt : str, default='%.6e'
-        Number format for saving (scientific notation with 6 decimals)
-    delim : str, default=','
-        Delimiter for CSV output
-    save_2d : {-1, 0, 1}, default=0
-        Save 2D fit to file:
-
-        - 0: Don't save
-        - 1: Save to CSV
-        - -1: Save to CSV (same as 1)
-
-    save_path : str or Path, default=''
-        Directory path for saving. File saved as: save_path/fit_2d.csv
-        Directory created if doesn't exist.
 
     Returns
     -------
@@ -1300,15 +1224,7 @@ def results_to_fit_2d(
                     args=args,
                 )
             )
-    fit_2d = np.asarray(lst)
-    #
-    if abs(save_2d) == 1:
-        pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
-        np.savetxt(
-            pathlib.Path(save_path) / "fit_2d.csv", fit_2d, fmt=num_fmt, delimiter=delim
-        )
-
-    return fit_2d
+    return np.asarray(lst)
 
 
 #
