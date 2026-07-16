@@ -517,7 +517,7 @@ class TestBuildFitParams:
 #
 class TestProjectFitLifecycle:
     """Project.fit_2d() populates file.model_2d so the standard post-fit
-    API (get_fit_results, save_2d_fit) works on project-fitted files."""
+    API (get_fit_results, export_fit) works on project-fitted files."""
 
     #
     @pytest.mark.slow
@@ -557,8 +557,8 @@ class TestProjectFitLifecycle:
 
     #
     @pytest.mark.slow
-    def test_save_2d_fit_works_after_project_fit(self, tmp_path):
-        """Legacy 2D save runs without error on project-fitted files."""
+    def test_export_fit_works_after_project_fit(self, tmp_path):
+        """Slot export runs without error on project-fitted files."""
 
         project = make_project(name="project_fit")
         truth = _make_truth_file()
@@ -570,7 +570,9 @@ class TestProjectFitLifecycle:
         project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
 
         for f in project.files:
-            f._save_2d_fit_legacy(save_path=tmp_path)  # must not raise
+            f.export_fit(tmp_path, fit_type="2d", show_output=0)
+            slot_dir = tmp_path / f.name / "project_glp__2d"
+            assert (slot_dir / "fit_2d.csv").exists()
 
     #
     @pytest.mark.slow

@@ -92,23 +92,35 @@ decisions 2026-07-14.
 - [x] `plt_fit_res_1d` / `plt_fit_res_2d` / `plt_fit_res_pars` remain the
       pure renderers (flag-driven via `_save_img_flag`).
 
-## Phase 4 — Route auto-export through slots; delete legacy path
+## Phase 4 — Route auto-export through slots; delete legacy path — DONE
 
-- [ ] `fit_slice_by_slice` / `File.fit_2d` / `Project.fit_2d`: replace the
-      `_save_*_fit_legacy(save_files=...)` calls with the baseline template —
-      display (`show_output>=1`) via direct renderer call on slot data with
-      `_save_img_flag(save=..., show=...)`; export (`auto_export`) via the
-      slot exporter. Keep the skip-entirely guard when neither is set
-      (hot-path invariant pinned by `TestPlotHelperSkipped`).
-- [ ] Per-slice PNGs inside the SbS loop (trspecfit.py ~3345) stay gated by
-      `auto_export` (unchanged behavior, new destination layout).
-- [ ] Delete `_save_sbs_fit_legacy`, `_save_2d_fit_legacy`, `save_sbs_fit`,
-      `save_2d_fit`. **Grep whole repo** (notebooks, YAML, docs, llms.txt,
-      AGENTS.md) for callers/mentions.
-- [ ] Update guardrail tests (`TestVerboseDisplayWithoutExport`,
-      `TestPlotHelperSkipped`, auto-export write/no-write classes) to the new
-      call targets; semantics (display-without-write, silent-skip) unchanged.
-- [ ] Changelog entry flagging the auto-export layout change (breaking).
+- [x] `fit_slice_by_slice` / `File.fit_2d` / `Project.fit_2d`: display
+      (`show_output>=1`) renders inline from the just-captured slot via new
+      `File._display_fit_2d_maps` / `_display_sbs_fit` helpers (save_img=0);
+      export (`auto_export`) calls `export_fit(self.p.path_results, ...,
+      overwrite=True)` — the slot exporter, rooted at `path_results` so the
+      configured results dir (and test redirection) is respected. Skip-
+      entirely guard preserved (`TestPlotHelperSkipped` green). The
+      `_append_*_slot` methods now return the slot (None for mocked/
+      no-data fits, which then skip display/export gracefully).
+- [x] Fit-time diagnostics unchanged in place: per-slice CSVs/PNGs and
+      `fit_wrapper`'s per-stage CSVs stay under `model_path()`
+      (`{path_results}/{file}/{fit_type}/{model}/`). Deviation from the
+      original "new destination" note: the export slot-dir name is
+      snapshot-dependent (hash suffix), so it can't be computed mid-fit,
+      and these are fit diagnostics, not results.
+- [x] Deleted `_save_sbs_fit_legacy`, `_save_2d_fit_legacy`, `save_sbs_fit`,
+      `save_2d_fit`. Repo grep clean; `Project.fit_2d`'s PNG-grid display
+      replaced by per-file inline slot maps (works without auto_export now).
+- [x] Tests: `TestVerboseDisplayWithoutExport` semantics unchanged;
+      `test_2d_legacy_saver_creates_its_directory` → slot-tree + refit-
+      overwrite tests; `test_export_fits_parity.py` repurposed to
+      auto-export ≡ explicit-export tree parity; test_file legacy-saver
+      validation tests → absence test; project-fit lifecycle test uses
+      `export_fit`.
+- [x] CHANGELOG `[Unreleased]` section written (breaking layout, breaking
+      get_correlations, removals, schema 3, accessor relocation);
+      `repo_architecture.md` save/export section updated.
 
 ## Phase 5 — Explicit plotting API
 

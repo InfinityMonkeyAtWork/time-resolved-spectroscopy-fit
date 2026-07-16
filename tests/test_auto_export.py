@@ -141,13 +141,10 @@ class TestAutoExportTrueWritesFiles:
         assert outputs, "expected at least one auto-written file"
 
     #
-    def test_2d_legacy_saver_creates_its_directory(self, tmp_path):
-        """Regression: the 2D legacy saver writes np.savetxt sidecars into a
-        directory that must be created on write (dirs are no longer
-        pre-created at path computation). File.fit_2d masks this — its
-        fit_wrapper CSVs create the dir first — but Project.fit_2d's
-        per-file save loop and the save_2d_fit wrapper reach the saver
-        with a fresh directory."""
+    def test_2d_auto_export_writes_slot_tree(self, tmp_path):
+        """fit_2d auto-export routes through the slot exporter: the grouped
+        ``<path_results>/<file>/<model>__2d/`` tree appears with the slot
+        artifacts (fit_2d.csv + observed_2d.csv + axis sidecars)."""
 
         project, file = _baseline_setup(tmp_path, auto_export=True)
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
@@ -159,10 +156,30 @@ class TestAutoExportTrueWritesFiles:
         )
         file.fit_2d("single_glp", stages=1, try_ci=0)
 
-        fresh = tmp_path / "fresh_export"
-        with pytest.warns(DeprecationWarning):
-            file.save_2d_fit(fresh)
-        assert (fresh / "fit_2d.csv").exists()
+        slot_dir = tmp_path / "auto" / file.name / "single_glp__2d"
+        assert (slot_dir / "fit_2d.csv").exists()
+        assert (slot_dir / "observed_2d.csv").exists()
+        assert (slot_dir / "energy.csv").exists()
+        assert (slot_dir / "time.csv").exists()
+
+    #
+    def test_2d_auto_export_overwrites_on_refit(self, tmp_path):
+        """Refitting the same (file, model, fit_type, selection) must not
+        raise FileExistsError — auto-export overwrites its own slot dir."""
+
+        project, file = _baseline_setup(tmp_path, auto_export=True)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        file.add_time_dependence(
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml="models/file_time.yaml",
+            dynamics_model=["MonoExpPos"],
+        )
+        file.fit_2d("single_glp", stages=1, try_ci=0)
+        file.fit_2d("single_glp", stages=1, try_ci=0)  # refit — must not raise
+
+        slot_dir = tmp_path / "auto" / file.name / "single_glp__2d"
+        assert (slot_dir / "fit_2d.csv").exists()
 
 
 #
@@ -307,9 +324,9 @@ class TestPlotHelperSkipped:
 #
 class TestVerboseDisplayWithoutExport:
     """``show_output>=1`` + ``auto_export=False`` shows the data/fit/residual
-    maps inline (via ``_save_{sbs,2d}_fit_legacy(save_files=False)``) but writes
-    no files — the interactive-display path mirroring fit_baseline. Guards the
-    save_files=False branch added to fit_slice_by_slice / fit_2d."""
+    maps inline (via the ``_display_*`` slot helpers) but writes no files —
+    the interactive-display path mirroring fit_baseline. Guards the
+    display/export split in fit_slice_by_slice / fit_2d."""
 
     #
     def _verbose_no_export_setup(self, tmp_path):

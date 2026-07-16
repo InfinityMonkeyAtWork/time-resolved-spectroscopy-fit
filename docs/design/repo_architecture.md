@@ -182,15 +182,18 @@ HDF5 archive ────► reader ────► FitResults (FitResults.load 
 one-line delegates to the corresponding `Project.*` / `FitResults.*`
 methods. There is no `File.load_fit`: load is path-scoped, not file-scoped.
 
-The legacy `File.save_sbs_fit` / `File.save_2d_fit` are deprecated
-aliases that emit `DeprecationWarning` and forward to the new
-`File.export_fit`. The legacy on-disk layout is preserved internally
-by `_save_sbs_fit_legacy` / `_save_2d_fit_legacy`, which are called
-from inside `fit_slice_by_slice` / `fit_2d` / `Project.fit_2d` on every
-fit unless the auto-export side effect is disabled via
-`Project.auto_export = False` (default `True`). Both are scheduled for
-removal before v1.0.0; new code should use `Project.export_fits` /
-`File.export_fit`.
+Auto-export inside `fit_slice_by_slice` / `fit_2d` / `Project.fit_2d`
+routes through the same slot exporter as explicit `export_fits` calls,
+writing the grouped `{path_results}/{file}/{model}__{fit_type}/` tree
+(unless disabled via `Project.auto_export = False`, default `True`).
+Interactive display (`show_output >= 1`) renders inline from the
+just-captured `SavedFitSlot` via the `File._display_*` helpers — the
+figure a user sees is built from the same arrays the export saves.
+Fit-time diagnostics (per-stage parameter CSVs from `fitlib.fit_wrapper`,
+SbS per-slice CSVs/PNGs) are separate from the results export and land
+under `File.model_path()` (`{path_results}/{file}/{fit_type}/{model}/`).
+The pre-0.14 legacy savers (`save_sbs_fit` / `save_2d_fit` and their
+`_save_*_fit_legacy` impls, which wrote a flat layout) were removed.
 
 ## `config/` — runtime configuration
 

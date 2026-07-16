@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [Unreleased]
+
+### Added
+
+- **Fit slots persist the correlation matrix and MCMC acceptance fraction** (archive schema 3): `SavedFitSlot.correl` stores the varying-parameter correlation matrix when the optimizer produced covariance (`None` for covariance-less methods and project-level joint fits, slice 0 for SbS), and the `mcmc` payload gains emcee's per-walker `acceptance_fraction`. Schema-2 archives still load (new fields read as `None`); appends remain same-version only.
+- `FitResults.get_fit_results` / `get_correlations` / `get_conf_intervals` / `get_mcmc`: the results accessors now live on `FitResults`, read the latest matching persisted slot (`file=` / `model=` / `fit_type=` filters), and therefore also work for SbS fits (slice-0 payloads) and on archives loaded with `FitResults.load`. The `File.get_*` methods remain as thin delegates with an added optional `model=` filter.
+
+### Changed
+
+- **Breaking: auto-export writes the slot-export layout.** `fit_slice_by_slice`, `File.fit_2d`, and `Project.fit_2d` now route auto-export through the same slot exporter as `export_fits`, producing the grouped `{path_results}/{file}/{model}__{fit_type}/` tree (params.csv, metrics, fit_2d.csv, observed_2d.csv, axis sidecars, PNGs) instead of the legacy flat `{file}/{fit_type}/{model}/` CSV layout. Fit-time diagnostics (per-stage parameter CSVs, SbS per-slice artifacts) still land under `File.model_path()`. Interactive display now renders from the captured fit slot, so the figure shown equals the figure exported; `Project.fit_2d` shows per-file maps instead of a PNG grid read back from disk.
+- **Breaking: `File.get_correlations` raises for covariance-less fits** (e.g. Nelder without numdifftools, project joint fits) instead of returning an identity-with-zeros matrix that misread as "uncorrelated".
+- `fitlib.results_to_df` and `fitlib.results_to_fit_2d` are pure conversions: the CSV writes, per-parameter plotting, and `save_df`/`save_2d` flags were removed along with the legacy save path that used them.
+
+### Removed
+
+- **Breaking: `File.save_sbs_fit` / `File.save_2d_fit`** (deprecated since the export pipeline landed) and their internal `_save_*_fit_legacy` implementations. Use `File.export_fit` / `Project.export_fits`.
+
 ## [0.13.0] - 2026-07-13
 
 ### Added

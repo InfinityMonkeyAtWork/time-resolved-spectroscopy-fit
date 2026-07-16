@@ -1059,7 +1059,6 @@ class TestFitPreconditions:
                 return_value=[None, object(), None, None, None],
             ) as mock_fit,
             unittest.mock.patch("trspecfit.trspecfit.fitlib.plt_fit_res_1d"),
-            unittest.mock.patch.object(file, "_save_sbs_fit_legacy"),
             unittest.mock.patch("trspecfit.trspecfit.fitlib.time_display"),
         ):
             file.fit_slice_by_slice(
@@ -1149,69 +1148,22 @@ class TestFitPreconditions:
         with pytest.raises(ValueError, match="missing"):
             file.fit_2d("simple_energy")
 
-    # -- save_sbs_fit --
+    # -- removed legacy savers --
 
     #
-    def test_save_sbs_fit_no_model_raises(self):
-        """Legacy SbS save raises ValueError when SbS model is missing."""
+    def test_legacy_savers_are_gone(self):
+        """save_sbs_fit / save_2d_fit (deprecated) and their _save_*_legacy
+        impls were removed with the auto-export slot routing; export_fit is
+        the only export entry point on File."""
 
         file = self._make_file_with_model()
-        file.model_sbs = None
-        with pytest.raises(ValueError, match="incomplete"):
-            file._save_sbs_fit_legacy("/tmp/dummy")
-
-    #
-    def test_save_sbs_fit_no_data_raises(self):
-        """Legacy SbS save raises ValueError when data is missing."""
-
-        file = self._make_file_with_model()
-        file.model_sbs = file.model_active
-        file.data = None
-        with pytest.raises(ValueError, match="Data missing"):
-            file._save_sbs_fit_legacy("/tmp/dummy")
-
-    # -- save_2d_fit --
-
-    #
-    def test_save_2d_fit_no_model_raises(self):
-        """Legacy 2D save raises ValueError when 2D model is missing."""
-
-        file = self._make_file_with_model()
-        file.model_2d = None
-        with pytest.raises(ValueError, match="missing"):
-            file._save_2d_fit_legacy("/tmp/dummy")
-
-    #
-    def test_save_2d_fit_no_data_raises(self):
-        """Legacy 2D save raises ValueError when data is missing."""
-
-        file = self._make_file_with_model()
-        file.model_2d = file.model_active
-        file.data = None
-        with pytest.raises(ValueError, match="missing"):
-            file._save_2d_fit_legacy("/tmp/dummy")
-
-    # -- deprecation warnings --
-
-    #
-    def test_save_sbs_fit_emits_deprecation_warning(self):
-        """save_sbs_fit emits DeprecationWarning pointing at export_fit."""
-
-        file = self._make_file_with_model()
-        file.model_sbs = None  # short-circuit so we don't need a real fit
-        with pytest.warns(DeprecationWarning, match="export_fit"):
-            with pytest.raises(ValueError):
-                file.save_sbs_fit("/tmp/dummy")
-
-    #
-    def test_save_2d_fit_emits_deprecation_warning(self):
-        """save_2d_fit emits DeprecationWarning pointing at export_fit."""
-
-        file = self._make_file_with_model()
-        file.model_2d = None  # short-circuit so we don't need a real fit
-        with pytest.warns(DeprecationWarning, match="export_fit"):
-            with pytest.raises(ValueError):
-                file.save_2d_fit("/tmp/dummy")
+        for name in (
+            "save_sbs_fit",
+            "save_2d_fit",
+            "_save_sbs_fit_legacy",
+            "_save_2d_fit_legacy",
+        ):
+            assert not hasattr(file, name)
 
 
 #

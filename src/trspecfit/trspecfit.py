@@ -455,8 +455,8 @@ class Project:
             root = pathlib.Path(filepath)
 
         # Per-file plot_config preserves File.plot_config customizations
-        # (axis labels, colormaps, etc.) — File.save_sbs_fit / save_2d_fit
-        # used self.plot_config for plotting, and we keep that contract.
+        # (axis labels, colormaps, etc.) — the fit methods use
+        # self.plot_config for inline display, and export keeps that contract.
         plot_configs: dict[str, Any] = {}
         for sf in project.files:
             live = self._find_file_for_slot(sf.slots[0])
@@ -1451,7 +1451,7 @@ class Project:
         )
 
         # Distribute final parameters back to file models and hook into
-        # the standard File 2D-fit lifecycle so that save_2d_fit() and
+        # the standard File 2D-fit lifecycle so that export_fit() and
         # get_fit_results("2d") work on project-fitted files.
         mapping = project_fit_info["mapping"]
         models = project_fit_info["models"]
@@ -1502,39 +1502,35 @@ class Project:
         # Append a per-file 2D slot to Project._fit_history so the joint fit
         # is discoverable via Project.results, matching the File.fit_2d()
         # entry point.
+        slots_2d: list[fit_io.SavedFitSlot | None] = []
         if joint_result:
             for f in self.files:
-                f._append_2d_slot(model_name=model_name, fit_fun_str="fit_model_mcp")
+                slots_2d.append(
+                    f._append_2d_slot(
+                        model_name=model_name, fit_fun_str="fit_model_mcp"
+                    )
+                )
 
-        # Save per-file 2D fit results (silently)
-        if self.auto_export:
-            saved = self.show_output
-            self.show_output = 0
-            try:
-                for f in self.files:
-                    if f.model_2d is not None:
-                        path_2d = f.model_path(model_name, fit_type="2d")
-                        f._save_2d_fit_legacy(save_path=path_2d)
-            finally:
-                self.show_output = saved
+        # Export per-file 2D fit results through the slot exporter (silently)
+        if self.auto_export and any(s is not None for s in slots_2d):
+            self.export_fits(
+                self.path_results,
+                model=model_name,
+                fit_type="2d",
+                overwrite=True,
+                show_output=0,
+            )
 
         if self.show_output >= 1:
             fitlib.time_display(
                 t_start=t_start,
                 print_str="Time elapsed for project-level 2D fit: ",
             )
-            # Show saved 2D fit plots in a grid
-            import matplotlib.image as mpimg
-
-            images = []
-            for f in self.files:
-                img_path = (
-                    f.model_path(model_name, fit_type="2d") / "2D_data_fit_res.png"
-                )
-                if img_path.exists():
-                    images.append(mpimg.imread(str(img_path)))
-            if images:
-                uplt.plot_grid(images, columns=min(3, len(images)))
+            # Show each file's data/fit/residual maps inline from its slot.
+            if slots_2d:
+                for f, slot in zip(self.files, slots_2d, strict=True):
+                    if slot is not None:
+                        f._display_fit_2d_maps(slot)
 
 
 #
@@ -3079,52 +3075,6 @@ class File:
         )
 
     #
-    # ------------------------------------------------------------------
-    # Deprecated aliases — scheduled for removal before v1.0.0.
-    # See TODO.md "Build & release → Remove legacy/backwards-compat code".
-    # ------------------------------------------------------------------
-
-    #
-    def save_sbs_fit(self, save_path: PathLike) -> None:
-        """
-        .. deprecated::
-            Use :meth:`File.export_fit` (``fit_type="sbs"``) instead.
-            ``save_sbs_fit`` is scheduled for removal before v1.0.0.
-
-        Behavior is preserved: this wrapper still writes the legacy
-        on-disk layout. Only the warning is new.
-        """
-
-        warnings.warn(
-            "File.save_sbs_fit is deprecated and will be removed before "
-            "v1.0.0; use File.export_fit(fit_type='sbs', filepath=...) "
-            "for the supported export pipeline.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self._save_sbs_fit_legacy(save_path)
-
-    #
-    def save_2d_fit(self, save_path: PathLike) -> None:
-        """
-        .. deprecated::
-            Use :meth:`File.export_fit` (``fit_type="2d"``) instead.
-            ``save_2d_fit`` is scheduled for removal before v1.0.0.
-
-        Behavior is preserved: this wrapper still writes the legacy
-        on-disk layout. Only the warning is new.
-        """
-
-        warnings.warn(
-            "File.save_2d_fit is deprecated and will be removed before "
-            "v1.0.0; use File.export_fit(fit_type='2d', filepath=...) "
-            "for the supported export pipeline.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self._save_2d_fit_legacy(save_path)
-
-    #
     def fit_slice_by_slice(
         self,
         model_name: str,
@@ -3235,7 +3185,8 @@ class File:
                 "run define_baseline() first or use seed_adapt=None."
             )
 
-        # define path where SbS fit results will be saved to
+        # path for fit-time diagnostics (per-slice CSVs/PNGs from the fit
+        # loop); the results export goes through export_fit below
         path_sbs_results = self.model_path(model_name, fit_type="sbs")
 
         if seed_source == "model":
@@ -3407,7 +3358,7 @@ class File:
                     raise
             self.results_sbs = [by_id[i] for i in sorted(by_id)]
             # mirror the serial path's final model state so downstream
-            # consumers (save_sbs_fit, plot helpers) see identical
+            # consumers (slot capture, plot helpers) see identical
             # const/args regardless of which path produced the results.
             self.model_sbs.const = (
                 self.energy,
@@ -3420,15 +3371,25 @@ class File:
             self.model_sbs.args = _args_sbs
 
         if stages >= 1:
-            # Extract slot BEFORE save_sbs_fit / seed restoration so the slot
-            # captures pristine per-slice fit state (results_sbs and parameter
-            # names taken before any post-fit cleanup).
-            self._append_sbs_slot(model_name=model_name, fit_fun_str=_fun_str)
-            # Display the data/fit/residual maps (and varied-parameter plots)
-            # when interactive (show_output); save only when auto_export.
-            if self.p.auto_export or self.p.show_output >= 1:
-                self._save_sbs_fit_legacy(
-                    save_path=path_sbs_results, save_files=self.p.auto_export
+            # Extract slot BEFORE seed restoration so the slot captures
+            # pristine per-slice fit state (results_sbs and parameter names
+            # taken before any post-fit cleanup).
+            slot_sbs = self._append_sbs_slot(
+                model_name=model_name, fit_fun_str=_fun_str
+            )
+            # Display inline when interactive (show_output); export the slot
+            # when auto_export — mirroring fit_baseline's split. Per-slice
+            # diagnostics (fit_wrapper CSVs, per-slice PNGs) were already
+            # written under model_path during the fit loop.
+            if self.p.show_output >= 1 and slot_sbs is not None:
+                self._display_sbs_fit(slot_sbs)
+            if self.p.auto_export and slot_sbs is not None:
+                self.export_fit(
+                    self.p.path_results,
+                    model=model_name,
+                    fit_type="sbs",
+                    overwrite=True,
+                    show_output=0,
                 )
         self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
         self.model_sbs.args = _args_sbs
@@ -3438,122 +3399,63 @@ class File:
             )
 
     #
-    def _save_sbs_fit_legacy(
-        self, save_path: PathLike, *, save_files: bool = True
-    ) -> None:
+    def _display_fit_2d_maps(self, slot: fit_io.SavedFitSlot) -> None:
         """
-        Legacy SbS export — preserves the original on-disk layout used by
-        the auto-export path inside :meth:`fit_slice_by_slice`.
+        Show a 2D-shaped slot's data/fit/residual maps inline (no writes).
 
-        Internal use only. The public ``save_sbs_fit`` is a deprecated
-        wrapper that forwards to :meth:`export_fit` (different layout);
-        prefer :meth:`export_fit` for new code.
-
-        Parameters
-        ----------
-        save_files : bool, default True
-            When ``True`` (auto-export), write the CSVs and save the figures.
-            When ``False`` (interactive display only), skip the CSVs and just
-            show the varied-parameter and data/fit/residual plots inline.
+        The slot's ``observed`` / ``fit`` arrays live on the cropped fit
+        grid, so the live axes are cut to the slot's selection before
+        plotting (mirrors ``fit_io._slot_axes``).
         """
 
-        if self.model_sbs is None or self.time is None:
-            raise ValueError(
-                "Slice-by-Slice model/results are incomplete; nothing to save."
-            )
-        if self.data is None:
-            raise ValueError("Data missing; cannot save Slice-by-Slice fit.")
-        if self.energy is None:
-            raise ValueError("Energy axis missing; cannot save Slice-by-Slice fit.")
-        if self.model_sbs.const is None or self.model_sbs.args is None:
-            raise ValueError(
-                "Slice-by-Slice model const/args missing; cannot reconstruct 2D fit."
-            )
-        if save_files:
-            pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
-            # axis sidecars (one value per row); paired with fit_2d.csv
-            np.savetxt(
-                pathlib.Path(save_path) / "energy.csv",
-                np.asarray(self.energy),
-                fmt=self.p.num_fmt,
-                delimiter=self.p.delim,
-            )
-            np.savetxt(
-                pathlib.Path(save_path) / "time.csv",
-                np.asarray(self.time),
-                fmt=self.p.num_fmt,
-                delimiter=self.p.delim,
-            )
-        df_sbs = fitlib.results_to_df(
-            results=self.results_sbs,
-            x=self.time,
-            index=np.arange(0, len(self.time)),
-            config=self.plot_config,
-        )
-        if save_files:
-            # save the dataframe (index, x axis, parameter1, parameter2, ...)
-            df_sbs.to_csv(
-                pathlib.Path(save_path) / "fit_pars.csv",
-                float_format=self.p.num_fmt,
-                sep=self.p.delim,
-            )
-
-        # Per-parameter curves vs time. Only varied parameters are shown;
-        # every parameter PNG is written when saving (save_img convention:
-        # 1 save+show, -1 save+close, 0 show only, -2 neither).
-        do_show = self.p.show_output >= 1 if save_files else True
-        vary_flags = ulmfit.par_to_df(
-            lmfit_params=self.results_sbs[0][1].params, col_type="min"
-        )["vary"]
-        save_array = []
-        for vary in vary_flags:
-            show_this = do_show and bool(vary)
-            if save_files and show_this:
-                save_array.append(1)
-            elif save_files:
-                save_array.append(-1)
-            elif show_this:
-                save_array.append(0)
-            else:
-                save_array.append(-2)
-        par_cols = [
-            c for c in df_sbs.columns if c not in ("index", self.plot_config.y_label)
-        ]
-        fitlib.plt_fit_res_pars(
-            df=df_sbs.loc[:, par_cols],
-            x=self.time,
-            config=self.plot_config,
-            save_img=save_array,
-            save_path=save_path,
-        )
-
-        # get slice-by-slice fit spectra as a 2D map (write CSV only when saving)
-        fit_2d_sbs = fitlib.results_to_fit_2d(
-            results=df_sbs,
-            parameter_names=self.model_sbs.parameter_names,
-            const=self.model_sbs.const,
-            args=self.model_sbs.args,
-        )
-        if save_files:
-            np.savetxt(
-                pathlib.Path(save_path) / "fit_2d.csv",
-                fit_2d_sbs,
-                fmt=self.p.num_fmt,
-                delimiter=self.p.delim,
-            )
-
-        # plot data, fit, and residual 2D maps (save only when writing files)
+        assert self.energy is not None  # type guard
+        assert self.time is not None  # type guard
+        energy = np.asarray(self.energy)
+        e_lim = slot.selection.get("e_lim")
+        if e_lim:
+            energy = energy[int(e_lim[0]) : int(e_lim[1])]
+        time = np.asarray(self.time)
+        if slot.fit_type == "2d":
+            t_lim = slot.selection.get("t_lim")
+            if t_lim:
+                time = time[int(t_lim[0]) : int(t_lim[1])]
         fitlib.plt_fit_res_2d(
-            data=self.data,
-            fit=fit_2d_sbs,
-            x=self.energy,
-            y=self.time,
+            data=slot.observed,
+            fit=slot.fit,
+            x=energy,
+            y=time,
             config=self.plot_config,
-            x_lim=self.e_lim,
-            y_lim=self.t_lim,
-            save_img=(-1 if self.p.show_output == 0 else 1) if save_files else 0,
-            save_path=save_path,
+            save_img=0,
         )
+
+    #
+    def _display_sbs_fit(self, slot: fit_io.SavedFitSlot) -> None:
+        """
+        Show an SbS slot inline: varied-parameter evolution + fit maps.
+
+        Vary flags come from the live slice-0 result (the wide per-slice
+        params frame carries no vary column; every slice shares the same
+        vary set).
+        """
+
+        assert self.time is not None  # type guard
+        vary_df = ulmfit.par_to_df(
+            lmfit_params=self.results_sbs[0][1].params, col_type="min"
+        )
+        varied = {
+            str(name)
+            for name, vary in zip(vary_df["name"], vary_df["vary"], strict=True)
+            if vary
+        }
+        par_cols = [c for c in slot.params.columns if c in varied]
+        if par_cols:
+            fitlib.plt_fit_res_pars(
+                df=slot.params.loc[:, par_cols],
+                x=np.asarray(self.time)[: len(slot.params)],
+                config=self.plot_config,
+                save_img=0,
+            )
+        self._display_fit_2d_maps(slot)
 
     #
     # ------------------------------------------------------------------
@@ -3561,7 +3463,9 @@ class File:
     # ------------------------------------------------------------------
 
     #
-    def _append_baseline_slot(self, *, model_name: str, fit_fun_str: str) -> None:
+    def _append_baseline_slot(
+        self, *, model_name: str, fit_fun_str: str
+    ) -> fit_io.SavedFitSlot | None:
         """
         Build a SavedFitSlot from the just-completed baseline fit and append
         it to ``self.p._fit_history``. Uses copied snapshot args so the slot
@@ -3572,10 +3476,10 @@ class File:
         assert self.data_base is not None  # type guard
         assert self.energy is not None  # type guard
         if self.data is None:
-            return  # data_base-only fixture / no source File data to fingerprint
+            return None  # data_base-only fixture / no File data to fingerprint
         result_fin = self.model_base.result[1]
         if not hasattr(result_fin, "params"):
-            return  # mocked / placeholder result; nothing to record
+            return None  # mocked / placeholder result; nothing to record
         # Evaluate model on the same grid as data_base, then crop to e_lim
         # so observed.shape == fit.shape and matches the residual grid.
         fit_full = np.asarray(
@@ -3634,6 +3538,7 @@ class File:
             mcmc=mcmc,
         )
         self.p._fit_history.append(slot)
+        return slot
 
     #
     def _append_spectrum_slot(
@@ -3644,7 +3549,7 @@ class File:
         time_point: float | None,
         time_range: list[float] | None,
         time_type: str,
-    ) -> None:
+    ) -> fit_io.SavedFitSlot | None:
         """Build and append a SavedFitSlot for a completed spectrum fit."""
 
         assert self.model_spec is not None  # type guard
@@ -3652,7 +3557,7 @@ class File:
         assert self.energy is not None  # type guard
         result_fin = self.model_spec.result[1]
         if not hasattr(result_fin, "params"):
-            return  # mocked / placeholder result; nothing to record
+            return None  # mocked / placeholder result; nothing to record
         fit_full = np.asarray(
             fitlib.residual_fun(
                 par=result_fin.params,
@@ -3708,9 +3613,12 @@ class File:
             mcmc=mcmc,
         )
         self.p._fit_history.append(slot)
+        return slot
 
     #
-    def _append_sbs_slot(self, *, model_name: str, fit_fun_str: str) -> None:
+    def _append_sbs_slot(
+        self, *, model_name: str, fit_fun_str: str
+    ) -> fit_io.SavedFitSlot | None:
         """
         Build and append a SavedFitSlot for a completed slice-by-slice fit.
 
@@ -3725,7 +3633,7 @@ class File:
         assert self.data is not None  # type guard
         assert self.energy is not None  # type guard
         if not self.results_sbs or not hasattr(self.results_sbs[0][1], "params"):
-            return  # mocked / placeholder results; nothing to record
+            return None  # mocked / placeholder results; nothing to record
         n_slices = len(self.data)
         e_lim = list(self.e_lim) if self.e_lim else None
         # Per-slice observed view + per-slice model evaluation. residual_fun
@@ -3793,9 +3701,12 @@ class File:
             mcmc=slice0_mcmc,
         )
         self.p._fit_history.append(slot)
+        return slot
 
     #
-    def _append_2d_slot(self, *, model_name: str, fit_fun_str: str) -> None:
+    def _append_2d_slot(
+        self, *, model_name: str, fit_fun_str: str
+    ) -> fit_io.SavedFitSlot | None:
         """Build and append a SavedFitSlot for a completed 2D global fit."""
 
         assert self.model_2d is not None  # type guard
@@ -3803,7 +3714,7 @@ class File:
         assert self.energy is not None  # type guard
         result_fin = self.model_2d.result[1]
         if not hasattr(result_fin, "params"):
-            return  # mocked / placeholder result; nothing to record
+            return None  # mocked / placeholder result; nothing to record
         # Evaluate the 2D model on the full grid; crop to (t_lim, e_lim) so
         # observed.shape == fit.shape and matches the residual grid.
         fit_full = np.asarray(
@@ -3867,6 +3778,7 @@ class File:
             mcmc=mcmc,
         )
         self.p._fit_history.append(slot)
+        return slot
 
     #
     def _resolve_model(self, model_name: str | None) -> mcp.Model:
@@ -4158,7 +4070,8 @@ class File:
         if self.energy is None or self.time is None or self.data is None:
             raise ValueError("Data/axes missing; cannot run 2D fit.")
 
-        # define path where 2D fit results will be saved to
+        # path for fit-time diagnostics (fit_wrapper's per-stage CSVs); the
+        # results export goes through export_fit below
         path_2d_results = self.model_path(model_name, fit_type="2d")
 
         # set all fixed 2D fit parameters equal to baseline model results
@@ -4245,19 +4158,26 @@ class File:
         # Write optimized values back to model.lmfit_pars.  fit_wrapper
         # optimizes a deepcopy, so model.lmfit_pars may be stale — especially
         # on the GIR path where fit_model_gir never calls model.update_value.
+        slot_2d: fit_io.SavedFitSlot | None = None
         if stages >= 1 and self.model_2d.result[1] != []:
             final_params = self.model_2d.result[1].params
             for name in self.model_2d.parameter_names:
                 if name in final_params:
                     self.model_2d.lmfit_pars[name].value = final_params[name].value
-            self._append_2d_slot(model_name=model_name, fit_fun_str=_fun_str)
+            slot_2d = self._append_2d_slot(model_name=model_name, fit_fun_str=_fun_str)
 
         if stages >= 1:
-            # Display the data/fit/residual maps when interactive (show_output),
-            # save them only when auto_export — mirroring fit_baseline.
-            if self.p.auto_export or self.p.show_output >= 1:
-                self._save_2d_fit_legacy(
-                    save_path=path_2d_results, save_files=self.p.auto_export
+            # Display inline when interactive (show_output); export the slot
+            # when auto_export — mirroring fit_baseline's split.
+            if self.p.show_output >= 1 and slot_2d is not None:
+                self._display_fit_2d_maps(slot_2d)
+            if self.p.auto_export and slot_2d is not None:
+                self.export_fit(
+                    self.p.path_results,
+                    model=model_name,
+                    fit_type="2d",
+                    overwrite=True,
+                    show_output=0,
                 )
             if self.p.show_output >= 1:
                 fitlib.time_display(
@@ -4265,75 +4185,6 @@ class File:
                 )
                 # display final pars below figure
                 display(self.model_2d.result[1].params)
-
-    #
-    def _save_2d_fit_legacy(
-        self, save_path: PathLike, *, save_files: bool = True
-    ) -> None:
-        """
-        Legacy 2D export — preserves the original on-disk layout used by
-        the auto-export path inside :meth:`fit_2d` and
-        :meth:`Project.fit_2d`.
-
-        Internal use only. The public ``save_2d_fit`` is a deprecated
-        wrapper that forwards to :meth:`export_fit` (different layout);
-        prefer :meth:`export_fit` for new code.
-
-        Parameters
-        ----------
-        save_files : bool, default True
-            When ``True`` (auto-export), write the CSVs and save the figure.
-            When ``False`` (interactive display only), skip the CSVs and just
-            show the data/fit/residual maps inline.
-        """
-
-        if (
-            self.model_2d is None
-            or self.energy is None
-            or self.time is None
-            or self.data is None
-        ):
-            raise ValueError("2D model/data/axes missing; nothing to save.")
-        self.model_2d.create_value_2d()  # update 2D spectrum to final fit result
-        if self.model_2d.value_2d is None:
-            raise ValueError(
-                "2D model evaluation did not produce value_2d; nothing to save."
-            )
-        if save_files:
-            pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
-            # save 2D fit map as CSV (rows=time, cols=energy), mirroring save_sbs_fit
-            np.savetxt(
-                pathlib.Path(save_path) / "fit_2d.csv",
-                self.model_2d.value_2d,
-                fmt=self.p.num_fmt,
-                delimiter=self.p.delim,
-            )
-            # axis sidecars (one value per row); paired with fit_2d.csv
-            np.savetxt(
-                pathlib.Path(save_path) / "energy.csv",
-                np.asarray(self.energy),
-                fmt=self.p.num_fmt,
-                delimiter=self.p.delim,
-            )
-            np.savetxt(
-                pathlib.Path(save_path) / "time.csv",
-                np.asarray(self.time),
-                fmt=self.p.num_fmt,
-                delimiter=self.p.delim,
-            )
-        # plot data, fit, and residual 2D maps (save only when writing files)
-        fitlib.plt_fit_res_2d(
-            data=self.data,
-            fit=self.model_2d.value_2d,
-            x=self.energy,
-            y=self.time,
-            config=self.plot_config,
-            x_lim=self.e_lim,
-            y_lim=self.t_lim,
-            save_img=(-1 if self.p.show_output == 0 else 1) if save_files else 0,
-            save_path=save_path,
-        )
-        # dpi_plot = round(1.5 *self.p.dpi_plt), NOT AVAILABLE YET (fig_size)
 
     #
     def get_fit_results(
