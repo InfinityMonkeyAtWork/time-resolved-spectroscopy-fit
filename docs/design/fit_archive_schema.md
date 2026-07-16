@@ -1,4 +1,4 @@
-# Fit-archive HDF5 schema (schema_version 2)
+# Fit-archive HDF5 schema (schema_version 3)
 
 On-disk layout for the fit-results archive written by `Project.save_fits()`
 and read by `FitResults.load()` / `Project.load_fits()`. The object model
@@ -87,7 +87,7 @@ dtypes.
 │     project_name       : str              # Project.name; set on first write
 │     timestamp_created  : str              # ISO 8601 UTC, first write
 │     timestamp_updated  : str              # ISO 8601 UTC, most recent write
-│     schema_version     : str              # "2"; bump on incompatible change
+│     schema_version     : str              # "3"; bump on incompatible change
 └── files/                                  # group; one subgroup per file
     ├── 000000/                             # SavedFile (see "File group")
     └── 000001/...
@@ -101,14 +101,23 @@ must not recreate the archive on subsequent saves unless the caller
 explicitly asks for that; the canonical way to start fresh is to choose
 a new path.
 
-`schema_version` is currently `"2"`. It was bumped from `"1"` before this
-branch shipped, when the σ-calibrated chi-square columns and per-slot sigma
-metadata changed the stored fields — a clean break, so archives written by
-the older schema can no longer be read. Future incompatible changes (e.g.
-project-scoped joint-result slots or `keep_history=True` full-log save —
-both deferred, see "What's *not* in v1") bump it again. The reader rejects
-archives with a `schema_version` it does not recognize. (This wire-format
-number is independent of the feature-scope "v1" used elsewhere in this doc.)
+`schema_version` is currently `"3"`. Version history:
+
+- `"1"` → `"2"`: the σ-calibrated chi-square columns and per-slot sigma
+  metadata changed the stored fields — a clean break, so schema-1 archives
+  can no longer be read.
+- `"2"` → `"3"` (2026-07): **additive** — slot `correl` dataset and mcmc
+  `acceptance_fraction` dataset. The reader accepts both `"2"` and `"3"`
+  (`SUPPORTED_READ_VERSIONS` in `utils/fit_io.py`); schema-2 archives load
+  with the new fields as `None`. The writer still refuses to append to an
+  archive whose version differs from its own — re-save to a new path to
+  migrate.
+
+Future incompatible changes (e.g. project-scoped joint-result slots or
+`keep_history=True` full-log save — both deferred, see "What's *not* in
+v1") bump it again. The reader rejects archives with a `schema_version` it
+does not recognize. (This wire-format number is independent of the
+feature-scope "v1" used elsewhere in this doc.)
 
 ## File group
 
@@ -186,6 +195,8 @@ files/000000/slots/000000/
 │     yaml_filename     : str        (opt)  # human breadcrumb; omit if None
 │     timestamp         : str               # ISO 8601 UTC, slot creation time
 │     # --- metrics (baseline / spectrum / 2d only) ---
+│     chi2_raw          : float64   (cond)
+│     chi2_red_raw      : float64   (cond)
 │     chi2              : float64   (cond)
 │     chi2_red          : float64   (cond)
 │     r2                : float64   (cond)
@@ -196,6 +207,7 @@ files/000000/slots/000000/
 ├── fit                                     # 1D or 2D dataset; preserves source dtype; observed.shape == fit.shape
 ├── metrics_per_slice                (opt)  # 1D structured dataset; sbs only
 ├── conf_ci                          (opt)  # heterogeneous-DataFrame dataset; see "conf_ci dataset"
+├── correl                           (opt)  # all-numeric DataFrame dataset; see "correl dataset"
 └── mcmc/                            (opt)  # see "mcmc group"
 ```
 
@@ -204,7 +216,7 @@ files/000000/slots/000000/
 scalars.
 
 `(opt)` = present iff the corresponding `SavedFitSlot` field is non-`None`
-(`conf_ci`, `mcmc`) or applicable to the fit type
+(`conf_ci`, `correl`, `mcmc`) or applicable to the fit type
 (`metrics_per_slice` is sbs-only).
 
 ### `archive_slot_key` vs `history_key`
@@ -282,11 +294,13 @@ heterogeneous-DataFrame dataset; do not redefine `params`.
 ```
 metrics_per_slice : 1D structured dataset, shape (n_slices,)
   dtype:
-    chi2     : float64
-    chi2_red : float64
-    r2       : float64
-    aic      : float64
-    bic      : float64
+    chi2_raw     : float64
+    chi2_red_raw : float64
+    chi2         : float64
+    chi2_red     : float64
+    r2           : float64
+    aic          : float64
+    bic          : float64
 ```
 
 Row order follows the time-slice order in `observed` axis 0. The reader
@@ -316,6 +330,25 @@ positional fields insulate HDF5 from arbitrary user-facing labels; the
 `columns` attr restores them on read. Omitted entirely if
 `SavedFitSlot.conf_ci is None`.
 
+## `correl` dataset (optional; schema ≥ 3)
+
+All-numeric DataFrame — the varying-parameter correlation matrix built by
+`correl_to_df` in `utils/lmfit.py`:
+
+```
+correl : 2D float64 dataset, shape (n_vary, n_vary)
+  attrs:
+    columns : vlen str[n_vary]   # varying parameter names; axis-1 order
+```
+
+The matrix is square with `index == columns`, so only the column labels
+are stored; the reader restores the index from the `columns` attr.
+Omitted entirely if `SavedFitSlot.correl is None` — which is the case
+when the optimizer reported no covariance (e.g. Nelder without
+numdifftools) and for project-level joint fits (joint covariance does not
+decompose per file). For SbS the matrix is slice 0's, mirroring
+`conf_ci` / `mcmc`.
+
 ## `mcmc/` group (optional)
 
 ```
@@ -327,6 +360,7 @@ mcmc/
 ├── ci                                (opt) # heterogeneous-dtype DataFrame
 │   1D structured dataset, shape (n_par,)
 │   field/attr layout identical to conf_ci above
+├── acceptance_fraction               (opt) # 1D float64 dataset, shape (n_walkers,); schema ≥ 3
 └── attrs:
       lnsigma : float64                     # __lnsigma point estimate
 ```
@@ -338,6 +372,9 @@ Within the group:
   emcee returned an empty chain.
 - `ci` is optional (emcee CI may not have been computed).
 - `lnsigma` is required when `mcmc/` is present.
+- `acceptance_fraction` is optional (absent in schema-2 archives and when
+  emcee did not expose it); the reader maps absence to `None` in the
+  payload dict.
 
 ## Reader → object-model mapping
 
@@ -361,6 +398,7 @@ Per slot, the reader produces a `SavedFitSlot` with:
 | `yaml_filename`      | slot `metadata.yaml_filename` attr (None if absent)            |
 | `timestamp`          | slot `metadata.timestamp` attr                                 |
 | `conf_ci`            | `conf_ci` dataset → DataFrame, or `None` if absent             |
+| `correl`             | `correl` dataset → DataFrame (index restored from `columns`), or `None` if absent |
 | `mcmc`               | `mcmc/` group → dict, or `None` if absent                      |
 
 `history_key` is persisted as a non-authoritative attr but recomputed
@@ -408,10 +446,10 @@ The archive does not distinguish them from slots produced by
   timestamp/sequence component in the slot key; deferred to v2.
 - **Model rehydration.** `yaml_filename` is a breadcrumb; v1 does not
   promise to deserialize a `Model` from the archive.
-- **MCMC trace metadata** (acceptance fraction, autocorrelation times,
-  etc.) — only `flatchain` / `ci` / `lnsigma` are persisted. If the
-  decoupled-MCMC follow-on (the archived design plan, "Out of scope") lands, that work owns
-  the schema extension.
+- **MCMC trace metadata beyond acceptance fraction** (autocorrelation
+  times, etc.) — schema 3 added `acceptance_fraction`; the rest is still
+  not persisted. If the decoupled-MCMC follow-on (the archived design
+  plan, "Out of scope") lands, that work owns the schema extension.
 
 ## Cross-references
 

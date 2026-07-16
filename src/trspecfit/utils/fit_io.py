@@ -44,7 +44,11 @@ from trspecfit.fitlib import (
 from trspecfit.utils.hdf5 import require_dataset, require_group
 
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
+# Schema 3 is additive over 2 (slot `correl` dataset, mcmc
+# `acceptance_fraction` dataset), so the reader accepts both; the writer
+# still refuses cross-version appends (see _classify_archive_for_write).
+SUPPORTED_READ_VERSIONS = ("2", "3")
 
 # Default noise metadata used when no σ has been set on the File. Mirrors the
 # project.yaml defaults defined in ``Project._set_defaults``; if you change one,
@@ -223,8 +227,17 @@ class SavedFitSlot:
         baseline (``N_avg`` = number of time slices averaged into
         ``data_base``). ``NaN`` when ``sigma_data`` is ``NaN``.
     conf_ci : pd.DataFrame | None
+    correl : pd.DataFrame | None
+        Varying-parameter correlation matrix (index == columns == varying
+        parameter names, 1.0 on the diagonal). ``None`` when the optimizer
+        reported no covariance (e.g. Nelder without numdifftools) and for
+        project-level joint fits, whose joint covariance does not decompose
+        per file. For SbS, captured from slice 0 (the representative slice,
+        mirroring ``conf_ci`` / ``mcmc``).
     mcmc : dict | None
-        ``{"flatchain", "ci", "lnsigma"}`` if MCMC ran, else ``None``.
+        ``{"flatchain", "ci", "lnsigma", "acceptance_fraction"}`` if MCMC
+        ran, else ``None``. ``acceptance_fraction`` is emcee's per-walker
+        array (``None`` in slots loaded from schema-2 archives).
     """
 
     file_fingerprint: dict[str, Any]
@@ -248,6 +261,7 @@ class SavedFitSlot:
     sigma_data: float
     sigma_eff: float
     conf_ci: pd.DataFrame | None = None
+    correl: pd.DataFrame | None = None
     mcmc: dict[str, Any] | None = None
 
 
@@ -468,8 +482,9 @@ def _mcmc_payload(
     Build the ``mcmc`` slot payload from ``fit_wrapper``'s emcee outputs.
 
     Returns ``None`` if MCMC did not run (``emcee_fin is None``). Otherwise
-    returns ``{"flatchain", "ci", "lnsigma"}`` matching ``SavedFitSlot.mcmc``.
-    Frames are copied so the slot is invariant to subsequent state changes.
+    returns ``{"flatchain", "ci", "lnsigma", "acceptance_fraction"}`` matching
+    ``SavedFitSlot.mcmc``. Frames and arrays are copied so the slot is
+    invariant to subsequent state changes.
     """
 
     if emcee_fin is None:
@@ -483,7 +498,16 @@ def _mcmc_payload(
     lnsigma_par = params.get("__lnsigma") if params is not None else None
     lnsigma = float(lnsigma_par.value) if lnsigma_par is not None else None
     ci_out = emcee_ci.copy() if not emcee_ci.empty else None
-    return {"flatchain": flatchain_out, "ci": ci_out, "lnsigma": lnsigma}
+    acceptance = getattr(emcee_fin, "acceptance_fraction", None)
+    acceptance_out = (
+        np.array(acceptance, dtype=np.float64) if acceptance is not None else None
+    )
+    return {
+        "flatchain": flatchain_out,
+        "ci": ci_out,
+        "lnsigma": lnsigma,
+        "acceptance_fraction": acceptance_out,
+    }
 
 
 #
@@ -510,6 +534,7 @@ def _slot_from_baseline(
     sigma_type: str,
     sigma_data: float,
     conf_ci: pd.DataFrame | None = None,
+    correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
 ) -> SavedFitSlot:
     """
@@ -538,6 +563,7 @@ def _slot_from_baseline(
         fit_alg=fit_alg,
         yaml_filename=yaml_filename,
         conf_ci=conf_ci,
+        correl=correl,
         mcmc=mcmc,
         noise_type=noise_type,
         sigma_source=sigma_source,
@@ -567,6 +593,7 @@ def _slot_from_spectrum(
     sigma_type: str,
     sigma_data: float,
     conf_ci: pd.DataFrame | None = None,
+    correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
 ) -> SavedFitSlot:
     """Build a SavedFitSlot for a completed spectrum fit.
@@ -595,6 +622,7 @@ def _slot_from_spectrum(
         fit_alg=fit_alg,
         yaml_filename=yaml_filename,
         conf_ci=conf_ci,
+        correl=correl,
         mcmc=mcmc,
         noise_type=noise_type,
         sigma_source=sigma_source,
@@ -622,6 +650,7 @@ def _slot_from_sbs(
     sigma_type: str,
     sigma_data: float,
     conf_ci: pd.DataFrame | None = None,
+    correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
 ) -> SavedFitSlot:
     """
@@ -673,6 +702,7 @@ def _slot_from_sbs(
         sigma_data=float(sigma_data),
         sigma_eff=float(sigma_eff),
         conf_ci=conf_ci,
+        correl=correl,
         mcmc=mcmc,
     )
 
@@ -696,6 +726,7 @@ def _slot_from_2d(
     sigma_type: str,
     sigma_data: float,
     conf_ci: pd.DataFrame | None = None,
+    correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
 ) -> SavedFitSlot:
     """Build a SavedFitSlot for a completed 2D global fit."""
@@ -717,6 +748,7 @@ def _slot_from_2d(
         fit_alg=fit_alg,
         yaml_filename=yaml_filename,
         conf_ci=conf_ci,
+        correl=correl,
         mcmc=mcmc,
         noise_type=noise_type,
         sigma_source=sigma_source,
@@ -745,6 +777,7 @@ def _build_slot(
     fit_alg: str,
     yaml_filename: str | None,
     conf_ci: pd.DataFrame | None,
+    correl: pd.DataFrame | None,
     mcmc: dict[str, Any] | None,
     noise_type: str,
     sigma_source: str,
@@ -790,6 +823,7 @@ def _build_slot(
         sigma_data=float(sigma_data),
         sigma_eff=float(sigma_eff),
         conf_ci=conf_ci,
+        correl=correl,
         mcmc=mcmc,
     )
 
@@ -1300,6 +1334,15 @@ def _write_slot(
         _write_metrics_per_slice(slot_group, slot.metrics)
     if slot.conf_ci is not None:
         _encode_dataframe(slot_group, "conf_ci", slot.conf_ci)
+    if slot.correl is not None:
+        # Square all-float matrix; index == columns, so only the columns
+        # attr is stored and the reader restores the index from it.
+        _encode_dataframe(
+            slot_group,
+            "correl",
+            slot.correl,
+            type_tags=_all_float64_tags(len(slot.correl.columns)),
+        )
     if slot.mcmc is not None:
         _write_mcmc_group(slot_group, slot.mcmc)
 
@@ -1375,7 +1418,8 @@ def _write_metrics_per_slice(
 
 #
 def _write_mcmc_group(slot_group: h5py.Group, mcmc: dict[str, Any]) -> None:
-    """``mcmc/`` subgroup: flatchain (always), ci (optional), lnsigma attr."""
+    """``mcmc/`` subgroup: flatchain (always), ci / acceptance_fraction
+    (optional), lnsigma attr."""
 
     mcmc_group = slot_group.create_group("mcmc")
     lnsigma = mcmc.get("lnsigma")
@@ -1398,6 +1442,12 @@ def _write_mcmc_group(slot_group: h5py.Group, mcmc: dict[str, Any]) -> None:
     ci = mcmc.get("ci")
     if ci is not None:
         _encode_dataframe(mcmc_group, "ci", ci)
+    acceptance = mcmc.get("acceptance_fraction")
+    if acceptance is not None:
+        mcmc_group.create_dataset(
+            "acceptance_fraction",
+            data=np.asarray(acceptance, dtype=np.float64),
+        )
 
 
 #
@@ -1496,9 +1546,11 @@ def _read_mcmc_group(group: h5py.Group) -> dict[str, Any]:
     """
     Inverse of ``_write_mcmc_group``.
 
-    Returns ``{"flatchain", "ci", "lnsigma"}`` matching the writer's
-    payload. ``lnsigma`` NaN maps back to ``None``; ``ci`` is ``None`` if
-    the optional dataset was not written.
+    Returns ``{"flatchain", "ci", "lnsigma", "acceptance_fraction"}``
+    matching the writer's payload. ``lnsigma`` NaN maps back to ``None``;
+    ``ci`` and ``acceptance_fraction`` are ``None`` if the optional dataset
+    was not written (``acceptance_fraction`` is always absent in schema-2
+    archives).
     """
 
     flatchain_obj = group.get("flatchain")
@@ -1519,7 +1571,18 @@ def _read_mcmc_group(group: h5py.Group) -> dict[str, Any]:
     else:
         v = float(np.asarray(lnsigma_attr).item())
         lnsigma = None if np.isnan(v) else v
-    return {"flatchain": flatchain, "ci": ci, "lnsigma": lnsigma}
+    acc_obj = group.get("acceptance_fraction")
+    acceptance = (
+        np.asarray(require_dataset(acc_obj, "mcmc/acceptance_fraction")[...])
+        if acc_obj is not None
+        else None
+    )
+    return {
+        "flatchain": flatchain,
+        "ci": ci,
+        "lnsigma": lnsigma,
+        "acceptance_fraction": acceptance,
+    }
 
 
 #
@@ -1560,6 +1623,12 @@ def _read_slot(
         if conf_ci_obj is not None
         else None
     )
+    correl_obj = slot_group.get("correl")
+    correl: pd.DataFrame | None = None
+    if correl_obj is not None:
+        correl = _decode_dataframe(require_dataset(correl_obj, "correl"))
+        # Square matrix stores only column labels; index == columns.
+        correl.index = pd.Index(correl.columns)
     mcmc_obj = slot_group.get("mcmc")
     mcmc = (
         _read_mcmc_group(require_group(mcmc_obj, "mcmc"))
@@ -1600,6 +1669,7 @@ def _read_slot(
         sigma_data=float(np.asarray(a["sigma_data"]).item()),
         sigma_eff=float(np.asarray(a["sigma_eff"]).item()),
         conf_ci=conf_ci,
+        correl=correl,
         mcmc=mcmc,
     )
 
@@ -1661,8 +1731,9 @@ def read_archive(filepath: PathLike | str) -> SavedProject:
     ``File``, or ``Model`` state — the returned ``SavedProject`` is a
     standalone, immutable view of the archive's contents at read time.
 
-    Raises ``ValueError`` if ``schema_version`` does not match the
-    reader's ``SCHEMA_VERSION``.
+    Raises ``ValueError`` if ``schema_version`` is not one of
+    ``SUPPORTED_READ_VERSIONS``. Schema-2 archives load with the schema-3
+    additions (slot ``correl``, mcmc ``acceptance_fraction``) as ``None``.
     """
 
     path = Path(filepath)
@@ -1670,10 +1741,11 @@ def read_archive(filepath: PathLike | str) -> SavedProject:
         meta = require_group(archive["metadata"], "metadata")
         ma = meta.attrs
         schema_version = _attr_str(ma["schema_version"])
-        if schema_version != SCHEMA_VERSION:
+        if schema_version not in SUPPORTED_READ_VERSIONS:
+            supported = ", ".join(repr(v) for v in SUPPORTED_READ_VERSIONS)
             raise ValueError(
                 f"Archive at {path} has schema_version {schema_version!r}; "
-                f"this reader supports {SCHEMA_VERSION!r}."
+                f"this reader supports {supported}."
             )
         files_obj = archive.get("files")
         files: list[SavedFile] = []

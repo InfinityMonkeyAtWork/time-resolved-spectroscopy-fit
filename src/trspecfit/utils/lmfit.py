@@ -419,6 +419,33 @@ def par_to_df(
 
 
 #
+def correl_to_df(lmfit_params: lmfit.Parameters) -> pd.DataFrame:
+    """
+    Build the varying-parameter correlation matrix from lmfit Parameters.
+
+    Parameters
+    ----------
+    lmfit_params : lmfit.Parameters
+        Parameters from a completed fit (pass ``result.params``).
+
+    Returns
+    -------
+    pd.DataFrame
+        Square matrix indexed by the varying parameter names: 1.0 on the
+        diagonal, lmfit's pairwise correlations off-diagonal (0.0 where a
+        pair is uncorrelated or the optimizer reported no covariance).
+    """
+
+    names = [n for n in lmfit_params if lmfit_params[n].vary]
+    mat = pd.DataFrame(np.eye(len(names)), index=names, columns=names, dtype=float)
+    for n in names:
+        for other, corr in (lmfit_params[n].correl or {}).items():
+            if other in mat.columns:
+                mat.loc[n, other] = corr
+    return mat
+
+
+#
 def list_of_par_to_df(results: list[Any]) -> pd.DataFrame:
     """
     Extract parameter values from multiple fit results into DataFrame.
@@ -611,7 +638,8 @@ class MCMCResult:
     """Live MCMC outputs for a single fit (counterpart to the ``MC`` settings).
 
     A read-only view over ``model.result`` (the raw ``lmfit.emcee`` result and
-    its quantile table), returned by ``File.get_mcmc``. Not persisted — see the
+    its quantile table), returned by ``File.get_mcmc``. The underlying data is
+    persisted in the ``SavedFitSlot.mcmc`` payload (schema 3) — see the
     "results-data ownership boundary" TODO for the planned unified results API.
 
     Attributes

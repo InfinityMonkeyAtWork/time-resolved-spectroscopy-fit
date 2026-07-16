@@ -30,22 +30,29 @@ decisions 2026-07-14.
   and loaded archives alike). `File.get_*` / `File.plot_*` / `File.compare_models`
   are thin sugar delegating to `project.results` filtered to that file.
 
-## Phase 1 — Persist `correl` + `acceptance_fraction` (schema v3)
+## Phase 1 — Persist `correl` + `acceptance_fraction` (schema v3) — DONE
 
-- [ ] Add `correl: pd.DataFrame | None` field to `SavedFitSlot` (correlation
+- [x] Add `correl: pd.DataFrame | None` field to `SavedFitSlot` (correlation
       matrix over varied params, mirroring `get_correlations()` output).
-      Stored like `conf_ci` via `_encode_dataframe`. Populate in
-      `_build_slot` / per-fit-type extractors from `par_fin.params[*].correl`.
-      (TODO wording said "into the `params` payload"; a sibling matrix dataset
-      mirrors the accessor's return shape and the `conf_ci` precedent — a
-      per-row JSON column in the long params table would be strictly worse to
-      read back.)
-- [ ] Add `acceptance_fraction` (per-walker float array) to the slot `mcmc`
+      Stored like `conf_ci` via `_encode_dataframe` (all-float64 square
+      matrix; index restored from `columns` on read). Matrix builder is
+      `ulmfit.correl_to_df`; `File.get_correlations` now delegates to it.
+      Captured in the `_append_*_slot` methods, gated on
+      `result_fin.covar is not None` — so `correl` is `None` for
+      covariance-less optimizers and project joint fits (mirrors
+      stderr/conf_ci absence) instead of a misleading identity matrix.
+      SbS captures slice 0 (the conf_ci/mcmc convention).
+- [x] Add `acceptance_fraction` (per-walker float array) to the slot `mcmc`
       payload (`_mcmc_payload`, `_write_mcmc_group`, `_read_mcmc_group`).
-- [ ] Bump `SCHEMA_VERSION` "2" → "3". Reader accepts v2 archives (new fields
-      → `None`); append across versions stays refused (existing policy).
-- [ ] Save/load round-trip tests for both fields (baseline, 2d, mcmc-on/off,
-      v2-archive read tolerance).
+- [x] Bump `SCHEMA_VERSION` "2" → "3" with `SUPPORTED_READ_VERSIONS = ("2",
+      "3")`. Reader accepts v2 archives (new fields → `None`); append across
+      versions stays refused (existing policy). `fit_archive_schema.md`
+      updated (also fixed the stale metrics attr list there).
+- [x] Round-trip tests: `test_correl_roundtrip` (leastsq pins the
+      deterministic covar path; Nelder covar depends on numdifftools),
+      conf_ci/correl/mcmc comparison added to `_assert_slot_round_tripped`,
+      acceptance_fraction round-trip in `TestMcmcPayload` (slow), v2
+      read-tolerance + unknown-version rejection tests.
 
 ## Phase 2 — Relocate accessors to `FitResults`, slot-backed
 

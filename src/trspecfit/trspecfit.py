@@ -3570,6 +3570,14 @@ class File:
             par_names=self.model_base.parameter_names,
         )
         conf_ci = self.model_base.result[2]
+        # correl only when the optimizer produced a covariance matrix —
+        # otherwise the matrix would misreport "no covariance" as
+        # "uncorrelated" (identity + zeros).
+        correl = (
+            ulmfit.correl_to_df(result_fin.params)
+            if getattr(result_fin, "covar", None) is not None
+            else None
+        )
         mcmc = fit_io._mcmc_payload(
             self.model_base.result[3],
             self.model_base.result[4],
@@ -3591,6 +3599,7 @@ class File:
             sigma_type=self.sigma_type,
             sigma_data=self.sigma_data,
             conf_ci=conf_ci if not conf_ci.empty else None,
+            correl=correl,
             mcmc=mcmc,
         )
         self.p._fit_history.append(slot)
@@ -3636,6 +3645,11 @@ class File:
             par_names=self.model_spec.parameter_names,
         )
         conf_ci = self.model_spec.result[2]
+        correl = (
+            ulmfit.correl_to_df(result_fin.params)
+            if getattr(result_fin, "covar", None) is not None
+            else None
+        )
         mcmc = fit_io._mcmc_payload(
             self.model_spec.result[3],
             self.model_spec.result[4],
@@ -3659,6 +3673,7 @@ class File:
             sigma_type=self.sigma_type,
             sigma_data=self.sigma_data,
             conf_ci=conf_ci if not conf_ci.empty else None,
+            correl=correl,
             mcmc=mcmc,
         )
         self.p._fit_history.append(slot)
@@ -3713,12 +3728,18 @@ class File:
         # because the same model_sbs is used for every slice).
         slice0_result = self.results_sbs[0][1]
         slice0_conf_ci = self.results_sbs[0][2]
-        # MCMC payload — captured from slice 0, mirroring fit_alg / nvarys.
-        # Per-slice MCMC chains are not stored; aggregate analysis uses
-        # slice 0 as the representative.
+        # MCMC and correl payloads — captured from slice 0, mirroring
+        # fit_alg / nvarys. Per-slice MCMC chains / correlation matrices
+        # are not stored; aggregate analysis uses slice 0 as the
+        # representative.
         slice0_mcmc = fit_io._mcmc_payload(
             self.results_sbs[0][3],
             self.results_sbs[0][4],
+        )
+        slice0_correl = (
+            ulmfit.correl_to_df(slice0_result.params)
+            if getattr(slice0_result, "covar", None) is not None
+            else None
         )
         slot = fit_io._slot_from_sbs(
             file_fingerprint=self.fingerprint(),
@@ -3737,6 +3758,7 @@ class File:
             sigma_type=self.sigma_type,
             sigma_data=self.sigma_data,
             conf_ci=slice0_conf_ci if not slice0_conf_ci.empty else None,
+            correl=slice0_correl,
             mcmc=slice0_mcmc,
         )
         self.p._fit_history.append(slot)
@@ -3781,6 +3803,14 @@ class File:
             par_names=self.model_2d.parameter_names,
         )
         conf_ci = self.model_2d.result[2]
+        # covar is absent on the project-fit path (SimpleNamespace result)
+        # and for covariance-less optimizers; correl stays None there,
+        # mirroring the per-file absence of stderr / conf_ci.
+        correl = (
+            ulmfit.correl_to_df(result_fin.params)
+            if getattr(result_fin, "covar", None) is not None
+            else None
+        )
         mcmc = fit_io._mcmc_payload(
             self.model_2d.result[3],
             self.model_2d.result[4],
@@ -3802,6 +3832,7 @@ class File:
             sigma_type=self.sigma_type,
             sigma_data=self.sigma_data,
             conf_ci=conf_ci if not conf_ci.empty else None,
+            correl=correl,
             mcmc=mcmc,
         )
         self.p._fit_history.append(slot)
@@ -4398,13 +4429,7 @@ class File:
         """
 
         params = self._result_model(fit_type).result[1].params
-        names = [n for n in params if params[n].vary]
-        mat = pd.DataFrame(np.eye(len(names)), index=names, columns=names, dtype=float)
-        for n in names:
-            for other, corr in (params[n].correl or {}).items():
-                if other in mat.columns:
-                    mat.loc[n, other] = corr
-        return mat
+        return ulmfit.correl_to_df(params)
 
     #
     def get_conf_intervals(

@@ -444,7 +444,7 @@ class TestMcmcPayload:
 
     #
     @pytest.mark.slow
-    def test_baseline_slot_captures_mcmc(self):
+    def test_baseline_slot_captures_mcmc(self, tmp_path):
         from trspecfit.utils.lmfit import MC
 
         truth_project = make_project(name="truth")
@@ -462,10 +462,26 @@ class TestMcmcPayload:
 
         slot = project._fit_history[0]
         assert slot.mcmc is not None
-        assert set(slot.mcmc.keys()) == {"flatchain", "ci", "lnsigma"}
+        assert set(slot.mcmc.keys()) == {
+            "flatchain",
+            "ci",
+            "lnsigma",
+            "acceptance_fraction",
+        }
         assert slot.mcmc["flatchain"] is not None
         assert slot.mcmc["ci"] is not None
         assert slot.mcmc["lnsigma"] is not None
+        # emcee's acceptance fraction is per-walker.
+        acceptance = slot.mcmc["acceptance_fraction"]
+        assert acceptance is not None  # type guard
+        assert acceptance.shape == (32,)
+
+        # acceptance_fraction survives the archive round-trip (schema 3).
+        archive_path = tmp_path / "mcmc.fit.h5"
+        project.save_fits(archive_path, show_output=0)
+        loaded = next(iter(FitResults.load(archive_path)))
+        assert loaded.mcmc is not None  # type guard
+        np.testing.assert_array_equal(loaded.mcmc["acceptance_fraction"], acceptance)
 
     #
     def test_baseline_slot_mcmc_none_when_mcmc_skipped(self):
