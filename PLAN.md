@@ -54,19 +54,29 @@ decisions 2026-07-14.
       acceptance_fraction round-trip in `TestMcmcPayload` (slow), v2
       read-tolerance + unknown-version rejection tests.
 
-## Phase 2 — Relocate accessors to `FitResults`, slot-backed
+## Phase 2 — Relocate accessors to `FitResults`, slot-backed — DONE
 
-- [ ] `FitResults.get_fit_results / get_correlations / get_conf_intervals /
+- [x] `FitResults.get_fit_results / get_correlations / get_conf_intervals /
       get_mcmc(file=..., model=..., fit_type=...)` reading the latest matching
-      slot (define "latest" = last in history order; document).
-- [ ] `get_mcmc` builds `ulmfit.MCMCResult` from the slot payload
-      (flatchain, ci table, lnsigma, acceptance_fraction).
-- [ ] `File.get_*` become thin delegates to `self.p.results` (signatures
-      unchanged → notebook 12 keeps working). Delete `File._result_model`.
-- [ ] SbS gains accessor coverage for free (slots exist; `_result_model`
-      used to raise for sbs).
-- [ ] Re-run / spot-check notebook 12 (`12_uncertainty_mcmc`) — its calls are
-      the compatibility contract.
+      slot via `_latest_slot` (find() is history-ordered; last match wins,
+      mirroring the live-model overwrite convention). Accessors return
+      copies so callers can't mutate slot state. "Not fit yet" raises
+      ValueError with the legacy "Run fit_x() first" message shape.
+- [x] `get_mcmc` builds `ulmfit.MCMCResult` from the slot payload;
+      `MCMCResult.acceptance_fraction` widened to `np.ndarray | None`
+      (None for slots loaded from schema-2 archives).
+- [x] `File.get_*` are thin delegates to `self.p.results` (fit_type kwarg
+      unchanged; optional `model=` filter added). `File._result_model`
+      deleted. Behavior changes: (a) covariance-less fits now raise from
+      `get_correlations` instead of returning an identity-with-zeros
+      matrix; (b) fits on Files without `data` (fingerprint source) record
+      no slot, so accessors raise — data_base-only test fixtures updated
+      to set `file.data`.
+- [x] SbS accessor coverage: get_fit_results serves the wide per-slice
+      frame; correlations/conf_intervals/mcmc serve slice 0 (documented).
+- [x] Notebook 12 compatibility: call signatures unchanged (fit_type
+      kwarg); stages=2 default → leastsq covar → correl present. Full
+      notebook re-run deferred to the Phase 6 docs/examples pass.
 
 ## Phase 3 — Purify the conversion layer (fitlib)
 

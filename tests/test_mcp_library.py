@@ -964,6 +964,10 @@ class TestMCPPickling:
         file.model_active.create_value_1d()
         assert file.model_active.value_1d is not None  # type guard
         file.data_base = file.model_active.value_1d.copy()
+        # file.data backs the fingerprint used for slot capture — without it
+        # the fit completes but records no slot, and the slot-backed get_*
+        # accessors have nothing to read.
+        file.data = file.model_active.value_1d.copy()
         file.e_lim = [0, len(file.energy)]
         return file
 
@@ -1209,16 +1213,20 @@ class TestMCPPickling:
             file.get_mcmc(fit_type="baseline")
 
     #
-    def test_accessors_raise_before_fit_and_reject_sbs(self):
-        """Accessors raise before a fit, and reject the per-slice 'sbs' type."""
+    def test_accessors_raise_before_fit(self):
+        """Accessors raise a clear "run fit_x() first" error before a fit —
+        for every fit type, including 'sbs' (served from slots since the
+        results-ownership relocation)."""
 
         from trspecfit.utils.lmfit import MCMCResult  # noqa: F401  (import check)
 
         file = self._make_fittable_file()
         with pytest.raises(ValueError, match="No baseline fit results"):
             file.get_correlations(fit_type="baseline")
-        with pytest.raises(ValueError, match="not available for Slice-by-Slice"):
+        with pytest.raises(ValueError, match="No sbs fit results"):
             file.get_conf_intervals(fit_type="sbs")
+        with pytest.raises(ValueError, match="Unknown fit_type"):
+            file.get_fit_results(fit_type="bogus")  # type: ignore[arg-type]
 
     #
     @pytest.mark.slow
@@ -1254,6 +1262,7 @@ class TestMCPPickling:
         file.model_active.create_value_1d()
         assert file.model_active.value_1d is not None  # type guard
         file.data_base = file.model_active.value_1d.copy()
+        file.data = file.model_active.value_1d.copy()  # fingerprint for slot capture
         file.e_lim = [0, len(file.energy)]
 
         mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1)

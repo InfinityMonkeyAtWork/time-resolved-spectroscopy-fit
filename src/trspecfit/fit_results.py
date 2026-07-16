@@ -22,15 +22,24 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from os import PathLike
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
 import pandas as pd
 
 from trspecfit.utils.fit_io import SavedFile, SavedFitSlot, read_archive
+from trspecfit.utils.lmfit import MCMCResult
 
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
 SbsAggregation = Literal["median", "mean", "sum", "long"]
+
+# Fit entry point per fit_type — used in "not fit yet" error messages.
+_FIT_METHOD_BY_TYPE: dict[str, str] = {
+    "baseline": "fit_baseline",
+    "spectrum": "fit_spectrum",
+    "sbs": "fit_slice_by_slice",
+    "2d": "fit_2d",
+}
 
 # Default columns. Dynamic: which set is used depends on whether any matched
 # slot carries a finite ``sigma_data``. ``chi2_red_raw`` is the lmfit-unweighted
@@ -292,6 +301,233 @@ class FitResults:
                 f"fit_type={fit_type!r}; use find() and narrow on .selection."
             )
         return matches[0]
+
+    #
+    def _latest_slot(
+        self,
+        *,
+        file: Any,
+        model: str | None,
+        fit_type: str,
+    ) -> SavedFitSlot:
+        """
+        Return the most recent slot matching the filters.
+
+        ``find()`` preserves history order, so the last match is the latest
+        fit — mirroring the live-model convention where each ``fit_*`` call
+        overwrites the previous result of that type. Raises ``ValueError``
+        (not ``LookupError``) with a "run fit_x() first" hint, matching the
+        long-standing accessor contract on ``File``.
+        """
+
+        if fit_type not in _FIT_METHOD_BY_TYPE:
+            raise ValueError(
+                f"Unknown fit_type={fit_type!r}; "
+                "use 'baseline', 'spectrum', 'sbs', or '2d'."
+            )
+        file_name = _resolve_file_arg(file)
+        matches = self.find(
+            file=file_name, model=model, fit_type=cast(FitType, fit_type)
+        )
+        if not matches:
+            parts = [
+                f"{k}={v!r}"
+                for k, v in (("file", file_name), ("model", model))
+                if v is not None
+            ]
+            detail = f" ({', '.join(parts)})" if parts else ""
+            raise ValueError(
+                f"No {fit_type} fit results{detail}. "
+                f"Run {_FIT_METHOD_BY_TYPE[fit_type]}() first."
+            )
+        return matches[-1]
+
+    #
+    def get_fit_results(
+        self,
+        *,
+        file: Any = None,
+        model: str | None = None,
+        fit_type: FitType = "baseline",
+    ) -> pd.DataFrame:
+        """
+        Return the fitted parameters of the latest matching fit.
+
+        Reads the persisted slot (``SavedFitSlot.params``) — works identically
+        on ``Project.results`` and on archives loaded via
+        :meth:`FitResults.load`.
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file (name string or object with ``.name``).
+        model : str, optional
+            Filter to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+            Which fit type to read. When several slots match, the most
+            recent fit wins.
+
+        Returns
+        -------
+        pd.DataFrame
+            For 'baseline', 'spectrum', and '2d': one row per parameter with
+            columns ``['name', 'value', 'stderr', 'init_value', 'min', 'max',
+            'vary', 'expr']``.
+            For 'sbs': one row per time slice with columns = parameter names.
+
+        Raises
+        ------
+        ValueError
+            If no matching fit has been performed (or loaded) yet.
+        """
+
+        slot = self._latest_slot(file=file, model=model, fit_type=fit_type)
+        return slot.params.copy()
+
+    #
+    def get_correlations(
+        self,
+        *,
+        file: Any = None,
+        model: str | None = None,
+        fit_type: FitType = "baseline",
+    ) -> pd.DataFrame:
+        """
+        Return the parameter correlation matrix of the latest matching fit.
+
+        Reads the persisted slot (``SavedFitSlot.correl``). For SbS fits the
+        matrix is slice 0's (the representative slice, like ``conf_ci`` and
+        ``mcmc``).
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file (name string or object with ``.name``).
+        model : str, optional
+            Filter to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+            Which fit type to read (latest matching fit wins).
+
+        Returns
+        -------
+        pd.DataFrame
+            Square matrix indexed by the varying parameter names: 1.0 on the
+            diagonal, lmfit's pairwise correlations off-diagonal.
+
+        Raises
+        ------
+        ValueError
+            If no matching fit exists, or the fit produced no covariance
+            (e.g. Nelder without numdifftools installed, or a project-level
+            joint fit).
+        """
+
+        slot = self._latest_slot(file=file, model=model, fit_type=fit_type)
+        if slot.correl is None:
+            raise ValueError(
+                f"No correlation matrix for the {fit_type} fit: the optimizer "
+                "reported no covariance. Use a covariance-producing method "
+                "(e.g. leastsq, or Nelder with numdifftools installed); "
+                "project-level joint fits do not decompose per file."
+            )
+        return slot.correl.copy()
+
+    #
+    def get_conf_intervals(
+        self,
+        *,
+        file: Any = None,
+        model: str | None = None,
+        fit_type: FitType = "baseline",
+    ) -> pd.DataFrame:
+        """
+        Return the profiled confidence-interval table of the latest matching
+        fit.
+
+        Reads the persisted slot (``SavedFitSlot.conf_ci``). Populated only
+        when the fit ran with ``try_ci=1`` (otherwise an empty DataFrame).
+        For SbS fits the table is slice 0's.
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file (name string or object with ``.name``).
+        model : str, optional
+            Filter to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+            Which fit type to read (latest matching fit wins).
+
+        Returns
+        -------
+        pd.DataFrame
+            The conf_interval table, or an empty DataFrame if ``try_ci`` was
+            off.
+
+        Raises
+        ------
+        ValueError
+            If no matching fit has been performed (or loaded) yet.
+        """
+
+        slot = self._latest_slot(file=file, model=model, fit_type=fit_type)
+        if slot.conf_ci is None:
+            return pd.DataFrame()
+        return slot.conf_ci.copy()
+
+    #
+    def get_mcmc(
+        self,
+        *,
+        file: Any = None,
+        model: str | None = None,
+        fit_type: FitType = "baseline",
+    ) -> MCMCResult:
+        """
+        Return the MCMC outputs (quantile table, chain, acceptance) of the
+        latest matching fit.
+
+        Reads the persisted slot (``SavedFitSlot.mcmc``). Available only when
+        the fit ran with ``mc_settings`` enabling MCMC. For SbS fits the
+        payload is slice 0's.
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file (name string or object with ``.name``).
+        model : str, optional
+            Filter to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+            Which fit type to read (latest matching fit wins).
+
+        Returns
+        -------
+        MCMCResult
+            Bundle of ``table`` (posterior quantiles), ``flatchain``, and
+            ``acceptance_fraction`` (``None`` for slots loaded from schema-2
+            archives, which did not store it).
+
+        Raises
+        ------
+        ValueError
+            If no matching fit exists, or the fit had no MCMC step.
+        """
+
+        slot = self._latest_slot(file=file, model=model, fit_type=fit_type)
+        if slot.mcmc is None:
+            raise ValueError(
+                f"No MCMC results for the {fit_type} fit. Re-run with "
+                "mc_settings=MC(use_mc=1, ...)."
+            )
+        flatchain = slot.mcmc.get("flatchain")
+        ci = slot.mcmc.get("ci")
+        acceptance = slot.mcmc.get("acceptance_fraction")
+        return MCMCResult(
+            table=ci.copy() if ci is not None else pd.DataFrame(),
+            flatchain=flatchain.copy() if flatchain is not None else pd.DataFrame(),
+            acceptance_fraction=(
+                np.asarray(acceptance) if acceptance is not None else None
+            ),
+        )
 
     #
     def compare_models(

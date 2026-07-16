@@ -4308,13 +4308,21 @@ class File:
     def get_fit_results(
         self,
         *,
+        model: str | None = None,
         fit_type: Literal["baseline", "spectrum", "sbs", "2d"] = "baseline",
     ) -> pd.DataFrame:
         """
         Return fit results as a DataFrame for programmatic access.
 
+        Sugar for ``self.p.results.get_fit_results(file=self, ...)`` — reads
+        the persisted fit slot (latest matching fit), so results survive
+        model reloads and are identical to what ``save_fits`` archives.
+
         Parameters
         ----------
+        model : str, optional
+            Restrict to a single model name. Default: latest fit of
+            ``fit_type`` regardless of model.
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
             Which fit results to return:
 
@@ -4337,116 +4345,68 @@ class File:
             If the requested fit has not been performed yet.
         """
 
-        if fit_type == "baseline":
-            if self.model_base is None or not self.model_base.result:
-                raise ValueError("No baseline fit results. Run fit_baseline() first.")
-            return ulmfit.par_to_df(
-                self.model_base.result[1].params,
-                col_type="min",
-                par_names=self.model_base.parameter_names,
-            )
-        if fit_type == "spectrum":
-            if self.model_spec is None or not self.model_spec.result:
-                raise ValueError("No spectrum fit results. Run fit_spectrum() first.")
-            return ulmfit.par_to_df(
-                self.model_spec.result[1].params,
-                col_type="min",
-                par_names=self.model_spec.parameter_names,
-            )
-        if fit_type == "sbs":
-            if not self.results_sbs:
-                raise ValueError(
-                    "No Slice-by-Slice fit results. Run fit_slice_by_slice() first."
-                )
-            return ulmfit.list_of_par_to_df(self.results_sbs)
-        if fit_type == "2d":
-            if self.model_2d is None or not self.model_2d.result:
-                raise ValueError("No 2D fit results. Run fit_2d() first.")
-            return ulmfit.par_to_df(
-                self.model_2d.result[1].params,
-                col_type="min",
-                par_names=self.model_2d.parameter_names,
-            )
-        raise ValueError(
-            f"Unknown fit_type={fit_type!r}; "
-            "use 'baseline', 'spectrum', 'sbs', or '2d'."
-        )
-
-    #
-    def _result_model(self, fit_type: str) -> mcp.Model:
-        """Resolve the fitted Model for a fit_type, or raise if not yet fit.
-
-        Shared by get_correlations / get_conf_intervals / get_mcmc. Slice-by-
-        Slice is excluded — its per-slice results have a different shape (use
-        ``get_fit_results(fit_type='sbs')``).
-        """
-
-        models = {
-            "baseline": (self.model_base, "fit_baseline"),
-            "spectrum": (self.model_spec, "fit_spectrum"),
-            "2d": (self.model_2d, "fit_2d"),
-        }
-        if fit_type == "sbs":
-            raise ValueError(
-                "get_correlations / get_conf_intervals / get_mcmc are not "
-                "available for Slice-by-Slice fits (per-slice results); use "
-                "get_fit_results(fit_type='sbs')."
-            )
-        if fit_type not in models:
-            raise ValueError(
-                f"Unknown fit_type={fit_type!r}; use 'baseline', 'spectrum', or '2d'."
-            )
-        model, fit_method = models[fit_type]
-        if model is None or not model.result:
-            raise ValueError(f"No {fit_type} fit results. Run {fit_method}() first.")
-        return model
+        return self.p.results.get_fit_results(file=self, model=model, fit_type=fit_type)
 
     #
     def get_correlations(
         self,
         *,
-        fit_type: Literal["baseline", "spectrum", "2d"] = "baseline",
+        model: str | None = None,
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] = "baseline",
     ) -> pd.DataFrame:
         """
         Return the parameter correlation matrix from a completed fit.
 
+        Sugar for ``self.p.results.get_correlations(file=self, ...)`` —
+        reads the persisted fit slot (latest matching fit). For SbS fits
+        the matrix is slice 0's (the representative slice).
+
         Parameters
         ----------
-        fit_type : {'baseline', 'spectrum', '2d'}, default='baseline'
+        model : str, optional
+            Restrict to a single model name. Default: latest fit of
+            ``fit_type`` regardless of model.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
             Which fit to read (see :meth:`get_fit_results`).
 
         Returns
         -------
         pd.DataFrame
             Square matrix indexed by the varying parameter names: 1.0 on the
-            diagonal, lmfit's pairwise correlations off-diagonal (0.0 where a
-            pair is uncorrelated or the optimizer reported no covariance).
+            diagonal, lmfit's pairwise correlations off-diagonal.
 
         Raises
         ------
         ValueError
-            If the requested fit has not been performed yet.
+            If the requested fit has not been performed yet, or produced no
+            covariance (e.g. Nelder without numdifftools, or a project-level
+            joint fit).
         """
 
-        params = self._result_model(fit_type).result[1].params
-        return ulmfit.correl_to_df(params)
+        return self.p.results.get_correlations(
+            file=self, model=model, fit_type=fit_type
+        )
 
     #
     def get_conf_intervals(
         self,
         *,
-        fit_type: Literal["baseline", "spectrum", "2d"] = "baseline",
+        model: str | None = None,
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] = "baseline",
     ) -> pd.DataFrame:
         """
         Return the profiled confidence-interval table from a completed fit.
 
-        Populated only when the fit ran with ``try_ci=1`` (otherwise an empty
-        DataFrame). Columns are the per-sigma bounds with the best-fit value in
-        the middle (see ``fitlib.fit_wrapper``).
+        Sugar for ``self.p.results.get_conf_intervals(file=self, ...)`` —
+        reads the persisted fit slot (latest matching fit). Populated only
+        when the fit ran with ``try_ci=1`` (otherwise an empty DataFrame).
+        For SbS fits the table is slice 0's.
 
         Parameters
         ----------
-        fit_type : {'baseline', 'spectrum', '2d'}, default='baseline'
+        model : str, optional
+            Restrict to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
             Which fit to read.
 
         Returns
@@ -4460,22 +4420,30 @@ class File:
             If the requested fit has not been performed yet.
         """
 
-        return self._result_model(fit_type).result[2]
+        return self.p.results.get_conf_intervals(
+            file=self, model=model, fit_type=fit_type
+        )
 
     #
     def get_mcmc(
         self,
         *,
-        fit_type: Literal["baseline", "spectrum", "2d"] = "baseline",
+        model: str | None = None,
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] = "baseline",
     ) -> ulmfit.MCMCResult:
         """
         Return the MCMC outputs (quantile table, chain, acceptance) of a fit.
 
-        Available only when the fit ran with ``mc_settings`` enabling MCMC.
+        Sugar for ``self.p.results.get_mcmc(file=self, ...)`` — reads the
+        persisted fit slot (latest matching fit). Available only when the
+        fit ran with ``mc_settings`` enabling MCMC. For SbS fits the payload
+        is slice 0's.
 
         Parameters
         ----------
-        fit_type : {'baseline', 'spectrum', '2d'}, default='baseline'
+        model : str, optional
+            Restrict to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
             Which fit to read.
 
         Returns
@@ -4490,18 +4458,7 @@ class File:
             If the requested fit has not been performed, or had no MCMC step.
         """
 
-        model = self._result_model(fit_type)
-        emcee_fin = model.result[3]
-        if emcee_fin is None:
-            raise ValueError(
-                f"No MCMC results for the {fit_type} fit. Re-run with "
-                "mc_settings=MC(use_mc=1, ...)."
-            )
-        return ulmfit.MCMCResult(
-            table=model.result[4],
-            flatchain=emcee_fin.flatchain,
-            acceptance_fraction=np.asarray(emcee_fin.acceptance_fraction),
-        )
+        return self.p.results.get_mcmc(file=self, model=model, fit_type=fit_type)
 
     #
     def compare_models(

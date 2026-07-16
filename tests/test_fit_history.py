@@ -355,6 +355,10 @@ class TestSbSSlot:
         for k in ("chi2", "chi2_red", "r2", "aic", "bic"):
             assert isinstance(slot.metrics[k], np.ndarray)
             assert slot.metrics[k].shape == (len(file.time),)
+        # The slot-backed accessor serves the wide per-slice params frame.
+        sbs_df = file.get_fit_results(fit_type="sbs")
+        pd.testing.assert_frame_equal(sbs_df, slot.params)
+        assert len(sbs_df) == len(file.time)
 
     #
     @pytest.mark.slow
@@ -479,15 +483,102 @@ class TestMcmcPayload:
         # acceptance_fraction survives the archive round-trip (schema 3).
         archive_path = tmp_path / "mcmc.fit.h5"
         project.save_fits(archive_path, show_output=0)
-        loaded = next(iter(FitResults.load(archive_path)))
+        loaded_results = FitResults.load(archive_path)
+        loaded = next(iter(loaded_results))
         assert loaded.mcmc is not None  # type guard
         np.testing.assert_array_equal(loaded.mcmc["acceptance_fraction"], acceptance)
+
+        # ... and the slot-backed accessor serves it from the loaded archive.
+        mcmc_res = loaded_results.get_mcmc(file="fit", fit_type="baseline")
+        assert mcmc_res.acceptance_fraction is not None  # type guard
+        np.testing.assert_array_equal(mcmc_res.acceptance_fraction, acceptance)
+        assert not mcmc_res.table.empty
+        assert not mcmc_res.flatchain.empty
 
     #
     def test_baseline_slot_mcmc_none_when_mcmc_skipped(self):
         project, _ = _setup_baseline_fit()  # try_ci=0, no MCMC
         slot = project._fit_history[0]
         assert slot.mcmc is None
+
+
+#
+# --- slot-backed get_* accessors ----------------------------------------------
+#
+
+
+#
+class TestSlotBackedAccessors:
+    """FitResults.get_fit_results / get_correlations / get_conf_intervals /
+    get_mcmc read the latest matching SavedFitSlot; the File.get_* methods
+    are thin sugar delegating with file=self."""
+
+    #
+    def test_file_sugar_matches_fitresults_accessor(self):
+        project, file = _setup_baseline_fit()
+        via_file = file.get_fit_results(fit_type="baseline")
+        via_results = project.results.get_fit_results(file=file, fit_type="baseline")
+        pd.testing.assert_frame_equal(via_file, via_results)
+        # ... and both match the slot payload.
+        pd.testing.assert_frame_equal(via_file, project._fit_history[0].params)
+
+    #
+    def test_returned_frame_is_a_copy(self):
+        """Accessors hand out copies — mutating the return value must not
+        desynchronize the persisted slot."""
+
+        project, file = _setup_baseline_fit()
+        df = file.get_fit_results(fit_type="baseline")
+        df.loc[0, "value"] = -999.0
+        assert project._fit_history[0].params.loc[0, "value"] != -999.0
+
+    #
+    def test_latest_slot_wins_after_refit(self):
+        project, file = _setup_baseline_fit()
+        assert file.data_base is not None  # type guard
+        # Refit against rescaled data: same (file, model, fit_type, selection)
+        # → a second slot appends, and the accessors must serve the newer one.
+        file.data_base = file.data_base * 1.5
+        file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+        assert len(project._fit_history) == 2
+
+        df = file.get_fit_results(fit_type="baseline")
+        pd.testing.assert_frame_equal(df, project._fit_history[-1].params)
+        first_values = project._fit_history[0].params["value"].to_numpy()
+        assert not np.allclose(df["value"].to_numpy(), first_values)
+
+    #
+    def test_get_correlations_raises_without_covariance(self):
+        """A slot with correl=None (covariance-less optimizer, project joint
+        fit) must produce a clear error, not a fabricated identity matrix."""
+
+        import dataclasses
+
+        project, _ = _setup_baseline_fit()
+        slot = dataclasses.replace(project._fit_history[0], correl=None)
+        results = FitResults(slots=[slot])
+        with pytest.raises(ValueError, match="reported no covariance"):
+            results.get_correlations(fit_type="baseline")
+
+    #
+    def test_get_mcmc_tolerates_missing_acceptance(self):
+        """Slots loaded from schema-2 archives carry acceptance_fraction=None;
+        get_mcmc must still serve table/flatchain."""
+
+        import dataclasses
+
+        project, _ = _setup_baseline_fit()
+        v2_payload = {
+            "flatchain": pd.DataFrame({"GLP_01_A": [1.0, 2.0]}),
+            "ci": None,
+            "lnsigma": None,
+            "acceptance_fraction": None,
+        }
+        slot = dataclasses.replace(project._fit_history[0], mcmc=v2_payload)
+        res = FitResults(slots=[slot]).get_mcmc(fit_type="baseline")
+        assert res.acceptance_fraction is None
+        assert res.table.empty
+        assert list(res.flatchain.columns) == ["GLP_01_A"]
 
 
 #

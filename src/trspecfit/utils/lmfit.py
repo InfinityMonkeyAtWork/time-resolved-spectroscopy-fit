@@ -635,12 +635,11 @@ class MC:
 #
 @dataclass(frozen=True)
 class MCMCResult:
-    """Live MCMC outputs for a single fit (counterpart to the ``MC`` settings).
+    """MCMC outputs for a single fit (counterpart to the ``MC`` settings).
 
-    A read-only view over ``model.result`` (the raw ``lmfit.emcee`` result and
-    its quantile table), returned by ``File.get_mcmc``. The underlying data is
-    persisted in the ``SavedFitSlot.mcmc`` payload (schema 3) — see the
-    "results-data ownership boundary" TODO for the planned unified results API.
+    A read-only bundle built from the persisted ``SavedFitSlot.mcmc``
+    payload (schema 3), returned by ``FitResults.get_mcmc`` and the
+    ``File.get_mcmc`` sugar.
 
     Attributes
     ----------
@@ -650,13 +649,14 @@ class MCMCResult:
         nuisance row. Fixed parameters have no posterior and are excluded.
     flatchain : pandas.DataFrame
         Flattened MCMC chain, one column per sampled parameter.
-    acceptance_fraction : numpy.ndarray
-        Per-walker acceptance fraction (healthy range ≈ 0.2–0.5).
+    acceptance_fraction : numpy.ndarray | None
+        Per-walker acceptance fraction (healthy range ≈ 0.2–0.5). ``None``
+        for slots loaded from schema-2 archives, which did not store it.
     """
 
     table: pd.DataFrame
     flatchain: pd.DataFrame
-    acceptance_fraction: np.ndarray
+    acceptance_fraction: np.ndarray | None
 
 
 #
