@@ -106,12 +106,13 @@ a new path.
 - `"1"` → `"2"`: the σ-calibrated chi-square columns and per-slot sigma
   metadata changed the stored fields — a clean break, so schema-1 archives
   can no longer be read.
-- `"2"` → `"3"` (2026-07): **additive** — slot `correl` dataset and mcmc
-  `acceptance_fraction` dataset. The reader accepts both `"2"` and `"3"`
-  (`SUPPORTED_READ_VERSIONS` in `utils/fit_io.py`); schema-2 archives load
-  with the new fields as `None`. The writer still refuses to append to an
-  archive whose version differs from its own — re-save to a new path to
-  migrate.
+- `"2"` → `"3"` (2026-07): **additive** — slot `correl` dataset, mcmc
+  `acceptance_fraction` dataset, the `fit_settings` provenance attr, and
+  the sbs-only `params_meta` / `params_stderr` datasets. The reader
+  accepts both `"2"` and `"3"` (`SUPPORTED_READ_VERSIONS` in
+  `utils/fit_io.py`); schema-2 archives load with the new fields as
+  `None`. The writer still refuses to append to an archive whose version
+  differs from its own — re-save to a new path to migrate.
 
 Future incompatible changes (e.g. project-scoped joint-result slots or
 `keep_history=True` full-log save — both deferred, see "What's *not* in
@@ -193,6 +194,7 @@ files/000000/slots/000000/
 │     # --- provenance ---
 │     fit_alg           : str               # e.g. "leastsq", "Nelder"
 │     yaml_filename     : str        (opt)  # human breadcrumb; omit if None
+│     fit_settings      : str        (opt)  # JSON dict; see "fit_settings attr"; schema ≥ 3
 │     timestamp         : str               # ISO 8601 UTC, slot creation time
 │     # --- metrics (baseline / spectrum / 2d only) ---
 │     chi2_raw          : float64   (cond)
@@ -203,6 +205,8 @@ files/000000/slots/000000/
 │     aic               : float64   (cond)
 │     bic               : float64   (cond)
 ├── params                                  # see "params dataset" below; layout depends on fit_type
+├── params_meta                      (opt)  # heterogeneous-DataFrame dataset; sbs only; schema ≥ 3
+├── params_stderr                    (opt)  # all-numeric DataFrame dataset; sbs only; schema ≥ 3
 ├── observed                                # 1D or 2D dataset; preserves source dtype
 ├── fit                                     # 1D or 2D dataset; preserves source dtype; observed.shape == fit.shape
 ├── metrics_per_slice                (opt)  # 1D structured dataset; sbs only
@@ -284,10 +288,66 @@ params : 2D float64 dataset, shape (n_slices, n_par)
     columns : vlen str[n_par]   # parameter names; axis-1 order
 ```
 
-Stores optimized values only — no init / stderr / min / max / vary /
-expr. Mirrors `list_of_par_to_df(results)` in `utils/lmfit.py`. If full
-per-slice metadata becomes useful later, add a sibling
-heterogeneous-DataFrame dataset; do not redefine `params`.
+Stores optimized values only. Mirrors `list_of_par_to_df(results)` in
+`utils/lmfit.py`. The slice-invariant metadata and the per-slice stderr
+live in the sibling `params_meta` / `params_stderr` datasets (schema ≥ 3)
+— do not redefine `params`.
+
+## `params_meta` dataset (sbs only, optional; schema ≥ 3)
+
+Shared per-parameter metadata — exactly the columns that are
+slice-invariant by construction (one model, one vary set for every
+slice; only *values* differ per slice):
+
+```
+params_meta : 1D structured dataset, shape (n_par,)
+  fields (positional, in column order):
+    c000000 : vlen str    # column "name"
+    c000001 : bool        # column "vary"
+    c000002 : float64     # column "min"   (-inf permitted)
+    c000003 : float64     # column "max"   (+inf permitted)
+    c000004 : vlen str    # column "expr"  ("" ↔ None)
+  attrs:
+    columns : vlen str[5] = ["name","vary","min","max","expr"]
+    dtypes  : vlen str[5] = ["str","bool","float64","float64","str"]
+```
+
+Captured from the slice-0 result params; rows are column-aligned with the
+wide `params` frame. Deliberately excludes `value` / `stderr` /
+`init_value`, which are per-slice (`init_value` diverges under
+`seed_adapt`). The runtime state is the source — not the model YAML,
+which the fit may have diverged from (e.g. `seed_source="baseline"`).
+
+## `params_stderr` dataset (sbs only, optional; schema ≥ 3)
+
+Per-slice parameter standard errors, mirroring the wide `params` layout:
+
+```
+params_stderr : 2D float64 dataset, shape (n_slices, n_par)
+  attrs:
+    columns : vlen str[n_par]   # parameter names; axis-1 order
+```
+
+`NaN` where the optimizer reported no stderr for that slice; the NaN is
+data (no None mapping). Mirrors `list_of_par_stderr_to_df(results)` in
+`utils/lmfit.py`.
+
+## `fit_settings` attr (optional; schema ≥ 3)
+
+JSON-encoded dict on the slot `metadata` group recording the optimizer
+configuration that can influence the result:
+
+- all fit types: `stages`, `fit_alg_1`, `fit_alg_2`, `try_ci`;
+- sbs: `seed_source`, `seed_adapt`, `seed_values` (JSON `null` is
+  meaningful — "no adaptation" is provenance too);
+- when MCMC was enabled: an `mc` sub-dict (`use_mc`, `steps`, `nwalkers`,
+  `burn`, `thin`, `ntemps`, `is_weighted`, `sigma_ini/min/max`).
+
+Execution details that cannot change the result (SbS / emcee worker
+counts; serial ≡ parallel dispatch is pinned by test) are deliberately
+excluded. `fit_settings` is not part of `history_key` — a refit with
+different settings is still a refit of the same (file, model, fit_type,
+selection). Built by `build_fit_settings` in `utils/fit_io.py`.
 
 ## `metrics_per_slice` dataset (sbs only)
 
@@ -391,6 +451,9 @@ Per slot, the reader produces a `SavedFitSlot` with:
 | `observed_sha256`    | slot `metadata.observed_sha256` attr                           |
 | `history_key`        | recomputed from `file_fingerprint + model_name + fit_type + selection_json` |
 | `params`             | `params` dataset (+ its `columns` attr) → DataFrame            |
+| `params_meta`        | `params_meta` dataset → DataFrame, or `None` if absent         |
+| `params_stderr`      | `params_stderr` dataset → DataFrame, or `None` if absent       |
+| `fit_settings`       | `metadata.fit_settings` attr (JSON) → dict, or `None` if absent |
 | `metrics`            | scalar attrs (non-sbs) or `metrics_per_slice` (sbs) → dict     |
 | `observed`           | `observed` dataset                                             |
 | `fit`                | `fit` dataset                                                  |

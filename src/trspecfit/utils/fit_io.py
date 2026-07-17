@@ -226,6 +226,24 @@ class SavedFitSlot:
         for SbS / 2D / spectrum; equals ``sigma_data / √N_avg`` for
         baseline (``N_avg`` = number of time slices averaged into
         ``data_base``). ``NaN`` when ``sigma_data`` is ``NaN``.
+    params_meta : pd.DataFrame | None
+        SbS only: shared per-parameter metadata ``[name, vary, min, max,
+        expr]`` — the columns that are slice-invariant by construction
+        (one model, one vary set for every slice). ``None`` for other fit
+        types, whose long-form ``params`` already carry these.
+    params_stderr : pd.DataFrame | None
+        SbS only: per-slice parameter standard errors, same shape/columns
+        as the wide ``params`` frame; ``NaN`` where the optimizer reported
+        none. ``None`` for other fit types (long-form ``params`` has a
+        ``stderr`` column).
+    fit_settings : dict | None
+        Optimizer-configuration provenance: ``{"stages", "fit_alg_1",
+        "fit_alg_2", "try_ci"}``, plus ``{"seed_source", "seed_adapt",
+        "seed_values"}`` for SbS and an ``"mc"`` sub-dict (steps, walkers,
+        burn, thin, ntemps, is_weighted, sigma bounds) when MCMC was
+        enabled. Deliberately excludes execution details that cannot
+        change the result (worker counts). Not part of ``history_key`` —
+        a refit with different settings is still a refit.
     conf_ci : pd.DataFrame | None
     correl : pd.DataFrame | None
         Varying-parameter correlation matrix (index == columns == varying
@@ -263,6 +281,9 @@ class SavedFitSlot:
     conf_ci: pd.DataFrame | None = None
     correl: pd.DataFrame | None = None
     mcmc: dict[str, Any] | None = None
+    params_meta: pd.DataFrame | None = None
+    params_stderr: pd.DataFrame | None = None
+    fit_settings: dict[str, Any] | None = None
 
 
 #
@@ -511,6 +532,55 @@ def _mcmc_payload(
 
 
 #
+def build_fit_settings(
+    *,
+    stages: int,
+    fit_wrapper_kwargs: dict[str, Any] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """
+    Assemble the provenance dict stored as ``SavedFitSlot.fit_settings``.
+
+    Records the optimizer configuration that can influence the fit result:
+    stage count, per-stage methods, the profiled-CI request, MCMC sampling
+    settings (when enabled), plus any fit-type-specific extras the caller
+    passes verbatim (e.g. SbS ``seed_source`` / ``seed_adapt`` /
+    ``seed_values`` — ``None`` values are kept: "no seed adaptation" is
+    provenance too). Execution details that cannot change the result
+    (SbS / emcee worker counts) are deliberately excluded — serial and
+    parallel dispatch are pinned result-identical by test.
+
+    Defaults mirror ``fitlib.fit_wrapper``'s signature; if you change one,
+    change the other.
+    """
+
+    kwargs = fit_wrapper_kwargs or {}
+    settings: dict[str, Any] = {
+        "stages": int(stages),
+        "fit_alg_1": str(kwargs.get("fit_alg_1", "Nelder")),
+        "fit_alg_2": str(kwargs.get("fit_alg_2", "leastsq")),
+        "try_ci": int(kwargs.get("try_ci", 1)),
+    }
+    mc = kwargs.get("mc_settings")
+    # MC stores its use_mc constructor arg as the use_emcee attribute.
+    if mc is not None and getattr(mc, "use_emcee", False):
+        settings["mc"] = {
+            "use_mc": int(mc.use_emcee),
+            "steps": int(mc.steps),
+            "nwalkers": int(mc.nwalkers),
+            "burn": int(mc.burn),
+            "thin": int(mc.thin),
+            "ntemps": int(mc.ntemps),
+            "is_weighted": bool(mc.is_weighted),
+            "sigma_ini": float(mc.sigma_ini),
+            "sigma_min": float(mc.sigma_min),
+            "sigma_max": float(mc.sigma_max),
+        }
+    settings.update(extra)
+    return settings
+
+
+#
 # --- per-fit-type slot extractors -------------------------------------------
 #
 
@@ -536,6 +606,7 @@ def _slot_from_baseline(
     conf_ci: pd.DataFrame | None = None,
     correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
+    fit_settings: dict[str, Any] | None = None,
 ) -> SavedFitSlot:
     """
     Build a SavedFitSlot for a completed baseline fit.
@@ -565,6 +636,7 @@ def _slot_from_baseline(
         conf_ci=conf_ci,
         correl=correl,
         mcmc=mcmc,
+        fit_settings=fit_settings,
         noise_type=noise_type,
         sigma_source=sigma_source,
         sigma_type=sigma_type,
@@ -595,6 +667,7 @@ def _slot_from_spectrum(
     conf_ci: pd.DataFrame | None = None,
     correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
+    fit_settings: dict[str, Any] | None = None,
 ) -> SavedFitSlot:
     """Build a SavedFitSlot for a completed spectrum fit.
 
@@ -624,6 +697,7 @@ def _slot_from_spectrum(
         conf_ci=conf_ci,
         correl=correl,
         mcmc=mcmc,
+        fit_settings=fit_settings,
         noise_type=noise_type,
         sigma_source=sigma_source,
         sigma_type=sigma_type,
@@ -652,6 +726,9 @@ def _slot_from_sbs(
     conf_ci: pd.DataFrame | None = None,
     correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
+    params_meta: pd.DataFrame | None = None,
+    params_stderr: pd.DataFrame | None = None,
+    fit_settings: dict[str, Any] | None = None,
 ) -> SavedFitSlot:
     """
     Build a SavedFitSlot for a completed slice-by-slice fit.
@@ -704,6 +781,9 @@ def _slot_from_sbs(
         conf_ci=conf_ci,
         correl=correl,
         mcmc=mcmc,
+        params_meta=params_meta,
+        params_stderr=params_stderr,
+        fit_settings=fit_settings,
     )
 
 
@@ -728,6 +808,7 @@ def _slot_from_2d(
     conf_ci: pd.DataFrame | None = None,
     correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
+    fit_settings: dict[str, Any] | None = None,
 ) -> SavedFitSlot:
     """Build a SavedFitSlot for a completed 2D global fit."""
 
@@ -750,6 +831,7 @@ def _slot_from_2d(
         conf_ci=conf_ci,
         correl=correl,
         mcmc=mcmc,
+        fit_settings=fit_settings,
         noise_type=noise_type,
         sigma_source=sigma_source,
         sigma_type=sigma_type,
@@ -779,6 +861,7 @@ def _build_slot(
     conf_ci: pd.DataFrame | None,
     correl: pd.DataFrame | None,
     mcmc: dict[str, Any] | None,
+    fit_settings: dict[str, Any] | None,
     noise_type: str,
     sigma_source: str,
     sigma_type: str,
@@ -825,6 +908,7 @@ def _build_slot(
         conf_ci=conf_ci,
         correl=correl,
         mcmc=mcmc,
+        fit_settings=fit_settings,
     )
 
 
@@ -1098,6 +1182,14 @@ _PARAMS_LONG_TYPE_TAGS: list[TypeTag] = [
     "bool",  # vary
     "str",  # expr
 ]
+# SbS shared per-parameter metadata (slice-invariant columns only).
+_PARAMS_META_TYPE_TAGS: list[TypeTag] = [
+    "str",  # name
+    "bool",  # vary
+    "float64",  # min
+    "float64",  # max
+    "str",  # expr
+]
 _METRICS_KEYS = (
     "chi2_raw",
     "chi2_red_raw",
@@ -1332,6 +1424,20 @@ def _write_slot(
     slot_group.create_dataset("fit", data=np.ascontiguousarray(slot.fit))
     if slot.fit_type == "sbs":
         _write_metrics_per_slice(slot_group, slot.metrics)
+    if slot.params_meta is not None:
+        _encode_dataframe(
+            slot_group,
+            "params_meta",
+            slot.params_meta,
+            type_tags=_PARAMS_META_TYPE_TAGS,
+        )
+    if slot.params_stderr is not None:
+        _encode_dataframe(
+            slot_group,
+            "params_stderr",
+            slot.params_stderr,
+            type_tags=_all_float64_tags(len(slot.params_stderr.columns)),
+        )
     if slot.conf_ci is not None:
         _encode_dataframe(slot_group, "conf_ci", slot.conf_ci)
     if slot.correl is not None:
@@ -1367,6 +1473,8 @@ def _write_slot_metadata(
     meta.attrs["fit_alg"] = slot.fit_alg
     if slot.yaml_filename is not None:
         meta.attrs["yaml_filename"] = slot.yaml_filename
+    if slot.fit_settings is not None:
+        meta.attrs["fit_settings"] = json.dumps(slot.fit_settings, sort_keys=True)
     meta.attrs["timestamp"] = slot.timestamp
     # Noise metadata snapshot at fit time — see SavedFitSlot docstring.
     meta.attrs["noise_type"] = slot.noise_type
@@ -1629,6 +1737,21 @@ def _read_slot(
         correl = _decode_dataframe(require_dataset(correl_obj, "correl"))
         # Square matrix stores only column labels; index == columns.
         correl.index = pd.Index(correl.columns)
+    params_meta_obj = slot_group.get("params_meta")
+    params_meta: pd.DataFrame | None = None
+    if params_meta_obj is not None:
+        params_meta = _decode_dataframe(require_dataset(params_meta_obj, "params_meta"))
+        # Same "" ↔ None mapping as long-form params (expr column).
+        _restore_long_params_nones(params_meta)
+    params_stderr_obj = slot_group.get("params_stderr")
+    params_stderr = (
+        _decode_dataframe(require_dataset(params_stderr_obj, "params_stderr"))
+        if params_stderr_obj is not None
+        else None
+    )
+    fit_settings = (
+        json.loads(_attr_str(a["fit_settings"])) if "fit_settings" in a else None
+    )
     mcmc_obj = slot_group.get("mcmc")
     mcmc = (
         _read_mcmc_group(require_group(mcmc_obj, "mcmc"))
@@ -1671,6 +1794,9 @@ def _read_slot(
         conf_ci=conf_ci,
         correl=correl,
         mcmc=mcmc,
+        params_meta=params_meta,
+        params_stderr=params_stderr,
+        fit_settings=fit_settings,
     )
 
 

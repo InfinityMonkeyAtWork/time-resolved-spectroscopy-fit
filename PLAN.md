@@ -124,22 +124,53 @@ decisions 2026-07-14.
 
 ## Phase 5 — Explicit plotting API
 
-- [ ] **Prerequisite**: `FitResults` must retain slot → axes context. Today it
-      flattens `SavedProject.files[*].slots` and discards `SavedFile`
-      (why `plot_residuals` plots vs. array index). Keep a per-slot reference
-      to its `SavedFile` (or a fingerprint-keyed axes lookup); `Project.results`
-      builds the equivalent from live `File` axes. `_slot_axes`
-      (fit_io.py ~1707) already implements the slicing.
-- [ ] `FitResults.plot_fit(file=..., model=..., fit_type=...)` — 1D/2D
-      observed/fit/residual from slot, real energy/time axes, delegating to
-      the fitlib renderers; `show_plot`/save args via `_save_img_flag`.
-- [ ] `FitResults.plot_param_evolution(...)` — SbS per-parameter-vs-time
-      (successor of the `results_to_df` → `plt_fit_res_pars` chain; varied
-      params by default).
-- [ ] Upgrade `plot_residuals` to use real axes now that they're available.
-- [ ] `File.plot_fit` / `File.plot_param_evolution` sugar.
-- [ ] PlotConfig: renderers already accept `config`; thread the owning file's
-      `plot_config` through (keep `figsize`-style overrides minimal).
+Design settled 2026-07-16 (session notes): three pieces of information the
+SbS plotting path used are unavailable from slots — vary flags (lost),
+axes (persisted but discarded at the FitResults layer), and PlotConfig
+(never persisted, by choice). Vary is slice-invariant by construction
+(one model, one vary set, no mid-loop hook; serial ≡ parallel pinned by
+test_gir_integration). YAML-derived capture was considered and rejected:
+the runtime state diverges from the YAML (default SbS seeds from the
+baseline *fit*; users mutate models between load and fit), so slots
+snapshot the model *as fit*. Model rehydration stays deferred.
+
+### 5a — schema-3 additions (still unreleased; no extra bump) — DONE
+
+- [x] SbS **shared param metadata** frame `[name, vary, min, max, expr]`
+      (`SavedFitSlot.params_meta`, sbs-only; captured from slice-0 result
+      params, column-aligned with the wide frame). `_display_sbs_fit` now
+      reads vary from it (fully slot-driven, live-result dependency gone).
+- [x] SbS **per-slice stderr** wide frame (`SavedFitSlot.params_stderr`;
+      NaN where absent; `ulmfit.list_of_par_stderr_to_df`).
+- [x] **`fit_settings` provenance dict** on all fit types
+      (`fit_io.build_fit_settings`, JSON attr, not in `history_key`).
+      Full scope incl. MC settings (gotcha: `MC` stores `use_mc` as
+      `.use_emcee`); worker counts deliberately excluded.
+- [x] Round-trip + capture + v2-tolerance tests; schema doc updated
+      (params_meta / params_stderr / fit_settings sections); changelog.
+
+### 5b — axes retention + plot methods
+
+- [ ] `FitResults` keeps a fingerprint-keyed axes lookup: `load` retains
+      the `SavedFile`s; `Project.results` passes the live `File`s (duck-
+      typed: both expose `.energy` / `.time`; live Files also expose
+      `.plot_config`, giving config resolution for free). Missing lookup →
+      index-based fallback (current plot_residuals behavior).
+- [ ] `FitResults.plot_fit(file=..., model=..., fit_type=..., config=None,
+      show_plot=...)` — latest matching slot; 2d/sbs delegate to
+      `fitlib.plt_fit_res_2d` on slot arrays + real axes; baseline/spectrum
+      render observed/fit + residual vs energy directly (the fit-time 1D
+      renderer `plt_fit_res_1d` re-evaluates the model — not slot-usable).
+- [ ] `FitResults.plot_param_evolution(...)` — sbs; slot.params +
+      `params_meta.vary` (varied-only default) + time axis via
+      `fitlib.plt_fit_res_pars`.
+- [ ] Upgrade `plot_residuals` to real axes; keep index fallback.
+- [ ] `File.plot_fit` / `File.plot_param_evolution` sugar; the fit-time
+      `_display_*` helpers collapse into the plot API where that stays
+      one rendering path (decide in implementation).
+- [ ] PlotConfig resolution: explicit `config=` kwarg > live file's
+      `plot_config` (via axes lookup) > default `PlotConfig()`. Styling is
+      deliberately not persisted in archives.
 
 ## Phase 6 — Docs, tests, release hygiene
 

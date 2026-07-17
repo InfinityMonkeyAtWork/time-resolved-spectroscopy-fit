@@ -359,6 +359,21 @@ class TestSbSSlot:
         sbs_df = file.get_fit_results(fit_type="sbs")
         pd.testing.assert_frame_equal(sbs_df, slot.params)
         assert len(sbs_df) == len(file.time)
+        # Shared per-parameter metadata, column-aligned with the wide frame.
+        assert slot.params_meta is not None  # type guard
+        assert list(slot.params_meta.columns) == ["name", "vary", "min", "max", "expr"]
+        assert list(slot.params_meta["name"]) == list(slot.params.columns)
+        assert bool(slot.params_meta["vary"].any())
+        # Per-slice stderr mirrors the wide params frame's shape.
+        assert slot.params_stderr is not None  # type guard
+        assert slot.params_stderr.shape == slot.params.shape
+        assert list(slot.params_stderr.columns) == list(slot.params.columns)
+        # Provenance records the SbS seeding recipe.
+        assert slot.fit_settings is not None  # type guard
+        assert slot.fit_settings["seed_source"] == "model"
+        assert slot.fit_settings["seed_adapt"] is None
+        assert slot.fit_settings["seed_values"] is None
+        assert slot.fit_settings["stages"] == 1
 
     #
     @pytest.mark.slow
@@ -479,6 +494,11 @@ class TestMcmcPayload:
         acceptance = slot.mcmc["acceptance_fraction"]
         assert acceptance is not None  # type guard
         assert acceptance.shape == (32,)
+        # MCMC settings land in the fit_settings provenance.
+        assert slot.fit_settings is not None  # type guard
+        assert slot.fit_settings["mc"]["steps"] == 20
+        assert slot.fit_settings["mc"]["nwalkers"] == 32
+        assert slot.fit_settings["mc"]["burn"] == 5
 
         # acceptance_fraction survives the archive round-trip (schema 3).
         archive_path = tmp_path / "mcmc.fit.h5"
@@ -500,6 +520,48 @@ class TestMcmcPayload:
         project, _ = _setup_baseline_fit()  # try_ci=0, no MCMC
         slot = project._fit_history[0]
         assert slot.mcmc is None
+
+
+#
+# --- fit_settings provenance ---------------------------------------------------
+#
+
+
+#
+class TestFitSettingsProvenance:
+    """Every fit type records its optimizer configuration in the slot."""
+
+    #
+    def test_baseline_slot_records_fit_settings(self):
+        project, _ = _setup_baseline_fit()  # stages=2, try_ci=0
+        slot = project._fit_history[0]
+        assert slot.fit_settings == {
+            "stages": 2,
+            "fit_alg_1": "Nelder",
+            "fit_alg_2": "leastsq",
+            "try_ci": 0,
+        }
+        # Non-sbs slots carry no sbs-only payloads.
+        assert slot.params_meta is None
+        assert slot.params_stderr is None
+
+    #
+    def test_fit_settings_records_custom_algorithms(self):
+        truth_project = make_project(name="truth")
+        truth = _make_truth_file(truth_project)
+        data = simulate_noisy(truth.model_active, noise_level=0.01)
+        project = make_project(name="fit")
+        file = _make_fit_file(project, data, truth.energy, truth.time)
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+        file.fit_baseline(
+            model_name="single_glp", stages=1, fit_alg_1="leastsq", try_ci=0
+        )
+        settings = project._fit_history[0].fit_settings
+        assert settings is not None  # type guard
+        assert settings["fit_alg_1"] == "leastsq"
+        assert settings["stages"] == 1
 
 
 #

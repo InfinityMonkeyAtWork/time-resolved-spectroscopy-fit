@@ -149,6 +149,13 @@ def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> 
     # --- uncertainty payloads (None ↔ None or exact) --------------------
     _assert_optional_df_equal(loaded.conf_ci, original.conf_ci, label="conf_ci")
     _assert_optional_df_equal(loaded.correl, original.correl, label="correl")
+    _assert_optional_df_equal(
+        loaded.params_meta, original.params_meta, label="params_meta"
+    )
+    _assert_optional_df_equal(
+        loaded.params_stderr, original.params_stderr, label="params_stderr"
+    )
+    assert loaded.fit_settings == original.fit_settings
     if original.correl is not None:
         assert loaded.correl is not None  # type guard
         # The square matrix persists only column labels; the reader must
@@ -508,8 +515,10 @@ def test_correl_roundtrip(tmp_path) -> None:
 #
 def _downgrade_archive_to_v2(archive_path) -> None:
     """Rewrite a schema-3 archive as schema 2 in place: relabel the version
-    and delete the schema-3 additions (slot ``correl``, mcmc
-    ``acceptance_fraction``) so the payload matches what a v2 writer produced."""
+    and delete the schema-3 additions (slot ``correl`` / ``params_meta`` /
+    ``params_stderr`` datasets, ``fit_settings`` attr, mcmc
+    ``acceptance_fraction``) so the payload matches what a v2 writer
+    produced."""
 
     import h5py
 
@@ -525,8 +534,12 @@ def _downgrade_archive_to_v2(archive_path) -> None:
             slots = require_group(slots_obj, "slots")
             for s_key in slots:
                 sg = require_group(slots[s_key], s_key)
-                if "correl" in sg:
-                    del sg["correl"]
+                for ds in ("correl", "params_meta", "params_stderr"):
+                    if ds in sg:
+                        del sg[ds]
+                meta = require_group(sg["metadata"], "metadata")
+                if "fit_settings" in meta.attrs:
+                    del meta.attrs["fit_settings"]
                 if "mcmc" in sg:
                     mcmc_group = require_group(sg["mcmc"], "mcmc")
                     if "acceptance_fraction" in mcmc_group:
@@ -553,6 +566,9 @@ def test_reader_accepts_schema_v2_archive(tmp_path) -> None:
     assert len(loaded) == 1
     slot = next(iter(loaded))
     assert slot.correl is None
+    assert slot.params_meta is None
+    assert slot.params_stderr is None
+    assert slot.fit_settings is None
     original = fit_file.p._fit_history[0]
     _assert_params_equal(slot.params, original.params, fit_type="baseline")
 

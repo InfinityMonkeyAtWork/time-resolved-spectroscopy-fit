@@ -497,6 +497,44 @@ def list_of_par_to_df(results: list[Any]) -> pd.DataFrame:
 
 
 #
+def list_of_par_stderr_to_df(results: list[Any]) -> pd.DataFrame:
+    """
+    Extract per-fit parameter stderr into a DataFrame (NaN where absent).
+
+    Companion to :func:`list_of_par_to_df` with the same shape contract
+    (rows=fits, columns=parameters): collects each fit's per-parameter
+    standard errors instead of the optimized values. lmfit reports
+    ``stderr=None`` when the optimizer produced no covariance; those cells
+    become ``NaN`` so the frame stays numeric.
+
+    Parameters
+    ----------
+    results : list
+        List of fit results from fit_wrapper or similar; element [1] holds
+        the lmfit.MinimizerResult with a .params attribute.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with rows=individual fits, columns=parameter stderr.
+    """
+
+    param_names = list(results[0][1].params.keys())
+    rows = []
+    for result in results:
+        params = result[1].params
+        rows.append(
+            [
+                float(params[name].stderr)
+                if params[name].stderr is not None
+                else np.nan
+                for name in param_names
+            ]
+        )
+    return pd.DataFrame(rows, columns=param_names)
+
+
+#
 # Configuration and compatibility classes
 #
 

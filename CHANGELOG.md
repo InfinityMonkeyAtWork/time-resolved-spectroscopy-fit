@@ -12,6 +12,7 @@ This file is maintained using the shared changelog workflow in
 ### Added
 
 - **Fit slots persist the correlation matrix and MCMC acceptance fraction** (archive schema 3): `SavedFitSlot.correl` stores the varying-parameter correlation matrix when the optimizer produced covariance (`None` for covariance-less methods and project-level joint fits, slice 0 for SbS), and the `mcmc` payload gains emcee's per-walker `acceptance_fraction`. Schema-2 archives still load (new fields read as `None`); appends remain same-version only.
+- **Fit slots record optimizer provenance and complete SbS parameter metadata** (also schema 3): every slot gains `fit_settings` — stages, per-stage methods, `try_ci`, SbS seeding recipe (`seed_source`/`seed_adapt`/`seed_values`), and MCMC sampling settings when enabled (worker counts deliberately excluded; serial ≡ parallel is a tested invariant). SbS slots additionally gain `params_meta` (the slice-invariant `[name, vary, min, max, expr]` metadata) and `params_stderr` (per-slice standard errors, previously discarded — the future weights for 1D trace fitting).
 - `FitResults.get_fit_results` / `get_correlations` / `get_conf_intervals` / `get_mcmc`: the results accessors now live on `FitResults`, read the latest matching persisted slot (`file=` / `model=` / `fit_type=` filters), and therefore also work for SbS fits (slice-0 payloads) and on archives loaded with `FitResults.load`. The `File.get_*` methods remain as thin delegates with an added optional `model=` filter.
 
 ### Changed

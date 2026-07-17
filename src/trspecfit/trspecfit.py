@@ -1504,10 +1504,15 @@ class Project:
         # entry point.
         slots_2d: list[fit_io.SavedFitSlot | None] = []
         if joint_result:
+            joint_fit_settings = fit_io.build_fit_settings(
+                stages=stages, fit_wrapper_kwargs=fit_wrapper_kwargs
+            )
             for f in self.files:
                 slots_2d.append(
                     f._append_2d_slot(
-                        model_name=model_name, fit_fun_str="fit_model_mcp"
+                        model_name=model_name,
+                        fit_fun_str="fit_model_mcp",
+                        fit_settings=joint_fit_settings,
                     )
                 )
 
@@ -2723,7 +2728,13 @@ class File:
                     self.model_base.result[1], return_type="list"
                 )
             )
-            self._append_baseline_slot(model_name=model_name, fit_fun_str=_fun_str)
+            self._append_baseline_slot(
+                model_name=model_name,
+                fit_fun_str=_fun_str,
+                fit_settings=fit_io.build_fit_settings(
+                    stages=stages, fit_wrapper_kwargs=lmfit_wrapper_kwargs
+                ),
+            )
             if self.p.auto_export:
                 self.save_baseline_fit(save_path=path_base_results)
 
@@ -2960,6 +2971,9 @@ class File:
                 time_point=time_point,
                 time_range=list(time_range) if time_range is not None else None,
                 time_type=time_type,
+                fit_settings=fit_io.build_fit_settings(
+                    stages=stages, fit_wrapper_kwargs=lmfit_wrapper_kwargs
+                ),
             )
             if self.p.auto_export:
                 self.save_spectrum_fit(save_path=path_spec_results)
@@ -3375,7 +3389,19 @@ class File:
             # pristine per-slice fit state (results_sbs and parameter names
             # taken before any post-fit cleanup).
             slot_sbs = self._append_sbs_slot(
-                model_name=model_name, fit_fun_str=_fun_str
+                model_name=model_name,
+                fit_fun_str=_fun_str,
+                fit_settings=fit_io.build_fit_settings(
+                    stages=stages,
+                    fit_wrapper_kwargs=fit_wrapper_kwargs,
+                    seed_source=seed_source,
+                    seed_adapt=seed_adapt,
+                    seed_values=(
+                        [float(v) for v in np.asarray(seed_values).ravel()]
+                        if seed_values is not None
+                        else None
+                    ),
+                ),
             )
             # Display inline when interactive (show_output); export the slot
             # when auto_export — mirroring fit_baseline's split. Per-slice
@@ -3433,18 +3459,18 @@ class File:
         """
         Show an SbS slot inline: varied-parameter evolution + fit maps.
 
-        Vary flags come from the live slice-0 result (the wide per-slice
-        params frame carries no vary column; every slice shares the same
-        vary set).
+        Fully slot-driven: vary flags come from ``slot.params_meta`` (the
+        vary set is slice-invariant, so the shared metadata frame is
+        authoritative).
         """
 
         assert self.time is not None  # type guard
-        vary_df = ulmfit.par_to_df(
-            lmfit_params=self.results_sbs[0][1].params, col_type="min"
-        )
+        assert slot.params_meta is not None  # type guard (sbs slots carry it)
         varied = {
             str(name)
-            for name, vary in zip(vary_df["name"], vary_df["vary"], strict=True)
+            for name, vary in zip(
+                slot.params_meta["name"], slot.params_meta["vary"], strict=True
+            )
             if vary
         }
         par_cols = [c for c in slot.params.columns if c in varied]
@@ -3464,7 +3490,11 @@ class File:
 
     #
     def _append_baseline_slot(
-        self, *, model_name: str, fit_fun_str: str
+        self,
+        *,
+        model_name: str,
+        fit_fun_str: str,
+        fit_settings: dict[str, Any] | None = None,
     ) -> fit_io.SavedFitSlot | None:
         """
         Build a SavedFitSlot from the just-completed baseline fit and append
@@ -3536,6 +3566,7 @@ class File:
             conf_ci=conf_ci if not conf_ci.empty else None,
             correl=correl,
             mcmc=mcmc,
+            fit_settings=fit_settings,
         )
         self.p._fit_history.append(slot)
         return slot
@@ -3549,6 +3580,7 @@ class File:
         time_point: float | None,
         time_range: list[float] | None,
         time_type: str,
+        fit_settings: dict[str, Any] | None = None,
     ) -> fit_io.SavedFitSlot | None:
         """Build and append a SavedFitSlot for a completed spectrum fit."""
 
@@ -3611,13 +3643,18 @@ class File:
             conf_ci=conf_ci if not conf_ci.empty else None,
             correl=correl,
             mcmc=mcmc,
+            fit_settings=fit_settings,
         )
         self.p._fit_history.append(slot)
         return slot
 
     #
     def _append_sbs_slot(
-        self, *, model_name: str, fit_fun_str: str
+        self,
+        *,
+        model_name: str,
+        fit_fun_str: str,
+        fit_settings: dict[str, Any] | None = None,
     ) -> fit_io.SavedFitSlot | None:
         """
         Build and append a SavedFitSlot for a completed slice-by-slice fit.
@@ -3680,6 +3717,13 @@ class File:
             if getattr(slice0_result, "covar", None) is not None
             else None
         )
+        # Shared per-parameter metadata (vary/bounds/expr are slice-invariant;
+        # captured from slice 0) and per-slice stderr — both column-aligned
+        # with the wide params frame.
+        params_meta = ulmfit.par_to_df(
+            slice0_result.params, col_type=["name", "vary", "min", "max", "expr"]
+        )
+        params_stderr = ulmfit.list_of_par_stderr_to_df(self.results_sbs)
         slot = fit_io._slot_from_sbs(
             file_fingerprint=self.fingerprint(),
             file_name=self.name,
@@ -3699,13 +3743,20 @@ class File:
             conf_ci=slice0_conf_ci if not slice0_conf_ci.empty else None,
             correl=slice0_correl,
             mcmc=slice0_mcmc,
+            params_meta=params_meta,
+            params_stderr=params_stderr,
+            fit_settings=fit_settings,
         )
         self.p._fit_history.append(slot)
         return slot
 
     #
     def _append_2d_slot(
-        self, *, model_name: str, fit_fun_str: str
+        self,
+        *,
+        model_name: str,
+        fit_fun_str: str,
+        fit_settings: dict[str, Any] | None = None,
     ) -> fit_io.SavedFitSlot | None:
         """Build and append a SavedFitSlot for a completed 2D global fit."""
 
@@ -3776,6 +3827,7 @@ class File:
             conf_ci=conf_ci if not conf_ci.empty else None,
             correl=correl,
             mcmc=mcmc,
+            fit_settings=fit_settings,
         )
         self.p._fit_history.append(slot)
         return slot
@@ -4164,7 +4216,13 @@ class File:
             for name in self.model_2d.parameter_names:
                 if name in final_params:
                     self.model_2d.lmfit_pars[name].value = final_params[name].value
-            slot_2d = self._append_2d_slot(model_name=model_name, fit_fun_str=_fun_str)
+            slot_2d = self._append_2d_slot(
+                model_name=model_name,
+                fit_fun_str=_fun_str,
+                fit_settings=fit_io.build_fit_settings(
+                    stages=stages, fit_wrapper_kwargs=fit_wrapper_kwargs
+                ),
+            )
 
         if stages >= 1:
             # Display inline when interactive (show_output); export the slot
