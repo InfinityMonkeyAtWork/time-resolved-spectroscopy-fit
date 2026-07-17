@@ -595,6 +595,33 @@ class TestSlotBackedAccessors:
         assert project._fit_history[0].params.loc[0, "value"] != -999.0
 
     #
+    def test_get_mcmc_payload_is_a_copy(self):
+        """get_mcmc must not alias the slot's stored arrays/frames —
+        np.asarray on an ndarray is a no-copy passthrough (regression)."""
+
+        import dataclasses
+
+        project, _ = _setup_baseline_fit()
+        payload = {
+            "flatchain": pd.DataFrame({"GLP_01_A": [1.0, 2.0]}),
+            "ci": pd.DataFrame({"par[v]/sigma[>]": ["GLP_01_A"], "best fit": [1.5]}),
+            "lnsigma": None,
+            "acceptance_fraction": np.array([0.3, 0.4]),
+        }
+        slot = dataclasses.replace(project._fit_history[0], mcmc=payload)
+        res = FitResults(slots=[slot]).get_mcmc(fit_type="baseline")
+
+        assert res.acceptance_fraction is not None  # type guard
+        res.acceptance_fraction[0] = -1.0
+        res.flatchain.loc[0, "GLP_01_A"] = -999.0
+        res.table.loc[0, "best fit"] = -999.0
+        np.testing.assert_array_equal(
+            payload["acceptance_fraction"], np.array([0.3, 0.4])
+        )
+        assert payload["flatchain"].loc[0, "GLP_01_A"] == 1.0
+        assert payload["ci"].loc[0, "best fit"] == 1.5
+
+    #
     def test_latest_slot_wins_after_refit(self):
         project, file = _setup_baseline_fit()
         assert file.data_base is not None  # type guard

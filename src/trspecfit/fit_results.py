@@ -612,7 +612,7 @@ class FitResults:
             table=ci.copy() if ci is not None else pd.DataFrame(),
             flatchain=flatchain.copy() if flatchain is not None else pd.DataFrame(),
             acceptance_fraction=(
-                np.asarray(acceptance) if acceptance is not None else None
+                np.asarray(acceptance).copy() if acceptance is not None else None
             ),
         )
 
