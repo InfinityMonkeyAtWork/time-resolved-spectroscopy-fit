@@ -33,8 +33,13 @@ file.fit_2d('2D')
 
 # 3) inspect results
 df = file.get_fit_results(fit_type='2d')             # pandas DataFrame
+file.plot_fit(fit_type='2d')                         # observed/fit/residual
 file.save_fit(...)                                   # HDF5 fit archive
 ```
+
+All `get_*` / `plot_*` result accessors read the persisted fit record
+(latest matching fit), so they work identically on a live session and on
+archives loaded via `FitResults.load(path)`.
 
 Simulation mirrors this: build a model the same way, then use
 `trspecfit.Simulator` (`simulate_1d`, `simulate_2d`, `simulate_n`) to

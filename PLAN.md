@@ -173,20 +173,33 @@ snapshot the model *as fit*. Model rehydration stays deferred.
 - [x] Config resolution: explicit `config=` > live `plot_config` >
       `PlotConfig()`. Changelog updated.
 
-## Phase 6 — Docs, tests, release hygiene
+## Phase 6 — Docs, tests, release hygiene — DONE
 
-- [ ] Update `docs/design/repo_architecture.md` (ownership contract),
-      `docs/design/ui.md` cross-refs, export-related docstrings.
-- [ ] Reconcile `llms.txt` / `AGENTS.md` guidance (auto-export layout,
-      accessor story).
-- [ ] Notebooks: 12 (accessors), 11/20 (saving/export) — check for legacy
-      layout or `save_*_fit` mentions.
-- [ ] TODO.md: drop both items on completion, remove `[ACTIVE]`; note partial
-      progress on v1.0.0 item 4 (remaining shims: sweep.py legacy branch,
-      plot.py int-mapping helper).
-- [ ] Version bump: breaking layout change + schema bump → `0.14.0`.
-- [ ] Archive decision: this file likely warrants `docs/design/archive/`
-      (ownership contract is durable) — ask at completion per protocol.
+- [x] `docs/design/repo_architecture.md`: fit_results.py section rewritten
+      around the ownership contract (accessors, plot API, axes providers);
+      save/export section was updated in Phase 4. `docs/design/ui.md` had
+      no affected content.
+- [x] `llms.txt`: plot_fit added to the workflow snippet + a line stating
+      the get_*/plot_* accessors read persisted records and work on loaded
+      archives. AGENTS.md had no affected content.
+- [x] Notebooks greped for legacy layout / removed APIs: only notebook 11
+      mentions export artifacts, and its description matches the slot
+      exporter (which is unchanged). Accessor signatures unchanged →
+      notebooks 12/01/03/04/20/21 compatible. Full notebook re-runs left
+      to the release flow (`docs/ai/check-example`).
+- [x] API docs: `docs/api/trspecfit.rst` gained a "Results, Plotting, and
+      Persistence" section (dropping the deleted save_sbs_fit/save_2d_fit
+      entries that broke autodoc); new `docs/api/fit_results.rst` documents
+      `FitResults` + `MCMCResult`. `make -C docs html` warning-free.
+- [x] TODO.md: both `[ACTIVE]` items removed — replaced by a slim deferred
+      item (typed result object / raw `result[1..4]` internal cleanup);
+      v1.0.0 item 4 updated (legacy savers gone; sweep.py + plot.py shims
+      remain); trace-fitting item notes params_stderr now persisted.
+- [x] Version bump: 0.13.1 → 0.14.0 (breaking auto-export layout +
+      schema 3). CHANGELOG `[Unreleased]` section already complete.
+- [ ] Archive decision: ask user — move this plan into
+      `docs/design/archive/` (ownership contract is durable) or let the
+      changelog stand; then clear PLAN.md per protocol.
 
 ## Open implementation points (resolve while working, not user-blocking)
 

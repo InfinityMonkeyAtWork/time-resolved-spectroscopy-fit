@@ -127,16 +127,23 @@ training-data synthesis.
 ### `fit_results.py` — completed-fit inspection / comparison
 
 User-facing `FitResults` class — the immutable view over a list of
-`SavedFitSlot`. Two construction paths: `FitResults.load(path)` for
-loaded archives and the `Project.results` property for in-session work.
-A `FitResults` is frozen at construction (the underlying slot list is
-copied), so `r1 = p.results; <run another fit>; r2 = p.results` gives
-two distinct snapshots — `r1` does not see the new slot. Query API:
-`find` / `get` / `files` / `models` / iteration. Comparison:
-`compare_models` (returns a metrics DataFrame; refuses to compare
-slots whose `observed_sha256` differs on the same `(file, fit_type)`)
-and `plot_residuals` (smoke-test-grade panels, no energy/time labels —
-slots don't carry parent-file axes). The save/export side lives in
+`SavedFitSlot`, and the single read/query/plot surface of the
+results-ownership contract: everything a user asks about a completed fit
+is answered from slots, never from live `Model.result`. Two construction
+paths: `FitResults.load(path)` for loaded archives and the
+`Project.results` property for in-session work; both also attach
+fingerprint-matched axes providers (`SavedFile`s / live `File`s) so plots
+carry real energy/time axes. A `FitResults` is frozen at construction
+(the underlying slot list is copied), so `r1 = p.results;
+<run another fit>; r2 = p.results` gives two distinct snapshots — `r1`
+does not see the new slot. Query API: `find` / `get` / `files` /
+`models` / iteration. Accessors (latest matching slot; `File.get_*` is
+thin sugar): `get_fit_results` / `get_correlations` /
+`get_conf_intervals` / `get_mcmc`. Comparison: `compare_models` (returns
+a metrics DataFrame; refuses to compare slots whose `observed_sha256`
+differs on the same `(file, fit_type)`). Plotting (`File.plot_*` sugar;
+also the fit methods' inline-display path): `plot_fit`,
+`plot_param_evolution`, `plot_residuals`. The save/export side lives in
 `utils/fit_io.py`; this module is read-only on top of those slots.
 
 ## Fit results: save / export / load architecture
