@@ -149,28 +149,29 @@ snapshot the model *as fit*. Model rehydration stays deferred.
 - [x] Round-trip + capture + v2-tolerance tests; schema doc updated
       (params_meta / params_stderr / fit_settings sections); changelog.
 
-### 5b — axes retention + plot methods
+### 5b — axes retention + plot methods — DONE
 
-- [ ] `FitResults` keeps a fingerprint-keyed axes lookup: `load` retains
-      the `SavedFile`s; `Project.results` passes the live `File`s (duck-
-      typed: both expose `.energy` / `.time`; live Files also expose
-      `.plot_config`, giving config resolution for free). Missing lookup →
-      index-based fallback (current plot_residuals behavior).
-- [ ] `FitResults.plot_fit(file=..., model=..., fit_type=..., config=None,
-      show_plot=...)` — latest matching slot; 2d/sbs delegate to
-      `fitlib.plt_fit_res_2d` on slot arrays + real axes; baseline/spectrum
-      render observed/fit + residual vs energy directly (the fit-time 1D
-      renderer `plt_fit_res_1d` re-evaluates the model — not slot-usable).
-- [ ] `FitResults.plot_param_evolution(...)` — sbs; slot.params +
-      `params_meta.vary` (varied-only default) + time axis via
-      `fitlib.plt_fit_res_pars`.
-- [ ] Upgrade `plot_residuals` to real axes; keep index fallback.
-- [ ] `File.plot_fit` / `File.plot_param_evolution` sugar; the fit-time
-      `_display_*` helpers collapse into the plot API where that stays
-      one rendering path (decide in implementation).
-- [ ] PlotConfig resolution: explicit `config=` kwarg > live file's
-      `plot_config` (via axes lookup) > default `PlotConfig()`. Styling is
-      deliberately not persisted in archives.
+- [x] `FitResults(slots=..., files=...)`: fingerprint-keyed provider lookup
+      (`_files_by_fp`); `load` passes the archive's `SavedFile`s,
+      `Project.results` the live `File`s (duck-typed `.energy`/`.time`;
+      live Files also give `.plot_config`). Files that can't fingerprint
+      (no data) are skipped — they produced no slots. Missing lookup →
+      index-based fallback. `_axes_for` mirrors `fit_io._slot_axes`
+      cropping but tolerates missing providers/axes.
+- [x] `FitResults.plot_fit`: 2d/sbs → `fitlib.plt_fit_res_2d` on slot
+      arrays + real axes (fitlib imported lazily — the package `__init__`
+      imports fit_results, so a top-level import would cycle); baseline/
+      spectrum → direct observed/fit + residual panels vs energy.
+- [x] `FitResults.plot_param_evolution`: varied-only default via
+      `params_meta` (all params for schema-2 archives), explicit `params=`
+      with KeyError on unknown names, silent no-op when nothing varied.
+- [x] `plot_residuals` upgraded to real axes (1D energy x-axis, 2D
+      imshow extent); index fallback preserved.
+- [x] `File.plot_fit` / `File.plot_param_evolution` sugar. The fit-time
+      `_display_*` helpers were deleted — fit methods display through the
+      plot API, so the fit-time figure equals what the API reproduces.
+- [x] Config resolution: explicit `config=` > live `plot_config` >
+      `PlotConfig()`. Changelog updated.
 
 ## Phase 6 — Docs, tests, release hygiene
 

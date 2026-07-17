@@ -300,10 +300,11 @@ class Project:
         subsequent fits append to the log and do not affect previously
         returned ``FitResults``. Object identity is unstable
         (``p.results is p.results`` is False); the contents at a given access
-        are fixed.
+        are fixed. The live ``File`` objects are passed along as axes /
+        plot-config providers for the plot methods.
         """
 
-        return FitResults(slots=list(self._fit_history))
+        return FitResults(slots=list(self._fit_history), files=list(self.files))
 
     #
     def save_fits(
@@ -1535,7 +1536,7 @@ class Project:
             if slots_2d:
                 for f, slot in zip(self.files, slots_2d, strict=True):
                     if slot is not None:
-                        f._display_fit_2d_maps(slot)
+                        f.plot_fit(model=model_name, fit_type="2d")
 
 
 #
@@ -3408,7 +3409,10 @@ class File:
             # diagnostics (fit_wrapper CSVs, per-slice PNGs) were already
             # written under model_path during the fit loop.
             if self.p.show_output >= 1 and slot_sbs is not None:
-                self._display_sbs_fit(slot_sbs)
+                # Inline display via the explicit plot API (reads the slot
+                # just appended): varied-parameter evolution + fit maps.
+                self.plot_param_evolution(model=model_name)
+                self.plot_fit(model=model_name, fit_type="sbs")
             if self.p.auto_export and slot_sbs is not None:
                 self.export_fit(
                     self.p.path_results,
@@ -3423,65 +3427,6 @@ class File:
             fitlib.time_display(
                 t_start=t_sbs, print_str="Time elapsed for Slice-by-Slice fit: "
             )
-
-    #
-    def _display_fit_2d_maps(self, slot: fit_io.SavedFitSlot) -> None:
-        """
-        Show a 2D-shaped slot's data/fit/residual maps inline (no writes).
-
-        The slot's ``observed`` / ``fit`` arrays live on the cropped fit
-        grid, so the live axes are cut to the slot's selection before
-        plotting (mirrors ``fit_io._slot_axes``).
-        """
-
-        assert self.energy is not None  # type guard
-        assert self.time is not None  # type guard
-        energy = np.asarray(self.energy)
-        e_lim = slot.selection.get("e_lim")
-        if e_lim:
-            energy = energy[int(e_lim[0]) : int(e_lim[1])]
-        time = np.asarray(self.time)
-        if slot.fit_type == "2d":
-            t_lim = slot.selection.get("t_lim")
-            if t_lim:
-                time = time[int(t_lim[0]) : int(t_lim[1])]
-        fitlib.plt_fit_res_2d(
-            data=slot.observed,
-            fit=slot.fit,
-            x=energy,
-            y=time,
-            config=self.plot_config,
-            save_img=0,
-        )
-
-    #
-    def _display_sbs_fit(self, slot: fit_io.SavedFitSlot) -> None:
-        """
-        Show an SbS slot inline: varied-parameter evolution + fit maps.
-
-        Fully slot-driven: vary flags come from ``slot.params_meta`` (the
-        vary set is slice-invariant, so the shared metadata frame is
-        authoritative).
-        """
-
-        assert self.time is not None  # type guard
-        assert slot.params_meta is not None  # type guard (sbs slots carry it)
-        varied = {
-            str(name)
-            for name, vary in zip(
-                slot.params_meta["name"], slot.params_meta["vary"], strict=True
-            )
-            if vary
-        }
-        par_cols = [c for c in slot.params.columns if c in varied]
-        if par_cols:
-            fitlib.plt_fit_res_pars(
-                df=slot.params.loc[:, par_cols],
-                x=np.asarray(self.time)[: len(slot.params)],
-                config=self.plot_config,
-                save_img=0,
-            )
-        self._display_fit_2d_maps(slot)
 
     #
     # ------------------------------------------------------------------
@@ -4228,7 +4173,7 @@ class File:
             # Display inline when interactive (show_output); export the slot
             # when auto_export — mirroring fit_baseline's split.
             if self.p.show_output >= 1 and slot_2d is not None:
-                self._display_fit_2d_maps(slot_2d)
+                self.plot_fit(model=model_name, fit_type="2d")
             if self.p.auto_export and slot_2d is not None:
                 self.export_fit(
                     self.p.path_results,
@@ -4399,6 +4344,79 @@ class File:
         """
 
         return self.p.results.get_mcmc(file=self, model=model, fit_type=fit_type)
+
+    #
+    def plot_fit(
+        self,
+        *,
+        model: str | None = None,
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] = "baseline",
+        config: PlotConfig | None = None,
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Plot the latest matching fit: observed, fit, and residual.
+
+        Sugar for ``self.p.results.plot_fit(file=self, ...)`` — reads the
+        persisted fit slot and uses this file's axes and ``plot_config``.
+        See :meth:`FitResults.plot_fit`.
+
+        Parameters
+        ----------
+        model : str, optional
+            Restrict to a single model name. Default: latest fit of
+            ``fit_type`` regardless of model.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+            Which fit to plot.
+        config : PlotConfig, optional
+            Styling override; defaults to this file's ``plot_config``.
+        show_plot : bool, default True
+            Set ``False`` to build without displaying.
+        """
+
+        self.p.results.plot_fit(
+            file=self,
+            model=model,
+            fit_type=fit_type,
+            config=config,
+            show_plot=show_plot,
+        )
+
+    #
+    def plot_param_evolution(
+        self,
+        *,
+        model: str | None = None,
+        params: Sequence[str] | None = None,
+        config: PlotConfig | None = None,
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Plot per-parameter evolution vs time for the latest SbS fit.
+
+        Sugar for ``self.p.results.plot_param_evolution(file=self, ...)``.
+        Defaults to the varied parameters; see
+        :meth:`FitResults.plot_param_evolution`.
+
+        Parameters
+        ----------
+        model : str, optional
+            Restrict to a single model name.
+        params : sequence of str, optional
+            Which parameters to plot (default: varied parameters).
+        config : PlotConfig, optional
+            Styling override; defaults to this file's ``plot_config``.
+        show_plot : bool, default True
+            Set ``False`` to build without displaying.
+        """
+
+        self.p.results.plot_param_evolution(
+            file=self,
+            model=model,
+            params=params,
+            config=config,
+            show_plot=show_plot,
+        )
 
     #
     def compare_models(

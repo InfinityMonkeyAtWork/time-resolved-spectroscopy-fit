@@ -27,6 +27,7 @@ from typing import Any, Literal, cast
 import numpy as np
 import pandas as pd
 
+from trspecfit.config.plot import PlotConfig
 from trspecfit.utils.fit_io import SavedFile, SavedFitSlot, read_archive
 from trspecfit.utils.lmfit import MCMCResult
 
@@ -155,13 +156,97 @@ class FitResults:
     """
     Immutable view over a list of ``SavedFitSlot``.
 
-    Construction is positional-only (``FitResults(slots=...)``); users normally
+    Construction is keyword-only (``FitResults(slots=...)``); users normally
     obtain instances via ``Project.results`` or ``FitResults.load(path)``.
+
+    ``files`` optionally supplies per-file axes / plot-config providers —
+    ``SavedFile`` records (load path) or live ``trspecfit.File`` objects
+    (``Project.results``), matched to slots by fingerprint. The plot
+    methods use them to label real energy/time axes; without a provider
+    they fall back to array-index axes.
     """
 
     #
-    def __init__(self, *, slots: list[SavedFitSlot]) -> None:
+    def __init__(
+        self,
+        *,
+        slots: list[SavedFitSlot],
+        files: Sequence[Any] | None = None,
+    ) -> None:
         self._slots: tuple[SavedFitSlot, ...] = tuple(slots)
+        self._files_by_fp: dict[tuple[Any, ...], Any] = {}
+        for f in files or ():
+            fp = self._provider_fp_key(f)
+            if fp is not None:
+                self._files_by_fp[fp] = f
+
+    #
+    @staticmethod
+    def _provider_fp_key(f: Any) -> tuple[Any, ...] | None:
+        """
+        Fingerprint key for an axes provider, or ``None`` if unavailable.
+
+        ``SavedFile.fingerprint`` is a dict attribute; the live
+        ``trspecfit.File.fingerprint`` is a method that raises when the
+        file has no data — such files produced no slots, so skipping them
+        is safe.
+        """
+
+        fingerprint = getattr(f, "fingerprint", None)
+        if callable(fingerprint):
+            try:
+                fingerprint = fingerprint()
+            except ValueError:
+                return None
+        if isinstance(fingerprint, dict):
+            return _fp_key(fingerprint)
+        return None
+
+    #
+    def _axes_for(
+        self, slot: SavedFitSlot
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """
+        ``(energy, time)`` on the slot's grid, or ``None`` where unknown.
+
+        Crops the provider's full axes to the slot's selection (same rule
+        as ``fit_io._slot_axes``, tolerant of missing providers/axes).
+        """
+
+        provider = self._files_by_fp.get(_fp_key(slot.file_fingerprint))
+        energy = getattr(provider, "energy", None) if provider is not None else None
+        time = getattr(provider, "time", None) if provider is not None else None
+        if energy is not None:
+            energy = np.asarray(energy)
+            e_lim = slot.selection.get("e_lim")
+            if e_lim:
+                energy = energy[int(e_lim[0]) : int(e_lim[1])]
+        if time is not None:
+            time = np.asarray(time)
+            if time.ndim == 0 or time.size == 0:
+                time = None
+            elif slot.fit_type == "2d":
+                t_lim = slot.selection.get("t_lim")
+                if t_lim:
+                    time = time[int(t_lim[0]) : int(t_lim[1])]
+        return energy, time
+
+    #
+    def _config_for(self, slot: SavedFitSlot, config: Any) -> Any:
+        """
+        Resolve the ``PlotConfig`` for a plot call.
+
+        Explicit ``config=`` wins; otherwise the live file's
+        ``plot_config`` when this ``FitResults`` was built from a Project;
+        default ``PlotConfig()`` for loaded archives (styling is
+        deliberately not persisted).
+        """
+
+        if config is not None:
+            return config
+        provider = self._files_by_fp.get(_fp_key(slot.file_fingerprint))
+        live_config = getattr(provider, "plot_config", None)
+        return live_config if live_config is not None else PlotConfig()
 
     #
     @classmethod
@@ -201,7 +286,9 @@ class FitResults:
                 if types_filter is not None and slot.fit_type not in types_filter:
                     continue
                 slots.append(slot)
-        return cls(slots=slots)
+        # SavedFiles are kept (unfiltered) as axes providers for the plot
+        # methods; slots are matched to them by fingerprint at plot time.
+        return cls(slots=slots, files=list(project.files))
 
     #
     def __iter__(self) -> Iterator[SavedFitSlot]:
@@ -530,6 +617,192 @@ class FitResults:
         )
 
     #
+    def plot_fit(
+        self,
+        *,
+        file: Any = None,
+        model: str | None = None,
+        fit_type: FitType = "baseline",
+        config: Any = None,
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Plot the latest matching fit: observed, fit, and residual.
+
+        Reads the persisted slot. 1D fits (baseline / spectrum) render an
+        observed+fit panel over a residual panel vs energy; 2D fits and SbS
+        render the data/fit/residual maps via ``fitlib.plt_fit_res_2d``.
+        Real axes are used when this ``FitResults`` carries an axes
+        provider for the slot's file (always the case for
+        ``Project.results`` and ``FitResults.load``); otherwise array
+        indices.
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file (name string or object with ``.name``).
+        model : str, optional
+            Filter to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+            Which fit type to plot (latest matching fit wins).
+        config : PlotConfig, optional
+            Styling override. Default: the live file's ``plot_config``
+            when available, else ``PlotConfig()``.
+        show_plot : bool, default True
+            Set ``False`` to build without displaying (tests / batch use).
+
+        Raises
+        ------
+        ValueError
+            If no matching fit has been performed (or loaded) yet.
+        """
+
+        slot = self._latest_slot(file=file, model=model, fit_type=fit_type)
+        cfg = self._config_for(slot, config)
+        energy, time = self._axes_for(slot)
+        if slot.fit_type in ("2d", "sbs"):
+            from trspecfit import fitlib
+
+            fitlib.plt_fit_res_2d(
+                data=np.asarray(slot.observed),
+                fit=np.asarray(slot.fit),
+                x=energy,
+                y=time,
+                config=cfg,
+                save_img=0 if show_plot else -2,
+            )
+            return
+        self._plot_fit_1d(slot, energy=energy, config=cfg, show_plot=show_plot)
+
+    #
+    @staticmethod
+    def _plot_fit_1d(
+        slot: SavedFitSlot,
+        *,
+        energy: np.ndarray | None,
+        config: Any,
+        show_plot: bool,
+    ) -> Any:
+        """Observed + fit over a residual panel for a 1D slot."""
+
+        import matplotlib.pyplot as plt
+
+        obs = np.asarray(slot.observed).ravel()
+        fit = np.asarray(slot.fit).ravel()
+        if energy is not None and energy.size == obs.size:
+            x = energy
+            x_label = getattr(config, "x_label", "energy")
+        else:
+            x = np.arange(obs.size)
+            x_label = "index"
+        fig, (ax_fit, ax_res) = plt.subplots(
+            2,
+            1,
+            sharex=True,
+            figsize=(6.0, 5.0),
+            height_ratios=[3, 1],
+        )
+        ax_fit.plot(x, obs, "k.", ms=3, label="observed")
+        ax_fit.plot(x, fit, "-", lw=1.5, label="fit")
+        ax_fit.set_ylabel("intensity")
+        ax_fit.legend(fontsize="small")
+        ax_fit.set_title(f"{slot.model_name} ({slot.fit_type})")
+        ax_res.plot(x, obs - fit, "-", lw=1.0)
+        ax_res.axhline(0, color="gray", lw=0.5)
+        ax_res.set_xlabel(x_label)
+        ax_res.set_ylabel("residual")
+        if getattr(config, "x_dir", "def") == "rev":
+            ax_res.invert_xaxis()
+        fig.tight_layout()
+        if show_plot:
+            plt.show()
+        else:
+            plt.close(fig)
+        return fig
+
+    #
+    def plot_param_evolution(
+        self,
+        *,
+        file: Any = None,
+        model: str | None = None,
+        params: Sequence[str] | None = None,
+        config: Any = None,
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Plot per-parameter evolution vs time for the latest matching SbS fit.
+
+        One panel per parameter, values from the slot's wide per-slice
+        ``params`` frame, x-axis from the file's time axis (array index if
+        no axes provider is available).
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file (name string or object with ``.name``).
+        model : str, optional
+            Filter to a single model name.
+        params : sequence of str, optional
+            Which parameters to plot. Default: the varied parameters (from
+            the slot's ``params_meta``); for slots loaded from schema-2
+            archives (no ``params_meta``), every parameter. Plots nothing
+            if the default resolves to an empty set (all-fixed model).
+        config : PlotConfig, optional
+            Styling override (see :meth:`plot_fit`).
+        show_plot : bool, default True
+            Set ``False`` to build without displaying.
+
+        Raises
+        ------
+        ValueError
+            If no matching SbS fit exists.
+        KeyError
+            If ``params`` names a parameter the fit does not have.
+        """
+
+        slot = self._latest_slot(file=file, model=model, fit_type="sbs")
+        if params is None:
+            if slot.params_meta is not None:
+                params = [
+                    str(name)
+                    for name, vary in zip(
+                        slot.params_meta["name"],
+                        slot.params_meta["vary"],
+                        strict=True,
+                    )
+                    if vary
+                ]
+            else:
+                params = [str(c) for c in slot.params.columns]
+        else:
+            params = [str(p) for p in params]
+            missing = [p for p in params if p not in slot.params.columns]
+            if missing:
+                raise KeyError(
+                    f"Parameter(s) {missing} not in this SbS fit; available: "
+                    f"{list(slot.params.columns)}"
+                )
+        if not params:
+            return
+        cfg = self._config_for(slot, config)
+        _, time = self._axes_for(slot)
+        n_slices = len(slot.params)
+        x = (
+            np.asarray(time)[:n_slices]
+            if time is not None and np.asarray(time).size >= n_slices
+            else np.arange(n_slices)
+        )
+        from trspecfit import fitlib
+
+        fitlib.plt_fit_res_pars(
+            df=slot.params.loc[:, params],
+            x=x,
+            config=cfg,
+            save_img=0 if show_plot else -2,
+        )
+
+    #
     def compare_models(
         self,
         file: Any = None,
@@ -812,10 +1085,10 @@ class FitResults:
         """
         Plot observed/fit/residual for the selected slots side-by-side.
 
-        Smoke-test-grade visualization: x-axis is array index (no energy /
-        time labels), since slots do not carry the parent file's axes.
-        Users wanting publication-quality plots should build their own from
-        ``slot.observed`` / ``slot.fit``.
+        Uses real energy/time axes when this ``FitResults`` carries an
+        axes provider for the file (always the case for ``Project.results``
+        and ``FitResults.load``); falls back to array indices otherwise.
+        For single-fit plots with full styling, see :meth:`plot_fit`.
 
         Parameters
         ----------
@@ -883,8 +1156,8 @@ class FitResults:
         )
 
     #
-    @staticmethod
     def _plot_residuals_1d(
+        self,
         slots: list[SavedFitSlot],
         file_name: str,
         *,
@@ -906,14 +1179,18 @@ class FitResults:
         for col, slot in enumerate(slots):
             obs = np.asarray(slot.observed).ravel()
             fit = np.asarray(slot.fit).ravel()
-            x = np.arange(obs.size)
+            energy, _ = self._axes_for(slot)
+            if energy is not None and energy.size == obs.size:
+                x, x_label = energy, "energy"
+            else:
+                x, x_label = np.arange(obs.size), "index"
             axs[0, col].plot(x, obs, "k.", ms=3, label="observed")
             axs[0, col].plot(x, fit, "-", lw=1.5, label="fit")
             axs[0, col].set_title(f"{slot.model_name} ({slot.fit_type})")
             axs[0, col].legend(fontsize="small")
             axs[1, col].plot(x, obs - fit, "-", lw=1.0)
             axs[1, col].axhline(0, color="gray", lw=0.5)
-            axs[1, col].set_xlabel("index")
+            axs[1, col].set_xlabel(x_label)
             if col == 0:
                 axs[0, col].set_ylabel("intensity")
                 axs[1, col].set_ylabel("residual")
@@ -926,8 +1203,8 @@ class FitResults:
         return fig
 
     #
-    @staticmethod
     def _plot_residuals_2d(
+        self,
         slots: list[SavedFitSlot],
         file_name: str,
         *,
@@ -957,6 +1234,24 @@ class FitResults:
         )
         im = None
         for col, (slot, res) in enumerate(zip(slots, residuals, strict=True)):
+            energy, time = self._axes_for(slot)
+            extent = None
+            x_label, y_label = "energy index", "time / slice index"
+            if (
+                energy is not None
+                and time is not None
+                and res.ndim == 2
+                and energy.size == res.shape[1]
+                and time.size >= res.shape[0]
+            ):
+                time_view = np.asarray(time)[: res.shape[0]]
+                extent = (
+                    float(energy[0]),
+                    float(energy[-1]),
+                    float(time_view[0]),
+                    float(time_view[-1]),
+                )
+                x_label, y_label = "energy", "time"
             im = axs[0, col].imshow(
                 res,
                 aspect="auto",
@@ -964,11 +1259,12 @@ class FitResults:
                 vmin=-global_max,
                 vmax=global_max,
                 origin="lower",
+                extent=extent,
             )
             axs[0, col].set_title(f"{slot.model_name} ({slot.fit_type})")
-            axs[0, col].set_xlabel("energy index")
+            axs[0, col].set_xlabel(x_label)
             if col == 0:
-                axs[0, col].set_ylabel("time / slice index")
+                axs[0, col].set_ylabel(y_label)
         if im is not None:
             fig.colorbar(im, ax=axs[0, :].tolist(), shrink=0.85)
         fig.suptitle(f"Residuals — {file_name}")

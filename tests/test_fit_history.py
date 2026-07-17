@@ -1479,6 +1479,148 @@ class TestFitResultsCompareModelsSigmaColumns:
 
 
 #
+class TestPlotFitAPI:
+    """FitResults.plot_fit / plot_param_evolution and the File.* sugar."""
+
+    #
+    def test_plot_fit_1d_uses_real_axes_and_config(self):
+        import matplotlib.pyplot as plt
+
+        _, file = _setup_baseline_fit()
+        file.plot_fit(fit_type="baseline")  # show under Agg keeps the fig live
+        fig = plt.gcf()
+        try:
+            line_x = fig.axes[0].lines[0].get_xdata()
+            np.testing.assert_array_equal(line_x, np.asarray(file.energy))
+            assert fig.axes[1].get_xlabel() == file.plot_config.x_label
+        finally:
+            plt.close("all")
+
+    #
+    def test_plot_fit_2d_passes_real_axes(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from trspecfit import fitlib
+
+        mock_2d = MagicMock()
+        monkeypatch.setattr(fitlib, "plt_fit_res_2d", mock_2d)
+
+        project, file = _setup_baseline_fit()
+        file.add_time_dependence(
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml="models/file_time.yaml",
+            dynamics_model=["MonoExpPos"],
+        )
+        file.fit_2d("single_glp", stages=1, try_ci=0)
+        mock_2d.reset_mock()
+
+        project.results.plot_fit(file=file, fit_type="2d", show_plot=False)
+        assert mock_2d.call_count == 1
+        kwargs = mock_2d.call_args.kwargs
+        np.testing.assert_array_equal(kwargs["x"], np.asarray(file.energy))
+        np.testing.assert_array_equal(kwargs["y"], np.asarray(file.time))
+        assert kwargs["save_img"] == -2  # show_plot=False
+
+    #
+    def test_plot_fit_from_loaded_archive_has_axes(self, tmp_path):
+        import matplotlib.pyplot as plt
+
+        project, file = _setup_baseline_fit()
+        archive_path = tmp_path / "plot.fit.h5"
+        project.save_fits(archive_path, show_output=0)
+
+        loaded = FitResults.load(archive_path)
+        loaded.plot_fit(file=file.name, fit_type="baseline")
+        fig = plt.gcf()
+        try:
+            line_x = fig.axes[0].lines[0].get_xdata()
+            np.testing.assert_array_equal(line_x, np.asarray(file.energy))
+        finally:
+            plt.close("all")
+
+    #
+    @staticmethod
+    def _fake_sbs_results(*, vary=(True, False, True)):
+        """FitResults around a synthetic SbS slot (wide params + metadata)."""
+
+        import dataclasses
+
+        project, _ = _setup_baseline_fit()
+        wide = pd.DataFrame(
+            {
+                "A": [1.0, 2.0, 3.0],
+                "B": [4.0, 5.0, 6.0],
+                "C": [7.0, 8.0, 9.0],
+            }
+        )
+        meta = pd.DataFrame(
+            {
+                "name": ["A", "B", "C"],
+                "vary": list(vary),
+                "min": [0.0] * 3,
+                "max": [10.0] * 3,
+                "expr": [None] * 3,
+            }
+        )
+        fake = dataclasses.replace(
+            project._fit_history[0], fit_type="sbs", params=wide, params_meta=meta
+        )
+        return FitResults(slots=[fake])
+
+    #
+    def test_plot_param_evolution_defaults_to_varied(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from trspecfit import fitlib
+
+        mock_pars = MagicMock()
+        monkeypatch.setattr(fitlib, "plt_fit_res_pars", mock_pars)
+
+        results = self._fake_sbs_results(vary=(True, False, True))
+        results.plot_param_evolution(show_plot=False)
+        assert mock_pars.call_count == 1
+        kwargs = mock_pars.call_args.kwargs
+        assert list(kwargs["df"].columns) == ["A", "C"]  # varied only
+        # No axes provider on this FitResults -> index fallback.
+        np.testing.assert_array_equal(kwargs["x"], np.arange(3))
+
+    #
+    def test_plot_param_evolution_explicit_and_missing_params(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from trspecfit import fitlib
+
+        mock_pars = MagicMock()
+        monkeypatch.setattr(fitlib, "plt_fit_res_pars", mock_pars)
+
+        results = self._fake_sbs_results()
+        results.plot_param_evolution(params=["B"], show_plot=False)
+        assert list(mock_pars.call_args.kwargs["df"].columns) == ["B"]
+        with pytest.raises(KeyError, match="not in this SbS fit"):
+            results.plot_param_evolution(params=["nope"], show_plot=False)
+
+    #
+    def test_plot_param_evolution_all_fixed_plots_nothing(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from trspecfit import fitlib
+
+        mock_pars = MagicMock()
+        monkeypatch.setattr(fitlib, "plt_fit_res_pars", mock_pars)
+
+        results = self._fake_sbs_results(vary=(False, False, False))
+        results.plot_param_evolution(show_plot=False)
+        assert mock_pars.call_count == 0
+
+    #
+    def test_plot_residuals_uses_energy_axis_with_provider(self):
+        project, file = _setup_baseline_fit()
+        fig = project.results.plot_residuals(file=file.name, show_plot=False)
+        assert fig.axes[1].get_xlabel() == "energy"
+
+
+#
 class TestFitResultsPlotResiduals:
     """Smoke tests for FitResults.plot_residuals — figure construction only."""
 
