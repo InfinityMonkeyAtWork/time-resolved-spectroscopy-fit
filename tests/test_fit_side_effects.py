@@ -137,7 +137,7 @@ class TestFitsWriteNothing:
         file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
 
         assert file.model_base.result is not None
-        assert file.model_base.result[1] != []
+        assert file.model_base.result.par_fin.success
         assert len(project._fit_history) == 1
         assert project._fit_history[0].fit_type == "baseline"
         assert _list_files(tmp_path) == set()
@@ -178,7 +178,7 @@ class TestFitsWriteNothing:
         file.fit_2d("single_glp", stages=1, try_ci=0)
 
         assert file.model_2d.result is not None
-        assert file.model_2d.result[1] != []
+        assert file.model_2d.result.par_fin.success
         assert any(slot.fit_type == "2d" for slot in project._fit_history)
         assert _list_files(tmp_path) == set()
 

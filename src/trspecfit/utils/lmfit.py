@@ -13,12 +13,40 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 import lmfit
 import numpy as np
 import pandas as pd
 from lmfit.minimizer import MinimizerResult
+
+if TYPE_CHECKING:
+    #
+    #
+    class TypedMinimizerResult(MinimizerResult):
+        """Annotation-only view of ``lmfit.minimizer.MinimizerResult``.
+
+        lmfit sets result attributes dynamically (``setattr`` in
+        ``__init__`` / ``minimize``), so type checkers see none of them.
+        This subclass declares the ones trspecfit reads; at runtime it IS
+        ``MinimizerResult`` (see the ``else`` branch).
+        """
+
+        params: lmfit.Parameters
+        method: str
+        success: bool
+        errorbars: bool
+        nvarys: int
+        nfree: int
+        chisqr: float
+        redchi: float
+        covar: np.ndarray | None
+        var_names: list[str]
+        # set by Minimizer.emcee only
+        flatchain: pd.DataFrame
+        acceptance_fraction: np.ndarray
+else:
+    TypedMinimizerResult = MinimizerResult
 
 #
 # lmfit parameter creation and extraction
@@ -446,11 +474,11 @@ def correl_to_df(lmfit_params: lmfit.Parameters) -> pd.DataFrame:
 
 
 #
-def list_of_par_to_df(results: list[Any]) -> pd.DataFrame:
+def list_of_par_to_df(results: list[FitOutput]) -> pd.DataFrame:
     """
     Extract parameter values from multiple fit results into DataFrame.
 
-    Collects optimized parameter values from a list of lmfit fit results
+    Collects optimized parameter values from a list of fit results
     (e.g., from slice-by-slice fitting) and organizes them in a DataFrame
     with rows=fits and columns=parameters.
     Assumes all fits have the same parameter names (typical for slice-by-slice).
@@ -458,10 +486,10 @@ def list_of_par_to_df(results: list[Any]) -> pd.DataFrame:
 
     Parameters
     ----------
-    results : list
-        List of fit results from fit_wrapper or similar.
-        Each element is expected to be a tuple/list where element [1] contains
-        the lmfit.MinimizerResult with a .params attribute.
+    results : list of FitOutput
+        Fit results from ``fitlib.fit_wrapper``, one per fit; each
+        ``par_fin`` holds the lmfit.MinimizerResult with a ``.params``
+        attribute.
 
     Returns
     -------
@@ -488,16 +516,16 @@ def list_of_par_to_df(results: list[Any]) -> pd.DataFrame:
     """
 
     # Extract parameter values from each result
-    param_values_list = [par_extract(results[i][1].params) for i in range(len(results))]
+    param_values_list = [par_extract(result.par_fin.params) for result in results]
 
     # Get parameter names from first result (all should be identical)
-    param_names = [k for k, v in results[0][1].params.valuesdict().items()]
+    param_names = list(results[0].par_fin.params.valuesdict())
 
     return pd.DataFrame(param_values_list, columns=param_names)
 
 
 #
-def list_of_par_stderr_to_df(results: list[Any]) -> pd.DataFrame:
+def list_of_par_stderr_to_df(results: list[FitOutput]) -> pd.DataFrame:
     """
     Extract per-fit parameter stderr into a DataFrame (NaN where absent).
 
@@ -509,9 +537,9 @@ def list_of_par_stderr_to_df(results: list[Any]) -> pd.DataFrame:
 
     Parameters
     ----------
-    results : list
-        List of fit results from fit_wrapper or similar; element [1] holds
-        the lmfit.MinimizerResult with a .params attribute.
+    results : list of FitOutput
+        Fit results from ``fitlib.fit_wrapper``; each ``par_fin`` holds
+        the lmfit.MinimizerResult with a ``.params`` attribute.
 
     Returns
     -------
@@ -519,10 +547,10 @@ def list_of_par_stderr_to_df(results: list[Any]) -> pd.DataFrame:
         DataFrame with rows=individual fits, columns=parameter stderr.
     """
 
-    param_names = list(results[0][1].params.keys())
+    param_names = list(results[0].par_fin.params.keys())
     rows = []
     for result in results:
-        params = result[1].params
+        params = result.par_fin.params
         rows.append(
             [
                 float(params[name].stderr)
@@ -537,6 +565,49 @@ def list_of_par_stderr_to_df(results: list[Any]) -> pd.DataFrame:
 #
 # Configuration and compatibility classes
 #
+
+
+#
+#
+@dataclass(frozen=True)
+class FitOutput:
+    """
+    Typed result of one ``fitlib.fit_wrapper`` optimization run.
+
+    Internal container replacing the historical raw five-element list
+    ``[par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]``. Stored on
+    ``mcp.Model.result`` and, per slice, in ``File.results_sbs``; the
+    authoritative persisted record remains ``SavedFitSlot``.
+
+    Attributes
+    ----------
+    par_ini : lmfit.Parameters or None
+        Initial parameter guess (deep copy, untouched by the fit). None
+        on the project-level joint-fit path, where per-file results are
+        projections of one joint optimization and no per-file initial
+        guess exists.
+    par_fin : lmfit.minimizer.MinimizerResult
+        Final fit result from ``lmfit.minimize`` (annotated as
+        ``TypedMinimizerResult`` for static attribute access). On the
+        project-level joint-fit path this is a minimal
+        ``MinimizerResult`` carrying only ``params`` / ``method`` /
+        ``nvarys``.
+    conf_ci : pd.DataFrame
+        Confidence intervals from ``lmfit.conf_interval`` (columns
+        ``['par[v]/sigma[>]', '-3.0', ..., 'best fit', ..., '+3.0']``).
+        Empty if CI was skipped or failed.
+    emcee_fin : lmfit.minimizer.MinimizerResult or None
+        MCMC sampling result from ``lmfit.emcee``. None if MCMC not used.
+    emcee_ci : pd.DataFrame
+        MCMC confidence intervals (quantiles of the flatchain, same
+        column structure as ``conf_ci``). Empty if MCMC not used.
+    """
+
+    par_ini: lmfit.Parameters | None
+    par_fin: TypedMinimizerResult
+    conf_ci: pd.DataFrame
+    emcee_fin: TypedMinimizerResult | None
+    emcee_ci: pd.DataFrame
 
 
 #

@@ -112,8 +112,11 @@ fit setup).
 The fitting machinery: residual function, `fit_wrapper` (global + local
 solvers), confidence intervals via `lmfit.conf_interval`, MCMC via
 `lmfit.emcee`, and the 1D/2D fit-result plotting (`plt_fit_res_1d`,
-`plt_fit_res_2d`). Internal module — method docstrings stay minimal,
-module-level doc carries the weight.
+`plt_fit_res_2d`). `fit_wrapper` returns a typed
+`utils.lmfit.FitOutput` (`par_ini` / `par_fin` / `conf_ci` /
+`emcee_fin` / `emcee_ci`), which is what `Model.result` and the
+per-slice entries of `File.results_sbs` hold. Internal module — method
+docstrings stay minimal, module-level doc carries the weight.
 
 ### `simulator.py` — synthetic data generation
 

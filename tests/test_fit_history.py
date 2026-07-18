@@ -489,7 +489,7 @@ class TestTwoDSlot:
 
 #
 class TestMcmcPayload:
-    """fit_wrapper's emcee outputs (result[3]/[4]) flow into SavedFitSlot.mcmc.
+    """fit_wrapper's emcee outputs (emcee_fin/emcee_ci) flow into SavedFitSlot.mcmc.
 
     Without this wiring the slot's ``mcmc`` field stays None even when MCMC
     actually ran — see _mcmc_payload in utils/fit_io.py.

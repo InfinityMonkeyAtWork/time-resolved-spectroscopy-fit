@@ -144,7 +144,7 @@ def sbs_fit_one_slice(
     fit_fun_str: str,
     stages: int,
     fit_wrapper_kwargs: dict[str, Any],
-) -> tuple[int, list[Any]]:
+) -> tuple[int, ulmfit.FitOutput]:
     """Fit one energy slice in a worker process.
 
     Uses worker-local ``_WORKER_MODEL`` and ``_WORKER_DISPATCH_ARGS``
@@ -155,7 +155,7 @@ def sbs_fit_one_slice(
 
     Returns
     -------
-    tuple[int, list]
+    tuple[int, ulmfit.FitOutput]
         (slice_index, fit_wrapper_result) so the caller can reassemble
         out-of-order completions back into slice order.
     """
@@ -271,8 +271,8 @@ def plot_sbs_slices(
             x=file.energy,
             y=file.data[s_i],
             fit_fun_str=file.p.spec_fun_str,
-            par_init=result_slice[0],
-            par_fin=result_slice[1],
+            par_init=result_slice.par_ini,
+            par_fin=result_slice.par_fin,
             args=model_sbs.args,
             plot_sum=False,
             show_init=show_init,

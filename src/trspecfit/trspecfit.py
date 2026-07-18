@@ -58,7 +58,6 @@ import os
 import pathlib
 import re
 import time
-import types
 import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
@@ -72,6 +71,7 @@ import lmfit
 import numpy as np
 import pandas as pd
 from IPython.display import display
+from lmfit.minimizer import MinimizerResult
 from ruamel.yaml import YAML
 from tqdm import tqdm
 
@@ -211,7 +211,7 @@ class Project:
 
         self._config_file: PathLike | None = None
         self.files: list[File] = []
-        self._project_fit_result: list[Any] | None = None
+        self._project_fit_result: ulmfit.FitOutput | None = None
         # Append-only log of completed fit slots, populated eagerly at fit
         # completion by the _slot_from_<fit_type> helpers in utils/fit_io.py.
         self._fit_history: list[fit_io.SavedFitSlot] = []
@@ -1458,41 +1458,42 @@ class Project:
         # get_fit_results("2d") work on project-fitted files.
         mapping = project_fit_info["mapping"]
         models = project_fit_info["models"]
-        joint_result = result[1] if result[1] else None
-        if joint_result:
-            final_pars = joint_result.params
-            for proj_name, file_idx, local_name in mapping:
-                if proj_name in final_pars:
-                    models[file_idx].lmfit_pars[local_name].value = final_pars[
-                        proj_name
-                    ].value
+        joint_result = result.par_fin
+        final_pars = joint_result.params
+        for proj_name, file_idx, local_name in mapping:
+            if proj_name in final_pars:
+                models[file_idx].lmfit_pars[local_name].value = final_pars[
+                    proj_name
+                ].value
 
         # method/nvarys come from the joint optimizer; per-file stderr/CI are
         # absent by design (joint covariance does not decompose cleanly per
         # file). conf_ci is an empty DataFrame so _append_2d_slot's
-        # `result[2].empty` check works without branching.
-        joint_method = (
-            getattr(joint_result, "method", "unknown") if joint_result else "unknown"
-        )
-        joint_nvarys = int(getattr(joint_result, "nvarys", 0)) if joint_result else 0
+        # `conf_ci.empty` check works without branching.
+        joint_method = str(getattr(joint_result, "method", "unknown"))
+        joint_nvarys = int(getattr(joint_result, "nvarys", 0))
         for f, model in zip(self.files, models, strict=True):
             f.model_2d = model
             assert model is not None  # type guard
             assert f.energy is not None and f.data is not None  # type guard
-            # Length-5 list mirrors fit_wrapper's [par_ini, par_fin, conf_ci,
-            # emcee_fin, emcee_ci]. Project fits do not run per-file MCMC, so
-            # emcee slots are inert (None / empty DataFrame).
-            model.result = [
-                None,
-                types.SimpleNamespace(
-                    params=model.lmfit_pars,
-                    method=joint_method,
-                    nvarys=joint_nvarys,
+            # Per-file FitOutput whose par_fin is a minimal MinimizerResult
+            # (params/method/nvarys only, no covar): the joint optimization
+            # has no per-file initial guess, and project fits do not run
+            # per-file MCMC, so those fields are inert (None / empty).
+            model.result = ulmfit.FitOutput(
+                par_ini=None,
+                par_fin=cast(
+                    "ulmfit.TypedMinimizerResult",
+                    MinimizerResult(
+                        params=model.lmfit_pars,
+                        method=joint_method,
+                        nvarys=joint_nvarys,
+                    ),
                 ),
-                pd.DataFrame(),
-                None,
-                pd.DataFrame(),
-            ]
+                conf_ci=pd.DataFrame(),
+                emcee_fin=None,
+                emcee_ci=pd.DataFrame(),
+            )
             # const/args mirror File.fit_2d so _append_2d_slot can evaluate
             # the per-file fit grid via fitlib.residual_fun. Per-file
             # re-evaluation always uses the interpreter — the fused JAX
@@ -1505,19 +1506,17 @@ class Project:
         # Append a per-file 2D slot to Project._fit_history so the joint fit
         # is discoverable via Project.results, matching the File.fit_2d()
         # entry point.
-        slots_2d: list[fit_io.SavedFitSlot | None] = []
-        if joint_result:
-            joint_fit_settings = fit_io.build_fit_settings(
-                stages=stages, fit_wrapper_kwargs=fit_wrapper_kwargs
+        joint_fit_settings = fit_io.build_fit_settings(
+            stages=stages, fit_wrapper_kwargs=fit_wrapper_kwargs
+        )
+        slots_2d: list[fit_io.SavedFitSlot | None] = [
+            f._append_2d_slot(
+                model_name=model_name,
+                fit_fun_str="fit_model_mcp",
+                fit_settings=joint_fit_settings,
             )
-            for f in self.files:
-                slots_2d.append(
-                    f._append_2d_slot(
-                        model_name=model_name,
-                        fit_fun_str="fit_model_mcp",
-                        fit_settings=joint_fit_settings,
-                    )
-                )
+            for f in self.files
+        ]
 
         if self.show_output >= 1:
             fitlib.time_display(
@@ -1608,7 +1607,7 @@ class File:
         Model used for baseline fitting
     model_sbs : Model or None
         Model used for Slice-by-Slice fitting
-    results_sbs : list
+    results_sbs : list of ulmfit.FitOutput
         Slice-by-Slice fit results for all time slices
     model_spec : Model or None
         Model used for individual spectrum fitting
@@ -1710,7 +1709,7 @@ class File:
         self.model_sbs: mcp.Model | None = None
         self.model_2d: mcp.Model | None = None
         # all Slice-by-Slice fit results (different from model_sbs.result)
-        self.results_sbs: list = []
+        self.results_sbs: list[ulmfit.FitOutput] = []
         #
         self.model_spec: mcp.Model | None = None  # model for individual spectrum fit
         self.data_spec: np.ndarray | None = None  # extracted 1D spectrum
@@ -2666,7 +2665,7 @@ class File:
         _args = self._build_1d_dispatch_args(self.model_base, _fun_str)
         self.model_base.args = _args
         # fit (optionally) with confidence intervals
-        self.model_base.result = fitlib.fit_wrapper(
+        fit_out = fitlib.fit_wrapper(
             const=self.model_base.const,
             args=self.model_base.args,
             par_names=self.model_base.parameter_names,
@@ -2675,15 +2674,14 @@ class File:
             show_output=1 if self.p.show_output >= 1 else 0,
             **lmfit_wrapper_kwargs,
         )
+        self.model_base.result = fit_out
 
         # Write optimized values back to model.lmfit_pars.  fit_wrapper
         # optimizes a deepcopy, so model.lmfit_pars may be stale when
         # the GIR path was used (it never calls model.update_value).
-        if stages >= 1 and self.model_base.result[1] != []:
+        if stages >= 1:
             self.model_base.update_value(
-                new_par_values=ulmfit.par_extract(
-                    self.model_base.result[1], return_type="list"
-                )
+                new_par_values=ulmfit.par_extract(fit_out.par_fin, return_type="list")
             )
             self._append_baseline_slot(
                 model_name=model_name,
@@ -2705,7 +2703,7 @@ class File:
                 y=self.data_base,
                 fit_fun_str=self.p.spec_fun_str,
                 par_init=initial_guess,
-                par_fin=self.model_base.result[1],
+                par_fin=fit_out.par_fin,
                 args=self.model_base.args,
                 plot_sum=False,
                 show_init=True,
@@ -2720,7 +2718,7 @@ class File:
             fitlib.time_display(
                 t_start=t_base, print_str="Time elapsed for baseline fit: "
             )
-            display(self.model_base.result[1].params)  # display final pars below figure
+            display(fit_out.par_fin.params)  # display final pars below figure
 
     #
     def _save_1d_fit(self, model: mcp.Model | None, save_path: PathLike) -> None:
@@ -2733,8 +2731,8 @@ class File:
 
         if model is None or self.energy is None:
             raise ValueError("Model/energy missing; nothing to save.")
-        if not model.result or not getattr(model.result[1], "params", None):
-            return  # mocked / placeholder; nothing to dump
+        if model.result is None or not getattr(model.result.par_fin, "params", None):
+            return  # unfitted or mocked / placeholder; nothing to dump
         model.create_value_1d(store_1d=1)
         if model.value_1d is None:
             raise ValueError(
@@ -2893,7 +2891,7 @@ class File:
         _args = self._build_1d_dispatch_args(self.model_spec, _fun_str)
         self.model_spec.args = _args
         # fit
-        self.model_spec.result = fitlib.fit_wrapper(
+        fit_out = fitlib.fit_wrapper(
             const=self.model_spec.const,
             args=self.model_spec.args,
             par_names=self.model_spec.parameter_names,
@@ -2902,13 +2900,12 @@ class File:
             show_output=1 if self.p.show_output >= 1 else 0,
             **lmfit_wrapper_kwargs,
         )
+        self.model_spec.result = fit_out
 
         # Write optimized values back to model.lmfit_pars (see fit_baseline).
-        if stages >= 1 and self.model_spec.result[1] != []:
+        if stages >= 1:
             self.model_spec.update_value(
-                new_par_values=ulmfit.par_extract(
-                    self.model_spec.result[1], return_type="list"
-                )
+                new_par_values=ulmfit.par_extract(fit_out.par_fin, return_type="list")
             )
             self._append_spectrum_slot(
                 model_name=model_name,
@@ -2939,7 +2936,7 @@ class File:
                 y=self.data_spec,
                 fit_fun_str=self.p.spec_fun_str,
                 par_init=initial_guess,
-                par_fin=self.model_spec.result[1],
+                par_fin=fit_out.par_fin,
                 args=self.model_spec.args,
                 plot_sum=False,
                 show_init=True,
@@ -2954,7 +2951,7 @@ class File:
             fitlib.time_display(
                 t_start=t_spec, print_str="Time elapsed for spectrum fit: "
             )
-            display(self.model_spec.result[1].params)
+            display(fit_out.par_fin.params)
 
     #
     def save_spectrum_fit(self, save_path: PathLike) -> None:
@@ -3123,7 +3120,7 @@ class File:
         if seed_adapt not in (None, "argmax_shift"):
             raise ValueError("seed_adapt must be None or 'argmax_shift'.")
         if seed_source == "baseline" and (
-            self.model_base is None or not self.model_base.result
+            self.model_base is None or self.model_base.result is None
         ):
             raise ValueError(
                 "Baseline seed requested but baseline model is not fitted yet; "
@@ -3145,8 +3142,9 @@ class File:
             )
         elif seed_source == "baseline":
             assert self.model_base is not None  # type guard
+            assert self.model_base.result is not None  # type guard
             seed_template = ulmfit.par_extract(
-                self.model_base.result[1], return_type="list"
+                self.model_base.result.par_fin, return_type="list"
             )
         else:
             seed_template = usbs.extract_sbs_seed_template(
@@ -3235,7 +3233,7 @@ class File:
             # sanitized_spawn_main keeps workers from re-running a
             # non-.py __main__ (e.g. a notebook executed via %run).
             ctx = multiprocessing.get_context("spawn")
-            by_id: dict[int, list[Any]] = {}
+            by_id: dict[int, ulmfit.FitOutput] = {}
             with (
                 uspawn.sanitized_spawn_main(),
                 concurrent.futures.ProcessPoolExecutor(
@@ -3347,7 +3345,9 @@ class File:
         assert self.energy is not None  # type guard
         if self.data is None:
             return None  # data_base-only fixture / no File data to fingerprint
-        result_fin = self.model_base.result[1]
+        fit_out = self.model_base.result
+        assert fit_out is not None  # type guard
+        result_fin = fit_out.par_fin
         if not hasattr(result_fin, "params"):
             return None  # mocked / placeholder result; nothing to record
         # Evaluate model on the same grid as data_base, then crop to e_lim
@@ -3374,7 +3374,7 @@ class File:
             col_type="min",
             par_names=self.model_base.parameter_names,
         )
-        conf_ci = self.model_base.result[2]
+        conf_ci = fit_out.conf_ci
         # correl only when the optimizer produced a covariance matrix —
         # otherwise the matrix would misreport "no covariance" as
         # "uncorrelated" (identity + zeros).
@@ -3383,10 +3383,7 @@ class File:
             if getattr(result_fin, "covar", None) is not None
             else None
         )
-        mcmc = fit_io._mcmc_payload(
-            self.model_base.result[3],
-            self.model_base.result[4],
-        )
+        mcmc = fit_io._mcmc_payload(fit_out.emcee_fin, fit_out.emcee_ci)
         slot = fit_io._slot_from_baseline(
             file_fingerprint=self.fingerprint(),
             file_name=self.name,
@@ -3427,7 +3424,9 @@ class File:
         assert self.model_spec is not None  # type guard
         assert self.data_spec is not None  # type guard
         assert self.energy is not None  # type guard
-        result_fin = self.model_spec.result[1]
+        fit_out = self.model_spec.result
+        assert fit_out is not None  # type guard
+        result_fin = fit_out.par_fin
         if not hasattr(result_fin, "params"):
             return None  # mocked / placeholder result; nothing to record
         fit_full = np.asarray(
@@ -3452,16 +3451,13 @@ class File:
             col_type="min",
             par_names=self.model_spec.parameter_names,
         )
-        conf_ci = self.model_spec.result[2]
+        conf_ci = fit_out.conf_ci
         correl = (
             ulmfit.correl_to_df(result_fin.params)
             if getattr(result_fin, "covar", None) is not None
             else None
         )
-        mcmc = fit_io._mcmc_payload(
-            self.model_spec.result[3],
-            self.model_spec.result[4],
-        )
+        mcmc = fit_io._mcmc_payload(fit_out.emcee_fin, fit_out.emcee_ci)
         slot = fit_io._slot_from_spectrum(
             file_fingerprint=self.fingerprint(),
             file_name=self.name,
@@ -3509,7 +3505,7 @@ class File:
         assert self.model_sbs is not None  # type guard
         assert self.data is not None  # type guard
         assert self.energy is not None  # type guard
-        if not self.results_sbs or not hasattr(self.results_sbs[0][1], "params"):
+        if not self.results_sbs or not hasattr(self.results_sbs[0].par_fin, "params"):
             return None  # mocked / placeholder results; nothing to record
         n_slices = len(self.data)
         e_lim = list(self.e_lim) if self.e_lim else None
@@ -3519,7 +3515,7 @@ class File:
         fit_rows = []
         for s_i in range(n_slices):
             slice_data = self.data[s_i]
-            slice_par = self.results_sbs[s_i][1].params
+            slice_par = self.results_sbs[s_i].par_fin.params
             fit_full = np.asarray(
                 fitlib.residual_fun(
                     par=slice_par,
@@ -3542,15 +3538,15 @@ class File:
         params_df = ulmfit.list_of_par_to_df(self.results_sbs)
         # n_free_pars + fit_alg captured from slice 0 (consistent across slices
         # because the same model_sbs is used for every slice).
-        slice0_result = self.results_sbs[0][1]
-        slice0_conf_ci = self.results_sbs[0][2]
+        slice0_result = self.results_sbs[0].par_fin
+        slice0_conf_ci = self.results_sbs[0].conf_ci
         # MCMC and correl payloads — captured from slice 0, mirroring
         # fit_alg / nvarys. Per-slice MCMC chains / correlation matrices
         # are not stored; aggregate analysis uses slice 0 as the
         # representative.
         slice0_mcmc = fit_io._mcmc_payload(
-            self.results_sbs[0][3],
-            self.results_sbs[0][4],
+            self.results_sbs[0].emcee_fin,
+            self.results_sbs[0].emcee_ci,
         )
         slice0_correl = (
             ulmfit.correl_to_df(slice0_result.params)
@@ -3603,7 +3599,9 @@ class File:
         assert self.model_2d is not None  # type guard
         assert self.data is not None  # type guard
         assert self.energy is not None  # type guard
-        result_fin = self.model_2d.result[1]
+        fit_out = self.model_2d.result
+        assert fit_out is not None  # type guard
+        result_fin = fit_out.par_fin
         if not hasattr(result_fin, "params"):
             return None  # mocked / placeholder result; nothing to record
         # Evaluate the 2D model on the full grid; crop to (t_lim, e_lim) so
@@ -3635,8 +3633,8 @@ class File:
             col_type="min",
             par_names=self.model_2d.parameter_names,
         )
-        conf_ci = self.model_2d.result[2]
-        # covar is absent on the project-fit path (SimpleNamespace result)
+        conf_ci = fit_out.conf_ci
+        # covar is absent on the project-fit path (minimal MinimizerResult)
         # and for covariance-less optimizers; correl stays None there,
         # mirroring the per-file absence of stderr / conf_ci.
         correl = (
@@ -3644,10 +3642,7 @@ class File:
             if getattr(result_fin, "covar", None) is not None
             else None
         )
-        mcmc = fit_io._mcmc_payload(
-            self.model_2d.result[3],
-            self.model_2d.result[4],
-        )
+        mcmc = fit_io._mcmc_payload(fit_out.emcee_fin, fit_out.emcee_ci)
         slot = fit_io._slot_from_2d(
             file_fingerprint=self.fingerprint(),
             file_name=self.name,
@@ -4029,7 +4024,7 @@ class File:
         self.model_2d.args = _args
 
         # fit (with confidence intervals)
-        self.model_2d.result = fitlib.fit_wrapper(
+        fit_out = fitlib.fit_wrapper(
             const=self.model_2d.const,
             args=self.model_2d.args,
             par_names=self.model_2d.parameter_names,
@@ -4038,12 +4033,13 @@ class File:
             show_output=1 if self.p.show_output >= 1 else 0,
             **fit_wrapper_kwargs,
         )
+        self.model_2d.result = fit_out
         # Write optimized values back to model.lmfit_pars.  fit_wrapper
         # optimizes a deepcopy, so model.lmfit_pars may be stale — especially
         # on the GIR path where fit_model_gir never calls model.update_value.
         slot_2d: fit_io.SavedFitSlot | None = None
-        if stages >= 1 and self.model_2d.result[1] != []:
-            final_params = self.model_2d.result[1].params
+        if stages >= 1:
+            final_params = fit_out.par_fin.params
             for name in self.model_2d.parameter_names:
                 if name in final_params:
                     self.model_2d.lmfit_pars[name].value = final_params[name].value
@@ -4063,7 +4059,7 @@ class File:
                     t_start=t_2d, print_str="Time elapsed for 2D model fit: "
                 )
                 # display final pars below figure
-                display(self.model_2d.result[1].params)
+                display(fit_out.par_fin.params)
 
     #
     def get_fit_results(

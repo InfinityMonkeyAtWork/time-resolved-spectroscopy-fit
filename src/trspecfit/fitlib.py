@@ -578,7 +578,7 @@ def fit_wrapper(
     fit_alg_2: str = "leastsq",
     jac_fun: Callable[..., np.ndarray] | None = None,
     show_output: int = 0,
-) -> list[Any]:
+) -> ulmfit.FitOutput:
     """
     Comprehensive fitting wrapper with optimization, CI, and MCMC.
 
@@ -659,19 +659,18 @@ def fit_wrapper(
 
     Returns
     -------
-    list
-        Five-element list containing results:
-        [par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]
+    ulmfit.FitOutput
+        Typed result container with fields:
 
         - **par_ini** (*lmfit.Parameters*) -- Initial parameter guess.
-        - **par_fin** (*lmfit.MinimizerResult or []*) -- Final fit result
+        - **par_fin** (*lmfit.MinimizerResult*) -- Final fit result
           from lmfit.minimize.
         - **conf_ci** (*pd.DataFrame*) -- Confidence intervals from
           lmfit.conf_interval. Columns: ``['par[v]/sigma[>]', '-3σ',
           '-2σ', '-1σ', 'best', '+1σ', '+2σ', '+3σ']``.
           Empty DataFrame if CI not calculated/failed.
-        - **emcee_fin** (*lmfit.MinimizerResult or []*) -- MCMC result
-          from lmfit.emcee. Empty list if MCMC not used.
+        - **emcee_fin** (*lmfit.MinimizerResult or None*) -- MCMC result
+          from lmfit.emcee. None if MCMC not used.
         - **emcee_ci** (*pd.DataFrame*) -- MCMC confidence intervals
           from quantiles of flatchain. Same column structure as conf_ci;
           one row per sampled parameter (varying model params + the
@@ -691,7 +690,7 @@ def fit_wrapper(
     ...     stages=1,
     ...     show_output=1
     ... )
-    >>> par_ini, par_fin, conf_ci, emcee_fin, emcee_ci = results
+    >>> results.par_fin.params  # optimized parameters
 
     >>> # Two-stage fit with confidence intervals
     >>> results = fit_wrapper(
@@ -857,9 +856,10 @@ def fit_wrapper(
         t_emcee0 = time.time()
         # deepcopy first: __lnsigma is an MCMC sampling construct, not a model
         # parameter. _result_params returns the live par_fin.params (stored as
-        # result[1] and consumed downstream as the model-only fit result), so
-        # adding __lnsigma in place would leak it into every consumer of that
-        # result (display, get_fit_results, SbS tables). emcee gets the copy.
+        # FitOutput.par_fin and consumed downstream as the model-only fit
+        # result), so adding __lnsigma in place would leak it into every
+        # consumer of that result (display, get_fit_results, SbS tables).
+        # emcee gets the copy.
         par_fin_params = copy.deepcopy(_result_params(par_fin))
         par_fin_params.add(
             "__lnsigma",
@@ -980,7 +980,15 @@ def fit_wrapper(
         emcee_fin = None
         emcee_ci = pd.DataFrame()
 
-    return [par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]
+    # cast: lmfit sets result attributes dynamically, so its returns are
+    # opaque to type checkers — TypedMinimizerResult declares what we read
+    return ulmfit.FitOutput(
+        par_ini=par_ini,
+        par_fin=cast("ulmfit.TypedMinimizerResult", par_fin),
+        conf_ci=conf_ci,
+        emcee_fin=cast("ulmfit.TypedMinimizerResult | None", emcee_fin),
+        emcee_ci=emcee_ci,
+    )
 
 
 #
@@ -990,7 +998,7 @@ def fit_wrapper(
 
 #
 def results_to_df(
-    results: list[Any],
+    results: list[ulmfit.FitOutput],
     x: ArrayLike | None = None,
     index: ArrayLike | None = None,
     config: PlotConfig | None = None,
@@ -1005,9 +1013,8 @@ def results_to_df(
 
     Parameters
     ----------
-    results : list
-        List of fit results from fit_wrapper, one per time slice.
-        Each element: [par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]
+    results : list of ulmfit.FitOutput
+        Fit results from fit_wrapper, one per time slice.
     x : array-like, optional
         Time axis values. If provided, included as column in DataFrame.
     index : array-like, optional
@@ -1043,7 +1050,7 @@ def results_to_df(
 
 #
 def results_to_fit_2d(
-    results: list[Any] | pd.DataFrame,
+    results: list[ulmfit.FitOutput] | pd.DataFrame,
     const: tuple[Any, ...],
     args: tuple[Any, ...],
     parameter_names: list[str] | None = None,
@@ -1060,11 +1067,10 @@ def results_to_fit_2d(
 
     Parameters
     ----------
-    results : list or pd.DataFrame
+    results : list of ulmfit.FitOutput or pd.DataFrame
         Fit results, either:
 
-        - list: Output from fit_wrapper for each slice.
-          Each element: ``[par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]``
+        - list: ``fit_wrapper`` output for each slice.
         - pd.DataFrame: From results_to_df() with parameters as columns
 
     parameter_names : list of str, optional
@@ -1109,7 +1115,7 @@ def results_to_fit_2d(
         if isinstance(results, list):
             lst.append(
                 residual_fun(
-                    results[i][1].params,
+                    results[i].par_fin.params,
                     x_const,
                     np.asarray(data_const),
                     fit_fun_const,
@@ -1181,7 +1187,7 @@ def plt_fit_res_1d(
     par_fin : lmfit.MinimizerResult or lmfit.Parameters or list
         Final fit parameters:
 
-        - lmfit.MinimizerResult: From fit_wrapper result[1]
+        - lmfit.MinimizerResult: From fit_wrapper (``FitOutput.par_fin``)
         - lmfit.Parameters: Manual parameter object
         - list: Empty list shows initial guess only (no final fit)
 

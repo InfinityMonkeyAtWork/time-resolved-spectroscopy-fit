@@ -119,18 +119,23 @@ and complete the same principle, in the same breaking release (0.14.0).
 
 ## Phase 8 — typed fit-result object (internal)
 
-- [ ] Introduce a small class (e.g. `FitOutcome`, name TBD at
-      implementation; `fitlib` or `utils/lmfit.py`) with named fields
-      `par_ini`, `par_fin`, `conf_ci`, `emcee_fin`, `emcee_ci` replacing
-      the raw 5-list. `fit_wrapper` returns it.
-- [ ] Update all internal consumers: the four fit methods,
+- [x] Introduce a small class (named `FitOutput` at implementation; in
+      `utils/lmfit.py` — `fitlib` imports `spectra`→`mcp`, so the class
+      lives below both) with named fields `par_ini`, `par_fin`,
+      `conf_ci`, `emcee_fin`, `emcee_ci` replacing the raw 5-list.
+      `fit_wrapper` returns it. Frozen dataclass; `par_fin` is annotated
+      via a TYPE_CHECKING-only `TypedMinimizerResult` shim (lmfit sets
+      result attributes dynamically, invisible to pyright).
+- [x] Update all internal consumers: the four fit methods,
       `_append_*_slot` capture, `results_sbs` per-slice entries, the
       MCMC-payload builder, and `Project.fit_2d`'s `SimpleNamespace`
-      stand-in (becomes a real `FitOutcome`).
-- [ ] No list-index back-compat: verify by grep that nothing outside the
-      package (notebooks, docs) indexes `model.result[...]` or
-      `results_sbs[i][...]`; update mocked-result tests.
-- [ ] Closes the "Unified results object / raw `result[1..4]` cleanup"
+      stand-in (now a real `FitOutput` wrapping a minimal
+      `MinimizerResult`).
+- [x] No list-index back-compat: verified by grep that nothing outside
+      the package (notebooks, docs) indexes `model.result[...]` or
+      `results_sbs[i][...]`; mocked-result test (`test_file.py`) now
+      builds a placeholder `FitOutput`.
+- [x] Closes the "Unified results object / raw `result[1..4]` cleanup"
       TODO item.
 
 ## Completion
