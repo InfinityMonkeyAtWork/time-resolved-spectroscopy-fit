@@ -578,10 +578,6 @@ def fit_wrapper(
     fit_alg_2: str = "leastsq",
     jac_fun: Callable[..., np.ndarray] | None = None,
     show_output: int = 0,
-    save_output: int = 0,
-    save_path: PathLike = "",
-    num_fmt: str = "%.6e",
-    delim: str = ",",
 ) -> list[Any]:
     """
     Comprehensive fitting wrapper with optimization, CI, and MCMC.
@@ -590,7 +586,7 @@ def fit_wrapper(
     - Single or two-stage optimization
     - Confidence interval estimation via lmfit.conf_interval
     - MCMC sampling via lmfit.emcee
-    - Result visualization and export
+    - Result visualization (never writes to disk)
 
     Two-stage fitting (stages=2) is recommended for robust optimization:
     first finds global minimum with Nelder-Mead, then refines locally with
@@ -659,25 +655,7 @@ def fit_wrapper(
 
         - 0: Silent / programmatic / API mode -- no prints
         - 1: Interactive / notebook / UI mode -- show timing, fit results,
-          and confidence intervals
-
-    save_output : {-1, 0, 1}, default=0
-        Save results to files:
-
-        - 0: Don't save
-        - 1: Save all results (parameters, CIs, MCMC, plots)
-        - -1: Same as 1 (for compatibility)
-
-    save_path : str or Path, default=''
-        Base path for saved files (without extension).
-        Files saved: _par_ini.csv, _par_fin.txt, _par_fin.csv,
-        _conf_ci.csv, _emcee_fin.txt, _emcee_flatchain.csv,
-        _emcee_ci.csv, _emcee_walker_acceptance_ratio.png,
-        _emcee_corner_plot.png
-    num_fmt : str, default='%.6e'
-        Float format applied to CSV outputs (pandas ``float_format``).
-    delim : str, default=','
-        Delimiter applied to CSV outputs (pandas ``sep``).
+          confidence intervals, and MCMC diagnostic figures
 
     Returns
     -------
@@ -724,9 +702,7 @@ def fit_wrapper(
     ...     stages=2,
     ...     try_ci=1,
     ...     ci_sigmas=[1, 2, 3],
-    ...     show_output=1,
-    ...     save_output=1,
-    ...     save_path='fit_results/baseline_fit'
+    ...     show_output=1
     ... )
 
     >>> # Fit with MCMC for uncertainty quantification
@@ -758,20 +734,17 @@ def fit_wrapper(
 
     **MCMC Diagnostics:**
     When using MCMC, check:
-    - Acceptance ratios (saved plot): Should be 0.2-0.5
-    - Corner plot (saved): Should show well-defined peaks
+    - Acceptance ratios: Should be 0.2-0.5
+    - Corner plot: Should show well-defined peaks
     - Chain length: Increase steps if distributions look noisy
+
+    Both figures are displayed when show_output=1 and can be reproduced
+    later from the persisted fit slot via FitResults.plot_mcmc().
 
     **Performance Tips:**
     - Use stages=1 for quick fits during model development
     - Use stages=2 for final/publication fits
     - MCMC is slow (minutes for complex models) but provides best uncertainties
-
-    **File Outputs:**
-    When save_output=1:
-    - CSV files: Comma-separated, easy to read in Excel/pandas
-    - TXT files: Human-readable lmfit.fit_report format
-    - PNG files: High-resolution plots for documentation
     """
 
     if ci_sigmas is None:
@@ -801,8 +774,6 @@ def fit_wrapper(
         par_ini = copy.deepcopy(par)
     else:
         par_ini = ulmfit.par_construct(par_names=par_names, par_info=par)
-    # convert par_ini to pandas dataframe and save all lmfit info
-    df_par_ini = ulmfit.par_to_df(par_ini, "ini", par_names)
 
     if show_output >= 1:
         t_0 = time.time()  # start time
@@ -944,22 +915,16 @@ def fit_wrapper(
             lmfit.report_fit(emcee_fin_params)
             t_emcee1 = time.time()
             print(f"Time lmfit.emcee: {t_emcee1 - t_emcee0} s")
-        # display per show_output, save per save_output (_finalize_plot
-        # semantics: >= 0 shows, abs == 1 saves, so -2 means neither);
-        # skip figure construction entirely when neither shows nor saves
+        # diagnostics figures are display-only (reproducible later from the
+        # persisted slot via FitResults.plot_mcmc); skip construction when
+        # silent
         if show_output >= 1:
-            emcee_save = save_output
-        else:
-            emcee_save = -1 if abs(save_output) == 1 else -2
-        if emcee_save != -2:
             # acceptance fraction of all walkers (plot)
             fig_emcee_walker, _ax = plt.subplots(1, 1, dpi=75)
             plt.plot(emcee_acceptance_fraction, "o")
             plt.xlabel("Walker number")
             plt.ylabel("Acceptance fraction")
-            uplt._finalize_plot(
-                emcee_save, f"{save_path}_emcee_walker_acceptance_ratio.png"
-            )
+            uplt._finalize_plot(0)
             # draw all combinations of the typically ellipsoidal chi plot
             # [<x=par1, y=par2, z=chi2> plot]
             emcee_truths = [
@@ -973,7 +938,7 @@ def fit_wrapper(
                 truths=emcee_truths,
                 fig=fig_emcee_corner,
             )
-            uplt._finalize_plot(emcee_save, f"{save_path}_emcee_corner_plot.png")
+            uplt._finalize_plot(0)
         # get percentage borders to categorize emcee.flatchain data
         sigma_borders = sigma_start_stop_percent(ci_sigmas)
         # one row per sampled parameter (varying model params + the __lnsigma
@@ -1014,60 +979,6 @@ def fit_wrapper(
     else:  # use_emcee equal to 0, or equal to 2 and conf_interval worked
         emcee_fin = None
         emcee_ci = pd.DataFrame()
-
-    # optional save (figures are saved above)
-    # [if statements check for empty list/dataframe]
-    if abs(save_output) == 1:
-        # save_path is a file prefix; make sure its directory exists
-        pathlib.Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-        # par_ini (pandas DataFrame) as csv file
-        df_par_ini.to_csv(
-            str(save_path) + "_par_ini.csv",
-            index=False,
-            float_format=num_fmt,
-            sep=delim,
-        )
-        # par_fin as text dump
-        if par_fin:
-            with pathlib.Path(f"{save_path}_par_fin.txt").open("w") as par_fin_file:
-                par_fin_file.write(lmfit.fit_report(par_fin))
-        # par_fin variables as csv file
-        df_par_fin = ulmfit.par_to_df(_result_params(par_fin), "min", par_names)
-        df_par_fin.to_csv(
-            str(save_path) + "_par_fin.csv",
-            index=False,
-            float_format=num_fmt,
-            sep=delim,
-        )
-        # conf_ci using pandas as it is a pd.DataFrame
-        if not conf_ci.empty:
-            conf_ci.to_csv(
-                str(save_path) + "_conf_ci.csv",
-                index=False,
-                float_format=num_fmt,
-                sep=delim,
-            )
-        # emcee_fin (fit_report) as text dump, emcee flatchain as csv
-        if emcee_fin is not None:
-            with pathlib.Path(f"{save_path}_emcee_fin.txt").open("w") as emcee_fin_file:
-                emcee_fin_file.write(lmfit.fit_report(emcee_fin))
-            emcee_flatchain = cast(
-                "pd.DataFrame", getattr(emcee_fin, "flatchain", pd.DataFrame())
-            )
-            emcee_flatchain.to_csv(
-                f"{save_path}_emcee_flatchain.csv",
-                index=False,
-                float_format=num_fmt,
-                sep=delim,
-            )
-        # emcee_ci using pandas as it is a pd.DataFrame
-        if not emcee_ci.empty:
-            emcee_ci.to_csv(
-                str(save_path) + "_emcee_ci.csv",
-                index=False,
-                float_format=num_fmt,
-                sep=delim,
-            )
 
     return [par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]
 

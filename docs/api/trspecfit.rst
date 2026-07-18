@@ -71,6 +71,8 @@ identically on a live session and on loaded archives — see
 .. automethod:: trspecfit.trspecfit.File.get_mcmc
 .. automethod:: trspecfit.trspecfit.File.plot_fit
 .. automethod:: trspecfit.trspecfit.File.plot_param_evolution
+.. automethod:: trspecfit.trspecfit.File.plot_mcmc
+.. automethod:: trspecfit.trspecfit.File.plot_sbs_slices
 .. automethod:: trspecfit.trspecfit.File.compare_models
 .. automethod:: trspecfit.trspecfit.File.save_fit
 .. automethod:: trspecfit.trspecfit.File.export_fit
@@ -83,4 +85,3 @@ Utility Methods
    Most users won't need to call these directly.
 
 .. automethod:: trspecfit.trspecfit.File.model_list_to_name
-.. automethod:: trspecfit.trspecfit.File.model_path

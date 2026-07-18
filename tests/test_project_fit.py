@@ -602,17 +602,10 @@ class TestProjectFitLifecycle:
     #
     @pytest.mark.slow
     def test_num_fmt_and_delim_propagate_to_csv_outputs(self, tmp_path):
-        """Custom num_fmt/delim on the Project flow into fit-CSV writes.
+        """Custom num_fmt/delim on the Project flow into explicit CSV writes
+        (``save_baseline_fit`` -> ``fit_1d.csv``)."""
 
-        Covers two pandas ``to_csv`` paths exercised by fit_baseline:
-        - fit_wrapper -> ``{model}_par_fin.csv``
-        - save_baseline_fit -> ``fit_1d.csv``
-        """
-
-        # the exported CSVs are this test's subject, so opt into auto-export
-        # and redirect the output tree into tmp_path for xdist isolation
-        project = make_project(name="num_fmt_test", auto_export=True)
-        project.path_results = tmp_path
+        project = make_project(name="num_fmt_test")
         project.num_fmt = "%.3f"
         project.delim = ";"
 
@@ -621,21 +614,13 @@ class TestProjectFitLifecycle:
         _make_fit_file(project, clean, truth.energy, truth.time, name="file_fmt")
 
         f = project.files[0]
-        base_dir = project.path_results / f.name / "baseline" / "project_glp_base"
+        base_dir = tmp_path / "base"
+        f.save_baseline_fit(save_path=base_dir)
 
-        # fit_wrapper writes <model>_par_fin.csv via pandas to_csv
-        par_fin_lines = (
-            (base_dir / "project_glp_base_par_fin.csv").read_text().splitlines()
-        )
-        assert ";" in par_fin_lines[0]  # custom delimiter on header
-        value_field = par_fin_lines[1].split(";")[1]
-        # %.3f -> fixed-point; %.6e fallback would contain 'e'
-        assert "." in value_field and "e" not in value_field.lower(), value_field
-
-        # save_baseline_fit writes fit_1d.csv via pandas to_csv
         fit_1d_lines = (base_dir / "fit_1d.csv").read_text().splitlines()
         assert fit_1d_lines[0].startswith("energy;sum;")
         energy_field = fit_1d_lines[1].split(";")[0]
+        # %.3f -> fixed-point; %.6e fallback would contain 'e'
         assert "." in energy_field and "e" not in energy_field.lower(), energy_field
 
 
@@ -814,7 +799,6 @@ def _make_shared_tau_project(*, spec_fun_str, grids=None, show_output=0):
     project = make_project(
         name=f"jax_project_{spec_fun_str}",
         spec_fun_str=spec_fun_str,
-        auto_export=False,
     )
     for i, ((energy, time_ax), amplitude, seed) in enumerate(
         zip(grids, amplitudes, seeds, strict=True)

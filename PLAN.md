@@ -44,18 +44,18 @@ and complete the same principle, in the same breaking release (0.14.0).
 
 ### Knob removal
 
-- [ ] Delete `Project.auto_export` (attribute, `_set_defaults`,
+- [x] Delete `Project.auto_export` (attribute, `_set_defaults`,
       `project.yaml` default). Check how YAML parsing treats the removed
       key — an existing `project.yaml` with `auto_export:` must fail or
       warn clearly, not be silently ignored (grep example/test yamls).
-- [ ] Delete `Project.path_results` and `File.model_path` (dead once the
+- [x] Delete `Project.path_results` and `File.model_path` (dead once the
       fit methods stop writing): update `Project.describe`, the tests
       that redirect `path_results`, and any `project.yaml` key handling.
       Single default output root remains `./fit_results/<name>/`.
-- [ ] `Project.name` default `"test"` → `"my_project"` (placeholder that
+- [x] `Project.name` default `"test"` → `"my_project"` (placeholder that
       can't be mistaken for test-suite artifacts). Grep tests/docs/
       examples for reliance on the old default.
-- [ ] Fit methods drop all export wiring:
+- [x] Fit methods drop all export wiring:
       - `fit_baseline` / `fit_spectrum`: the `save_baseline_fit` /
         `save_spectrum_fit` auto-calls and `fit_wrapper(save_output=...)`.
       - `fit_slice_by_slice`: the post-fit `export_fit` call, the serial
@@ -65,7 +65,7 @@ and complete the same principle, in the same breaking release (0.14.0).
       - `File.fit_2d` / `Project.fit_2d`: the post-fit `export_fit(s)`
         calls and `save_output` wiring.
       - Display gating (`show_output`) is untouched.
-- [ ] `fitlib.fit_wrapper`: remove `save_output` / `save_path` /
+- [x] `fitlib.fit_wrapper`: remove `save_output` / `save_path` /
       `num_fmt` / `delim` params, the CSV/txt dump block, and the emcee
       figure *save* path (walker/corner figures become display-only via
       `show_output`). Fit methods drop their `num_fmt`/`delim`
@@ -73,18 +73,18 @@ and complete the same principle, in the same breaking release (0.14.0).
 
 ### Reproducibility checklist (what auto-export wrote → where it lives now)
 
-- [ ] `*_par_ini.csv` / `*_par_fin.csv` → slot `params`
+- [x] `*_par_ini.csv` / `*_par_fin.csv` → slot `params`
       (`init_value`/`value`/`stderr`/bounds/`vary`/`expr`); exported as
       `params.csv`. ✓ nothing to add.
-- [ ] `*_conf_ci.csv`, `*_emcee_flatchain.csv`, `*_emcee_ci.csv` → slot
+- [x] `*_conf_ci.csv`, `*_emcee_flatchain.csv`, `*_emcee_ci.csv` → slot
       `conf_ci` / `mcmc` payload; exported under the slot dir. ✓
-- [ ] `*_emcee_walker_acceptance_ratio.png`, `*_emcee_corner_plot.png` →
+- [x] `*_emcee_walker_acceptance_ratio.png`, `*_emcee_corner_plot.png` →
       add `FitResults.plot_mcmc(file=..., model=..., fit_type=...,
       show_plot=...)` rendering the corner plot (from persisted
       `flatchain`) and per-walker acceptance (from persisted
       `acceptance_fraction`), with `File.plot_mcmc` sugar — turnkey
       reproduction from live sessions *and* archives.
-- [ ] SbS per-slice PNGs → new `File.plot_sbs_slices(model=...,
+- [x] SbS per-slice PNGs → new `File.plot_sbs_slices(model=...,
       slices=None, show_init=True, save_path=None, show_plot=...)`,
       logic in `utils/sbs.py`; uses live `results_sbs` (per-slice
       `par_ini` + component decomposition via `plt_fit_res_1d`), so it
@@ -92,26 +92,26 @@ and complete the same principle, in the same breaking release (0.14.0).
       document. `save_path=None` → display-only; deliberately NOT part
       of `export_fits` (export stays slot-fed and archive-reproducible;
       per-slice diagnostics need live inputs and would flood the tree).
-- [ ] SbS per-slice `*_par_ini.csv` → accepted loss: re-derivable from
+- [x] SbS per-slice `*_par_ini.csv` → accepted loss: re-derivable from
       the persisted `fit_settings` seeding recipe; document in changelog.
-- [ ] `lmfit.fit_report` text dumps → accepted loss: contents (params,
+- [x] `lmfit.fit_report` text dumps → accepted loss: contents (params,
       stderr, correlations, metrics) all persisted; document.
-- [ ] Baseline/spectrum component-decomposed `fit_1d.csv` → explicit
+- [x] Baseline/spectrum component-decomposed `fit_1d.csv` → explicit
       `save_baseline_fit` / `save_spectrum_fit` (kept, no longer
       auto-called).
-- [ ] 2D/SbS result trees → explicit `export_fit(s)` (unchanged).
+- [x] 2D/SbS result trees → explicit `export_fit(s)` (unchanged).
 
 ### Tests / docs
 
-- [ ] `tests/test_auto_export.py` reshaped: "fits write nothing" becomes
+- [x] `tests/test_auto_export.py` reshaped: "fits write nothing" becomes
       the unconditional default; explicit save/export tests remain; the
       display/silent guardrail matrix (`TestPlotHelperSkipped`,
       `TestVerboseDisplayWithoutExport`) survives with `auto_export`
       references removed. `make_project(auto_export=...)` helper param
       goes; export-parity tests re-anchor on two explicit exports.
-- [ ] New tests: `plot_mcmc` (slot-backed, incl. loaded archive),
+- [x] New tests: `plot_mcmc` (slot-backed, incl. loaded archive),
       `plot_sbs_slices` (live; raises helpfully without `results_sbs`).
-- [ ] Docs: llms.txt headless section shrinks (`show_output=0` is the
+- [x] Docs: llms.txt headless section shrinks (`show_output=0` is the
       only knob — no-write is default); repo_architecture.md auto-export
       paragraph rewritten (fits never write; explicit save/export;
       diagnostics on demand); changelog breaking entry; grep notebooks +

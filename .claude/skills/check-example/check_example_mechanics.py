@@ -2,7 +2,8 @@
 
 Covers the statically-checkable parts of docs/ai/check-example.md: stripped
 outputs (9), roadmap/TOC numbering (5), required files (3), committed truth (2),
-auto_export (4), side-effect artifacts (4), and prose-voice candidates (10).
+removed config keys (4), side-effect artifacts (4), and prose-voice
+candidates (10).
 Prints a PASS / WARN / FAIL / INFO line per check — INFO marks a fact the agent
 must resolve by reading (evidence, not a verdict). The judgment criteria
 (1, 6, 7, 8, 11, plus the prose/message parts of 5 and 10) are graded by reading
@@ -280,22 +281,22 @@ def check_truth(ex: Path) -> tuple[str, str]:
 
 
 #
-def check_auto_export(ex: Path) -> tuple[str, str]:
-    """Criterion 4 — project.yaml sets auto_export: False."""
+def check_removed_config_keys(ex: Path) -> tuple[str, str]:
+    """Criterion 4 — project.yaml carries no removed config keys.
+
+    Fits never write to disk since v0.14.0; a leftover ``auto_export:`` /
+    ``path_results:`` key makes ``Project()`` raise at load.
+    """
 
     pj = ex / "project.yaml"
     if not pj.is_file():
         # INFO: a %run-preamble notebook inherits a sibling's config.
         return "INFO", "no project.yaml — resolve: %run preamble inherits config?"
     text = pj.read_text(encoding="utf-8")
-    m = re.search(r"^\s*auto_export\s*:\s*(\w+)", text, re.MULTILINE)
-    if m and m.group(1).lower() == "false":
-        return "PASS", "auto_export: False"
-    # INFO, not WARN: only a defect if export is not the notebook's topic —
-    # the agent decides that by reading.
+    m = re.search(r"^\s*(auto_export|path_results)\s*:", text, re.MULTILINE)
     if m:
-        return "INFO", f"auto_export: {m.group(1)} — resolve: is export the topic?"
-    return "INFO", "no auto_export key — resolve: is export the topic?"
+        return "FAIL", f"removed key '{m.group(1)}' present — Project() will raise"
+    return "PASS", "no removed config keys"
 
 
 #
@@ -378,7 +379,7 @@ def report_example(ex: Path) -> tuple[int, int]:
         rows.append(("9  Stripped outputs", "FAIL", "no example.ipynb"))
     rows.append(("3  Required files", *check_required_files(ex)))
     rows.append(("2  Committed truth", *check_truth(ex)))
-    rows.append(("4  auto_export", *check_auto_export(ex)))
+    rows.append(("4  Removed keys", *check_removed_config_keys(ex)))
     rows.append(("4  Artifacts", *check_artifacts(ex)))
     for name, status, detail in rows:
         print(f"{status:4} | {name:22} | {detail}")

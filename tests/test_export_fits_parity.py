@@ -1,16 +1,11 @@
 """
-Auto-export vs explicit ``Project.export_fits`` parity.
+Explicit ``Project.export_fits`` determinism.
 
-Both paths route through the same slot exporter (``fit_io._export_slot``)
-since the legacy ``_save_*_fit_legacy`` savers were removed: auto-export
-inside ``fit_slice_by_slice`` / ``fit_2d`` writes the grouped slot tree
-under ``Project.path_results``, and an explicit ``export_fits`` call
-writes it under the caller's root. The artifacts must be identical — a
-divergence means one of the paths grew its own writer again.
-
-Strategy: redirect ``path_results`` into ``tmp_path``, run the fit with
-``auto_export=True`` (which writes the auto tree), then call
-``project.export_fits`` into a sibling directory and diff the trees.
+Fits never write to disk (v0.14.0) — ``export_fits`` is the only CSV/PNG
+writer, always fed from the persisted fit slots. Two exports of the same
+history into different roots must therefore produce identical trees; a
+divergence means the exporter grew run-dependent state (timestamps,
+ordering, slot mutation) or a second writer crept back in.
 """
 
 from __future__ import annotations
@@ -62,16 +57,10 @@ def _truth_2d_data():
 
 #
 def _make_parity_fit_file(*, name: str, tmp_path: Path, spec_fun_str: str):
-    """Build a fit-side project + file with auto-export redirected into
-    ``tmp_path / "auto"`` (auto-export writes the slot tree under
-    ``project.path_results``), so the test has full control over both
-    outputs and the source repo stays untouched.
-    """
+    """Build a fit-side project + file for the export-determinism tests."""
 
     data = _truth_2d_data()
-    # export parity is this test's subject, so opt back into auto-export
-    project = make_project(name=name, spec_fun_str=spec_fun_str, auto_export=True)
-    project.path_results = tmp_path / "auto"
+    project = make_project(name=name, spec_fun_str=spec_fun_str)
     file = File(
         parent_project=project,
         name="fit",
@@ -91,9 +80,9 @@ def _make_parity_fit_file(*, name: str, tmp_path: Path, spec_fun_str: str):
 #
 @pytest.mark.slow
 def test_sbs_export_parity(tmp_path):
-    """SbS auto-export tree is identical to an explicit ``export_fits`` tree.
+    """Two explicit SbS ``export_fits`` runs produce identical trees.
 
-    Both must go through ``fit_io._export_slot``; the file sets and every
+    Both go through ``fit_io._export_slot``; the file sets and every
     shared artifact's values are compared.
     """
 
@@ -108,26 +97,27 @@ def test_sbs_export_parity(tmp_path):
         try_ci=0,
     )
 
-    auto_dir = project.path_results / file.name / "single_glp__sbs"
+    project.export_fits(tmp_path / "first", show_output=0)
+    first_dir = tmp_path / "first" / file.name / "single_glp__sbs"
     new_root = tmp_path / "new"
     project.export_fits(new_root, show_output=0)
     new_dir = new_root / file.name / "single_glp__sbs"
 
     # --- identical artifact sets (both trees written by _export_slot)
-    auto_names = {p.name for p in auto_dir.rglob("*") if p.is_file()}
+    first_names = {p.name for p in first_dir.rglob("*") if p.is_file()}
     new_names = {p.name for p in new_dir.rglob("*") if p.is_file()}
-    assert auto_names == new_names
-    assert "fit_pars.csv" in auto_names
-    assert "fit_2d.csv" in auto_names
+    assert first_names == new_names
+    assert "fit_pars.csv" in first_names
+    assert "fit_2d.csv" in first_names
 
     # --- fit_pars.csv: per-slice param values with [index, time, par...] cols
-    auto_fp = pd.read_csv(auto_dir / "fit_pars.csv")
+    first_fp = pd.read_csv(first_dir / "fit_pars.csv")
     new_fp = pd.read_csv(new_dir / "fit_pars.csv")
-    assert list(auto_fp.columns) == list(new_fp.columns)
-    assert auto_fp.shape == new_fp.shape
-    for col in auto_fp.columns:
+    assert list(first_fp.columns) == list(new_fp.columns)
+    assert first_fp.shape == new_fp.shape
+    for col in first_fp.columns:
         np.testing.assert_allclose(
-            auto_fp[col].to_numpy(dtype=float),
+            first_fp[col].to_numpy(dtype=float),
             new_fp[col].to_numpy(dtype=float),
             rtol=0,
             atol=0,
@@ -135,17 +125,17 @@ def test_sbs_export_parity(tmp_path):
 
     # --- fit_2d.csv: stacked per-slice fit spectra (n_time × n_energy),
     # both from the slot's captured ``fit`` array.
-    auto_2d = np.loadtxt(auto_dir / "fit_2d.csv", delimiter=project.delim)
+    first_2d = np.loadtxt(first_dir / "fit_2d.csv", delimiter=project.delim)
     new_2d = np.loadtxt(new_dir / "fit_2d.csv", delimiter=project.delim)
-    assert auto_2d.shape == new_2d.shape == (len(file.time), len(file.energy))
-    np.testing.assert_allclose(auto_2d, new_2d, rtol=0, atol=0)
+    assert first_2d.shape == new_2d.shape == (len(file.time), len(file.energy))
+    np.testing.assert_allclose(first_2d, new_2d, rtol=0, atol=0)
 
     # --- axis sidecars
     for name, axis in (("energy.csv", file.energy), ("time.csv", file.time)):
-        auto_ax = np.loadtxt(auto_dir / name, delimiter=project.delim)
+        first_ax = np.loadtxt(first_dir / name, delimiter=project.delim)
         new_ax = np.loadtxt(new_dir / name, delimiter=project.delim)
-        assert auto_ax.shape == new_ax.shape == (len(axis),)
-        np.testing.assert_array_equal(auto_ax, new_ax)
+        assert first_ax.shape == new_ax.shape == (len(axis),)
+        np.testing.assert_array_equal(first_ax, new_ax)
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +146,7 @@ def test_sbs_export_parity(tmp_path):
 #
 @pytest.mark.slow
 def test_2d_export_parity(tmp_path):
-    """2D auto-export tree is identical to an explicit ``export_fits`` tree."""
+    """Two explicit 2D ``export_fits`` runs produce identical trees."""
 
     project, file = _make_parity_fit_file(
         name="parity_2d", tmp_path=tmp_path, spec_fun_str="fit_model_gir"
@@ -171,30 +161,31 @@ def test_2d_export_parity(tmp_path):
     )
     file.fit_2d("single_glp", stages=1, try_ci=0)
 
-    auto_dir = project.path_results / file.name / "single_glp__2d"
+    project.export_fits(tmp_path / "first", fit_type="2d", show_output=0)
+    first_dir = tmp_path / "first" / file.name / "single_glp__2d"
     new_root = tmp_path / "new"
     project.export_fits(new_root, fit_type="2d", show_output=0)
     new_dir = new_root / file.name / "single_glp__2d"
 
     # --- identical artifact sets
-    auto_names = {p.name for p in auto_dir.rglob("*") if p.is_file()}
+    first_names = {p.name for p in first_dir.rglob("*") if p.is_file()}
     new_names = {p.name for p in new_dir.rglob("*") if p.is_file()}
-    assert auto_names == new_names
+    assert first_names == new_names
 
     # --- fit_2d.csv (both from the slot's captured ``fit`` array)
-    auto_2d = np.loadtxt(auto_dir / "fit_2d.csv", delimiter=project.delim)
+    first_2d = np.loadtxt(first_dir / "fit_2d.csv", delimiter=project.delim)
     new_2d = np.loadtxt(new_dir / "fit_2d.csv", delimiter=project.delim)
-    assert auto_2d.shape == new_2d.shape == (len(file.time), len(file.energy))
-    np.testing.assert_allclose(auto_2d, new_2d, rtol=0, atol=0)
+    assert first_2d.shape == new_2d.shape == (len(file.time), len(file.energy))
+    np.testing.assert_allclose(first_2d, new_2d, rtol=0, atol=0)
 
     # --- axis sidecars (identical writers, identical inputs)
     for name in ("energy.csv", "time.csv"):
-        auto_ax = np.loadtxt(auto_dir / name, delimiter=project.delim)
+        first_ax = np.loadtxt(first_dir / name, delimiter=project.delim)
         new_ax = np.loadtxt(new_dir / name, delimiter=project.delim)
-        np.testing.assert_array_equal(auto_ax, new_ax)
+        np.testing.assert_array_equal(first_ax, new_ax)
 
     # --- residual-map PNG present in both
-    assert (auto_dir / "2D_data_fit_res.png").exists()
+    assert (first_dir / "2D_data_fit_res.png").exists()
     assert (new_dir / "2D_data_fit_res.png").exists()
 
 

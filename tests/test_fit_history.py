@@ -377,6 +377,40 @@ class TestSbSSlot:
 
     #
     @pytest.mark.slow
+    def test_sbs_slot_records_explicit_dict_seed(self):
+        """Explicit dict seeds land in fit_settings as the normalized,
+        parameter-ordered float list (regression: the raw dict used to be
+        np.asarray()'d, which raised TypeError at slot capture)."""
+
+        truth_project = make_project(name="truth")
+        truth = _make_truth_file(truth_project)
+        data = simulate_clean(truth.model_active)
+
+        project = make_project(name="fit")
+        project.spec_fun_str = "fit_model_mcp"
+        file = _make_fit_file(project, data, truth.energy, truth.time)
+        model = file.model_active
+        seed_values = {
+            name: model.lmfit_pars[name].value for name in model.parameter_names
+        }
+        file.fit_slice_by_slice(
+            "single_glp",
+            n_workers=1,
+            seed_source="explicit",
+            seed_values=seed_values,
+            seed_adapt=None,
+            try_ci=0,
+        )
+
+        settings = project._fit_history[0].fit_settings
+        assert settings is not None  # type guard
+        assert settings["seed_source"] == "explicit"
+        assert settings["seed_values"] == [
+            float(seed_values[name]) for name in model.parameter_names
+        ]
+
+    #
+    @pytest.mark.slow
     def test_sbs_slot_survives_seed_template_restoration(self):
         """
         SbS ends with model_sbs.update_value(seed_template, par_select='all'),
@@ -514,6 +548,15 @@ class TestMcmcPayload:
         np.testing.assert_array_equal(mcmc_res.acceptance_fraction, acceptance)
         assert not mcmc_res.table.empty
         assert not mcmc_res.flatchain.empty
+
+        # plot_mcmc reproduces the fit-time diagnostics from the persisted
+        # payload — live history and loaded archive alike.
+        import matplotlib.pyplot as plt
+
+        n_figs = len(plt.get_fignums())
+        file.plot_mcmc(fit_type="baseline", show_plot=False)
+        loaded_results.plot_mcmc(file="fit", fit_type="baseline", show_plot=False)
+        assert len(plt.get_fignums()) == n_figs
 
     #
     def test_baseline_slot_mcmc_none_when_mcmc_skipped(self):
@@ -1645,6 +1688,81 @@ class TestPlotFitAPI:
         project, file = _setup_baseline_fit()
         fig = project.results.plot_residuals(file=file.name, show_plot=False)
         assert fig.axes[1].get_xlabel() == "energy"
+
+
+#
+class TestPlotMcmc:
+    """FitResults.plot_mcmc renders diagnostics from the slot's mcmc payload
+    (synthetic slots here; the live-fit + loaded-archive path is covered in
+    TestMcmcPayload)."""
+
+    #
+    @staticmethod
+    def _mcmc_results(*, with_acceptance=True):
+        import dataclasses
+
+        n = 40
+        flatchain = pd.DataFrame(
+            {
+                "GLP_01_A": np.linspace(0.9, 1.1, n),
+                "__lnsigma": np.linspace(-2.1, -1.9, n),
+            }
+        )
+        ci = pd.DataFrame(
+            {
+                "par[v]/sigma[>]": ["GLP_01_A", "__lnsigma"],
+                "-1.0": [0.95, -2.05],
+                "best fit": [1.0, -2.0],
+                "+1.0": [1.05, -1.95],
+            }
+        )
+        mcmc = {
+            "flatchain": flatchain,
+            "ci": ci,
+            "lnsigma": -2.0,
+            "acceptance_fraction": (np.full(8, 0.4) if with_acceptance else None),
+        }
+        return FitResults(slots=[dataclasses.replace(_slot_stub(), mcmc=mcmc)])
+
+    #
+    def test_renders_acceptance_and_corner(self):
+        import matplotlib.pyplot as plt
+
+        results = self._mcmc_results()
+        plt.close("all")
+        results.plot_mcmc(file="f1", fit_type="baseline")  # show under Agg
+        try:
+            assert len(plt.get_fignums()) == 2
+        finally:
+            plt.close("all")
+
+    #
+    def test_skips_acceptance_when_absent(self):
+        import matplotlib.pyplot as plt
+
+        # schema-2 archives did not store acceptance_fraction.
+        results = self._mcmc_results(with_acceptance=False)
+        plt.close("all")
+        results.plot_mcmc(file="f1", fit_type="baseline")
+        try:
+            assert len(plt.get_fignums()) == 1  # corner only
+        finally:
+            plt.close("all")
+
+    #
+    def test_show_plot_false_leaves_no_figures(self):
+        import matplotlib.pyplot as plt
+
+        results = self._mcmc_results()
+        n_figs = len(plt.get_fignums())
+        results.plot_mcmc(file="f1", fit_type="baseline", show_plot=False)
+        assert len(plt.get_fignums()) == n_figs
+
+    #
+    def test_raises_without_mcmc_payload(self):
+        results = FitResults(slots=[_slot_stub()])
+        with pytest.raises(ValueError, match="No MCMC results"):
+            results.plot_mcmc(file="f1", fit_type="baseline", show_plot=False)
 
 
 #

@@ -23,25 +23,19 @@ def make_project(
     name: str = "test",
     spec_fun_str: str = "fit_model_gir",
     show_output: int = 0,
-    auto_export: bool = False,
 ):
     """Create a Project pointing at tests/ for YAML access.
 
     Defaults to ``show_output=0`` (silent) so test output stays clean.  Pass
     ``show_output=1`` for tests that exercise display/plot behavior.
 
-    ``auto_export`` defaults to ``False`` here (the production default is
-    ``True``) so tests do not write fit-completion CSV/PNG side effects into
-    the shared ``tests_fits/`` tree by default -- concurrent xdist workers
-    would otherwise race on colliding output paths. Pass ``auto_export=True``
-    only in tests whose subject is the save/export behavior itself, and
-    redirect ``project.path_results`` to a ``tmp_path`` there.
+    Fits never write to disk (v0.14.0); tests that exercise persistence call
+    ``save_fits`` / ``export_fits`` explicitly with a ``tmp_path``.
     """
 
     project = Project(path="tests", name=name)
     project.show_output = show_output
     project.spec_fun_str = spec_fun_str
-    project.auto_export = auto_export
     return project
 
 

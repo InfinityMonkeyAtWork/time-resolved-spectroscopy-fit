@@ -152,8 +152,9 @@ class Project:
     path : str or Path
         Base directory for project data files and YAML configuration.
         If None, defaults to 'test' directory.
-    name : str, default='test'
-        Name for this analysis run. Creates subdirectory in results folder.
+    name : str, default='my_project'
+        Name for this analysis run. Names the default output root used by
+        ``save_fits`` / ``export_fits`` (``./fit_results/<name>/``).
     config_file : str or Path, optional
         YAML configuration file name (located in path directory).
         If None, uses default settings only.
@@ -162,8 +163,6 @@ class Project:
     ----------
     path : Path
         Base project directory containing data and configuration
-    path_results : Path
-        Results directory (path + '_fits' suffix)
     name : str
         Name for this analysis run
     files : list of File
@@ -204,11 +203,10 @@ class Project:
     def __init__(
         self,
         path: PathLike | None,
-        name: str = "test",
+        name: str = "my_project",
         config_file: PathLike | None = "project.yaml",
     ) -> None:
         self.path = pathlib.Path(path) if path is not None else pathlib.Path("test")
-        self.path_results = pathlib.Path(f"{path}_fits")
         self.name = name
 
         self._config_file: PathLike | None = None
@@ -230,10 +228,6 @@ class Project:
         """Set default project configuration."""
 
         self.show_output = 1
-        # When False, fit_* methods skip the automatic CSV/PNG side effects
-        # (fit_wrapper(save_output=1) and the legacy save_*_fit calls).
-        # Explicit File.export_fit / Project.export_fits still write.
-        self.auto_export = True
         # Plot settings
         self.e_label = "Energy"
         self.t_label = "Time"
@@ -700,7 +694,6 @@ class Project:
 
         print("Project")
         print(f"  path:         {self.path}")
-        print(f"  results:      {self.path_results}")
         print(f"  name:         {self.name}")
         if self._config_file is not None:
             print(f"  config:       {self._config_file}")
@@ -810,8 +803,25 @@ class Project:
                     "y_label": "t_label",
                     "dpi_plot": "dpi_plt",
                 }
+                _removed_keys = {
+                    "auto_export": (
+                        "fits no longer write to disk; use "
+                        "save_fits()/export_fits() to persist results"
+                    ),
+                    "path_results": (
+                        "the fit-time output tree is gone; save_fits()/"
+                        "export_fits() take an explicit path (default "
+                        "./fit_results/<name>/)"
+                    ),
+                }
                 project_key = _key_map.get(normalized_key) or normalized_key
 
+                if project_key in _removed_keys:
+                    raise ValueError(
+                        f"Config key '{key}' was removed in v0.14.0: "
+                        f"{_removed_keys[project_key]}. "
+                        f"Remove it from {config_path}."
+                    )
                 if hasattr(self, project_key):
                     setattr(self, project_key, value)
                 else:
@@ -1071,18 +1081,11 @@ class Project:
                 t_start=t_start,
                 print_str=(f"Baseline fit complete for {len(self.files)} files: "),
             )
-            # Show saved baseline fit plots in a grid
-            import matplotlib.image as mpimg
-
-            images = []
+            # Show each file's baseline fit inline from its slot.
+            results = self.results
             for f in self.files:
-                img_path = (
-                    f.model_path(model_name, fit_type="baseline") / "base_fit.png"
-                )
-                if img_path.exists():
-                    images.append(mpimg.imread(str(img_path)))
-            if images:
-                uplt.plot_grid(images, columns=min(3, len(images)))
+                if results.find(file=f.name, model=model_name, fit_type="baseline"):
+                    results.plot_fit(file=f, model=model_name, fit_type="baseline")
 
     # ------------------------------------------------------------------
     # Project-level fitting
@@ -1447,7 +1450,6 @@ class Project:
             par=combined_pars,
             stages=stages,
             show_output=1 if self.show_output >= 1 else 0,
-            save_output=0,
             **fit_wrapper_kwargs,
         )
 
@@ -1516,16 +1518,6 @@ class Project:
                         fit_settings=joint_fit_settings,
                     )
                 )
-
-        # Export per-file 2D fit results through the slot exporter (silently)
-        if self.auto_export and any(s is not None for s in slots_2d):
-            self.export_fits(
-                self.path_results,
-                model=model_name,
-                fit_type="2d",
-                overwrite=True,
-                show_output=0,
-            )
 
         if self.show_output >= 1:
             fitlib.time_display(
@@ -2266,35 +2258,6 @@ class File:
         )
 
     #
-    def model_path(
-        self,
-        model_name: str,
-        *,
-        fit_type: Literal["baseline", "spectrum", "sbs", "2d"],
-    ) -> pathlib.Path:
-        """
-        Build the path where model fit results are saved.
-
-        Layout: ``{Project.path_results}/{File.name}/{fit_type}/{model_name}/``.
-        Only computes the path — directories are created by the write sites
-        when a file is actually saved.
-
-        Parameters
-        ----------
-        model_name : str
-            Name of model (must exist in self.models)
-        fit_type : {"baseline", "spectrum", "sbs", "2d"}
-            Fit type segment in the output path.
-
-        Returns
-        -------
-        Path
-            Path to model results directory
-        """
-
-        return self.p.path_results / self.name / fit_type / model_name
-
-    #
     def _apply_corrections(self) -> None:
         """Rebuild ``data`` from ``data_raw`` by applying dark and calibration."""
 
@@ -2688,8 +2651,6 @@ class File:
         initial_guess = ulmfit.par_extract(
             self.model_base.lmfit_pars, return_type="list"
         )
-        # define path where baseline fit results will be saved to
-        path_base_results = self.model_path(model_name, fit_type="baseline")
 
         # const = (x, data, package, fnctn string, unpack, energy limits, time limits)
         _fun_str = self.p.spec_fun_str
@@ -2704,9 +2665,6 @@ class File:
         # --- dispatch: GIR fast path vs interpreter ---
         _args = self._build_1d_dispatch_args(self.model_base, _fun_str)
         self.model_base.args = _args
-        # CSV format/delimiter: project defaults unless caller overrides
-        lmfit_wrapper_kwargs.setdefault("num_fmt", self.p.num_fmt)
-        lmfit_wrapper_kwargs.setdefault("delim", self.p.delim)
         # fit (optionally) with confidence intervals
         self.model_base.result = fitlib.fit_wrapper(
             const=self.model_base.const,
@@ -2715,8 +2673,6 @@ class File:
             par=self.model_base.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
-            save_output=1 if self.p.auto_export else 0,
-            save_path=path_base_results / model_name,
             **lmfit_wrapper_kwargs,
         )
 
@@ -2736,18 +2692,14 @@ class File:
                     stages=stages, fit_wrapper_kwargs=lmfit_wrapper_kwargs
                 ),
             )
-            if self.p.auto_export:
-                self.save_baseline_fit(save_path=path_base_results)
 
-        # display/plot and save baseline fit summary
+        # display baseline fit summary
         title_base = (
             f"File: {self.path}, "
             f'Model: "{model_name}" (from "{self.model_base.yaml_f_name}.yaml")'
         )
 
-        save_plot = self.p.auto_export
-        show_plot = self.p.show_output >= 1
-        if save_plot or show_plot:
+        if self.p.show_output >= 1:
             fitlib.plt_fit_res_1d(
                 x=self.energy,
                 y=self.data_base,
@@ -2761,8 +2713,7 @@ class File:
                 fit_lim=self.e_lim,
                 config=self.plot_config,
                 legend=[comp.name for comp in self.model_base.components],
-                save_img=uplt._save_img_flag(save=save_plot, show=show_plot),
-                save_path=path_base_results / "base_fit.png",
+                save_img=0,
             )
 
         if stages >= 1 and self.p.show_output >= 1:
@@ -2927,8 +2878,6 @@ class File:
         initial_guess = ulmfit.par_extract(
             self.model_spec.lmfit_pars, return_type="list"
         )
-        # define path where spectrum fit results will be saved to
-        path_spec_results = self.model_path(model_name, fit_type="spectrum")
 
         # const = (x, data, fnctn string, unpack, energy limits, time limits)
         _fun_str = self.p.spec_fun_str
@@ -2943,9 +2892,6 @@ class File:
         # --- dispatch: GIR fast path vs interpreter ---
         _args = self._build_1d_dispatch_args(self.model_spec, _fun_str)
         self.model_spec.args = _args
-        # CSV format/delimiter: project defaults unless caller overrides
-        lmfit_wrapper_kwargs.setdefault("num_fmt", self.p.num_fmt)
-        lmfit_wrapper_kwargs.setdefault("delim", self.p.delim)
         # fit
         self.model_spec.result = fitlib.fit_wrapper(
             const=self.model_spec.const,
@@ -2954,8 +2900,6 @@ class File:
             par=self.model_spec.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
-            save_output=1 if self.p.auto_export else 0,
-            save_path=path_spec_results / model_name,
             **lmfit_wrapper_kwargs,
         )
 
@@ -2976,10 +2920,8 @@ class File:
                     stages=stages, fit_wrapper_kwargs=lmfit_wrapper_kwargs
                 ),
             )
-            if self.p.auto_export:
-                self.save_spectrum_fit(save_path=path_spec_results)
 
-        # display/plot and save spectrum fit summary
+        # display spectrum fit summary
         time_label = (
             f"t = {self.spec_t_abs[0]:.4g}"
             if self.spec_t_abs[0] == self.spec_t_abs[1]
@@ -2991,9 +2933,7 @@ class File:
             f'(from "{self.model_spec.yaml_f_name}.yaml")'
         )
 
-        save_fig = self.p.auto_export
-        show_fig = show_plot and self.p.show_output >= 1
-        if save_fig or show_fig:
+        if show_plot and self.p.show_output >= 1:
             fitlib.plt_fit_res_1d(
                 x=self.energy,
                 y=self.data_spec,
@@ -3007,8 +2947,7 @@ class File:
                 fit_lim=self.e_lim,
                 config=self.plot_config,
                 legend=[comp.name for comp in self.model_spec.components],
-                save_img=uplt._save_img_flag(save=save_fig, show=show_fig),
-                save_path=path_spec_results / "spec_fit.png",
+                save_img=0,
             )
 
         if stages >= 1 and self.p.show_output >= 1:
@@ -3200,10 +3139,6 @@ class File:
                 "run define_baseline() first or use seed_adapt=None."
             )
 
-        # path for fit-time diagnostics (per-slice CSVs/PNGs from the fit
-        # loop); the results export goes through export_fit below
-        path_sbs_results = self.model_path(model_name, fit_type="sbs")
-
         if seed_source == "model":
             seed_template = ulmfit.par_extract(
                 self.model_sbs.lmfit_pars, return_type="list"
@@ -3246,19 +3181,11 @@ class File:
 
         n_slices = len(self.data)
 
-        def _slice_path(s_i: int) -> pathlib.Path:
-            return path_sbs_results / "slices" / str(self.p.da_slices_fmt % s_i)
-
         # resolve worker count: None -> auto, otherwise honour user.
         if n_workers is None:
             n_workers = max(1, (os.cpu_count() or 1) - 1)
         # No point spawning more workers than slices.
         n_workers = max(1, min(n_workers, n_slices))
-
-        # CSV format/delimiter: project defaults unless caller overrides
-        # (forwarded into both the serial and parallel SbS dispatch paths)
-        fit_wrapper_kwargs.setdefault("num_fmt", self.p.num_fmt)
-        fit_wrapper_kwargs.setdefault("delim", self.p.delim)
 
         if n_workers == 1:
             # serial path (debug escape hatch). tqdm (not a raw print with
@@ -3270,14 +3197,12 @@ class File:
             # ipywidgets-based tqdm.notebook inside a kernel, and ipywidgets is
             # not a dependency -- it would emit "IProgress not found" warnings.
             self.results_sbs = []
-            for s_i, s in tqdm(
+            for _s_i, s in tqdm(
                 enumerate(self.data),
                 total=n_slices,
                 desc="SbS fit (serial)",
             ):
-                path_slice = _slice_path(s_i)
-
-                initial_guess = usbs.prepare_sbs_model_for_slice(
+                usbs.prepare_sbs_model_for_slice(
                     self.model_sbs,
                     _args_sbs,
                     seed_template,
@@ -3302,27 +3227,9 @@ class File:
                     par=self.model_sbs.lmfit_pars,
                     stages=stages,
                     show_output=0,
-                    save_output=1 if self.p.auto_export else 0,
-                    save_path=path_slice,
                     **fit_wrapper_kwargs,
                 )
                 self.results_sbs.append(result_sbs)
-
-                if self.p.auto_export:
-                    fitlib.plt_fit_res_1d(
-                        x=const[0],
-                        y=const[1],
-                        fit_fun_str=self.p.spec_fun_str,
-                        par_init=initial_guess,
-                        par_fin=result_sbs[1],
-                        args=args,
-                        plot_sum=False,
-                        show_init=True,
-                        fit_lim=self.e_lim,
-                        config=self.plot_config,
-                        save_img=-1,
-                        save_path=path_slice.with_suffix(".png"),
-                    )
         else:
             # parallel path: spawn pool, install model once per worker.
             # sanitized_spawn_main keeps workers from re-running a
@@ -3351,10 +3258,7 @@ class File:
                         data_base_argmax_energy=data_base_argmax_energy,
                         fit_fun_str=_fun_str,
                         stages=stages,
-                        path_slice=_slice_path(s_i),
-                        plot_config=self.plot_config,
                         fit_wrapper_kwargs=fit_wrapper_kwargs,
-                        auto_export=self.p.auto_export,
                     ): s_i
                     for s_i in range(n_slices)
                 }
@@ -3397,30 +3301,21 @@ class File:
                     fit_wrapper_kwargs=fit_wrapper_kwargs,
                     seed_source=seed_source,
                     seed_adapt=seed_adapt,
+                    # capture the normalized template (ordered by
+                    # parameter_names), not the raw user input — explicit
+                    # seeds arrive as dicts/lists/Parameters alike
                     seed_values=(
-                        [float(v) for v in np.asarray(seed_values).ravel()]
-                        if seed_values is not None
+                        [float(v) for v in seed_template]
+                        if seed_source == "explicit"
                         else None
                     ),
                 ),
             )
-            # Display inline when interactive (show_output); export the slot
-            # when auto_export — mirroring fit_baseline's split. Per-slice
-            # diagnostics (fit_wrapper CSVs, per-slice PNGs) were already
-            # written under model_path during the fit loop.
             if self.p.show_output >= 1 and slot_sbs is not None:
                 # Inline display via the explicit plot API (reads the slot
                 # just appended): varied-parameter evolution + fit maps.
                 self.plot_param_evolution(model=model_name)
                 self.plot_fit(model=model_name, fit_type="sbs")
-            if self.p.auto_export and slot_sbs is not None:
-                self.export_fit(
-                    self.p.path_results,
-                    model=model_name,
-                    fit_type="sbs",
-                    overwrite=True,
-                    show_output=0,
-                )
         self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
         self.model_sbs.args = _args_sbs
         if stages >= 1 and self.p.show_output >= 1:
@@ -4067,10 +3962,6 @@ class File:
         if self.energy is None or self.time is None or self.data is None:
             raise ValueError("Data/axes missing; cannot run 2D fit.")
 
-        # path for fit-time diagnostics (fit_wrapper's per-stage CSVs); the
-        # results export goes through export_fit below
-        path_2d_results = self.model_path(model_name, fit_type="2d")
-
         # set all fixed 2D fit parameters equal to baseline model results
         base_df = ulmfit.par_to_df(self.model_base.lmfit_pars, col_type="min")
         self.model_2d.update_value(
@@ -4137,9 +4028,6 @@ class File:
         )
         self.model_2d.args = _args
 
-        # CSV format/delimiter: project defaults unless caller overrides
-        fit_wrapper_kwargs.setdefault("num_fmt", self.p.num_fmt)
-        fit_wrapper_kwargs.setdefault("delim", self.p.delim)
         # fit (with confidence intervals)
         self.model_2d.result = fitlib.fit_wrapper(
             const=self.model_2d.const,
@@ -4148,8 +4036,6 @@ class File:
             par=self.model_2d.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
-            save_output=1 if self.p.auto_export else 0,
-            save_path=path_2d_results / model_name,
             **fit_wrapper_kwargs,
         )
         # Write optimized values back to model.lmfit_pars.  fit_wrapper
@@ -4170,18 +4056,8 @@ class File:
             )
 
         if stages >= 1:
-            # Display inline when interactive (show_output); export the slot
-            # when auto_export — mirroring fit_baseline's split.
             if self.p.show_output >= 1 and slot_2d is not None:
                 self.plot_fit(model=model_name, fit_type="2d")
-            if self.p.auto_export and slot_2d is not None:
-                self.export_fit(
-                    self.p.path_results,
-                    model=model_name,
-                    fit_type="2d",
-                    overwrite=True,
-                    show_output=0,
-                )
             if self.p.show_output >= 1:
                 fitlib.time_display(
                     t_start=t_2d, print_str="Time elapsed for 2D model fit: "
@@ -4415,6 +4291,84 @@ class File:
             model=model,
             params=params,
             config=config,
+            show_plot=show_plot,
+        )
+
+    #
+    def plot_mcmc(
+        self,
+        *,
+        model: str | None = None,
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] = "baseline",
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Plot the MCMC diagnostics (walker acceptance, corner plot) of a fit.
+
+        Sugar for ``self.p.results.plot_mcmc(file=self, ...)`` — reads the
+        persisted fit slot (latest matching fit). Available only when the
+        fit ran with ``mc_settings`` enabling MCMC. See
+        :meth:`FitResults.plot_mcmc`.
+
+        Parameters
+        ----------
+        model : str, optional
+            Restrict to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+            Which fit to plot. For SbS fits the payload is slice 0's.
+        show_plot : bool, default True
+            Set ``False`` to build without displaying.
+        """
+
+        self.p.results.plot_mcmc(
+            file=self,
+            model=model,
+            fit_type=fit_type,
+            show_plot=show_plot,
+        )
+
+    #
+    def plot_sbs_slices(
+        self,
+        *,
+        model: str | None = None,
+        slices: Sequence[int] | None = None,
+        show_init: bool = True,
+        save_path: PathLike | None = None,
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Plot per-slice fit panels for the most recent Slice-by-Slice fit.
+
+        Each panel shows the slice data, the per-slice seeded initial
+        guess, the final fit, and the component decomposition. Reads the
+        in-session fit state (``results_sbs``), which is richer than the
+        persisted slot but does not survive it: this diagnostic is
+        live-session only and raises on a File without a completed
+        ``fit_slice_by_slice`` run.
+
+        Parameters
+        ----------
+        model : str, optional
+            Guard against stale expectations: raises if the live SbS
+            results belong to a different model.
+        slices : sequence of int, optional
+            Slice indices to render. Default: all slices.
+        show_init : bool, default True
+            Overlay the per-slice initial guess.
+        save_path : str or Path, optional
+            Directory to write one PNG per slice (named by
+            ``Project.da_slices_fmt``). Default ``None`` = display-only.
+        show_plot : bool, default True
+            Set ``False`` to build without displaying.
+        """
+
+        usbs.plot_sbs_slices(
+            self,
+            model=model,
+            slices=slices,
+            show_init=show_init,
+            save_path=save_path,
             show_plot=show_plot,
         )
 

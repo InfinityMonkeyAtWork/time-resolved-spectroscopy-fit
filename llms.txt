@@ -95,11 +95,11 @@ Component types (see the API reference for signatures):
 
 ## Pitfalls for scripted / headless use
 
-- Fits display figures and write CSV/PNG side effects by default. To run
-  headless, set the Project knobs `project.show_output = 0` (suppress
-  display) and `project.auto_export = False` (suppress automatic export).
-  These govern the `fit_baseline` / `fit_spectrum` / `fit_slice_by_slice` /
-  `fit_2d` calls; those methods do not accept `save_img` (passing it raises
+- Fits never write to disk; persistence is always an explicit `save_fits`
+  (HDF5) or `export_fits` (CSV/PNG) call. Fits do display figures by
+  default — to run headless, set `project.show_output = 0`. This governs
+  the `fit_baseline` / `fit_spectrum` / `fit_slice_by_slice` / `fit_2d`
+  calls; those methods do not accept `save_img` (passing it raises
   `TypeError`).
 - The low-level plot and setup helpers instead take their own arguments:
   pass `show_plot=False` where available, or `save_img=-1` (save without

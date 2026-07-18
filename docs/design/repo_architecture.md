@@ -189,18 +189,21 @@ HDF5 archive ────► reader ────► FitResults (FitResults.load 
 one-line delegates to the corresponding `Project.*` / `FitResults.*`
 methods. There is no `File.load_fit`: load is path-scoped, not file-scoped.
 
-Auto-export inside `fit_slice_by_slice` / `fit_2d` / `Project.fit_2d`
-routes through the same slot exporter as explicit `export_fits` calls,
-writing the grouped `{path_results}/{file}/{model}__{fit_type}/` tree
-(unless disabled via `Project.auto_export = False`, default `True`).
-Interactive display (`show_output >= 1`) renders inline from the
-just-captured `SavedFitSlot` via the `File._display_*` helpers — the
-figure a user sees is built from the same arrays the export saves.
-Fit-time diagnostics (per-stage parameter CSVs from `fitlib.fit_wrapper`,
-SbS per-slice CSVs/PNGs) are separate from the results export and land
-under `File.model_path()` (`{path_results}/{file}/{fit_type}/{model}/`).
-The pre-0.14 legacy savers (`save_sbs_fit` / `save_2d_fit` and their
-`_save_*_fit_legacy` impls, which wrote a flat layout) were removed.
+Fits never write to disk (v0.14.0): the fit methods compute, display
+(per `show_output`), and capture `SavedFitSlot`s — persistence is always
+the explicit `save_fits` (HDF5) / `export_fits` (CSV/PNG tree) pair, fed
+from the slot history, with one default output root
+(`./fit_results/{Project.name}/`). Interactive display (`show_output >=
+1`) renders inline from the just-captured slot via the `FitResults` plot
+API — the figure a user sees is the one the API reproduces later.
+On-demand diagnostics replace the old fit-time file dumps:
+`FitResults.plot_mcmc` re-renders the emcee walker-acceptance and corner
+figures from the persisted payload (live or loaded archive);
+`File.plot_sbs_slices` renders per-slice fit panels from the live
+`results_sbs` state (live-session only). The pre-0.14 auto-export
+machinery (`Project.auto_export`, `Project.path_results`,
+`File.model_path`, the legacy `save_sbs_fit` / `save_2d_fit` savers, and
+`fit_wrapper`'s CSV/TXT dump block) was removed.
 
 ## `config/` — runtime configuration
 

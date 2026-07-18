@@ -123,10 +123,9 @@ section is framed as data generation, not a fitting tutorial.
     duplicating the CSVs.
 - **Casual user's mental model is `File`.** `file.save_fit()` snapshots this
   file's completed fits (latest slot per model / fit type / selection).
-- **`auto_export` opt-out.** `fit_*` methods auto-write CSV/PNG on completion by
-  default; example `project.yaml` files set `auto_export: False` (with a
-  comment) so notebooks leave no surprise files. The default + opt-out is taught
-  where export is the topic.
+- **Fits never write to disk** (v0.14.0), so notebooks leave no surprise
+  files by construction; on-disk artifacts come only from explicit
+  `save_fits` / `export_fits` calls, taught where persistence is the topic.
 - **`pathlib.Path.cwd()`** for `Project(path=...)`, not `import os`.
 
 ## Save / export / load language

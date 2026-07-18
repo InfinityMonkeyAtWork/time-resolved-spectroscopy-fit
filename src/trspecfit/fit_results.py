@@ -721,6 +721,81 @@ class FitResults:
         return fig
 
     #
+    def plot_mcmc(
+        self,
+        *,
+        file: Any = None,
+        model: str | None = None,
+        fit_type: FitType = "baseline",
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Plot the MCMC diagnostics of the latest matching fit.
+
+        Renders the two figures ``fit_wrapper`` shows at fit time, from the
+        persisted slot (``SavedFitSlot.mcmc``): the per-walker acceptance
+        fraction and the corner plot of the posterior samples. Works
+        identically on ``Project.results`` and on archives loaded via
+        :meth:`FitResults.load`. The acceptance panel is skipped for slots
+        loaded from schema-2 archives (which did not store
+        ``acceptance_fraction``).
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file (name string or object with ``.name``).
+        model : str, optional
+            Filter to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+            Which fit to plot (latest matching fit wins). For SbS fits the
+            payload is slice 0's.
+        show_plot : bool, default True
+            Set ``False`` to build without displaying (tests / batch use).
+
+        Raises
+        ------
+        ValueError
+            If no matching fit exists, or the fit had no MCMC step.
+        """
+
+        import corner
+        import matplotlib.pyplot as plt
+
+        mcmc = self.get_mcmc(file=file, model=model, fit_type=fit_type)
+        if mcmc.acceptance_fraction is not None:
+            fig_walker, ax = plt.subplots(1, 1, dpi=75)
+            ax.plot(mcmc.acceptance_fraction, "o")
+            ax.set_xlabel("Walker number")
+            ax.set_ylabel("Acceptance fraction")
+            if show_plot:
+                plt.show()
+            else:
+                plt.close(fig_walker)
+        if not mcmc.flatchain.empty:
+            var_names = list(mcmc.flatchain.columns)
+            truths = None
+            if not mcmc.table.empty:
+                best = dict(
+                    zip(
+                        mcmc.table.iloc[:, 0],
+                        mcmc.table["best fit"],
+                        strict=True,
+                    )
+                )
+                truths = [best.get(name) for name in var_names]
+            fig_corner = plt.figure(figsize=(10, 10))
+            corner.corner(
+                mcmc.flatchain,
+                labels=var_names,
+                truths=truths,
+                fig=fig_corner,
+            )
+            if show_plot:
+                plt.show()
+            else:
+                plt.close(fig_corner)
+
+    #
     def plot_param_evolution(
         self,
         *,
