@@ -1154,7 +1154,7 @@ def plt_fit_res_1d(
     x: ArrayLike,
     y: ArrayLike,
     fit_fun_str: str,
-    par_init: Any,
+    par_ini: Any,
     par_fin: Any,
     args: tuple[Any, ...] | None = None,
     *,
@@ -1182,7 +1182,7 @@ def plt_fit_res_1d(
     fit_fun_str : str
         Name of fitting function in ``trspecfit.spectra``
         (e.g., ``'fit_model_mcp'``, ``'fit_model_gir'``)
-    par_init : list or lmfit.Parameters
+    par_ini : list or lmfit.Parameters
         Initial parameter guess. Can be empty list [] if show_init=False.
     par_fin : lmfit.MinimizerResult or lmfit.Parameters or list
         Final fit parameters:
@@ -1266,10 +1266,10 @@ def plt_fit_res_1d(
 
     # Plot initial guess if requested
     if show_init:
-        par_ini = ulmfit.par_extract(par_init, return_type="list")
+        par_ini_vals = ulmfit.par_extract(par_ini, return_type="list")
         plt.plot(
             x_arr,
-            fit_fun(x_arr, par_ini, True, *args),
+            fit_fun(x_arr, par_ini_vals, True, *args),
             color="#FFD700",
             linestyle=":",
             linewidth=2,
@@ -1312,8 +1312,8 @@ def plt_fit_res_1d(
         res = y_arr - fit_fun(x_arr, par_fin_vals, True, *args)
     else:
         # Initial guess only
-        par_ini = ulmfit.par_extract(par_init, return_type="list")
-        res = y_arr - fit_fun(x_arr, par_ini, True, *args)
+        par_ini_vals = ulmfit.par_extract(par_ini, return_type="list")
+        res = y_arr - fit_fun(x_arr, par_ini_vals, True, *args)
 
     # Plot residual (scaled for visibility)
     plt.plot(

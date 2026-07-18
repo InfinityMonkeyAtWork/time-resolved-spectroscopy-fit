@@ -271,7 +271,7 @@ def plot_sbs_slices(
             x=file.energy,
             y=file.data[s_i],
             fit_fun_str=file.p.spec_fun_str,
-            par_init=result_slice.par_ini,
+            par_ini=result_slice.par_ini,
             par_fin=result_slice.par_fin,
             args=model_sbs.args,
             plot_sum=False,
