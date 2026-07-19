@@ -23,6 +23,7 @@ import pytest
 from _utils import simulate_noisy
 
 from trspecfit import File, Project, fitlib
+from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils.lmfit import MC
 
 TESTS_DIR = pathlib.Path(__file__).resolve().parent
@@ -342,6 +343,23 @@ class TestPlotSbsSlices:
         file.plot_sbs_slices(slices=[0, 2], save_path=out, show_plot=False)
         expected = {str(project.da_slices_fmt % s) + ".png" for s in (0, 2)}
         assert {p.name for p in out.iterdir()} == expected
+
+    #
+    def test_does_not_mutate_model_params(self, tmp_path, monkeypatch):
+        """Rendering must not leak plotted per-slice values into the model.
+
+        fit_model_mcp evaluation writes the evaluated values into
+        lmfit_pars in place, and fit_slice_by_slice deliberately restores
+        the seed template after fitting — a post-fit diagnostic must not
+        undo that (it would corrupt later seed_source='model' runs).
+        """
+
+        _, file = self._sbs_fit(tmp_path, monkeypatch)
+        assert file.model_sbs is not None  # type guard
+        before = ulmfit.par_extract(file.model_sbs.lmfit_pars, return_type="list")
+        file.plot_sbs_slices(slices=[0], save_path=tmp_path / "slices", show_plot=False)
+        after = ulmfit.par_extract(file.model_sbs.lmfit_pars, return_type="list")
+        assert after == before
 
     #
     def test_raises_without_live_results(self, tmp_path, monkeypatch):

@@ -129,8 +129,10 @@ class Model:
         Constants for residual function (x, data, package, function_str, ...)
     args : tuple or None
         Arguments for fit function (model, dim)
-    result : list
-        Fit results from fit_wrapper [par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]
+    result : trspecfit.utils.lmfit.FitOutput or None
+        Fit result from ``fitlib.fit_wrapper`` (fields ``par_ini`` /
+        ``par_fin`` / ``conf_ci`` / ``emcee_fin`` / ``emcee_ci``);
+        None until fitted
     parent_file : File or None
         Parent File object (set when model is loaded)
     dim : int or None

@@ -251,35 +251,43 @@ def plot_sbs_slices(
         return
 
     legend = [comp.name for comp in model_sbs.components]
-    for s_i in slice_indices:
-        result_slice = results_sbs[s_i]
-        if file.time is not None:
-            title = f"{file.name} — slice {s_i} (t = {file.time[s_i]:.4g})"
-        else:
-            title = f"{file.name} — slice {s_i}"
-        img_path: str | pathlib.Path
-        if save:
-            assert save_path is not None  # type guard
-            save_img = uplt._save_img_flag(save=True, show=show_plot)
-            img_path = pathlib.Path(save_path) / (
-                str(file.p.da_slices_fmt % s_i) + ".png"
+    # rendering on the mcp path evaluates through the live model and
+    # writes the plotted per-slice values into model_sbs.lmfit_pars
+    # (spectra.fit_model_mcp) — snapshot and restore so a diagnostic
+    # never leaks into later seed_source="model" runs or inspection
+    saved_par_values = ulmfit.par_extract(model_sbs.lmfit_pars, return_type="list")
+    try:
+        for s_i in slice_indices:
+            result_slice = results_sbs[s_i]
+            if file.time is not None:
+                title = f"{file.name} — slice {s_i} (t = {file.time[s_i]:.4g})"
+            else:
+                title = f"{file.name} — slice {s_i}"
+            img_path: str | pathlib.Path
+            if save:
+                assert save_path is not None  # type guard
+                save_img = uplt._save_img_flag(save=True, show=show_plot)
+                img_path = pathlib.Path(save_path) / (
+                    str(file.p.da_slices_fmt % s_i) + ".png"
+                )
+            else:
+                save_img = 0
+                img_path = ""
+            fitlib.plt_fit_res_1d(
+                x=file.energy,
+                y=file.data[s_i],
+                fit_fun_str=file.p.spec_fun_str,
+                par_ini=result_slice.par_ini,
+                par_fin=result_slice.par_fin,
+                args=model_sbs.args,
+                plot_sum=False,
+                show_init=show_init,
+                title=title,
+                fit_lim=file.e_lim,
+                config=file.plot_config,
+                legend=legend,
+                save_img=save_img,
+                save_path=img_path,
             )
-        else:
-            save_img = 0
-            img_path = ""
-        fitlib.plt_fit_res_1d(
-            x=file.energy,
-            y=file.data[s_i],
-            fit_fun_str=file.p.spec_fun_str,
-            par_ini=result_slice.par_ini,
-            par_fin=result_slice.par_fin,
-            args=model_sbs.args,
-            plot_sum=False,
-            show_init=show_init,
-            title=title,
-            fit_lim=file.e_lim,
-            config=file.plot_config,
-            legend=legend,
-            save_img=save_img,
-            save_path=img_path,
-        )
+    finally:
+        model_sbs.update_value(new_par_values=saved_par_values, par_select="all")

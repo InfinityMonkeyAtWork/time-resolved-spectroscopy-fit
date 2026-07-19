@@ -588,8 +588,8 @@ def capture_par_variability(example_num, *, n_starts=4):
         fitted_runs.append({name: fitted[name] for name in free_names})
 
         try:
-            redchi = model.result[1].redchi
-        except (AttributeError, IndexError, TypeError):
+            redchi = model.result.par_fin.redchi
+        except AttributeError:  # result is None or placeholder par_fin
             redchi = float("nan")
         labels.append(label)
         redchis.append(redchi)
