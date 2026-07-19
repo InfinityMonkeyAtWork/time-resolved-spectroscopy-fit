@@ -14,9 +14,9 @@ orphan: true
 ## The ownership contract
 
 - **`Model`/`File` (live layer)** own inputs and fit execution.
-  `model.result` (the raw `[par_ini, par_fin, conf_ci, emcee_fin,
-  emcee_ci]` list) is a transient internal of the fit run; nothing
-  user-facing reads it.
+  `model.result` (originally the raw `[par_ini, par_fin, conf_ci,
+  emcee_fin, emcee_ci]` list; a typed `FitOutput` since Phase 8 below)
+  is a transient internal of the fit run; nothing user-facing reads it.
 - **`SavedFitSlot`** is the single authoritative record of a completed
   fit — everything a user can ask about a fit must be in (or derivable
   from) the slot.
@@ -98,8 +98,61 @@ orphan: true
 
 ## Deferred
 
-- Typed result object replacing the internal raw `result[1..4]` list
-  (tracked in the repo-root `TODO.md`).
+- Typed result object replacing the internal raw `result[1..4]` list —
+  completed in Phase 8 (below) rather than deferred after all.
 - Model rehydration from archives (raw YAML text provenance).
 - The in-place-mutation guard stance for user-facing arrays (separate
   TODO item; slots store arrays by reference).
+
+## Phases 7–8 continuation (same branch, 2026-07-17)
+
+Two follow-on phases from the post-completion review completed the same
+principle in the same release (0.14.0).
+
+### Phase 7 — remove auto-export; fits never write
+
+`Project.auto_export`, `Project.path_results`, and `File.model_path`
+removed: fit methods compute, display (per `show_output`), and capture
+slots — they never touch disk. Persistence is the explicit `save_fits`
+(HDF5) / `export_fits` (CSV/PNG tree) pair, both slot-fed, with the
+single default output root `./fit_results/<Project.name>/`
+(`Project.name` default `"test"` → the placeholder `"my_project"`).
+A `project.yaml` still setting a removed key fails loudly with
+migration guidance. Everything auto-export used to write is
+reproducible:
+
+- MCMC walker-acceptance and corner PNGs → `FitResults.plot_mcmc`
+  (renders from the persisted slot payload — live sessions and loaded
+  archives alike; `File.plot_mcmc` sugar).
+- SbS per-slice PNGs → `File.plot_sbs_slices` (live `results_sbs` only;
+  shows the per-slice seeded initial guess and component decomposition
+  the old PNGs lacked). Deliberately NOT part of `export_fits` — export
+  stays archive-reproducible, per-slice panels need live inputs.
+- Component-decomposed `fit_1d.csv` → `save_baseline_fit` /
+  `save_spectrum_fit` (kept as explicit calls, no longer auto-invoked).
+- Accepted losses: per-slice `par_ini` CSVs (re-derivable from the
+  persisted `fit_settings` seeding recipe) and `lmfit.fit_report` text
+  dumps (all contents persisted in the slot).
+
+`fitlib.fit_wrapper` lost `save_output` / `save_path` / `num_fmt` /
+`delim` and its CSV/TXT dump block; emcee diagnostics figures are
+display-only. The SbS worker payload shed its IO-only arguments
+(`auto_export`, `path_slice`, `plot_config`).
+
+### Phase 8 — typed `FitOutput`
+
+The raw 5-list became a frozen dataclass — named `FitOutput`, in
+`utils/lmfit.py` because `fitlib` imports `spectra` → `mcp` and `mcp`
+needs the annotation (so the class must live below all three). Fields
+`par_ini` / `par_fin` / `conf_ci` / `emcee_fin` / `emcee_ci`;
+`Model.result` is `FitOutput | None` (was `[]` when unfitted),
+`File.results_sbs` holds one per slice, and `Project.fit_2d`'s per-file
+stand-in is a real minimal `MinimizerResult` (params/method/nvarys)
+instead of a `SimpleNamespace`. lmfit sets result attributes
+dynamically (invisible to pyright), so a TYPE_CHECKING-only
+`TypedMinimizerResult` shim declares the attributes trspecfit reads,
+with casts at the two construction choke points. No list-index
+back-compat; `SavedFitSlot` and all `FitResults` accessors unchanged.
+Naming consolidation in the same pass: `plt_fit_res_1d(par_init=)` →
+`par_ini` (matching the `par_ini`/`par_fin` pair); `show_init` (a verb
+phrase) and lmfit's own `init_value` deliberately kept.
