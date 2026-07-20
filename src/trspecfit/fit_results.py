@@ -683,7 +683,7 @@ class FitResults:
         config: Any,
         show_plot: bool,
     ) -> Any:
-        """Observed + fit over a residual panel for a 1D slot."""
+        """Observed + fit (with components, when persisted) over a residual panel."""
 
         import matplotlib.pyplot as plt
 
@@ -703,7 +703,24 @@ class FitResults:
             height_ratios=[3, 1],
         )
         ax_fit.plot(x, obs, "k.", ms=3, label="observed")
-        ax_fit.plot(x, fit, "-", lw=1.5, label="fit")
+        if slot.components is not None:
+            # schema >= 4: render the persisted per-component decomposition,
+            # matching fitlib.plt_fit_res_1d's live visual style.
+            colors = list(
+                plt.rcParams["axes.prop_cycle"].by_key().get("color", ["#1f77b4"])
+            )
+            names = slot.component_names or [
+                f"component {i}" for i in range(slot.components.shape[0])
+            ]
+            for p, (peak, name) in enumerate(zip(slot.components, names, strict=True)):
+                color = colors[p % len(colors)]
+                ax_fit.plot(
+                    x, peak, color=color, linestyle="-", linewidth=2, label=name
+                )
+                ax_fit.fill_between(x, 0, peak, facecolor=color, alpha=0.5)
+            ax_fit.plot(x, fit, "-", lw=1.5, color="#000000", label="fit")
+        else:
+            ax_fit.plot(x, fit, "-", lw=1.5, label="fit")
         ax_fit.set_ylabel("intensity")
         ax_fit.legend(fontsize="small")
         ax_fit.set_title(f"{slot.model_name} ({slot.fit_type})")

@@ -1,4 +1,4 @@
-# Fit-archive HDF5 schema (schema_version 3)
+# Fit-archive HDF5 schema (schema_version 4)
 
 On-disk layout for the fit-results archive written by `Project.save_fits()`
 and read by `FitResults.load()` / `Project.load_fits()`. The object model
@@ -87,7 +87,7 @@ dtypes.
 │     project_name       : str              # Project.name; set on first write
 │     timestamp_created  : str              # ISO 8601 UTC, first write
 │     timestamp_updated  : str              # ISO 8601 UTC, most recent write
-│     schema_version     : str              # "3"; bump on incompatible change
+│     schema_version     : str              # "4"; bump on incompatible change
 └── files/                                  # group; one subgroup per file
     ├── 000000/                             # SavedFile (see "File group")
     └── 000001/...
@@ -101,7 +101,7 @@ must not recreate the archive on subsequent saves unless the caller
 explicitly asks for that; the canonical way to start fresh is to choose
 a new path.
 
-`schema_version` is currently `"3"`. Version history:
+`schema_version` is currently `"4"`. Version history:
 
 - `"1"` → `"2"`: the σ-calibrated chi-square columns and per-slot sigma
   metadata changed the stored fields — a clean break, so schema-1 archives
@@ -113,6 +113,15 @@ a new path.
   `utils/fit_io.py`); schema-2 archives load with the new fields as
   `None`. The writer still refuses to append to an archive whose version
   differs from its own — re-save to a new path to migrate.
+- `"3"` → `"4"` (2026-07): **additive** — slot `components` and
+  `component_names` datasets for 1D fit types (baseline, spectrum, sbs).
+  Never present for `fit_type == "2d"` — there is no per-component
+  concept there. The reader accepts `"2"`, `"3"`, and `"4"`
+  (`SUPPORTED_READ_VERSIONS` in `utils/fit_io.py`); schema-2/3 archives
+  load with `components` / `component_names` as `None`, and
+  `FitResults.plot_fit` falls back to a sum-only rendering in that case.
+  The writer still refuses to append to an archive whose version differs
+  from its own.
 
 Future incompatible changes (e.g. project-scoped joint-result slots or
 `keep_history=True` full-log save — both deferred, see "What's *not* in
@@ -212,7 +221,9 @@ files/000000/slots/000000/
 ├── metrics_per_slice                (opt)  # 1D structured dataset; sbs only
 ├── conf_ci                          (opt)  # heterogeneous-DataFrame dataset; see "conf_ci dataset"
 ├── correl                           (opt)  # all-numeric DataFrame dataset; see "correl dataset"
-└── mcmc/                            (opt)  # see "mcmc group"
+├── mcmc/                            (opt)  # see "mcmc group"
+├── components                       (opt)  # 1D fit types only; see "components dataset"; schema ≥ 4
+└── component_names                  (opt)  # present iff components is; see "components dataset"; schema ≥ 4
 ```
 
 `(cond)` = present iff `fit_type != "sbs"`. SbS metrics live in the
@@ -220,8 +231,9 @@ files/000000/slots/000000/
 scalars.
 
 `(opt)` = present iff the corresponding `SavedFitSlot` field is non-`None`
-(`conf_ci`, `correl`, `mcmc`) or applicable to the fit type
-(`metrics_per_slice` is sbs-only).
+(`conf_ci`, `correl`, `mcmc`, `components`, `component_names`) or
+applicable to the fit type (`metrics_per_slice` is sbs-only; `components`
+/ `component_names` are never present for `fit_type == "2d"`).
 
 ### `archive_slot_key` vs `history_key`
 
@@ -436,6 +448,35 @@ Within the group:
   emcee did not expose it); the reader maps absence to `None` in the
   payload dict.
 
+## `components` / `component_names` (optional; schema ≥ 4)
+
+Per-component fit curves for 1D fit types (baseline, spectrum, sbs),
+evaluated at final params on the same grid as `fit`. Never present for
+`fit_type == "2d"` — there is no per-component concept there.
+
+```
+components : ndarray (preserves source dtype)
+  baseline / spectrum : shape (n_components, n_e_view)
+  sbs                 : shape (n_slices, n_components, n_e_view)
+component_names : 1D vlen-utf8 dataset, shape (n_components,)
+  component labels; order matches components' component axis
+```
+
+Both fields are omitted together — `components` is `None` on the object
+model iff `component_names` is. `component_names` is captured directly
+from `[comp.name for comp in model.components]` at fit time rather than
+re-derived from `params.name`: a static (`dim == 1`) attached
+`par_profile` splices a nested model's parameters into its host
+component's name block without adding a distinct `model.components`
+entry, which would break any prefix-based re-derivation from parameter
+names. Summing `components` along its component axis reconstructs `fit`
+exactly (verified by `_assert_slot_round_tripped` in
+`tests/test_fit_archive_roundtrip.py`).
+
+Absent in schema-2/3 archives; the reader maps absence to `None` for
+both fields, and `FitResults.plot_fit` falls back to the pre-schema-4
+sum-only 1D rendering when `components is None`.
+
 ## Reader → object-model mapping
 
 Per slot, the reader produces a `SavedFitSlot` with:
@@ -463,6 +504,8 @@ Per slot, the reader produces a `SavedFitSlot` with:
 | `conf_ci`            | `conf_ci` dataset → DataFrame, or `None` if absent             |
 | `correl`             | `correl` dataset → DataFrame (index restored from `columns`), or `None` if absent |
 | `mcmc`               | `mcmc/` group → dict, or `None` if absent                      |
+| `components`         | `components` dataset → ndarray, or `None` if absent            |
+| `component_names`    | `component_names` dataset → list of str, or `None` if absent   |
 
 `history_key` is persisted as a non-authoritative attr but recomputed
 by the reader (see "`archive_slot_key` vs `history_key`"). The on-disk
@@ -471,12 +514,12 @@ on the returned `SavedFitSlot` always comes from the live recompute.
 
 ## Per-fit-type cheat sheet
 
-| fit_type   | `observed.shape`        | `params` layout                      | metrics location          | sbs-only datasets     | t_lim applied |
-|------------|-------------------------|--------------------------------------|---------------------------|-----------------------|---------------|
-| baseline   | `(n_e_view,)`           | structured (long, named columns)     | scalar attrs              | —                     | n/a           |
-| spectrum   | `(n_e_view,)`           | structured (long, named columns)     | scalar attrs              | —                     | n/a           |
-| sbs        | `(n_t_full, n_e_view)`  | 2D float64 + `columns` attr (wide)   | `metrics_per_slice`       | `metrics_per_slice`   | **no**        |
-| 2d         | `(n_t_view, n_e_view)`  | structured (long, named columns)     | scalar attrs              | —                     | yes           |
+| fit_type   | `observed.shape`        | `params` layout                      | metrics location          | `components.shape`                    | sbs-only datasets     | t_lim applied |
+|------------|-------------------------|--------------------------------------|---------------------------|----------------------------------------|-----------------------|---------------|
+| baseline   | `(n_e_view,)`           | structured (long, named columns)     | scalar attrs              | `(n_components, n_e_view)`             | —                     | n/a           |
+| spectrum   | `(n_e_view,)`           | structured (long, named columns)     | scalar attrs              | `(n_components, n_e_view)`             | —                     | n/a           |
+| sbs        | `(n_t_full, n_e_view)`  | 2D float64 + `columns` attr (wide)   | `metrics_per_slice`       | `(n_t_full, n_components, n_e_view)`   | `metrics_per_slice`   | **no**        |
+| 2d         | `(n_t_view, n_e_view)`  | structured (long, named columns)     | scalar attrs              | always `None`                          | —                     | yes           |
 
 `n_e_view` denotes the energy axis cropped by `e_lim`; `n_t_view`
 denotes the time axis cropped by `t_lim`. `n_t_full` is the file's full

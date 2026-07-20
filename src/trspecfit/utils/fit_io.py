@@ -44,11 +44,13 @@ from trspecfit.fitlib import (
 from trspecfit.utils.hdf5 import require_dataset, require_group
 
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 # Schema 3 is additive over 2 (slot `correl` dataset, mcmc
-# `acceptance_fraction` dataset), so the reader accepts both; the writer
-# still refuses cross-version appends (see _classify_archive_for_write).
-SUPPORTED_READ_VERSIONS = ("2", "3")
+# `acceptance_fraction` dataset). Schema 4 is additive over 3 (slot
+# `components` / `component_names` datasets for 1D fit types — baseline,
+# spectrum, sbs; never present for 2d). The reader accepts all three; the
+# writer still refuses cross-version appends (see _classify_archive_for_write).
+SUPPORTED_READ_VERSIONS = ("2", "3", "4")
 
 # Default noise metadata used when no σ has been set on the File. Mirrors the
 # project.yaml defaults defined in ``Project._set_defaults``; if you change one,
@@ -256,6 +258,21 @@ class SavedFitSlot:
         ``{"flatchain", "ci", "lnsigma", "acceptance_fraction"}`` if MCMC
         ran, else ``None``. ``acceptance_fraction`` is emcee's per-walker
         array (``None`` in slots loaded from schema-2 archives).
+    components : np.ndarray | None
+        Per-component fit curves on the same grid as ``fit``, evaluated at
+        final params. ``None`` for ``fit_type == "2d"`` (no per-component
+        concept there) and for slots loaded from schema < 4 archives.
+        Shape ``(n_components, energy_in_lim)`` for baseline/spectrum;
+        ``(n_slices, n_components, energy_in_lim)`` for sbs.
+    component_names : list of str | None
+        Component labels, same order as ``components``' component axis —
+        ``[comp.name for comp in model.components]`` at fit time. Persisted
+        explicitly rather than parsed from ``params.name`` because a
+        static (``dim == 1``) attached ``par_profile`` splices a nested
+        model's parameters into its host component's name block without
+        adding a distinct ``model.components`` entry, breaking any
+        prefix-based re-derivation. ``None`` exactly when ``components``
+        is ``None``.
     """
 
     file_fingerprint: dict[str, Any]
@@ -284,6 +301,8 @@ class SavedFitSlot:
     params_meta: pd.DataFrame | None = None
     params_stderr: pd.DataFrame | None = None
     fit_settings: dict[str, Any] | None = None
+    components: np.ndarray | None = None
+    component_names: list[str] | None = None
 
 
 #
@@ -607,6 +626,8 @@ def _slot_from_baseline(
     correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
     fit_settings: dict[str, Any] | None = None,
+    components: np.ndarray | None = None,
+    component_names: list[str] | None = None,
 ) -> SavedFitSlot:
     """
     Build a SavedFitSlot for a completed baseline fit.
@@ -641,6 +662,8 @@ def _slot_from_baseline(
         sigma_source=sigma_source,
         sigma_type=sigma_type,
         sigma_data=sigma_data,
+        components=components,
+        component_names=component_names,
     )
 
 
@@ -668,6 +691,8 @@ def _slot_from_spectrum(
     correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
     fit_settings: dict[str, Any] | None = None,
+    components: np.ndarray | None = None,
+    component_names: list[str] | None = None,
 ) -> SavedFitSlot:
     """Build a SavedFitSlot for a completed spectrum fit.
 
@@ -702,6 +727,8 @@ def _slot_from_spectrum(
         sigma_source=sigma_source,
         sigma_type=sigma_type,
         sigma_data=sigma_data,
+        components=components,
+        component_names=component_names,
     )
 
 
@@ -729,13 +756,16 @@ def _slot_from_sbs(
     params_meta: pd.DataFrame | None = None,
     params_stderr: pd.DataFrame | None = None,
     fit_settings: dict[str, Any] | None = None,
+    components: np.ndarray | None = None,
+    component_names: list[str] | None = None,
 ) -> SavedFitSlot:
     """
     Build a SavedFitSlot for a completed slice-by-slice fit.
 
-    ``observed`` and ``fit`` are 2D arrays (slices x energy_in_lim). ``metrics``
-    values are per-slice 1D arrays. ``params_df`` is the SbS DataFrame
-    (one row per slice).
+    ``observed`` and ``fit`` are 2D arrays (slices x energy_in_lim).
+    ``metrics`` values are per-slice 1D arrays. ``params_df`` is the SbS
+    DataFrame (one row per slice). ``components`` is 3D
+    ``(n_slices, n_components, energy_in_lim)`` when provided.
     """
 
     selection = {
@@ -784,6 +814,8 @@ def _slot_from_sbs(
         params_meta=params_meta,
         params_stderr=params_stderr,
         fit_settings=fit_settings,
+        components=components,
+        component_names=component_names,
     )
 
 
@@ -866,6 +898,8 @@ def _build_slot(
     sigma_source: str,
     sigma_type: str,
     sigma_data: float,
+    components: np.ndarray | None = None,
+    component_names: list[str] | None = None,
 ) -> SavedFitSlot:
     """Shared scalar-metric path for baseline / spectrum / 2d."""
 
@@ -909,6 +943,8 @@ def _build_slot(
         correl=correl,
         mcmc=mcmc,
         fit_settings=fit_settings,
+        components=components,
+        component_names=component_names,
     )
 
 
@@ -1451,6 +1487,15 @@ def _write_slot(
         )
     if slot.mcmc is not None:
         _write_mcmc_group(slot_group, slot.mcmc)
+    if slot.components is not None:
+        slot_group.create_dataset(
+            "components", data=np.ascontiguousarray(slot.components)
+        )
+        assert slot.component_names is not None  # type guard
+        slot_group.create_dataset(
+            "component_names",
+            data=np.array(slot.component_names, dtype=_VLEN_STR),
+        )
 
 
 #
@@ -1758,6 +1803,13 @@ def _read_slot(
         if mcmc_obj is not None
         else None
     )
+    components_obj = slot_group.get("components")
+    components: np.ndarray | None = None
+    component_names: list[str] | None = None
+    if components_obj is not None:
+        components = np.asarray(require_dataset(components_obj, "components")[...])
+        names_obj = require_dataset(slot_group["component_names"], "component_names")
+        component_names = [_to_str_value(v) for v in names_obj[...]]
 
     yaml_filename = _attr_str(a["yaml_filename"]) if "yaml_filename" in a else None
     selection = json.loads(selection_json)
@@ -1797,6 +1849,8 @@ def _read_slot(
         params_meta=params_meta,
         params_stderr=params_stderr,
         fit_settings=fit_settings,
+        components=components,
+        component_names=component_names,
     )
 
 

@@ -182,6 +182,29 @@ def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> 
     assert loaded.yaml_filename == original.yaml_filename
     assert loaded.timestamp == original.timestamp
 
+    # --- components (schema 4; None for 2d) -----------------------------
+    if original.fit_type == "2d":
+        assert original.components is None
+        assert loaded.components is None
+        assert original.component_names is None
+        assert loaded.component_names is None
+    else:
+        assert original.components is not None
+        assert loaded.components is not None
+        np.testing.assert_array_equal(loaded.components, original.components)
+        assert loaded.component_names == original.component_names
+        if original.fit_type == "sbs":
+            assert loaded.components.shape[0] == loaded.observed.shape[0]  # n_slices
+            assert loaded.components.shape[2] == loaded.observed.shape[1]  # n_energy
+            assert loaded.components.shape[1] == len(loaded.component_names)
+            recon = np.sum(loaded.components, axis=1)
+        else:
+            assert loaded.components.shape[1] == loaded.observed.shape[0]
+            assert loaded.components.shape[0] == len(loaded.component_names)
+            recon = np.sum(loaded.components, axis=0)
+        # Components must sum back to the persisted fit curve.
+        np.testing.assert_allclose(recon, loaded.fit, rtol=1e-8, atol=1e-8)
+
     # --- residual reconstruction (design invariant) --------------------
     # chi2_raw is the lmfit-unweighted SSE diagnostic; chi2 is σ-calibrated
     # and NaN when no σ was set on the file, so we cross-check against the raw
@@ -514,11 +537,11 @@ def test_correl_roundtrip(tmp_path) -> None:
 
 #
 def _downgrade_archive_to_v2(archive_path) -> None:
-    """Rewrite a schema-3 archive as schema 2 in place: relabel the version
+    """Rewrite a schema-4 archive as schema 2 in place: relabel the version
     and delete the schema-3 additions (slot ``correl`` / ``params_meta`` /
     ``params_stderr`` datasets, ``fit_settings`` attr, mcmc
-    ``acceptance_fraction``) so the payload matches what a v2 writer
-    produced."""
+    ``acceptance_fraction``) plus the schema-4 additions (``components`` /
+    ``component_names``) so the payload matches what a v2 writer produced."""
 
     import h5py
 
@@ -534,7 +557,13 @@ def _downgrade_archive_to_v2(archive_path) -> None:
             slots = require_group(slots_obj, "slots")
             for s_key in slots:
                 sg = require_group(slots[s_key], s_key)
-                for ds in ("correl", "params_meta", "params_stderr"):
+                for ds in (
+                    "correl",
+                    "params_meta",
+                    "params_stderr",
+                    "components",
+                    "component_names",
+                ):
                     if ds in sg:
                         del sg[ds]
                 meta = require_group(sg["metadata"], "metadata")
@@ -544,6 +573,31 @@ def _downgrade_archive_to_v2(archive_path) -> None:
                     mcmc_group = require_group(sg["mcmc"], "mcmc")
                     if "acceptance_fraction" in mcmc_group:
                         del mcmc_group["acceptance_fraction"]
+
+
+#
+def _downgrade_archive_to_v3(archive_path) -> None:
+    """Rewrite a schema-4 archive as schema 3 in place: relabel the version
+    and delete only the schema-4 additions (slot ``components`` /
+    ``component_names``), keeping every schema-3 field intact."""
+
+    import h5py
+
+    from trspecfit.utils.hdf5 import require_group
+
+    with h5py.File(archive_path, "r+") as h5:
+        require_group(h5["metadata"], "metadata").attrs["schema_version"] = "3"
+        files_group = require_group(h5["files"], "files")
+        for f_key in files_group:
+            slots_obj = require_group(files_group[f_key], f_key).get("slots")
+            if slots_obj is None:
+                continue
+            slots = require_group(slots_obj, "slots")
+            for s_key in slots:
+                sg = require_group(slots[s_key], s_key)
+                for ds in ("components", "component_names"):
+                    if ds in sg:
+                        del sg[ds]
 
 
 #
@@ -571,6 +625,32 @@ def test_reader_accepts_schema_v2_archive(tmp_path) -> None:
     assert slot.fit_settings is None
     original = fit_file.p._fit_history[0]
     _assert_params_equal(slot.params, original.params, fit_type="baseline")
+
+
+#
+def test_reader_accepts_schema_v3_archive(tmp_path) -> None:
+    """Schema 4 is additive, so v3 archives must still load — with
+    components/component_names as None, and FitResults.plot_fit falling
+    back to the lean sum-only rendering (no live Model needed)."""
+
+    _, fit_file, family = _build_fit_file("F1")
+    fit_file.fit_baseline(model_name=family.model_name("default"), stages=1, try_ci=0)
+    archive_path = tmp_path / "v3.fit.h5"
+    fit_file.p.save_fits(archive_path, show_output=0)
+    _downgrade_archive_to_v3(archive_path)
+
+    loaded = FitResults.load(archive_path)
+    assert len(loaded) == 1
+    slot = next(iter(loaded))
+    assert slot.components is None
+    assert slot.component_names is None
+
+    import matplotlib.pyplot as plt
+
+    try:
+        loaded.plot_fit(file=slot.file_name, fit_type="baseline", show_plot=False)
+    finally:
+        plt.close("all")
 
 
 #

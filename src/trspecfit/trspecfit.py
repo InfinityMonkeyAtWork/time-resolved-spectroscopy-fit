@@ -3369,6 +3369,22 @@ class File:
         else:
             observed = self.data_base.copy()
             fit_arr = fit_full.copy()
+        # Per-component decomposition, evaluated on the full grid (same
+        # correctness reasoning as fit_full above) then cropped to e_lim.
+        from trspecfit import spectra
+
+        par_fin_vals = ulmfit.par_extract(result_fin.params, return_type="list")
+        assert self.model_base.args is not None  # type guard
+        components_full = getattr(spectra, fit_fun_str)(
+            self.energy, par_fin_vals, False, *self.model_base.args
+        )
+        component_names = [comp.name for comp in self.model_base.components]
+        if e_lim:
+            components = np.stack(
+                [np.asarray(c)[e_lim[0] : e_lim[1]] for c in components_full], axis=0
+            )
+        else:
+            components = np.stack([np.asarray(c) for c in components_full], axis=0)
         params_df = ulmfit.par_to_df(
             result_fin.params,
             col_type="min",
@@ -3404,6 +3420,8 @@ class File:
             correl=correl,
             mcmc=mcmc,
             fit_settings=fit_settings,
+            components=components,
+            component_names=component_names,
         )
         self.p._fit_history.append(slot)
         return slot
@@ -3446,6 +3464,22 @@ class File:
         else:
             observed = self.data_spec.copy()
             fit_arr = fit_full.copy()
+        # Per-component decomposition, evaluated on the full grid (same
+        # correctness reasoning as fit_full above) then cropped to e_lim.
+        from trspecfit import spectra
+
+        par_fin_vals = ulmfit.par_extract(result_fin.params, return_type="list")
+        assert self.model_spec.args is not None  # type guard
+        components_full = getattr(spectra, fit_fun_str)(
+            self.energy, par_fin_vals, False, *self.model_spec.args
+        )
+        component_names = [comp.name for comp in self.model_spec.components]
+        if e_lim:
+            components = np.stack(
+                [np.asarray(c)[e_lim[0] : e_lim[1]] for c in components_full], axis=0
+            )
+        else:
+            components = np.stack([np.asarray(c) for c in components_full], axis=0)
         params_df = ulmfit.par_to_df(
             result_fin.params,
             col_type="min",
@@ -3480,6 +3514,8 @@ class File:
             correl=correl,
             mcmc=mcmc,
             fit_settings=fit_settings,
+            components=components,
+            component_names=component_names,
         )
         self.p._fit_history.append(slot)
         return slot
@@ -3511,8 +3547,13 @@ class File:
         e_lim = list(self.e_lim) if self.e_lim else None
         # Per-slice observed view + per-slice model evaluation. residual_fun
         # is called once per slice with that slice's final params.
+        from trspecfit import spectra
+
+        assert self.model_sbs.args is not None  # type guard
         observed_rows = []
         fit_rows = []
+        component_rows = []
+        component_names = [comp.name for comp in self.model_sbs.components]
         for s_i in range(n_slices):
             slice_data = self.data[s_i]
             slice_par = self.results_sbs[s_i].par_fin.params
@@ -3526,14 +3567,28 @@ class File:
                     res_type="fit",
                 )
             )
+            slice_par_vals = ulmfit.par_extract(slice_par, return_type="list")
+            components_full = getattr(spectra, fit_fun_str)(
+                self.energy, slice_par_vals, False, *self.model_sbs.args
+            )
             if e_lim:
                 observed_rows.append(slice_data[e_lim[0] : e_lim[1]].copy())
                 fit_rows.append(fit_full[e_lim[0] : e_lim[1]].copy())
+                component_rows.append(
+                    np.stack(
+                        [np.asarray(c)[e_lim[0] : e_lim[1]] for c in components_full],
+                        axis=0,
+                    )
+                )
             else:
                 observed_rows.append(slice_data.copy())
                 fit_rows.append(fit_full.copy())
+                component_rows.append(
+                    np.stack([np.asarray(c) for c in components_full], axis=0)
+                )
         observed = np.stack(observed_rows, axis=0)
         fit_arr = np.stack(fit_rows, axis=0)
+        components = np.stack(component_rows, axis=0)
         # Per-slice DataFrame (one row per slice, columns = parameter values).
         params_df = ulmfit.list_of_par_to_df(self.results_sbs)
         # n_free_pars + fit_alg captured from slice 0 (consistent across slices
@@ -3582,6 +3637,8 @@ class File:
             params_meta=params_meta,
             params_stderr=params_stderr,
             fit_settings=fit_settings,
+            components=components,
+            component_names=component_names,
         )
         self.p._fit_history.append(slot)
         return slot

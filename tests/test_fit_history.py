@@ -1610,6 +1610,57 @@ class TestPlotFitAPI:
             plt.close("all")
 
     #
+    def test_plot_fit_1d_renders_components_when_present(self):
+        """schema >= 4: components/component_names present -> one line +
+        one fill_between per component, plus the observed/fit lines."""
+
+        import dataclasses
+
+        import matplotlib.pyplot as plt
+
+        obs = np.array([1.0, 2.0, 3.0, 4.0])
+        comp_a = np.array([0.6, 1.2, 1.8, 2.4])
+        comp_b = np.array([0.4, 0.8, 1.2, 1.6])
+        slot = dataclasses.replace(
+            _slot_stub(),
+            observed=obs,
+            fit=comp_a + comp_b,
+            components=np.stack([comp_a, comp_b], axis=0),
+            component_names=["peak_a", "peak_b"],
+        )
+        fig = FitResults._plot_fit_1d(slot, energy=None, config=None, show_plot=False)
+        try:
+            ax_fit = fig.axes[0]
+            labels = [line.get_label() for line in ax_fit.lines]
+            assert "peak_a" in labels
+            assert "peak_b" in labels
+            assert "fit" in labels
+            assert "observed" in labels
+            # one fill_between per component
+            assert len(ax_fit.collections) == 2
+            fit_line = next(line for line in ax_fit.lines if line.get_label() == "fit")
+            np.testing.assert_array_equal(fit_line.get_ydata(), comp_a + comp_b)
+        finally:
+            plt.close(fig)
+
+    #
+    def test_plot_fit_1d_falls_back_to_lean_when_components_none(self):
+        """Older-schema slots (components=None) keep the sum-only rendering."""
+
+        import matplotlib.pyplot as plt
+
+        slot = _slot_stub()
+        assert slot.components is None
+        fig = FitResults._plot_fit_1d(slot, energy=None, config=None, show_plot=False)
+        try:
+            ax_fit = fig.axes[0]
+            labels = [line.get_label() for line in ax_fit.lines]
+            assert labels == ["observed", "fit"]
+            assert len(ax_fit.collections) == 0
+        finally:
+            plt.close(fig)
+
+    #
     @staticmethod
     def _fake_sbs_results(*, vary=(True, False, True)):
         """FitResults around a synthetic SbS slot (wide params + metadata)."""
