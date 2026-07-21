@@ -1376,6 +1376,8 @@ def plt_fit_res_2d(
     x: ArrayLike | None = None,
     y: ArrayLike | None = None,
     config: PlotConfig | None = None,
+    *,
+    title: str = "",
     **kwargs: Any,
 ) -> None:
     """
@@ -1397,6 +1399,9 @@ def plt_fit_res_2d(
         Y-axis (time) coordinates. If None, uses row indices.
     config : PlotConfig, optional
         Plot configuration object. If None, uses defaults.
+    title : str, default=''
+        Figure-level title (e.g. file/model identification). Empty means no
+        suptitle, matching prior behavior.
     **kwargs : dict
         Override config attributes for this plot.
 
@@ -1494,6 +1499,8 @@ def plt_fit_res_2d(
         constrained_layout=True,
         figsize=(9, 12),
     )
+    if title:
+        fig.suptitle(title)
 
     # Data panel (uses shared scale)
     axs["left"].pcolormesh(

@@ -2145,9 +2145,16 @@ class File:
         # parameter list
         mod.describe(detail=0)
 
+        title_mod = (
+            f"File: {self.path}, "
+            f'Model: "{model_info}" (from "{mod.yaml_f_name}.yaml")'
+            ": initial guess"
+        )
+
         if detail == 1 and isinstance(mod, mcp.Dynamics):
             mod.create_value_1d(store_1d=1)  # update individual component spectra
-            mod.plot_1d(plot_sum=False)  # plot guess only (individual components)
+            # plot guess only (individual components)
+            mod.plot_1d(plot_sum=False, title=title_mod)
 
         if detail == 1 and mod.dim == 1:
             if self.energy is None or self.data_base is None:
@@ -2159,11 +2166,6 @@ class File:
                 return
             mod.create_value_1d(store_1d=1)  # update individual component spectra
             # plot initial guess (individual components), data, and residual
-            title_mod = (
-                f"File: {self.path}, "
-                f'Model: "{model_info}" (from "{mod.yaml_f_name}.yaml")'
-                ": initial guess"
-            )
             fitlib.plt_fit_res_1d(
                 x=self.energy,
                 y=self.data_base,
@@ -2196,6 +2198,7 @@ class File:
                 config=self.plot_config,
                 x_lim=self.e_lim,
                 y_lim=self.t_lim,
+                title=title_mod,
             )
 
     #
