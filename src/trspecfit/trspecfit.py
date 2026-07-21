@@ -2147,7 +2147,7 @@ class File:
 
         title_mod = (
             f"File: {self.path}, "
-            f'Model: "{model_info}" (from "{mod.yaml_f_name}.yaml")'
+            f'Model: "{mod.name}" (from "{mod.yaml_f_name}.yaml")'
             ": initial guess"
         )
 
