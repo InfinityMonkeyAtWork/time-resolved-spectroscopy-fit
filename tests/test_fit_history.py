@@ -257,6 +257,101 @@ class TestBaselineSlot:
         )
         assert k == slot.history_key
 
+    #
+    def test_stages2_init_value_is_true_seed_not_stage1_output(self):
+        """Regression: lmfit resets init_value at the start of every
+        optimization stage, and fit_wrapper's stage 2 starts from stage
+        1's output — so a two-stage result's init_value would silently
+        become stage 1's output unless restore_true_init_values corrects
+        it before the slot is built. _setup_baseline_fit already uses
+        stages=2."""
+
+        truth_project = make_project(name="truth")
+        truth = _make_truth_file(truth_project)
+        data = simulate_noisy(truth.model_active, noise_level=0.01)
+
+        project = make_project(name="fit")
+        file = _make_fit_file(project, data, truth.energy, truth.time)
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+
+        model = next(m for m in file.models if m.name == "single_glp")
+        true_seed = {name: par.value for name, par in model.lmfit_pars.items()}
+        file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+
+        slot = project._fit_history[0]
+        persisted_init = dict(
+            zip(slot.params["name"], slot.params["init_value"], strict=True)
+        )
+        assert persisted_init.keys() == true_seed.keys()
+        for name, seed_value in true_seed.items():
+            assert persisted_init[name] == pytest.approx(seed_value)
+
+    #
+    def test_stages1_init_value_is_true_seed(self):
+        """stages=1 already had correct init_value (no intermediate stage to
+        taint it); confirm the added correction call doesn't change that."""
+
+        truth_project = make_project(name="truth")
+        truth = _make_truth_file(truth_project)
+        data = simulate_noisy(truth.model_active, noise_level=0.01)
+
+        project = make_project(name="fit")
+        file = _make_fit_file(project, data, truth.energy, truth.time)
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+
+        model = next(m for m in file.models if m.name == "single_glp")
+        true_seed = {name: par.value for name, par in model.lmfit_pars.items()}
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+
+        slot = project._fit_history[0]
+        persisted_init = dict(
+            zip(slot.params["name"], slot.params["init_value"], strict=True)
+        )
+        for name, seed_value in true_seed.items():
+            assert persisted_init[name] == pytest.approx(seed_value)
+
+    #
+    def test_stages2_fit_wrapper_result_and_report_show_true_seed(self, capsys):
+        """The fix lives in fitlib.fit_wrapper itself (not the slot
+        extractors), so it must be visible on two things the slot layer
+        doesn't touch: FitOutput.par_fin.params directly (any direct
+        consumer, not just code that passes through
+        _append_baseline_slot), and lmfit.report_fit's own printed
+        "(init = ...)" annotation for the local-optimization stage
+        (previously showed stage 1's output, contradicting the archive)."""
+
+        truth_project = make_project(name="truth")
+        truth = _make_truth_file(truth_project)
+        data = simulate_noisy(truth.model_active, noise_level=0.01)
+
+        project = make_project(name="fit", show_output=1)
+        file = _make_fit_file(project, data, truth.energy, truth.time)
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+
+        model = next(m for m in file.models if m.name == "single_glp")
+        true_seed = {name: par.value for name, par in model.lmfit_pars.items()}
+        capsys.readouterr()  # drop setup output
+        file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+        printed = capsys.readouterr().out
+
+        result = file.model_base.result
+        assert result is not None
+        for name, seed_value in true_seed.items():
+            assert result.par_fin.params[name].init_value == pytest.approx(seed_value)
+
+        # lmfit.report_fit's "(init = <value>)" for the *local optimization*
+        # stage must show the true seed, not stage 1's output. lmfit
+        # formats it with .7g (printfuncs.py:177).
+        local_section = printed.split("Results local optimization fit")[1]
+        for seed_value in true_seed.values():
+            assert f"(init = {seed_value:.7g})" in local_section
+
 
 #
 # --- spectrum slot extraction ------------------------------------------------

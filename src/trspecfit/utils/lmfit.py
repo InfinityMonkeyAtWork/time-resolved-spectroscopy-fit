@@ -447,6 +447,33 @@ def par_to_df(
 
 
 #
+def restore_true_init_values(
+    result_params: lmfit.Parameters, par_ini: lmfit.Parameters
+) -> None:
+    """
+    Correct ``result_params``' ``init_value`` in place to the true
+    pre-fit seed (``par_ini``).
+
+    Two-stage fitting (``fitlib.fit_wrapper`` stages=2) starts its second
+    stage from stage-1's output, and lmfit's ``prepare_fit`` unconditionally
+    resets ``Parameter.init_value = Parameter.value`` at the start of every
+    stage — so a two-stage result's ``init_value`` reflects stage-1's
+    output, not the true original seed, unless corrected here.
+
+    Parameters
+    ----------
+    result_params : lmfit.Parameters
+        A completed fit's ``result.params`` (mutated in place).
+    par_ini : lmfit.Parameters
+        The true pre-fit seed (``FitOutput.par_ini``).
+    """
+
+    for name, par in result_params.items():
+        if name in par_ini:
+            par.init_value = par_ini[name].value
+
+
+#
 def correl_to_df(lmfit_params: lmfit.Parameters) -> pd.DataFrame:
     """
     Build the varying-parameter correlation matrix from lmfit Parameters.

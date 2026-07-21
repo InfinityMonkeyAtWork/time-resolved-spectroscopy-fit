@@ -813,6 +813,13 @@ def fit_wrapper(
             method=fit_alg_2, params=par_fin_gm_params, **_method_kws(fit_alg_2)
         )
         par_fin_params = _result_params(par_fin)
+        # Stage 2 starts from stage 1's output, and lmfit's prepare_fit()
+        # unconditionally resets init_value = value at the start of every
+        # stage — restore the true pre-fit seed before it's printed below
+        # or reaches any consumer of FitOutput.par_fin (report_fit's own
+        # "(init = ...)" annotation would otherwise show stage 1's output,
+        # contradicting the persisted archive).
+        ulmfit.restore_true_init_values(par_fin_params, par_ini)
         if show_output >= 1:
             print(f"\nResults local optimization fit (method={fit_alg_2}): ")
             lmfit.report_fit(par_fin_params)

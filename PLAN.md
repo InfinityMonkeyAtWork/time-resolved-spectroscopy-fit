@@ -95,3 +95,65 @@ new default.
 **Out of scope**: no schema/wire-format change; no model rehydration /
 extrapolated-fit-curve reconstruction outside the ROI (declined already
 for schema-4); no reintroduction of `show_init`.
+
+## Fix: persisted `init_value` is wrong for two-stage fits
+
+Full design/rationale: `/home/yoyo/.claude/plans/hm-i-guess-the-eventual-simon.md`
+(session-local; overwritten with this fix's plan, contents mirrored here).
+
+**Goal**: while discussing whether the initial guess should be treated as
+fit-result provenance (a different seed can land the same algorithm on a
+different local minimum), found that the already-persisted
+`SavedFitSlot.params` `init_value` column (baseline/spectrum/2d) is
+silently wrong for `stages=2` fits — lmfit's `Minimizer.prepare_fit()`
+unconditionally resets `Parameter.init_value = Parameter.value` at the
+start of every stage, and stage 2 starts from stage 1's *output*, so a
+two-stage result's `init_value` reflects stage 1's output, not the true
+original seed. Verified directly against the installed `lmfit` source.
+`stages=1` fits were already correct.
+
+- [x] **`utils/lmfit.py`**: added `restore_true_init_values(result_params,
+      par_ini)` — corrects `result_params`' `init_value` in place from
+      the true seed.
+- [x] **`fitlib.fit_wrapper`** (not the slot extractors — moved after
+      review): calls `restore_true_init_values(par_fin_params, par_ini)`
+      right after stage 2's `mini.minimize()`, before `par_fin_params` is
+      printed via `lmfit.report_fit` or returned in `FitOutput`.
+      `_result_params` returns `result.params` by reference (no copy), so
+      this is the same object that later becomes `FitOutput.par_fin.params`
+      — fixing it once at the source means the live printed report *and*
+      every direct consumer of `FitOutput.par_fin` (not just code that
+      passes through `_append_baseline_slot`/`_append_spectrum_slot`/
+      `_append_2d_slot`) sees the true seed consistently. The three
+      downstream calls in `trspecfit.py` from the first pass were removed
+      as redundant.
+- [x] **Tests**: `tests/test_lmfit_utils.py` (new) — direct unit tests
+      for `restore_true_init_values`. `test_fit_history.py` — two
+      regression tests via the persisted slot (`stages=2` seed correctly
+      persisted, not stage 1's output; `stages=1` companion confirming no
+      change), plus a new direct test asserting both
+      `FitOutput.par_fin.params[name].init_value` and `report_fit`'s
+      printed `"(init = ...)"` (captured via `capsys`, matching lmfit's
+      own `.7g` format) show the true seed for the local-optimization
+      stage — verified each regression test actually fails without its
+      fix via temporary-revert round-trips. Full suite (1200+ tests incl.
+      slow), mypy, pyright, ruff all clean.
+- [x] **Docs**: `docs/design/fit_archive_schema.md` — clarified the
+      `init_value` column description, pointing at `fitlib.fit_wrapper`
+      as the fix location. No schema/wire-format change (same column,
+      same shape, corrected values) — no version bump. Verified with a
+      `sphinx -W` build.
+
+**Status**: implementation complete, verified 2026-07-21.
+
+**Out of scope (deliberately deferred)**: SbS initial-guess persistence
+(schema-new, not a correctness fix — candidate: slice-0's true
+`init_value` in `params_meta`, mirroring how `correl`/`mcmc` are already
+slice-0-only); the project-level joint-fit `par_ini=None` case; any new
+schema field.
+
+**Next**: plan the seed-as-provenance schema extension — persist the true
+initial guess for baseline/spectrum/2d (e.g. a `fit_ini`/`components_ini`
+evaluated at `par_ini`, mirroring the schema-4 `components` pattern, so
+`plot_fit` can render an initial-guess overlay archive-side) and decide
+whether to fold in SbS slice-0 `init_value` at the same time.

@@ -308,7 +308,13 @@ Mirrors the DataFrame returned by `par_to_df(..., col_type="min")` in
 `utils/lmfit.py`. `stderr` is the only float column that legitimately
 holds `NaN`-as-`None` — the others must always have a real value.
 `min`/`max` may carry IEEE `-inf`/`+inf` (unbounded parameters); those
-are written verbatim.
+are written verbatim. `init_value` is the true pre-fit seed regardless
+of `stages` (1 or 2) — `fitlib.fit_wrapper` calls
+`restore_true_init_values` (`utils/lmfit.py`) on the stage-2 result
+before returning it, since lmfit's `prepare_fit` otherwise resets
+`init_value` to stage 1's output at the start of stage 2. Fixed once at
+the source, so every consumer of `FitOutput.par_fin` sees the true seed
+consistently — not just this persisted column.
 
 ### sbs — wide format (one row per slice, one column per parameter)
 
