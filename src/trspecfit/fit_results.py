@@ -738,6 +738,7 @@ class FitResults:
         config: Any = None,
         show_plot: bool = True,
         full_range: bool | None = None,
+        show_init: bool | None = None,
     ) -> None:
         """
         Plot the latest matching fit: observed, fit, and residual.
@@ -775,6 +776,12 @@ class FitResults:
             Default: ``config.full_range`` (``PlotConfig`` field,
             itself ``Project.full_range``-backed; ``True`` out of the
             box) — pass explicitly to override for one call.
+        show_init : bool, optional
+            Draw the dotted-gold initial-guess overlay (1D fit types
+            only — baseline/spectrum) when the slot has a persisted
+            ``fit_ini``. Default: ``config.show_init`` (``PlotConfig``
+            field, itself ``Project.show_init``-backed; ``True`` out of
+            the box) — pass explicitly to override for one call.
 
         Raises
         ------
@@ -786,9 +793,12 @@ class FitResults:
         cfg = self._config_for(slot, config)
         if full_range is None:
             full_range = bool(getattr(cfg, "full_range", False))
+        if show_init is None:
+            show_init = bool(getattr(cfg, "show_init", False))
         observed = np.asarray(slot.observed)
         fit = np.asarray(slot.fit)
         components = slot.components
+        fit_ini = slot.fit_ini
         e_lim: list[int] | None = None
         t_lim: list[int] | None = None
 
@@ -812,6 +822,8 @@ class FitResults:
                     fit = self._pad_axis(fit, n_e_full, e_lim, axis=1)
                 else:  # baseline / spectrum
                     fit = self._pad_axis(fit, n_e_full, e_lim, axis=0)
+                    if fit_ini is not None:
+                        fit_ini = self._pad_axis(fit_ini, n_e_full, e_lim, axis=0)
                 if components is not None:
                     comp_axis = 2 if slot.fit_type == "sbs" else 1
                     components = self._pad_axis(
@@ -846,6 +858,8 @@ class FitResults:
             fit=fit,
             components=components,
             roi=e_lim,
+            fit_ini=fit_ini,
+            show_init=show_init,
         )
 
     #
@@ -860,6 +874,8 @@ class FitResults:
         fit: np.ndarray | None = None,
         components: np.ndarray | None = None,
         roi: list[int] | None = None,
+        fit_ini: np.ndarray | None = None,
+        show_init: bool = True,
     ) -> Any:
         """
         Observed + fit (with components, when persisted) over a residual panel.
@@ -868,7 +884,9 @@ class FitResults:
         (cropped) arrays; pass overrides to render a full-range
         reconstruction instead (see ``FitResults.plot_fit``'s
         ``full_range``). ``roi`` draws dashed boundary lines at the given
-        ``[start, stop)`` index window (full-range mode only).
+        ``[start, stop)`` index window (full-range mode only). ``fit_ini``
+        (default: the slot's own, when ``show_init`` and persisted) draws
+        the dotted-gold initial-guess overlay.
         """
 
         import matplotlib.pyplot as plt
@@ -876,6 +894,7 @@ class FitResults:
         obs = np.asarray(observed if observed is not None else slot.observed).ravel()
         fit_arr = np.asarray(fit if fit is not None else slot.fit).ravel()
         comps = components if components is not None else slot.components
+        ini = fit_ini if fit_ini is not None else slot.fit_ini
         if energy is not None and energy.size == obs.size:
             x = energy
             x_label = getattr(config, "x_label", "energy")
@@ -890,6 +909,17 @@ class FitResults:
             height_ratios=[3, 1],
         )
         ax_fit.plot(x, obs, "k.", ms=3, label="observed")
+        if show_init and ini is not None:
+            # NaN entries (full-range mode, outside the fit window) leave a
+            # gap rather than a fabricated value, matching fit/components.
+            ax_fit.plot(
+                x,
+                np.asarray(ini).ravel(),
+                color="#FFD700",
+                linestyle=":",
+                linewidth=2,
+                label="initial guess",
+            )
         if comps is not None:
             # schema >= 4: render the persisted per-component decomposition,
             # matching fitlib.plt_fit_res_1d's live visual style. NaN

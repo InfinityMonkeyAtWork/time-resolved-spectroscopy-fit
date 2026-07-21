@@ -375,6 +375,62 @@ class TestFullRangeConfigResolution:
 
 
 #
+class TestShowInitConfigResolution:
+    """show_init mirrors full_range's PlotConfig-field precedent exactly:
+    Project.show_init-backed, True out of the box, resolved once by
+    FitResults.plot_fit rather than hardcoded at a live call site. A
+    baseline fit now persists fit_ini (schema 6), so the live post-fit
+    display can render the dotted-gold "initial guess" overlay."""
+
+    #
+    def test_project_default_is_true(self):
+        project = _make_abs_project()
+        assert project.show_init is True
+
+    #
+    def test_live_baseline_display_shows_initial_guess_when_config_true(
+        self, tmp_path, monkeypatch
+    ):
+        import matplotlib.pyplot as plt
+
+        project, file = _baseline_setup(tmp_path, monkeypatch, show_output=1)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        try:
+            labels = [line.get_label() for line in plt.gcf().axes[0].lines]
+            assert "initial guess" in labels
+        finally:
+            plt.close("all")
+
+    #
+    def test_live_baseline_display_omits_initial_guess_when_config_false(
+        self, tmp_path, monkeypatch
+    ):
+        import matplotlib.pyplot as plt
+
+        project, file = _baseline_setup(tmp_path, monkeypatch, show_output=1)
+        project.show_init = False
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        try:
+            labels = [line.get_label() for line in plt.gcf().axes[0].lines]
+            assert "initial guess" not in labels
+        finally:
+            plt.close("all")
+
+    #
+    def test_per_call_override_wins_over_config(self, tmp_path, monkeypatch):
+        import matplotlib.pyplot as plt
+
+        project, file = _baseline_setup(tmp_path, monkeypatch, show_output=0)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        try:
+            file.plot_fit(fit_type="baseline", show_init=False)
+            labels = [line.get_label() for line in plt.gcf().axes[0].lines]
+            assert "initial guess" not in labels
+        finally:
+            plt.close("all")
+
+
+#
 class TestPlotSbsSlices:
     """File.plot_sbs_slices: on-demand per-slice diagnostics from the live
     SbS fit state — display-only by default, PNGs only on explicit

@@ -245,6 +245,7 @@ class Project:
         self.dpi_save = 300
         self.res_mult = 5
         self.full_range = True
+        self.show_init = True
         self.title = ""
         self.x_lim = None
         self.y_lim = None
@@ -3333,6 +3334,25 @@ class File:
             )
         else:
             components = np.stack([np.asarray(c) for c in components_full], axis=0)
+        # Model evaluated at the true pre-fit seed, same grid as fit_arr.
+        # None on the project-level joint-fit path (no per-file par_ini).
+        fit_ini_arr = None
+        if fit_out.par_ini is not None:
+            fit_ini_full = np.asarray(
+                fitlib.residual_fun(
+                    par=fit_out.par_ini,
+                    x=self.energy,
+                    data=self.data_base,
+                    fit_fun_str=fit_fun_str,
+                    args=self.model_base.args,
+                    res_type="fit",
+                )
+            )
+            fit_ini_arr = (
+                fit_ini_full[e_lim[0] : e_lim[1]].copy()
+                if e_lim
+                else fit_ini_full.copy()
+            )
         params_df = ulmfit.par_to_df(
             result_fin.params,
             col_type="min",
@@ -3370,6 +3390,7 @@ class File:
             fit_settings=fit_settings,
             components=components,
             component_names=component_names,
+            fit_ini=fit_ini_arr,
         )
         self.p._fit_history.append(slot)
         return slot
@@ -3428,6 +3449,25 @@ class File:
             )
         else:
             components = np.stack([np.asarray(c) for c in components_full], axis=0)
+        # Model evaluated at the true pre-fit seed, same grid as fit_arr.
+        # None on the project-level joint-fit path (no per-file par_ini).
+        fit_ini_arr = None
+        if fit_out.par_ini is not None:
+            fit_ini_full = np.asarray(
+                fitlib.residual_fun(
+                    par=fit_out.par_ini,
+                    x=self.energy,
+                    data=self.data_spec,
+                    fit_fun_str=fit_fun_str,
+                    args=self.model_spec.args,
+                    res_type="fit",
+                )
+            )
+            fit_ini_arr = (
+                fit_ini_full[e_lim[0] : e_lim[1]].copy()
+                if e_lim
+                else fit_ini_full.copy()
+            )
         params_df = ulmfit.par_to_df(
             result_fin.params,
             col_type="min",
@@ -3464,6 +3504,7 @@ class File:
             fit_settings=fit_settings,
             components=components,
             component_names=component_names,
+            fit_ini=fit_ini_arr,
         )
         self.p._fit_history.append(slot)
         return slot
@@ -3501,6 +3542,7 @@ class File:
         observed_rows = []
         fit_rows = []
         component_rows = []
+        fit_ini_rows = []
         component_names = [comp.name for comp in self.model_sbs.components]
         for s_i in range(n_slices):
             slice_data = self.data[s_i]
@@ -3519,6 +3561,19 @@ class File:
             components_full = getattr(spectra, fit_fun_str)(
                 self.energy, slice_par_vals, False, *self.model_sbs.args
             )
+            # Per-slice seed is already available at no extra cost (the
+            # worker returns the full FitOutput, not a stripped payload).
+            slice_par_ini = self.results_sbs[s_i].par_ini
+            fit_ini_full = np.asarray(
+                fitlib.residual_fun(
+                    par=slice_par_ini,
+                    x=self.energy,
+                    data=slice_data,
+                    fit_fun_str=fit_fun_str,
+                    args=self.model_sbs.args,
+                    res_type="fit",
+                )
+            )
             if e_lim:
                 observed_rows.append(slice_data[e_lim[0] : e_lim[1]].copy())
                 fit_rows.append(fit_full[e_lim[0] : e_lim[1]].copy())
@@ -3528,17 +3583,21 @@ class File:
                         axis=0,
                     )
                 )
+                fit_ini_rows.append(fit_ini_full[e_lim[0] : e_lim[1]].copy())
             else:
                 observed_rows.append(slice_data.copy())
                 fit_rows.append(fit_full.copy())
                 component_rows.append(
                     np.stack([np.asarray(c) for c in components_full], axis=0)
                 )
+                fit_ini_rows.append(fit_ini_full.copy())
         observed = np.stack(observed_rows, axis=0)
         fit_arr = np.stack(fit_rows, axis=0)
         components = np.stack(component_rows, axis=0)
+        fit_ini = np.stack(fit_ini_rows, axis=0)
         # Per-slice DataFrame (one row per slice, columns = parameter values).
         params_df = ulmfit.list_of_par_to_df(self.results_sbs)
+        params_init = ulmfit.list_of_par_ini_to_df(self.results_sbs)
         # n_free_pars + fit_alg captured from slice 0 (consistent across slices
         # because the same model_sbs is used for every slice).
         slice0_result = self.results_sbs[0].par_fin
@@ -3587,6 +3646,8 @@ class File:
             fit_settings=fit_settings,
             components=components,
             component_names=component_names,
+            fit_ini=fit_ini,
+            params_init=params_init,
         )
         self.p._fit_history.append(slot)
         return slot
@@ -3633,6 +3694,25 @@ class File:
             fit_arr = fit_arr[:, e_lim[0] : e_lim[1]]
         observed = observed.copy()
         fit_arr = fit_arr.copy()
+        # Model evaluated at the true pre-fit seed, same grid as fit_arr.
+        # None on the project-level joint-fit path (no per-file par_ini).
+        fit_ini_arr = None
+        if fit_out.par_ini is not None:
+            fit_ini_full = np.asarray(
+                fitlib.residual_fun(
+                    par=fit_out.par_ini,
+                    x=self.energy,
+                    data=self.data,
+                    fit_fun_str=fit_fun_str,
+                    args=self.model_2d.args,
+                    res_type="fit",
+                )
+            )
+            if t_lim:
+                fit_ini_full = fit_ini_full[t_lim[0] : t_lim[1], :]
+            if e_lim:
+                fit_ini_full = fit_ini_full[:, e_lim[0] : e_lim[1]]
+            fit_ini_arr = fit_ini_full.copy()
         params_df = ulmfit.par_to_df(
             result_fin.params,
             col_type="min",
@@ -3668,6 +3748,7 @@ class File:
             correl=correl,
             mcmc=mcmc,
             fit_settings=fit_settings,
+            fit_ini=fit_ini_arr,
         )
         self.p._fit_history.append(slot)
         return slot
@@ -4210,6 +4291,7 @@ class File:
         config: PlotConfig | None = None,
         show_plot: bool = True,
         full_range: bool | None = None,
+        show_init: bool | None = None,
     ) -> None:
         """
         Plot the latest matching fit: observed, fit, and residual.
@@ -4233,6 +4315,9 @@ class File:
             Show the full, uncropped data range instead of just the fit
             window. Default: ``config.full_range``. See
             :meth:`FitResults.plot_fit`.
+        show_init : bool, optional
+            Draw the dotted-gold initial-guess overlay. Default:
+            ``config.show_init``. See :meth:`FitResults.plot_fit`.
         """
 
         self.p.results.plot_fit(
@@ -4242,6 +4327,7 @@ class File:
             config=config,
             show_plot=show_plot,
             full_range=full_range,
+            show_init=show_init,
         )
 
     #

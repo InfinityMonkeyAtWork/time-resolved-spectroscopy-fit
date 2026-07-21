@@ -1819,6 +1819,98 @@ class TestPlotFitAPI:
             plt.close(fig)
 
     #
+    def test_plot_fit_1d_renders_initial_guess_when_present_and_shown(self):
+        """fit_ini + show_init=True (default) -> dotted-gold "initial
+        guess" line, drawn alongside observed/fit."""
+
+        import dataclasses
+
+        import matplotlib.pyplot as plt
+
+        obs = np.array([1.0, 2.0, 3.0])
+        fit = np.array([1.1, 1.9, 3.2])
+        fit_ini = np.array([0.5, 1.0, 1.5])
+        slot = dataclasses.replace(_slot_stub(), observed=obs, fit=fit, fit_ini=fit_ini)
+        fig = FitResults._plot_fit_1d(slot, energy=None, config=None, show_plot=False)
+        try:
+            ax_fit = fig.axes[0]
+            labels = [line.get_label() for line in ax_fit.lines]
+            assert "initial guess" in labels
+            ini_line = next(
+                line for line in ax_fit.lines if line.get_label() == "initial guess"
+            )
+            np.testing.assert_array_equal(ini_line.get_ydata(), fit_ini)
+            assert ini_line.get_linestyle() == ":"
+            assert ini_line.get_color() == "#FFD700"
+        finally:
+            plt.close(fig)
+
+    #
+    def test_plot_fit_1d_omits_initial_guess_when_show_init_false(self):
+        """A persisted fit_ini is not drawn when show_init=False."""
+
+        import dataclasses
+
+        import matplotlib.pyplot as plt
+
+        slot = dataclasses.replace(_slot_stub(), fit_ini=np.array([0.5, 1.0, 1.5]))
+        fig = FitResults._plot_fit_1d(
+            slot, energy=None, config=None, show_plot=False, show_init=False
+        )
+        try:
+            labels = [line.get_label() for line in fig.axes[0].lines]
+            assert "initial guess" not in labels
+        finally:
+            plt.close(fig)
+
+    #
+    def test_plot_fit_1d_omits_initial_guess_when_absent(self):
+        """show_init=True (default) with no persisted fit_ini draws nothing
+        extra — schema < 6 slots keep the pre-schema-6 rendering."""
+
+        import matplotlib.pyplot as plt
+
+        slot = _slot_stub()
+        assert slot.fit_ini is None
+        fig = FitResults._plot_fit_1d(slot, energy=None, config=None, show_plot=False)
+        try:
+            labels = [line.get_label() for line in fig.axes[0].lines]
+            assert "initial guess" not in labels
+        finally:
+            plt.close(fig)
+
+    #
+    def test_plot_fit_1d_full_range_pads_fit_ini_with_nan(self):
+        """full_range mode: an explicit fit_ini override (NaN outside the
+        fit window, mirroring fit/components) renders with the same gaps."""
+
+        import matplotlib.pyplot as plt
+
+        x = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+        obs_full = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        fit_full = np.array([np.nan, np.nan, 2.9, 3.9, np.nan, np.nan])
+        fit_ini_full = np.array([np.nan, np.nan, 0.8, 1.6, np.nan, np.nan])
+        slot = _slot_stub()
+        fig = FitResults._plot_fit_1d(
+            slot,
+            energy=x,
+            config=None,
+            show_plot=False,
+            observed=obs_full,
+            fit=fit_full,
+            fit_ini=fit_ini_full,
+            roi=[2, 4],
+        )
+        try:
+            ax_fit = fig.axes[0]
+            ini_line = next(
+                line for line in ax_fit.lines if line.get_label() == "initial guess"
+            )
+            np.testing.assert_array_equal(ini_line.get_ydata(), fit_ini_full)
+        finally:
+            plt.close(fig)
+
+    #
     @staticmethod
     def _fake_sbs_results(*, vary=(True, False, True)):
         """FitResults around a synthetic SbS slot (wide params + metadata)."""

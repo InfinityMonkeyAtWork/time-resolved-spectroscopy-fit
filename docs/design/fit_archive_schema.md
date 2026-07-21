@@ -1,4 +1,4 @@
-# Fit-archive HDF5 schema (schema_version 5)
+# Fit-archive HDF5 schema (schema_version 6)
 
 On-disk layout for the fit-results archive written by `Project.save_fits()`
 and read by `FitResults.load()` / `Project.load_fits()`. The object model
@@ -87,7 +87,7 @@ dtypes.
 │     project_name       : str              # Project.name; set on first write
 │     timestamp_created  : str              # ISO 8601 UTC, first write
 │     timestamp_updated  : str              # ISO 8601 UTC, most recent write
-│     schema_version     : str              # "5"; bump on incompatible change
+│     schema_version     : str              # "6"; bump on incompatible change
 └── files/                                  # group; one subgroup per file
     ├── 000000/                             # SavedFile (see "File group")
     └── 000001/...
@@ -101,7 +101,7 @@ must not recreate the archive on subsequent saves unless the caller
 explicitly asks for that; the canonical way to start fresh is to choose
 a new path.
 
-`schema_version` is currently `"5"`. Version history:
+`schema_version` is currently `"6"`. Version history:
 
 - `"1"` → `"2"`: the σ-calibrated chi-square columns and per-slot sigma
   metadata changed the stored fields — a clean break, so schema-1 archives
@@ -130,6 +130,19 @@ a new path.
   `utils/fit_io.py`); pre-5 archives and files with no auxiliary axis both
   load with `aux_axis` as `None` on `SavedFile`. The writer still refuses
   to append to an archive whose version differs from its own.
+- `"5"` → `"6"` (2026-07): **additive** — slot `fit_ini` dataset for all 4
+  fit types (the model evaluated at the true pre-fit seed,
+  `FitOutput.par_ini`; `None` on the project-level joint-fit path, where
+  no per-file `par_ini` exists), plus the sbs-only `params_init` dataset
+  (per-slice true initial-guess values, mirroring `params_stderr`'s
+  shape). Unlike `correl`/`mcmc`/`params_meta` (slice-0-representative),
+  sbs `fit_ini`/`params_init` cover every slice — the per-slice seed is
+  already available in the worker's `FitOutput` at no extra cost. The
+  reader accepts `"2"` through `"6"` (`SUPPORTED_READ_VERSIONS` in
+  `utils/fit_io.py`); pre-6 archives load both fields as `None`, and
+  `FitResults.plot_fit` simply omits the initial-guess overlay in that
+  case. The writer still refuses to append to an archive whose version
+  differs from its own.
 
 Future incompatible changes (e.g. project-scoped joint-result slots or
 `keep_history=True` full-log save — both deferred, see "What's *not* in
@@ -236,8 +249,10 @@ files/000000/slots/000000/
 ├── params                                  # see "params dataset" below; layout depends on fit_type
 ├── params_meta                      (opt)  # heterogeneous-DataFrame dataset; sbs only; schema ≥ 3
 ├── params_stderr                    (opt)  # all-numeric DataFrame dataset; sbs only; schema ≥ 3
+├── params_init                      (opt)  # all-numeric DataFrame dataset; sbs only; schema ≥ 6
 ├── observed                                # 1D or 2D dataset; preserves source dtype
 ├── fit                                     # 1D or 2D dataset; preserves source dtype; observed.shape == fit.shape
+├── fit_ini                          (opt)  # same shape as fit; see "fit_ini dataset"; schema ≥ 6
 ├── metrics_per_slice                (opt)  # 1D structured dataset; sbs only
 ├── conf_ci                          (opt)  # heterogeneous-DataFrame dataset; see "conf_ci dataset"
 ├── correl                           (opt)  # all-numeric DataFrame dataset; see "correl dataset"
@@ -251,9 +266,11 @@ files/000000/slots/000000/
 scalars.
 
 `(opt)` = present iff the corresponding `SavedFitSlot` field is non-`None`
-(`conf_ci`, `correl`, `mcmc`, `components`, `component_names`) or
-applicable to the fit type (`metrics_per_slice` is sbs-only; `components`
-/ `component_names` are never present for `fit_type == "2d"`).
+(`conf_ci`, `correl`, `mcmc`, `components`, `component_names`, `fit_ini`,
+`params_init`) or applicable to the fit type (`metrics_per_slice` and
+`params_init` are sbs-only; `components` / `component_names` are never
+present for `fit_type == "2d"`; `fit_ini` is `None` on the project-level
+joint-fit path, where no per-file `par_ini` exists).
 
 ### `archive_slot_key` vs `history_key`
 
@@ -369,6 +386,23 @@ params_stderr : 2D float64 dataset, shape (n_slices, n_par)
 `NaN` where the optimizer reported no stderr for that slice; the NaN is
 data (no None mapping). Mirrors `list_of_par_stderr_to_df(results)` in
 `utils/lmfit.py`.
+
+## `params_init` dataset (sbs only, optional; schema ≥ 6)
+
+Per-slice true initial-guess values, mirroring the wide `params` /
+`params_stderr` layout:
+
+```
+params_init : 2D float64 dataset, shape (n_slices, n_par)
+  attrs:
+    columns : vlen str[n_par]   # parameter names; axis-1 order
+```
+
+Unlike `correl`/`mcmc`/`params_meta` (captured from slice 0 only as a
+representative), `params_init` covers **every** slice — the per-slice
+seed (`FitOutput.par_ini`) is already available in the sbs worker's
+result at no extra plumbing cost. Mirrors
+`list_of_par_ini_to_df(results)` in `utils/lmfit.py`.
 
 ## `fit_settings` attr (optional; schema ≥ 3)
 
@@ -503,6 +537,31 @@ Absent in schema-2/3 archives; the reader maps absence to `None` for
 both fields, and `FitResults.plot_fit` falls back to the pre-schema-4
 sum-only 1D rendering when `components is None`.
 
+## `fit_ini` dataset (optional; schema ≥ 6)
+
+Model evaluated at the true pre-fit seed (`FitOutput.par_ini`), on the
+same grid as `fit`, for all 4 fit types:
+
+```
+fit_ini : ndarray (preserves source dtype)
+  baseline / spectrum : shape (n_e_view,)
+  2d                  : shape (n_t_view, n_e_view)
+  sbs                 : shape (n_slices, n_e_view)  — every slice
+```
+
+`None` on the project-level joint-fit path (`Project.fit_2d()`), where
+per-file results are projections of one joint optimization and no
+per-file initial guess exists — same case `components` already handles
+for baseline/spectrum/2d. Absent in schema < 6 archives; the reader maps
+absence to `None`, and `FitResults.plot_fit` simply omits the
+initial-guess overlay in that case. Rendered (1D fit types only) as the
+dotted-gold "initial guess" line by `FitResults._plot_fit_1d` when
+`PlotConfig.show_init` resolves `True`; `NaN`-padded outside the fit
+window in `full_range` mode, same honesty principle as `fit`/`components`
+(never a fabricated extrapolation). 2D persists `fit_ini` for
+completeness/symmetry but does not render it (no live precedent for a 2D
+initial-guess overlay either).
+
 ## Reader → object-model mapping
 
 Per slot, the reader produces a `SavedFitSlot` with:
@@ -520,10 +579,12 @@ Per slot, the reader produces a `SavedFitSlot` with:
 | `params`             | `params` dataset (+ its `columns` attr) → DataFrame            |
 | `params_meta`        | `params_meta` dataset → DataFrame, or `None` if absent         |
 | `params_stderr`      | `params_stderr` dataset → DataFrame, or `None` if absent       |
+| `params_init`        | `params_init` dataset → DataFrame, or `None` if absent         |
 | `fit_settings`       | `metadata.fit_settings` attr (JSON) → dict, or `None` if absent |
 | `metrics`            | scalar attrs (non-sbs) or `metrics_per_slice` (sbs) → dict     |
 | `observed`           | `observed` dataset                                             |
 | `fit`                | `fit` dataset                                                  |
+| `fit_ini`            | `fit_ini` dataset → ndarray, or `None` if absent                |
 | `fit_alg`            | slot `metadata.fit_alg` attr                                   |
 | `yaml_filename`      | slot `metadata.yaml_filename` attr (None if absent)            |
 | `timestamp`          | slot `metadata.timestamp` attr                                 |
@@ -540,12 +601,12 @@ on the returned `SavedFitSlot` always comes from the live recompute.
 
 ## Per-fit-type cheat sheet
 
-| fit_type   | `observed.shape`        | `params` layout                      | metrics location          | `components.shape`                    | sbs-only datasets     | t_lim applied |
-|------------|-------------------------|--------------------------------------|---------------------------|----------------------------------------|-----------------------|---------------|
-| baseline   | `(n_e_view,)`           | structured (long, named columns)     | scalar attrs              | `(n_components, n_e_view)`             | —                     | n/a           |
-| spectrum   | `(n_e_view,)`           | structured (long, named columns)     | scalar attrs              | `(n_components, n_e_view)`             | —                     | n/a           |
-| sbs        | `(n_t_full, n_e_view)`  | 2D float64 + `columns` attr (wide)   | `metrics_per_slice`       | `(n_t_full, n_components, n_e_view)`   | `metrics_per_slice`   | **no**        |
-| 2d         | `(n_t_view, n_e_view)`  | structured (long, named columns)     | scalar attrs              | always `None`                          | —                     | yes           |
+| fit_type   | `observed.shape`        | `params` layout                      | metrics location          | `components.shape`                    | `fit_ini.shape`         | sbs-only datasets                    | t_lim applied |
+|------------|-------------------------|--------------------------------------|---------------------------|----------------------------------------|-------------------------|---------------------------------------|---------------|
+| baseline   | `(n_e_view,)`           | structured (long, named columns)     | scalar attrs              | `(n_components, n_e_view)`             | `(n_e_view,)` or `None`  | —                                     | n/a           |
+| spectrum   | `(n_e_view,)`           | structured (long, named columns)     | scalar attrs              | `(n_components, n_e_view)`             | `(n_e_view,)` or `None`  | —                                     | n/a           |
+| sbs        | `(n_t_full, n_e_view)`  | 2D float64 + `columns` attr (wide)   | `metrics_per_slice`       | `(n_t_full, n_components, n_e_view)`   | `(n_t_full, n_e_view)`   | `metrics_per_slice`, `params_init`   | **no**        |
+| 2d         | `(n_t_view, n_e_view)`  | structured (long, named columns)     | scalar attrs              | always `None`                          | `(n_t_view, n_e_view)` or `None` | —                             | yes           |
 
 `n_e_view` denotes the energy axis cropped by `e_lim`; `n_t_view`
 denotes the time axis cropped by `t_lim`. `n_t_full` is the file's full

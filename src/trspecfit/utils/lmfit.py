@@ -590,6 +590,39 @@ def list_of_par_stderr_to_df(results: list[FitOutput]) -> pd.DataFrame:
 
 
 #
+def list_of_par_ini_to_df(results: list[FitOutput]) -> pd.DataFrame:
+    """
+    Extract per-fit true initial-guess values into a DataFrame.
+
+    Companion to :func:`list_of_par_stderr_to_df` with the same shape
+    contract (rows=fits, columns=parameters): collects each fit's true
+    pre-fit seed (``FitOutput.par_ini``) rather than the optimized value.
+    Reads the seed directly, so it is unaffected by
+    ``fitlib.fit_wrapper``'s two-stage ``init_value`` correction.
+
+    Parameters
+    ----------
+    results : list of FitOutput
+        Fit results from ``fitlib.fit_wrapper``; each ``par_ini`` holds
+        the pre-fit ``lmfit.Parameters`` seed (never ``None`` for
+        per-slice SbS results, the only caller of this function).
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with rows=individual fits, columns=parameter init values.
+    """
+
+    param_names = list(results[0].par_fin.params.keys())
+    rows = []
+    for result in results:
+        par_ini = result.par_ini
+        assert par_ini is not None  # type guard
+        rows.append([par_ini[name].value for name in param_names])
+    return pd.DataFrame(rows, columns=param_names)
+
+
+#
 # Configuration and compatibility classes
 #
 

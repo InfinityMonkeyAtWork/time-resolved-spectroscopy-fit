@@ -1,8 +1,42 @@
 """Unit tests for trspecfit.utils.lmfit helpers not covered elsewhere."""
 
-import lmfit
+import typing
 
-from trspecfit.utils.lmfit import restore_true_init_values
+import lmfit
+import pandas as pd
+from lmfit.minimizer import MinimizerResult
+
+from trspecfit.utils import lmfit as ulmfit
+from trspecfit.utils.lmfit import (
+    FitOutput,
+    list_of_par_ini_to_df,
+    restore_true_init_values,
+)
+
+
+#
+def _make_fit_output(
+    fin_values: dict[str, float], ini_values: dict[str, float]
+) -> FitOutput:
+    """Minimal FitOutput with real lmfit.Parameters for par_ini/par_fin.params."""
+
+    par_fin_params = lmfit.Parameters()
+    for name, value in fin_values.items():
+        par_fin_params.add(name, value=value)
+    par_fin = typing.cast("ulmfit.TypedMinimizerResult", MinimizerResult())
+    par_fin.params = par_fin_params
+
+    par_ini = lmfit.Parameters()
+    for name, value in ini_values.items():
+        par_ini.add(name, value=value)
+
+    return FitOutput(
+        par_ini=par_ini,
+        par_fin=par_fin,
+        conf_ci=pd.DataFrame(),
+        emcee_fin=None,
+        emcee_ci=pd.DataFrame(),
+    )
 
 
 #
@@ -60,3 +94,30 @@ class TestRestoreTrueInitValues:
         restore_true_init_values(result_params, par_ini)
 
         assert result_params["A"].init_value == 5.0
+
+
+#
+class TestListOfParIniToDf:
+    """list_of_par_ini_to_df — per-slice true initial-guess values, the
+    SbS companion to list_of_par_stderr_to_df; reads FitOutput.par_ini
+    directly (unaffected by fitlib.fit_wrapper's init_value correction)."""
+
+    #
+    def test_shape_and_columns_match_par_fin(self):
+        results = [
+            _make_fit_output({"A": 5.0, "B": 10.0}, {"A": 1.0, "B": 2.0}),
+            _make_fit_output({"A": 6.0, "B": 11.0}, {"A": 1.5, "B": 2.5}),
+        ]
+
+        df = list_of_par_ini_to_df(results)
+
+        assert list(df.columns) == ["A", "B"]
+        assert len(df) == 2
+
+    #
+    def test_values_are_the_true_seed_not_the_fit_result(self):
+        results = [_make_fit_output({"A": 5.0}, {"A": 1.0})]
+
+        df = list_of_par_ini_to_df(results)
+
+        assert df.iloc[0]["A"] == 1.0

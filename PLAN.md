@@ -157,3 +157,88 @@ initial guess for baseline/spectrum/2d (e.g. a `fit_ini`/`components_ini`
 evaluated at `par_ini`, mirroring the schema-4 `components` pattern, so
 `plot_fit` can render an initial-guess overlay archive-side) and decide
 whether to fold in SbS slice-0 `init_value` at the same time.
+
+## Persist the true initial guess (`fit_ini`) for all 4 fit types (schema 5 → 6)
+
+Full design/rationale: `/home/yoyo/.claude/plans/hm-i-guess-the-eventual-simon.md`
+(session-local; contents mirrored here for repo persistence).
+
+**Goal**: the direct sequel to the two sections above — persist an
+*evaluated* initial-guess curve so `FitResults.plot_fit` can render the
+archive-side overlay that live `plt_fit_res_1d`/`plot_sbs_slices` already
+show (`show_init=True`, dotted-gold line). Same shape of change as the
+schema-4 `components` work: persist the data now, richer viewers later.
+
+- [x] **`utils/lmfit.py`**: added `list_of_par_ini_to_df(results)` —
+      per-slice true initial-guess values (rows=fits, columns=parameters),
+      mirrors `list_of_par_stderr_to_df` but reads `result.par_ini`
+      directly (unaffected by the stage-2 `init_value` fix above).
+- [x] **`utils/fit_io.py`**: schema `"5"` → `"6"` (additive). `SavedFitSlot`
+      gained `fit_ini: np.ndarray | None` (all 4 fit types; `None` on the
+      project-level joint-fit path, same case `components` already
+      handles) and `params_init: pd.DataFrame | None` (sbs only, mirrors
+      `params_stderr`'s shape — every slice, not slice-0-representative,
+      since `results_sbs[i].par_ini` is already available at no extra
+      plumbing cost). `_write_slot`/`_read_slot` conditional write/read;
+      `_slot_from_*` helpers and `_build_slot` thread the new kwargs
+      through.
+- [x] **`trspecfit.py`**: `_append_baseline_slot`/`_append_spectrum_slot`/
+      `_append_2d_slot` evaluate a second `fitlib.residual_fun(...,
+      par=fit_out.par_ini, res_type="fit")` alongside the existing
+      final-params evaluation, cropped identically to `fit_arr`.
+      `_append_sbs_slot` does the same per-slice inside the existing
+      per-slice loop (using `self.results_sbs[s_i].par_ini`), plus
+      `params_init = ulmfit.list_of_par_ini_to_df(self.results_sbs)`
+      after the loop.
+- [x] **`config/plot.py` / `Project._set_defaults`**: `PlotConfig` gained
+      `show_init: bool = True` (docstring entry, placed near
+      `full_range`); `Project._set_defaults` gained `self.show_init = True`.
+- [x] **`fit_results.py`**: `FitResults.plot_fit`/`File.plot_fit` gained
+      `show_init: bool | None = None`, resolved via `cfg.show_init` the
+      same `None` = "use config" way `full_range` was done.
+      `_plot_fit_1d` gained a `fit_ini` override param (mirrors `fit`/
+      `components`/`roi`); renders the dotted-gold "initial guess" line
+      (`color="#FFD700", linestyle=":"`, matching `plt_fit_res_1d`'s live
+      style) when `show_init` resolves `True` and `fit_ini` is not
+      `None`. `full_range` mode `NaN`-pads `fit_ini` via the existing
+      `_pad_axis` helper, same honesty principle as `fit`/`components`.
+      Rendering is 1D-only (baseline/spectrum); 2D persists `fit_ini` for
+      completeness/symmetry but doesn't render it (no live precedent for
+      a 2D init overlay); SbS's archive view still routes through the
+      heatmap-style `plt_fit_res_2d` (no per-slice viewer yet — deferred,
+      but `fit_ini`/`params_init` are now available for it).
+- [x] **Tests**: `test_fit_archive_roundtrip.py` — `_assert_slot_round_tripped`
+      extended with `fit_ini`/`params_init` checks across the F1/F6/F8
+      family matrix; sbs cross-checks `params_init` against each slice's
+      true seed straight from the live `results_sbs` (joint validation
+      with the `fitlib.fit_wrapper` fix); new `_downgrade_archive_to_v5` +
+      `test_reader_accepts_schema_v5_archive`. `test_lmfit_utils.py` — new
+      `TestListOfParIniToDf` unit tests. `test_fit_history.py` — 4 new
+      `_plot_fit_1d` direct-call tests (renders when present+shown; omitted
+      when `show_init=False`; omitted when absent; `NaN`-padded in
+      `full_range` mode). `test_fit_side_effects.py` — new
+      `TestShowInitConfigResolution` class mirroring
+      `TestFullRangeConfigResolution` exactly (project default `True`; a
+      live baseline fit's display honors `config.show_init` in both
+      directions; per-call override wins). Full suite (1041 + 171 slow),
+      mypy, pyright, ruff all clean (whole-tree sweep; the 5 pre-existing
+      mypy errors in `test_full_range_plot.py`/`test_fit_archive_roundtrip.py`
+      were confirmed present on the base branch, unrelated to this work).
+- [x] **Docs**: `docs/design/fit_archive_schema.md` — bumped documented
+      `schema_version` to `"6"`, added the 5→6 version-history entry, new
+      `fit_ini`/`params_init` dataset sections, updated the slot-group
+      layout diagram, reader→object-model mapping table, and per-fit-type
+      cheat sheet. `config/plot.py`'s `PlotConfig` docstring gained a
+      `show_init` entry. Verified with a `sphinx -W` build.
+- [x] **Manual verification**: a `stages=2` baseline fit with
+      `show_output=1` shows stage-2's printed `init_value` matching the
+      true seed; `save_fits` → reload with no live `Model` →
+      `FitResults.plot_fit(..., full_range=True)` renders the "initial
+      guess" line, `NaN`-masked outside the fit window.
+
+**Status**: implementation complete, verified 2026-07-21.
+
+**Out of scope (deliberately deferred)**: no SbS per-slice archive viewer
+yet (`fit_ini`/`params_init` make it buildable later without another
+schema bump); no 2D visual initial-guess overlay; no model rehydration
+for an initial-guess curve extrapolated beyond the fit window.

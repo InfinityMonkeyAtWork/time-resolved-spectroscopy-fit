@@ -44,14 +44,18 @@ from trspecfit.fitlib import (
 from trspecfit.utils.hdf5 import require_dataset, require_group
 
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 # Schema 3 is additive over 2 (slot `correl` dataset, mcmc
 # `acceptance_fraction` dataset). Schema 4 is additive over 3 (slot
 # `components` / `component_names` datasets for 1D fit types — baseline,
 # spectrum, sbs; never present for 2d). Schema 5 is additive over 4 (per-file,
-# not per-slot, optional `aux_axis` dataset). The reader accepts all four; the
-# writer still refuses cross-version appends (see _classify_archive_for_write).
-SUPPORTED_READ_VERSIONS = ("2", "3", "4", "5")
+# not per-slot, optional `aux_axis` dataset). Schema 6 is additive over 5
+# (slot `fit_ini` dataset for all 4 fit types — the model evaluated at the
+# true pre-fit seed, `None` on the project-level joint-fit path; sbs-only
+# `params_init` dataset, per-slice true seed values mirroring
+# `params_stderr`'s shape). The reader accepts all five; the writer still
+# refuses cross-version appends (see _classify_archive_for_write).
+SUPPORTED_READ_VERSIONS = ("2", "3", "4", "5", "6")
 
 # Default noise metadata used when no σ has been set on the File. Mirrors the
 # project.yaml defaults defined in ``Project._set_defaults``; if you change one,
@@ -274,6 +278,20 @@ class SavedFitSlot:
         adding a distinct ``model.components`` entry, breaking any
         prefix-based re-derivation. ``None`` exactly when ``components``
         is ``None``.
+    fit_ini : np.ndarray | None
+        Model evaluated at the true pre-fit seed (``FitOutput.par_ini``),
+        on the same grid as ``fit``. ``None`` on the project-level
+        joint-fit path (no per-file ``par_ini`` there) and for slots
+        loaded from schema < 6 archives. Shape matches ``fit``: for sbs,
+        ``(n_slices, energy_in_lim)`` (every slice, not just slice 0 —
+        the per-slice seed is already available at slot-construction
+        time at no extra cost).
+    params_init : pd.DataFrame | None
+        SbS only: per-slice true initial-guess values, same shape/columns
+        as the wide ``params`` frame's value columns (mirrors
+        ``params_stderr``). ``None`` for other fit types (long-form
+        ``params`` already has an ``init_value`` column) and for slots
+        loaded from schema < 6 archives.
     """
 
     file_fingerprint: dict[str, Any]
@@ -304,6 +322,8 @@ class SavedFitSlot:
     fit_settings: dict[str, Any] | None = None
     components: np.ndarray | None = None
     component_names: list[str] | None = None
+    fit_ini: np.ndarray | None = None
+    params_init: pd.DataFrame | None = None
 
 
 #
@@ -634,6 +654,7 @@ def _slot_from_baseline(
     fit_settings: dict[str, Any] | None = None,
     components: np.ndarray | None = None,
     component_names: list[str] | None = None,
+    fit_ini: np.ndarray | None = None,
 ) -> SavedFitSlot:
     """
     Build a SavedFitSlot for a completed baseline fit.
@@ -670,6 +691,7 @@ def _slot_from_baseline(
         sigma_data=sigma_data,
         components=components,
         component_names=component_names,
+        fit_ini=fit_ini,
     )
 
 
@@ -699,6 +721,7 @@ def _slot_from_spectrum(
     fit_settings: dict[str, Any] | None = None,
     components: np.ndarray | None = None,
     component_names: list[str] | None = None,
+    fit_ini: np.ndarray | None = None,
 ) -> SavedFitSlot:
     """Build a SavedFitSlot for a completed spectrum fit.
 
@@ -735,6 +758,7 @@ def _slot_from_spectrum(
         sigma_data=sigma_data,
         components=components,
         component_names=component_names,
+        fit_ini=fit_ini,
     )
 
 
@@ -764,6 +788,8 @@ def _slot_from_sbs(
     fit_settings: dict[str, Any] | None = None,
     components: np.ndarray | None = None,
     component_names: list[str] | None = None,
+    fit_ini: np.ndarray | None = None,
+    params_init: pd.DataFrame | None = None,
 ) -> SavedFitSlot:
     """
     Build a SavedFitSlot for a completed slice-by-slice fit.
@@ -822,6 +848,8 @@ def _slot_from_sbs(
         fit_settings=fit_settings,
         components=components,
         component_names=component_names,
+        fit_ini=fit_ini,
+        params_init=params_init,
     )
 
 
@@ -847,6 +875,7 @@ def _slot_from_2d(
     correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
     fit_settings: dict[str, Any] | None = None,
+    fit_ini: np.ndarray | None = None,
 ) -> SavedFitSlot:
     """Build a SavedFitSlot for a completed 2D global fit."""
 
@@ -874,6 +903,7 @@ def _slot_from_2d(
         sigma_source=sigma_source,
         sigma_type=sigma_type,
         sigma_data=sigma_data,
+        fit_ini=fit_ini,
     )
 
 
@@ -906,6 +936,7 @@ def _build_slot(
     sigma_data: float,
     components: np.ndarray | None = None,
     component_names: list[str] | None = None,
+    fit_ini: np.ndarray | None = None,
 ) -> SavedFitSlot:
     """Shared scalar-metric path for baseline / spectrum / 2d."""
 
@@ -951,6 +982,7 @@ def _build_slot(
         fit_settings=fit_settings,
         components=components,
         component_names=component_names,
+        fit_ini=fit_ini,
     )
 
 
@@ -1482,6 +1514,13 @@ def _write_slot(
             slot.params_stderr,
             type_tags=_all_float64_tags(len(slot.params_stderr.columns)),
         )
+    if slot.params_init is not None:
+        _encode_dataframe(
+            slot_group,
+            "params_init",
+            slot.params_init,
+            type_tags=_all_float64_tags(len(slot.params_init.columns)),
+        )
     if slot.conf_ci is not None:
         _encode_dataframe(slot_group, "conf_ci", slot.conf_ci)
     if slot.correl is not None:
@@ -1504,6 +1543,8 @@ def _write_slot(
             "component_names",
             data=np.array(slot.component_names, dtype=_VLEN_STR),
         )
+    if slot.fit_ini is not None:
+        slot_group.create_dataset("fit_ini", data=np.ascontiguousarray(slot.fit_ini))
 
 
 #
@@ -1802,6 +1843,12 @@ def _read_slot(
         if params_stderr_obj is not None
         else None
     )
+    params_init_obj = slot_group.get("params_init")
+    params_init = (
+        _decode_dataframe(require_dataset(params_init_obj, "params_init"))
+        if params_init_obj is not None
+        else None
+    )
     fit_settings = (
         json.loads(_attr_str(a["fit_settings"])) if "fit_settings" in a else None
     )
@@ -1818,6 +1865,12 @@ def _read_slot(
         components = np.asarray(require_dataset(components_obj, "components")[...])
         names_obj = require_dataset(slot_group["component_names"], "component_names")
         component_names = [_to_str_value(v) for v in names_obj[...]]
+    fit_ini_obj = slot_group.get("fit_ini")
+    fit_ini = (
+        np.asarray(require_dataset(fit_ini_obj, "fit_ini")[...])
+        if fit_ini_obj is not None
+        else None
+    )
 
     yaml_filename = _attr_str(a["yaml_filename"]) if "yaml_filename" in a else None
     selection = json.loads(selection_json)
@@ -1859,6 +1912,8 @@ def _read_slot(
         fit_settings=fit_settings,
         components=components,
         component_names=component_names,
+        fit_ini=fit_ini,
+        params_init=params_init,
     )
 
 

@@ -205,6 +205,24 @@ def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> 
         # Components must sum back to the persisted fit curve.
         np.testing.assert_allclose(recon, loaded.fit, rtol=1e-8, atol=1e-8)
 
+    # --- fit_ini / params_init (schema 6) -------------------------------
+    # None only on the project-level joint-fit path; every family/fit_type
+    # exercised here goes through a per-File fit method, so fit_ini is
+    # always populated.
+    assert original.fit_ini is not None
+    assert loaded.fit_ini is not None
+    np.testing.assert_array_equal(loaded.fit_ini, original.fit_ini)
+    assert loaded.fit_ini.shape == loaded.fit.shape
+    if original.fit_type == "sbs":
+        assert original.params_init is not None
+        assert loaded.params_init is not None
+        _assert_optional_df_equal(
+            loaded.params_init, original.params_init, label="params_init"
+        )
+    else:
+        assert original.params_init is None
+        assert loaded.params_init is None
+
     # --- residual reconstruction (design invariant) --------------------
     # chi2_raw is the lmfit-unweighted SSE diagnostic; chi2 is σ-calibrated
     # and NaN when no σ was set on the file, so we cross-check against the raw
@@ -382,6 +400,17 @@ def test_sbs_roundtrip(family_id: str, tmp_path) -> None:
     # Per-slice metrics are arrays sized to the time axis.
     assert loaded_slot.metrics["chi2"].shape == (len(fit_file.time),)
     _assert_slot_round_tripped(loaded_slot, original)
+
+    # Cross-check params_init against each slice's true seed straight from
+    # the live SbS results — joint validation that this feature and the
+    # fitlib.fit_wrapper stage-2 init_value fix agree with each other.
+    assert loaded_slot.params_init is not None  # type guard
+    for i, result in enumerate(fit_file.results_sbs):
+        assert result.par_ini is not None  # type guard
+        for name in loaded_slot.params_init.columns:
+            assert loaded_slot.params_init.iloc[i][name] == pytest.approx(
+                result.par_ini[name].value
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -628,6 +657,31 @@ def _downgrade_archive_to_v4(archive_path) -> None:
 
 
 #
+def _downgrade_archive_to_v5(archive_path) -> None:
+    """Rewrite a schema-6 archive as schema 5 in place: relabel the version
+    and delete only the schema-6 additions (slot ``fit_ini`` /
+    ``params_init``), keeping every schema-5 field intact."""
+
+    import h5py
+
+    from trspecfit.utils.hdf5 import require_group
+
+    with h5py.File(archive_path, "r+") as h5:
+        require_group(h5["metadata"], "metadata").attrs["schema_version"] = "5"
+        files_group = require_group(h5["files"], "files")
+        for f_key in files_group:
+            slots_obj = require_group(files_group[f_key], f_key).get("slots")
+            if slots_obj is None:
+                continue
+            slots = require_group(slots_obj, "slots")
+            for s_key in slots:
+                sg = require_group(slots[s_key], s_key)
+                for ds in ("fit_ini", "params_init"):
+                    if ds in sg:
+                        del sg[ds]
+
+
+#
 def test_reader_accepts_schema_v2_archive(tmp_path) -> None:
     """Schema 3 is additive, so v2 archives must still load — with the
     schema-3 fields (``correl``, mcmc ``acceptance_fraction``) as None."""
@@ -695,6 +749,32 @@ def test_reader_accepts_schema_v4_archive(tmp_path) -> None:
     assert len(loaded) == 1
     provider = next(iter(loaded._files_by_fp.values()))
     assert provider.aux_axis is None
+
+
+#
+def test_reader_accepts_schema_v5_archive(tmp_path) -> None:
+    """Schema 6 is additive, so v5 archives must still load — with
+    fit_ini/params_init as None, and FitResults.plot_fit simply omitting
+    the initial-guess overlay in that case."""
+
+    _, fit_file, family = _build_fit_file("F1")
+    fit_file.fit_baseline(model_name=family.model_name("default"), stages=1, try_ci=0)
+    archive_path = tmp_path / "v5.fit.h5"
+    fit_file.p.save_fits(archive_path, show_output=0)
+    _downgrade_archive_to_v5(archive_path)
+
+    loaded = FitResults.load(archive_path)
+    assert len(loaded) == 1
+    slot = next(iter(loaded))
+    assert slot.fit_ini is None
+    assert slot.params_init is None
+
+    import matplotlib.pyplot as plt
+
+    try:
+        loaded.plot_fit(file=slot.file_name, fit_type="baseline", show_plot=False)
+    finally:
+        plt.close("all")
 
 
 #
