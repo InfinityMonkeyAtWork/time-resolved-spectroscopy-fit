@@ -1,4 +1,4 @@
-# Fit-archive HDF5 schema (schema_version 4)
+# Fit-archive HDF5 schema (schema_version 5)
 
 On-disk layout for the fit-results archive written by `Project.save_fits()`
 and read by `FitResults.load()` / `Project.load_fits()`. The object model
@@ -87,7 +87,7 @@ dtypes.
 │     project_name       : str              # Project.name; set on first write
 │     timestamp_created  : str              # ISO 8601 UTC, first write
 │     timestamp_updated  : str              # ISO 8601 UTC, most recent write
-│     schema_version     : str              # "4"; bump on incompatible change
+│     schema_version     : str              # "5"; bump on incompatible change
 └── files/                                  # group; one subgroup per file
     ├── 000000/                             # SavedFile (see "File group")
     └── 000001/...
@@ -101,7 +101,7 @@ must not recreate the archive on subsequent saves unless the caller
 explicitly asks for that; the canonical way to start fresh is to choose
 a new path.
 
-`schema_version` is currently `"4"`. Version history:
+`schema_version` is currently `"5"`. Version history:
 
 - `"1"` → `"2"`: the σ-calibrated chi-square columns and per-slot sigma
   metadata changed the stored fields — a clean break, so schema-1 archives
@@ -122,6 +122,14 @@ a new path.
   `FitResults.plot_fit` falls back to a sum-only rendering in that case.
   The writer still refuses to append to an archive whose version differs
   from its own.
+- `"4"` → `"5"` (2026-07): **additive** — per-file (not per-slot) optional
+  `aux_axis` dataset (`File.aux_axis`, the auxiliary physical axis used by
+  `par_profile`-attached models, e.g. depth). Sits alongside `data` /
+  `energy` / `time` in the file group, not under `slots/`. The reader
+  accepts `"2"` through `"5"` (`SUPPORTED_READ_VERSIONS` in
+  `utils/fit_io.py`); pre-5 archives and files with no auxiliary axis both
+  load with `aux_axis` as `None` on `SavedFile`. The writer still refuses
+  to append to an archive whose version differs from its own.
 
 Future incompatible changes (e.g. project-scoped joint-result slots or
 `keep_history=True` full-log save — both deferred, see "What's *not* in
@@ -147,6 +155,7 @@ files/000000/
 ├── energy                                  # 1D dataset; preserves source dtype
 ├── time                                    # 1D dataset; length 0 if 1D file; preserves source dtype
 ├── data                                    # 1D (1D file) or 2D (n_t, n_e) dataset; preserves source dtype
+├── aux_axis                         (opt)  # 1D dataset; preserves source dtype; schema ≥ 5
 └── slots/
     ├── 000000/                             # SavedFitSlot (see "Slot group")
     └── 000001/...
@@ -160,7 +169,12 @@ Notes:
 - `data_sha256`, `energy_sha256`, `time_sha256` together with `shape`
   form the `file_fingerprint` used to match an archive's file to a
   `Project.files[*]` (or to another archive). See
-  `compute_file_fingerprint` in `utils/fit_io.py`.
+  `compute_file_fingerprint` in `utils/fit_io.py`. `aux_axis` is not part
+  of the fingerprint — file identity stays `data`/`energy`/`time`-based.
+- `aux_axis` is omitted entirely when `File.aux_axis is None` (most
+  files — only `par_profile`-attached models use it), following the
+  same omit-when-`None` rule as the optional slot datasets, not the
+  "empty array" convention used for `time` on 1D files.
 
 ### Identity collisions
 

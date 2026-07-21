@@ -44,13 +44,14 @@ from trspecfit.fitlib import (
 from trspecfit.utils.hdf5 import require_dataset, require_group
 
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 # Schema 3 is additive over 2 (slot `correl` dataset, mcmc
 # `acceptance_fraction` dataset). Schema 4 is additive over 3 (slot
 # `components` / `component_names` datasets for 1D fit types — baseline,
-# spectrum, sbs; never present for 2d). The reader accepts all three; the
+# spectrum, sbs; never present for 2d). Schema 5 is additive over 4 (per-file,
+# not per-slot, optional `aux_axis` dataset). The reader accepts all four; the
 # writer still refuses cross-version appends (see _classify_archive_for_write).
-SUPPORTED_READ_VERSIONS = ("2", "3", "4")
+SUPPORTED_READ_VERSIONS = ("2", "3", "4", "5")
 
 # Default noise metadata used when no σ has been set on the File. Mirrors the
 # project.yaml defaults defined in ``Project._set_defaults``; if you change one,
@@ -339,6 +340,10 @@ class SavedFile:
         Slots belonging to this file. Tuple (not list) to keep the record
         immutable; the writer accumulates slots into a list and freezes
         on construction.
+    aux_axis : np.ndarray | None
+        Auxiliary physical axis (``File.aux_axis``, e.g. depth) for
+        ``par_profile``-attached models. ``None`` when the file has none
+        (most files) or when loaded from a pre-schema-5 archive.
     """
 
     name: str
@@ -352,6 +357,7 @@ class SavedFile:
     e_lim: list[int] | None
     t_lim: list[int] | None
     slots: tuple[SavedFitSlot, ...]
+    aux_axis: np.ndarray | None = None
 
 
 #
@@ -1416,6 +1422,8 @@ def _write_file_payload(file_group: h5py.Group, sf: SavedFile) -> None:
     file_group.create_dataset("energy", data=np.ascontiguousarray(sf.energy))
     file_group.create_dataset("time", data=np.ascontiguousarray(sf.time))
     file_group.create_dataset("data", data=np.ascontiguousarray(sf.data))
+    if sf.aux_axis is not None:
+        file_group.create_dataset("aux_axis", data=np.ascontiguousarray(sf.aux_axis))
     file_group.create_group("slots")
 
 
@@ -1876,6 +1884,12 @@ def _read_file(file_group: h5py.Group) -> SavedFile:
     data = np.asarray(require_dataset(file_group["data"], "data")[...])
     energy = np.asarray(require_dataset(file_group["energy"], "energy")[...])
     time = np.asarray(require_dataset(file_group["time"], "time")[...])
+    aux_axis_obj = file_group.get("aux_axis")
+    aux_axis = (
+        np.asarray(require_dataset(aux_axis_obj, "aux_axis")[...])
+        if aux_axis_obj is not None
+        else None
+    )
 
     slot_records: list[SavedFitSlot] = []
     slots_obj = file_group.get("slots")
@@ -1899,6 +1913,7 @@ def _read_file(file_group: h5py.Group) -> SavedFile:
         e_lim=e_lim,
         t_lim=t_lim,
         slots=tuple(slot_records),
+        aux_axis=aux_axis,
     )
 
 

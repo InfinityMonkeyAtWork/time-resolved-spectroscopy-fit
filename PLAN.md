@@ -1,52 +1,59 @@
 # Active Plan
 
-## Persist per-component 1D fit data in SavedFitSlot (schema 4)
+## Persist `aux_axis` at the per-file archive level (schema 4 → 5)
 
 Full design/rationale: `/home/yoyo/.claude/plans/hm-i-guess-the-eventual-simon.md`
 (session-local; contents mirrored here for repo persistence).
 
-**Goal**: close the live-vs-archive gap for 1D fit component visibility.
-`FitResults.plot_fit` currently shows only observed/fit/residual for
-baseline/spectrum/SbS slots; component decomposition is live-only
-(`describe_model(detail=1)`, `File.plot_sbs_slices`). Persist components
-directly in the slot instead.
+**Goal**: while investigating the live-vs-archive display-range question,
+found that the archive already persists the full, uncropped `data`/
+`energy`/`time` once per file (`SavedFile`), but not `aux_axis`
+(`File.aux_axis` — the auxiliary physical axis used by `par_profile`
+models). Reloading an archive with no live `File` loses it entirely.
+Added it, following the exact `data`/`energy`/`time` pattern.
 
-**Decisions**: persist for baseline, spectrum, and every SbS slice
-(symmetric); 2D untouched (no component concept there); store explicit
-`component_names` labels (not parsed from `params_df` — breaks for
-static `par_profile`-attached models); unconditional computation, no
-perf opt-out; persistence-only in this pass, no new SbS per-slice
-archive viewer yet.
-
-- [x] **Schema** (`src/trspecfit/utils/fit_io.py`): added `components`/
-      `component_names` fields to `SavedFitSlot`; bumped `SCHEMA_VERSION`
-      3→4, extended `SUPPORTED_READ_VERSIONS`; `_write_slot`/`_read_slot`
-      optional-field read/write; threaded through `_slot_from_baseline`/
-      `_slot_from_spectrum`/`_slot_from_sbs`.
-- [x] **Slot construction** (`src/trspecfit/trspecfit.py`):
-      `_append_baseline_slot`/`_append_spectrum_slot` evaluate + crop
-      components alongside the existing fit-curve eval;
-      `_append_sbs_slot` does the same per-slice inside its existing
-      parent-process finalization loop.
-- [x] **Plotting** (`src/trspecfit/fit_results.py`): `_plot_fit_1d`
-      renders components when present, falls back to lean sum-only
-      when `None` (old-schema archives).
-- [x] **Tests**: extended `_assert_slot_round_tripped` (schema round-trip
-      across F1/F6/F8 families, including the F6 static-profile edge
-      case) with components/component_names + a sum-reconstructs-fit
-      invariant; added `test_reader_accepts_schema_v3_archive` (schema-3
-      backward compat, `components=None`, `plot_fit` still renders); added
-      `_downgrade_archive_to_v3`; extended `_downgrade_archive_to_v2` to
-      also strip schema-4 fields; added
-      `test_plot_fit_1d_renders_components_when_present` /
-      `test_plot_fit_1d_falls_back_to_lean_when_components_none` in
-      `test_fit_history.py`. Full suite (1005 tests), mypy, pyright, ruff
-      all clean.
+- [x] **Schema** (`src/trspecfit/utils/fit_io.py`): added
+      `aux_axis: np.ndarray | None = None` to `SavedFile`; bumped
+      `SCHEMA_VERSION` 4→5, extended `SUPPORTED_READ_VERSIONS`;
+      `_write_file_payload`/`_read_file` optional-field write/read
+      (conditional write, `.get()` + `None` fallback — not the
+      unconditional pattern used for `data`/`energy`/`time`).
+- [x] **Writer call site** (`src/trspecfit/trspecfit.py`): threaded
+      `aux_axis=live.aux_axis` into the `fit_io.SavedFile(...)`
+      construction used by `save_fits`.
+- [x] **Tests**: extended `test_baseline_roundtrip` (F1/F6/F8) with an
+      `aux_axis` round-trip assertion (non-`None` + array-equal for
+      F6/F8, `None` for F1) via the loaded `FitResults._files_by_fp`
+      provider; added `_downgrade_archive_to_v4` +
+      `test_reader_accepts_schema_v4_archive` (pre-5 archives load with
+      `aux_axis=None`). Full suite (1006 tests), mypy, pyright, ruff all
+      clean.
+- [x] **Docs**: `docs/design/fit_archive_schema.md` — bumped documented
+      `schema_version` to `"5"`, added the 4→5 version-history entry, the
+      `aux_axis` line in the file-group layout diagram, and a notes-
+      section callout on the omit-if-`None` write rule and the
+      fingerprint exclusion. Verified with a `sphinx -W` build.
 
 **Status**: implementation complete, verified 2026-07-20. Not yet
 committed — awaiting user review/approval before commit.
 
-**Next**: revisit the plot-range-vs-fit-limits inconsistency
-(`describe_model`/fit-time displays show full data range,
-`FitResults.plot_fit` shows only the fit window) — plan already drafted,
-deferred at user's request until this work landed.
+**Out of scope (deliberately deferred)**: exposing `aux_axis` through
+`FitResults._axes_for` or any plotting method (no current consumer needs
+it yet); adding `aux_axis` to `file_fingerprint` identity hashing.
+
+**Next**: return to the live-vs-archive 1D post-fit display-range
+inconsistency. Investigation this session found `fit_2d`/
+`fit_slice_by_slice` already route their post-fit live display through
+`self.plot_fit(...)` (so 2D/SbS are already consistent live vs. archive);
+only `fit_baseline`/`fit_spectrum` still call `fitlib.plt_fit_res_1d`
+directly with the full, uncropped data. Chosen fix (confirmed with user):
+route those two through `self.plot_fit(...)` too, matching `fit_2d`/
+`fit_slice_by_slice` — this drops the `show_init` initial-guess overlay
+from post-fit display (confirmed acceptable: init guess isn't a
+completed-fit artifact) and deletes a chunk of now-dead code
+(`initial_guess` extraction, bespoke title construction) in both methods.
+Also needs a small title-informativeness enhancement in
+`FitResults._plot_fit_1d` (file name, yaml stem, spectrum's time
+selection) since it becomes the sole 1D post-fit display path. Needs a
+fresh plan file before implementing (the plan file was overwritten for
+this aux_axis detour).

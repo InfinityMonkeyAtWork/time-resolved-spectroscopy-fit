@@ -546,6 +546,7 @@ class Project:
                     e_lim=list(live.e_lim) if live.e_lim else None,
                     t_lim=list(live.t_lim) if live.t_lim else None,
                     slots=tuple(slots),
+                    aux_axis=live.aux_axis,
                 )
             )
 

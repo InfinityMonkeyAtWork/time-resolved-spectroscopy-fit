@@ -302,10 +302,18 @@ def test_baseline_roundtrip(family_id: str, tmp_path) -> None:
     project = fit_file.p
     archive_path = tmp_path / "baseline.fit.h5"
 
-    loaded_slot, _ = _save_load_one(project, archive_path)
+    loaded_slot, loaded_results = _save_load_one(project, archive_path)
     original = project._fit_history[0]
     assert original.fit_type == "baseline"
     _assert_slot_round_tripped(loaded_slot, original)
+
+    # --- per-file aux_axis (schema 5; None unless the family needs it) -----
+    provider = next(iter(loaded_results._files_by_fp.values()))
+    if family.needs_aux:
+        assert fit_file.aux_axis is not None
+        np.testing.assert_array_equal(provider.aux_axis, fit_file.aux_axis)
+    else:
+        assert provider.aux_axis is None
 
 
 # ---------------------------------------------------------------------------
@@ -601,6 +609,25 @@ def _downgrade_archive_to_v3(archive_path) -> None:
 
 
 #
+def _downgrade_archive_to_v4(archive_path) -> None:
+    """Rewrite a schema-5 archive as schema 4 in place: relabel the version
+    and delete only the schema-5 addition (per-file ``aux_axis`` dataset),
+    keeping every schema-4 field intact."""
+
+    import h5py
+
+    from trspecfit.utils.hdf5 import require_group
+
+    with h5py.File(archive_path, "r+") as h5:
+        require_group(h5["metadata"], "metadata").attrs["schema_version"] = "4"
+        files_group = require_group(h5["files"], "files")
+        for f_key in files_group:
+            fg = require_group(files_group[f_key], f_key)
+            if "aux_axis" in fg:
+                del fg["aux_axis"]
+
+
+#
 def test_reader_accepts_schema_v2_archive(tmp_path) -> None:
     """Schema 3 is additive, so v2 archives must still load — with the
     schema-3 fields (``correl``, mcmc ``acceptance_fraction``) as None."""
@@ -651,6 +678,23 @@ def test_reader_accepts_schema_v3_archive(tmp_path) -> None:
         loaded.plot_fit(file=slot.file_name, fit_type="baseline", show_plot=False)
     finally:
         plt.close("all")
+
+
+#
+def test_reader_accepts_schema_v4_archive(tmp_path) -> None:
+    """Schema 5 is additive, so v4 archives must still load — with the
+    per-file ``aux_axis`` as None (checked via the loaded axes provider)."""
+
+    _, fit_file, family = _build_fit_file("F6")
+    fit_file.fit_baseline(model_name=family.model_name("default"), stages=1, try_ci=0)
+    archive_path = tmp_path / "v4.fit.h5"
+    fit_file.p.save_fits(archive_path, show_output=0)
+    _downgrade_archive_to_v4(archive_path)
+
+    loaded = FitResults.load(archive_path)
+    assert len(loaded) == 1
+    provider = next(iter(loaded._files_by_fp.values()))
+    assert provider.aux_axis is None
 
 
 #
