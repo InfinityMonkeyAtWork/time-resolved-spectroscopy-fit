@@ -85,6 +85,7 @@ from trspecfit.fit_results import FitResults
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import profile as fcts_profile
 from trspecfit.functions import time as fcts_time
+from trspecfit.utils import arrays as uarrays
 from trspecfit.utils import fit_io
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import parsing as uparsing
@@ -243,6 +244,7 @@ class Project:
         self.dpi_plt = 100
         self.dpi_save = 300
         self.res_mult = 5
+        self.full_range = True
         self.title = ""
         self.x_lim = None
         self.y_lim = None
@@ -2647,11 +2649,6 @@ class File:
                 "Run define_baseline() first to extract the baseline region."
             )
 
-        # get initial guess
-        initial_guess = ulmfit.par_extract(
-            self.model_base.lmfit_pars, return_type="list"
-        )
-
         # const = (x, data, package, fnctn string, unpack, energy limits, time limits)
         _fun_str = self.p.spec_fun_str
         self.model_base.const = (
@@ -2692,28 +2689,8 @@ class File:
                 ),
             )
 
-        # display baseline fit summary
-        title_base = (
-            f"File: {self.path}, "
-            f'Model: "{model_name}" (from "{self.model_base.yaml_f_name}.yaml")'
-        )
-
         if self.p.show_output >= 1:
-            fitlib.plt_fit_res_1d(
-                x=self.energy,
-                y=self.data_base,
-                fit_fun_str=self.p.spec_fun_str,
-                par_ini=initial_guess,
-                par_fin=fit_out.par_fin,
-                args=self.model_base.args,
-                plot_sum=False,
-                show_init=True,
-                title=title_base,
-                fit_lim=self.e_lim,
-                config=self.plot_config,
-                legend=[comp.name for comp in self.model_base.components],
-                save_img=0,
-            )
+            self.plot_fit(model=model_name, fit_type="baseline")
 
         if stages >= 1 and self.p.show_output >= 1:
             fitlib.time_display(
@@ -2873,10 +2850,6 @@ class File:
             )
 
         assert self.data_spec is not None  # type guard
-        # get initial guess
-        initial_guess = ulmfit.par_extract(
-            self.model_spec.lmfit_pars, return_type="list"
-        )
 
         # const = (x, data, fnctn string, unpack, energy limits, time limits)
         _fun_str = self.p.spec_fun_str
@@ -2919,34 +2892,8 @@ class File:
                 ),
             )
 
-        # display spectrum fit summary
-        time_label = (
-            f"t = {self.spec_t_abs[0]:.4g}"
-            if self.spec_t_abs[0] == self.spec_t_abs[1]
-            else f"t in [{self.spec_t_abs[0]:.4g}, {self.spec_t_abs[1]:.4g}]"
-        )
-        title_spec = (
-            f"File: {self.path}, {time_label}, "
-            f'Model: "{model_name}" '
-            f'(from "{self.model_spec.yaml_f_name}.yaml")'
-        )
-
         if show_plot and self.p.show_output >= 1:
-            fitlib.plt_fit_res_1d(
-                x=self.energy,
-                y=self.data_spec,
-                fit_fun_str=self.p.spec_fun_str,
-                par_ini=initial_guess,
-                par_fin=fit_out.par_fin,
-                args=self.model_spec.args,
-                plot_sum=False,
-                show_init=True,
-                title=title_spec,
-                fit_lim=self.e_lim,
-                config=self.plot_config,
-                legend=[comp.name for comp in self.model_spec.components],
-                save_img=0,
-            )
+            self.plot_fit(model=model_name, fit_type="spectrum")
 
         if stages >= 1 and self.p.show_output >= 1:
             fitlib.time_display(
@@ -3807,30 +3754,9 @@ class File:
 
         if self.time is None:
             raise ValueError("Time axis is not set.")
-        n = len(self.time)
-        if time_type == "abs":
-            if t_start == t_stop:
-                ind_start = int(np.searchsorted(self.time, t_start, side="left"))
-                ind_stop = ind_start + 1
-            else:
-                ind_start = int(np.searchsorted(self.time, t_start, side="left"))
-                ind_stop = int(np.searchsorted(self.time, t_stop, side="right"))
-        elif time_type == "ind":
-            ind_start = int(t_start)
-            ind_stop = int(t_stop) + 1 if t_start == t_stop else int(t_stop + 1)
-        else:
-            raise ValueError(
-                f"Unknown time_type '{time_type}'. Expected 'abs' or 'ind'."
-            )
-        if ind_start >= ind_stop or ind_start >= n or ind_stop <= 0:
-            raise ValueError(
-                f"Time selection resolves to an empty or out-of-range slice "
-                f"[{ind_start}:{ind_stop}). "
-                f"Time axis has {n} points [{self.time[0]}, {self.time[-1]}]."
-            )
-        ind_start = max(ind_start, 0)
-        ind_stop = min(ind_stop, n)
-        return [ind_start, ind_stop]
+        return uarrays.resolve_time_selection(
+            self.time, t_start, t_stop, time_type=time_type
+        )
 
     #
     def add_time_dependence(
@@ -4283,6 +4209,7 @@ class File:
         fit_type: Literal["baseline", "spectrum", "sbs", "2d"] = "baseline",
         config: PlotConfig | None = None,
         show_plot: bool = True,
+        full_range: bool | None = None,
     ) -> None:
         """
         Plot the latest matching fit: observed, fit, and residual.
@@ -4302,6 +4229,10 @@ class File:
             Styling override; defaults to this file's ``plot_config``.
         show_plot : bool, default True
             Set ``False`` to build without displaying.
+        full_range : bool, optional
+            Show the full, uncropped data range instead of just the fit
+            window. Default: ``config.full_range``. See
+            :meth:`FitResults.plot_fit`.
         """
 
         self.p.results.plot_fit(
@@ -4310,6 +4241,7 @@ class File:
             fit_type=fit_type,
             config=config,
             show_plot=show_plot,
+            full_range=full_range,
         )
 
     #

@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 from _utils import simulate_noisy
 
-from trspecfit import File, Project, fitlib
+from trspecfit import File, FitResults, Project, fitlib
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils.lmfit import MC
 
@@ -210,15 +210,17 @@ class TestExplicitPathsStillWrite:
 
 #
 class TestPlotHelperSkipped:
-    """Silent mode must skip ``plt_fit_res_1d`` entirely — not just
+    """Silent mode must skip the post-fit render entirely — not just
     suppress its display. Guards against future regressions where figures
     get built and immediately closed (the SbS hot path is the expensive
-    case)."""
+    case). fit_baseline/fit_spectrum route their post-fit display through
+    self.plot_fit -> FitResults._plot_fit_1d (not fitlib.plt_fit_res_1d,
+    which describe_model still uses)."""
 
     #
     def test_baseline_skips_plot_when_silent(self, tmp_path, monkeypatch):
         mock = MagicMock()
-        monkeypatch.setattr(fitlib, "plt_fit_res_1d", mock)
+        monkeypatch.setattr(FitResults, "_plot_fit_1d", mock)
 
         project, file = _baseline_setup(tmp_path, monkeypatch)
         # show_output defaults to 0 (silent) in _baseline_setup.
@@ -229,7 +231,7 @@ class TestPlotHelperSkipped:
     #
     def test_baseline_plots_when_verbose(self, tmp_path, monkeypatch):
         mock = MagicMock()
-        monkeypatch.setattr(fitlib, "plt_fit_res_1d", mock)
+        monkeypatch.setattr(FitResults, "_plot_fit_1d", mock)
 
         project, file = _baseline_setup(tmp_path, monkeypatch, show_output=1)
         file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
@@ -303,6 +305,73 @@ class TestPlotHelperSkipped:
         )
 
         assert mock.call_count == 0
+
+
+#
+class TestFullRangeConfigResolution:
+    """full_range is a real PlotConfig field (Project.full_range-backed,
+    True out of the box), not a value hardcoded at each live call site.
+    Every live post-fit display call (fit_baseline/fit_spectrum/
+    fit_slice_by_slice/fit_2d/Project.fit_baselines/Project.fit_2d) now
+    omits full_range entirely and inherits whatever FitResults.plot_fit
+    resolves from config — so a project-wide override (or a per-call
+    explicit full_range=) actually takes effect everywhere, instead of a
+    hardcoded True silently overriding it. (PlotConfig field-existence
+    coverage itself lives in test_plotting.py's generic
+    test_every_field_settable_via_project.)"""
+
+    #
+    def test_project_default_is_true(self):
+        project = _make_abs_project()
+        assert project.full_range is True
+
+    #
+    def test_live_baseline_display_uses_full_range_when_config_true(
+        self, tmp_path, monkeypatch
+    ):
+        import matplotlib.pyplot as plt
+
+        project, file = _baseline_setup(tmp_path, monkeypatch, show_output=1)
+        e = file.energy
+        file.set_fit_limits([float(e[5]), float(e[-6])], show_plot=False)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        try:
+            line_x = plt.gcf().axes[0].lines[0].get_xdata()
+            assert len(line_x) == len(e)
+        finally:
+            plt.close("all")
+
+    #
+    def test_live_baseline_display_uses_cropped_view_when_config_false(
+        self, tmp_path, monkeypatch
+    ):
+        import matplotlib.pyplot as plt
+
+        project, file = _baseline_setup(tmp_path, monkeypatch, show_output=1)
+        project.full_range = False
+        e = file.energy
+        file.set_fit_limits([float(e[5]), float(e[-6])], show_plot=False)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        try:
+            line_x = plt.gcf().axes[0].lines[0].get_xdata()
+            assert len(line_x) < len(e)
+        finally:
+            plt.close("all")
+
+    #
+    def test_per_call_override_wins_over_config(self, tmp_path, monkeypatch):
+        import matplotlib.pyplot as plt
+
+        project, file = _baseline_setup(tmp_path, monkeypatch, show_output=0)
+        e = file.energy
+        file.set_fit_limits([float(e[5]), float(e[-6])], show_plot=False)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        try:
+            file.plot_fit(fit_type="baseline", full_range=False)
+            line_x = plt.gcf().axes[0].lines[0].get_xdata()
+            assert len(line_x) < len(e)
+        finally:
+            plt.close("all")
 
 
 #

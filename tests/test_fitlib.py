@@ -1,5 +1,10 @@
 """Unit tests for fitlib bridge functions."""
 
+import matplotlib
+
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
@@ -72,3 +77,34 @@ class TestResultsToFit2D:
             fitlib.results_to_fit_2d(
                 df_missing, const, args, parameter_names=model.parameter_names
             )
+
+
+#
+class TestPltFitRes2dNanAware:
+    """plt_fit_res_2d must handle a NaN-padded fit array (full_range mode)
+    without warning/crashing, and report min/max from the real values."""
+
+    #
+    def test_nan_padded_fit_renders_without_warning(self, recwarn):
+        rng = np.random.default_rng(0)
+        data = rng.random((6, 8))
+        fit = np.full((6, 8), np.nan)
+        fit[2:4, 3:6] = data[2:4, 3:6] * 0.9  # the "fit window"
+
+        fitlib.plt_fit_res_2d(
+            data=data,
+            fit=fit,
+            x_lim=[3, 6],
+            y_lim=[2, 4],
+            save_img=0,
+        )
+        fig = plt.gcf()
+        try:
+            assert not any("All-NaN" in str(w.message) for w in recwarn.list)
+            fit_ax = next(
+                ax for ax in fig.axes if ax.get_title().startswith("Fit [min:")
+            )
+            expected_min = np.nanmin(fit)
+            assert f"{expected_min:.3E}" in fit_ax.get_title()
+        finally:
+            plt.close("all")

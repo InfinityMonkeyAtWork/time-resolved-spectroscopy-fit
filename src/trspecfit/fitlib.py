@@ -1464,7 +1464,12 @@ def plt_fit_res_2d(
     # Determine color scale ranges
     # Data and fit share the same scale for comparison
     if z_lim_top is None:
-        range_dat_fit = [min(np.min(data), np.min(fit)), max(np.max(data), np.max(fit))]
+        # nanmin/nanmax: full_range mode's fit array carries NaN outside
+        # the fit window; identical to min/max when no NaN is present.
+        range_dat_fit = [
+            min(np.min(data), np.nanmin(fit)),
+            max(np.max(data), np.nanmax(fit)),
+        ]
     else:
         range_dat_fit = z_lim_top
 
@@ -1513,9 +1518,9 @@ def plt_fit_res_2d(
     )
     axs["right"].set_title(
         "Fit [min: "
-        + str(f"{np.min(fit):.3E}")
+        + str(f"{np.nanmin(fit):.3E}")
         + ", max: "
-        + str(f"{np.max(fit):.3E}")
+        + str(f"{np.nanmax(fit):.3E}")
         + "]"
     )
 

@@ -1661,6 +1661,69 @@ class TestPlotFitAPI:
             plt.close(fig)
 
     #
+    def test_plot_fit_1d_full_range_masks_outside_roi_and_draws_boundary(self):
+        """full_range overrides: NaN outside the ROI leaves a gap (never a
+        fabricated value); roi draws dashed boundary lines on both panels."""
+
+        import matplotlib.pyplot as plt
+
+        x = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+        obs_full = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        fit_full = np.array([np.nan, np.nan, 2.9, 3.9, np.nan, np.nan])
+        slot = _slot_stub()
+        fig = FitResults._plot_fit_1d(
+            slot,
+            energy=x,
+            config=None,
+            show_plot=False,
+            observed=obs_full,
+            fit=fit_full,
+            roi=[2, 4],
+        )
+        try:
+            ax_fit, ax_res = fig.axes
+            fit_line = next(line for line in ax_fit.lines if line.get_label() == "fit")
+            np.testing.assert_array_equal(fit_line.get_ydata(), fit_full)
+            # residual is NaN wherever fit is NaN (obs - NaN = NaN), no
+            # special-cased padding logic needed; residual is plotted first,
+            # before the boundary vlines
+            res_line = ax_res.lines[0]
+            np.testing.assert_array_equal(
+                np.isnan(res_line.get_ydata()), np.isnan(fit_full)
+            )
+            # dashed boundary lines at the ROI edges, on both panels
+            dashed_x = {
+                float(line.get_xdata()[0])
+                for line in ax_fit.lines
+                if line.get_linestyle() == "--"
+            }
+            assert dashed_x == {x[2], x[3]}
+        finally:
+            plt.close(fig)
+
+    #
+    def test_plot_fit_1d_full_range_defaults_match_cropped_view(self):
+        """Omitting the overrides (full_range=False path) renders exactly
+        the slot's own cropped arrays — unchanged from before full_range
+        existed."""
+
+        import dataclasses
+
+        import matplotlib.pyplot as plt
+
+        obs = np.array([1.0, 2.0, 3.0])
+        fit = np.array([1.1, 1.9, 3.2])
+        slot = dataclasses.replace(_slot_stub(), observed=obs, fit=fit)
+        fig = FitResults._plot_fit_1d(slot, energy=None, config=None, show_plot=False)
+        try:
+            ax_fit, ax_res = fig.axes
+            fit_line = next(line for line in ax_fit.lines if line.get_label() == "fit")
+            np.testing.assert_array_equal(fit_line.get_ydata(), fit)
+            assert not any(line.get_linestyle() == "--" for line in ax_fit.lines)
+        finally:
+            plt.close(fig)
+
+    #
     @staticmethod
     def _fake_sbs_results(*, vary=(True, False, True)):
         """FitResults around a synthetic SbS slot (wide params + metadata)."""

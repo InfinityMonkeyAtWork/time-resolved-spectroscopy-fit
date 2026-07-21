@@ -166,6 +166,12 @@ Notes:
 - The full data + axes are duplicated into the archive deliberately
   (decision in the archived design plan — "Self-contained archive"). On load, the reader
   hands these back via `SavedFile`; the live `Project` is not mutated.
+  `FitResults.plot_fit(..., full_range=True)` is a concrete consumer: it
+  re-derives the real, uncropped view from these fields (plus
+  `SavedFitSlot.selection`) with no live `Model` required — `fit`/
+  `components` are `NaN`-masked outside the fit window rather than
+  fabricated, since only the archived data (not the model) is available
+  outside it.
 - `data_sha256`, `energy_sha256`, `time_sha256` together with `shape`
   form the `file_fingerprint` used to match an archive's file to a
   `Project.files[*]` (or to another archive). See

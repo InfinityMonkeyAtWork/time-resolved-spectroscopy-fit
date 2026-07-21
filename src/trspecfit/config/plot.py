@@ -54,6 +54,10 @@ class PlotConfig:
         DPI for displaying plots
     dpi_save : int
         DPI for saving plots
+    full_range : bool
+        ``FitResults.plot_fit``: show the full, uncropped data range
+        (fit/residual/components ``NaN``-masked outside the fit window)
+        instead of just the fit-limits window. Overridable per call.
     z_colormap : str
         Colormap name for 2D plots
     z_colormap_res : str
@@ -142,6 +146,11 @@ class PlotConfig:
 
     # Residual multiplier for 1D fit plots
     res_mult: float = 5
+
+    # FitResults.plot_fit: show the full, uncropped data range (fit/residual/
+    # components NaN-masked outside the fit window) instead of just the
+    # fit-limits window. A per-call full_range= argument overrides this.
+    full_range: bool = True
 
     # 2D plot settings
     z_colormap: str = "viridis"

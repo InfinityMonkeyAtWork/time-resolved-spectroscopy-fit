@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 from trspecfit.config.plot import PlotConfig
+from trspecfit.utils.arrays import resolve_time_selection
 from trspecfit.utils.fit_io import SavedFile, SavedFitSlot, read_archive
 from trspecfit.utils.lmfit import MCMCResult
 
@@ -109,6 +110,24 @@ def _resolve_file_arg(file: Any) -> str | None:
         f"file must be str, SavedFile, or have a .name attribute; "
         f"got {type(file).__name__}"
     )
+
+
+#
+def _slot_title(slot: SavedFitSlot) -> str:
+    """Plot title from persisted slot metadata: file, model, yaml stem, time."""
+
+    title = f'{slot.file_name} - "{slot.model_name}" ({slot.fit_type})'
+    if slot.yaml_filename:
+        title += f" [{slot.yaml_filename}]"
+    if slot.fit_type == "spectrum":
+        time_point = slot.selection.get("time_point")
+        time_range = slot.selection.get("time_range")
+        time_type = slot.selection.get("time_type", "abs")
+        if time_point is not None:
+            title += f", t={time_point} ({time_type})"
+        elif time_range is not None:
+            title += f", t in {time_range} ({time_type})"
+    return title
 
 
 #
@@ -203,33 +222,126 @@ class FitResults:
         return None
 
     #
+    def _provider_for(self, slot: SavedFitSlot) -> Any | None:
+        """Axes/data provider (``SavedFile`` or live ``File``) for this slot's file."""
+
+        return self._files_by_fp.get(_fp_key(slot.file_fingerprint))
+
+    #
     def _axes_for(
-        self, slot: SavedFitSlot
+        self, slot: SavedFitSlot, *, full_range: bool = False
     ) -> tuple[np.ndarray | None, np.ndarray | None]:
         """
         ``(energy, time)`` on the slot's grid, or ``None`` where unknown.
 
         Crops the provider's full axes to the slot's selection (same rule
         as ``fit_io._slot_axes``, tolerant of missing providers/axes).
+        Pass ``full_range=True`` to skip the crop and return the
+        provider's full, uncropped axes instead.
         """
 
-        provider = self._files_by_fp.get(_fp_key(slot.file_fingerprint))
+        provider = self._provider_for(slot)
         energy = getattr(provider, "energy", None) if provider is not None else None
         time = getattr(provider, "time", None) if provider is not None else None
         if energy is not None:
             energy = np.asarray(energy)
-            e_lim = slot.selection.get("e_lim")
-            if e_lim:
-                energy = energy[int(e_lim[0]) : int(e_lim[1])]
+            if not full_range:
+                e_lim = slot.selection.get("e_lim")
+                if e_lim:
+                    energy = energy[int(e_lim[0]) : int(e_lim[1])]
         if time is not None:
             time = np.asarray(time)
             if time.ndim == 0 or time.size == 0:
                 time = None
-            elif slot.fit_type == "2d":
+            elif not full_range and slot.fit_type == "2d":
                 t_lim = slot.selection.get("t_lim")
                 if t_lim:
                     time = time[int(t_lim[0]) : int(t_lim[1])]
         return energy, time
+
+    #
+    def _full_observed_for(
+        self, slot: SavedFitSlot, provider: Any
+    ) -> np.ndarray | None:
+        """
+        Real, full-range observed array for ``slot``, re-derived from the
+        provider's full ``data`` — or ``None`` if reconstruction isn't
+        possible (missing provider/selection fields; caller falls back to
+        the cropped ``slot.observed``).
+
+        ``sbs``/``2d`` need no re-derivation — the provider's full ``data``
+        already matches (sbs never crops time; 2d's slot is a direct
+        sub-slice of it). ``baseline``/``spectrum`` re-derive the
+        time-reduced spectrum (average or single row) from the persisted
+        selection, mirroring ``File.fit_baseline``/``File.fit_spectrum``.
+        """
+
+        data = getattr(provider, "data", None)
+        if data is None:
+            return None
+        data = np.asarray(data)
+
+        if slot.fit_type in ("sbs", "2d"):
+            return data
+
+        if slot.fit_type == "baseline":
+            base_t_ind = slot.selection.get("base_t_ind")
+            if not base_t_ind:
+                return None
+            return np.asarray(
+                np.mean(data[int(base_t_ind[0]) : int(base_t_ind[1]), :], axis=0)
+            )
+
+        if slot.fit_type == "spectrum":
+            time = getattr(provider, "time", None)
+            if time is None:
+                return None
+            time = np.asarray(time)
+            time_point = slot.selection.get("time_point")
+            time_range = slot.selection.get("time_range")
+            time_type = slot.selection.get("time_type", "abs")
+            try:
+                if time_point is not None:
+                    ind = resolve_time_selection(
+                        time, time_point, time_point, time_type=time_type
+                    )
+                    return np.asarray(data[ind[0], :])
+                if time_range is not None:
+                    ind = resolve_time_selection(
+                        time, time_range[0], time_range[1], time_type=time_type
+                    )
+                    return np.asarray(np.mean(data[ind[0] : ind[1], :], axis=0))
+            except ValueError:
+                return None
+            return None
+
+        return None
+
+    #
+    @staticmethod
+    def _pad_axis(
+        cropped: np.ndarray, full_len: int, lim: list[int] | None, *, axis: int
+    ) -> np.ndarray:
+        """
+        Return ``cropped`` embedded in a ``NaN``-filled array of length
+        ``full_len`` along ``axis``, at the ``lim`` (``[start, stop)``)
+        window. ``lim is None`` means that axis is already full range
+        (the fit ran on the whole axis) — ``cropped`` is returned as-is.
+
+        Used to place a slot's cropped ``fit``/``components`` into the
+        full-range grid without fabricating values outside the fit
+        window — the padding is ``NaN``, never a placeholder.
+        """
+
+        if lim is None:
+            return cropped
+        shape = list(cropped.shape)
+        shape[axis] = full_len
+        full = np.full(tuple(shape), np.nan, dtype=np.result_type(cropped, float))
+        idx: list[slice] = [slice(None)] * cropped.ndim
+        idx[axis] = slice(int(lim[0]), int(lim[1]))
+        full[tuple(idx)] = cropped
+        return full
 
     #
     def _config_for(self, slot: SavedFitSlot, config: Any) -> Any:
@@ -244,7 +356,7 @@ class FitResults:
 
         if config is not None:
             return config
-        provider = self._files_by_fp.get(_fp_key(slot.file_fingerprint))
+        provider = self._provider_for(slot)
         live_config = getattr(provider, "plot_config", None)
         return live_config if live_config is not None else PlotConfig()
 
@@ -625,6 +737,7 @@ class FitResults:
         fit_type: FitType = "baseline",
         config: Any = None,
         show_plot: bool = True,
+        full_range: bool | None = None,
     ) -> None:
         """
         Plot the latest matching fit: observed, fit, and residual.
@@ -650,6 +763,18 @@ class FitResults:
             when available, else ``PlotConfig()``.
         show_plot : bool, default True
             Set ``False`` to build without displaying (tests / batch use).
+        full_range : bool, optional
+            Show the full, uncropped data range (re-derived from the
+            file's persisted raw data) instead of just the fit-limits
+            window. Fit/residual/components are drawn only inside the
+            fit window (``NaN`` outside — never a fabricated value),
+            with dashed lines marking the window boundary, matching
+            ``describe_model``'s pre-fit view. Falls back to the
+            cropped, fit-limits-only view when reconstruction isn't
+            possible (e.g. no axes provider for this slot's file).
+            Default: ``config.full_range`` (``PlotConfig`` field,
+            itself ``Project.full_range``-backed; ``True`` out of the
+            box) — pass explicitly to override for one call.
 
         Raises
         ------
@@ -659,20 +784,69 @@ class FitResults:
 
         slot = self._latest_slot(file=file, model=model, fit_type=fit_type)
         cfg = self._config_for(slot, config)
-        energy, time = self._axes_for(slot)
+        if full_range is None:
+            full_range = bool(getattr(cfg, "full_range", False))
+        observed = np.asarray(slot.observed)
+        fit = np.asarray(slot.fit)
+        components = slot.components
+        e_lim: list[int] | None = None
+        t_lim: list[int] | None = None
+
+        if full_range:
+            provider = self._provider_for(slot)
+            full_observed = (
+                self._full_observed_for(slot, provider)
+                if provider is not None
+                else None
+            )
+            energy, time = self._axes_for(slot, full_range=True)
+            if full_observed is not None and energy is not None:
+                n_e_full = energy.shape[0]
+                e_lim = slot.selection.get("e_lim")
+                if slot.fit_type == "2d":
+                    t_lim = slot.selection.get("t_lim")
+                    n_t_full = time.shape[0] if time is not None else fit.shape[0]
+                    fit = self._pad_axis(fit, n_t_full, t_lim, axis=0)
+                    fit = self._pad_axis(fit, n_e_full, e_lim, axis=1)
+                elif slot.fit_type == "sbs":
+                    fit = self._pad_axis(fit, n_e_full, e_lim, axis=1)
+                else:  # baseline / spectrum
+                    fit = self._pad_axis(fit, n_e_full, e_lim, axis=0)
+                if components is not None:
+                    comp_axis = 2 if slot.fit_type == "sbs" else 1
+                    components = self._pad_axis(
+                        components, n_e_full, e_lim, axis=comp_axis
+                    )
+                observed = full_observed
+            else:
+                energy, time = self._axes_for(slot)
+        else:
+            energy, time = self._axes_for(slot)
+
         if slot.fit_type in ("2d", "sbs"):
             from trspecfit import fitlib
 
             fitlib.plt_fit_res_2d(
-                data=np.asarray(slot.observed),
-                fit=np.asarray(slot.fit),
+                data=observed,
+                fit=fit,
                 x=energy,
                 y=time,
+                x_lim=e_lim,
+                y_lim=t_lim,
                 config=cfg,
                 save_img=0 if show_plot else -2,
             )
             return
-        self._plot_fit_1d(slot, energy=energy, config=cfg, show_plot=show_plot)
+        self._plot_fit_1d(
+            slot,
+            energy=energy,
+            config=cfg,
+            show_plot=show_plot,
+            observed=observed,
+            fit=fit,
+            components=components,
+            roi=e_lim,
+        )
 
     #
     @staticmethod
@@ -682,13 +856,26 @@ class FitResults:
         energy: np.ndarray | None,
         config: Any,
         show_plot: bool,
+        observed: np.ndarray | None = None,
+        fit: np.ndarray | None = None,
+        components: np.ndarray | None = None,
+        roi: list[int] | None = None,
     ) -> Any:
-        """Observed + fit (with components, when persisted) over a residual panel."""
+        """
+        Observed + fit (with components, when persisted) over a residual panel.
+
+        ``observed``/``fit``/``components`` default to the slot's own
+        (cropped) arrays; pass overrides to render a full-range
+        reconstruction instead (see ``FitResults.plot_fit``'s
+        ``full_range``). ``roi`` draws dashed boundary lines at the given
+        ``[start, stop)`` index window (full-range mode only).
+        """
 
         import matplotlib.pyplot as plt
 
-        obs = np.asarray(slot.observed).ravel()
-        fit = np.asarray(slot.fit).ravel()
+        obs = np.asarray(observed if observed is not None else slot.observed).ravel()
+        fit_arr = np.asarray(fit if fit is not None else slot.fit).ravel()
+        comps = components if components is not None else slot.components
         if energy is not None and energy.size == obs.size:
             x = energy
             x_label = getattr(config, "x_label", "energy")
@@ -703,31 +890,39 @@ class FitResults:
             height_ratios=[3, 1],
         )
         ax_fit.plot(x, obs, "k.", ms=3, label="observed")
-        if slot.components is not None:
+        if comps is not None:
             # schema >= 4: render the persisted per-component decomposition,
-            # matching fitlib.plt_fit_res_1d's live visual style.
+            # matching fitlib.plt_fit_res_1d's live visual style. NaN
+            # entries (full-range mode, outside the fit window) leave a
+            # gap rather than a fabricated value.
             colors = list(
                 plt.rcParams["axes.prop_cycle"].by_key().get("color", ["#1f77b4"])
             )
             names = slot.component_names or [
-                f"component {i}" for i in range(slot.components.shape[0])
+                f"component {i}" for i in range(comps.shape[0])
             ]
-            for p, (peak, name) in enumerate(zip(slot.components, names, strict=True)):
+            for p, (peak, name) in enumerate(zip(comps, names, strict=True)):
                 color = colors[p % len(colors)]
                 ax_fit.plot(
                     x, peak, color=color, linestyle="-", linewidth=2, label=name
                 )
                 ax_fit.fill_between(x, 0, peak, facecolor=color, alpha=0.5)
-            ax_fit.plot(x, fit, "-", lw=1.5, color="#000000", label="fit")
+            ax_fit.plot(x, fit_arr, "-", lw=1.5, color="#000000", label="fit")
         else:
-            ax_fit.plot(x, fit, "-", lw=1.5, label="fit")
+            ax_fit.plot(x, fit_arr, "-", lw=1.5, label="fit")
         ax_fit.set_ylabel("intensity")
         ax_fit.legend(fontsize="small")
-        ax_fit.set_title(f"{slot.model_name} ({slot.fit_type})")
-        ax_res.plot(x, obs - fit, "-", lw=1.0)
+        ax_fit.set_title(_slot_title(slot))
+        ax_res.plot(x, obs - fit_arr, "-", lw=1.0)
         ax_res.axhline(0, color="gray", lw=0.5)
         ax_res.set_xlabel(x_label)
         ax_res.set_ylabel("residual")
+        if roi is not None and len(roi) == 2 and x.size:
+            x_start = x[roi[0]]
+            x_end = x[roi[1] - 1] if roi[1] > 0 else x[-1]
+            for ax in (ax_fit, ax_res):
+                ax.axvline(x_start, color="#A9A9A9", linestyle="--")
+                ax.axvline(x_end, color="#A9A9A9", linestyle="--")
         if getattr(config, "x_dir", "def") == "rev":
             ax_res.invert_xaxis()
         fig.tight_layout()
