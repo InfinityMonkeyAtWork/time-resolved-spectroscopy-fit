@@ -33,8 +33,13 @@ file.fit_2d('2D')
 
 # 3) inspect results
 df = file.get_fit_results(fit_type='2d')             # pandas DataFrame
+file.plot_fit(fit_type='2d')                         # observed/fit/residual
 file.save_fit(...)                                   # HDF5 fit archive
 ```
+
+All `get_*` / `plot_*` result accessors read the persisted fit record
+(latest matching fit), so they work identically on a live session and on
+archives loaded via `FitResults.load(path)`.
 
 Simulation mirrors this: build a model the same way, then use
 `trspecfit.Simulator` (`simulate_1d`, `simulate_2d`, `simulate_n`) to
@@ -90,9 +95,15 @@ Component types (see the API reference for signatures):
 
 ## Pitfalls for scripted / headless use
 
-- Fit and plot methods display figures by default. Pass `show_plot=False`
-  where available, or `save_img=-1` (save without display; `0` = display,
-  `1` = both) when running outside a notebook.
+- Fits never write to disk; persistence is always an explicit `save_fits`
+  (HDF5) or `export_fits` (CSV/PNG) call. Fits do display figures by
+  default — to run headless, set `project.show_output = 0`. This governs
+  the `fit_baseline` / `fit_spectrum` / `fit_slice_by_slice` / `fit_2d`
+  calls; those methods do not accept `save_img` (passing it raises
+  `TypeError`).
+- The low-level plot and setup helpers instead take their own arguments:
+  pass `show_plot=False` where available, or `save_img=-1` (save without
+  display; `0` = display, `1` = both) when running outside a notebook.
 - Time axes for multi-cycle dynamics should not sample exactly on subcycle
   boundaries — assignment there flips with floating-point representation,
   and `trspecfit` warns when it detects this.

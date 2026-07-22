@@ -112,8 +112,11 @@ fit setup).
 The fitting machinery: residual function, `fit_wrapper` (global + local
 solvers), confidence intervals via `lmfit.conf_interval`, MCMC via
 `lmfit.emcee`, and the 1D/2D fit-result plotting (`plt_fit_res_1d`,
-`plt_fit_res_2d`). Internal module — method docstrings stay minimal,
-module-level doc carries the weight.
+`plt_fit_res_2d`). `fit_wrapper` returns a typed
+`utils.lmfit.FitOutput` (`par_ini` / `par_fin` / `conf_ci` /
+`emcee_fin` / `emcee_ci`), which is what `Model.result` and the
+per-slice entries of `File.results_sbs` hold. Internal module — method
+docstrings stay minimal, module-level doc carries the weight.
 
 ### `simulator.py` — synthetic data generation
 
@@ -127,16 +130,23 @@ training-data synthesis.
 ### `fit_results.py` — completed-fit inspection / comparison
 
 User-facing `FitResults` class — the immutable view over a list of
-`SavedFitSlot`. Two construction paths: `FitResults.load(path)` for
-loaded archives and the `Project.results` property for in-session work.
-A `FitResults` is frozen at construction (the underlying slot list is
-copied), so `r1 = p.results; <run another fit>; r2 = p.results` gives
-two distinct snapshots — `r1` does not see the new slot. Query API:
-`find` / `get` / `files` / `models` / iteration. Comparison:
-`compare_models` (returns a metrics DataFrame; refuses to compare
-slots whose `observed_sha256` differs on the same `(file, fit_type)`)
-and `plot_residuals` (smoke-test-grade panels, no energy/time labels —
-slots don't carry parent-file axes). The save/export side lives in
+`SavedFitSlot`, and the single read/query/plot surface of the
+results-ownership contract: everything a user asks about a completed fit
+is answered from slots, never from live `Model.result`. Two construction
+paths: `FitResults.load(path)` for loaded archives and the
+`Project.results` property for in-session work; both also attach
+fingerprint-matched axes providers (`SavedFile`s / live `File`s) so plots
+carry real energy/time axes. A `FitResults` is frozen at construction
+(the underlying slot list is copied), so `r1 = p.results;
+<run another fit>; r2 = p.results` gives two distinct snapshots — `r1`
+does not see the new slot. Query API: `find` / `get` / `files` /
+`models` / iteration. Accessors (latest matching slot; `File.get_*` is
+thin sugar): `get_fit_results` / `get_correlations` /
+`get_conf_intervals` / `get_mcmc`. Comparison: `compare_models` (returns
+a metrics DataFrame; refuses to compare slots whose `observed_sha256`
+differs on the same `(file, fit_type)`). Plotting (`File.plot_*` sugar;
+also the fit methods' inline-display path): `plot_fit`,
+`plot_param_evolution`, `plot_residuals`. The save/export side lives in
 `utils/fit_io.py`; this module is read-only on top of those slots.
 
 ## Fit results: save / export / load architecture
@@ -182,15 +192,21 @@ HDF5 archive ────► reader ────► FitResults (FitResults.load 
 one-line delegates to the corresponding `Project.*` / `FitResults.*`
 methods. There is no `File.load_fit`: load is path-scoped, not file-scoped.
 
-The legacy `File.save_sbs_fit` / `File.save_2d_fit` are deprecated
-aliases that emit `DeprecationWarning` and forward to the new
-`File.export_fit`. The legacy on-disk layout is preserved internally
-by `_save_sbs_fit_legacy` / `_save_2d_fit_legacy`, which are called
-from inside `fit_slice_by_slice` / `fit_2d` / `Project.fit_2d` on every
-fit unless the auto-export side effect is disabled via
-`Project.auto_export = False` (default `True`). Both are scheduled for
-removal before v1.0.0; new code should use `Project.export_fits` /
-`File.export_fit`.
+Fits never write to disk (v0.14.0): the fit methods compute, display
+(per `show_output`), and capture `SavedFitSlot`s — persistence is always
+the explicit `save_fits` (HDF5) / `export_fits` (CSV/PNG tree) pair, fed
+from the slot history, with one default output root
+(`./fit_results/{Project.name}/`). Interactive display (`show_output >=
+1`) renders inline from the just-captured slot via the `FitResults` plot
+API — the figure a user sees is the one the API reproduces later.
+On-demand diagnostics replace the old fit-time file dumps:
+`FitResults.plot_mcmc` re-renders the emcee walker-acceptance and corner
+figures from the persisted payload (live or loaded archive);
+`File.plot_sbs_slices` renders per-slice fit panels from the live
+`results_sbs` state (live-session only). The pre-0.14 auto-export
+machinery (`Project.auto_export`, `Project.path_results`,
+`File.model_path`, the legacy `save_sbs_fit` / `save_2d_fit` savers, and
+`fit_wrapper`'s CSV/TXT dump block) was removed.
 
 ## `config/` — runtime configuration
 

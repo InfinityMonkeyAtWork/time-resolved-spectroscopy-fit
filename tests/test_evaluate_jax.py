@@ -366,7 +366,8 @@ class TestJaxFit2D:
         fit_file.fit_2d(model_name="single_glp", stages=2, try_ci=0)
 
         assert fit_file.model_2d is not None  # type guard
-        result_params = fit_file.model_2d.result[1].params
+        assert fit_file.model_2d.result is not None  # type guard
+        result_params = fit_file.model_2d.result.par_fin.params
         for name, true_val in truth_pars.items():
             fit_val = result_params[name].value
             assert np.isclose(true_val, fit_val, rtol=1e-8, atol=1e-10), (

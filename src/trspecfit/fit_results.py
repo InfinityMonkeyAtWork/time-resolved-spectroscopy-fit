@@ -22,15 +22,26 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from os import PathLike
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
 import pandas as pd
 
+from trspecfit.config.plot import PlotConfig
+from trspecfit.utils.arrays import resolve_time_selection
 from trspecfit.utils.fit_io import SavedFile, SavedFitSlot, read_archive
+from trspecfit.utils.lmfit import MCMCResult
 
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
 SbsAggregation = Literal["median", "mean", "sum", "long"]
+
+# Fit entry point per fit_type — used in "not fit yet" error messages.
+_FIT_METHOD_BY_TYPE: dict[str, str] = {
+    "baseline": "fit_baseline",
+    "spectrum": "fit_spectrum",
+    "sbs": "fit_slice_by_slice",
+    "2d": "fit_2d",
+}
 
 # Default columns. Dynamic: which set is used depends on whether any matched
 # slot carries a finite ``sigma_data``. ``chi2_red_raw`` is the lmfit-unweighted
@@ -102,6 +113,24 @@ def _resolve_file_arg(file: Any) -> str | None:
 
 
 #
+def _slot_title(slot: SavedFitSlot) -> str:
+    """Plot title from persisted slot metadata: file, model, yaml stem, time."""
+
+    title = f'{slot.file_name} - "{slot.model_name}" ({slot.fit_type})'
+    if slot.yaml_filename:
+        title += f" [{slot.yaml_filename}]"
+    if slot.fit_type == "spectrum":
+        time_point = slot.selection.get("time_point")
+        time_range = slot.selection.get("time_range")
+        time_type = slot.selection.get("time_type", "abs")
+        if time_point is not None:
+            title += f", t={time_point} ({time_type})"
+        elif time_range is not None:
+            title += f", t in {time_range} ({time_type})"
+    return title
+
+
+#
 def _has_any_sigma(slots: Sequence[SavedFitSlot]) -> bool:
     """True if at least one slot carries a finite ``sigma_data``."""
 
@@ -146,13 +175,190 @@ class FitResults:
     """
     Immutable view over a list of ``SavedFitSlot``.
 
-    Construction is positional-only (``FitResults(slots=...)``); users normally
+    Construction is keyword-only (``FitResults(slots=...)``); users normally
     obtain instances via ``Project.results`` or ``FitResults.load(path)``.
+
+    ``files`` optionally supplies per-file axes / plot-config providers —
+    ``SavedFile`` records (load path) or live ``trspecfit.File`` objects
+    (``Project.results``), matched to slots by fingerprint. The plot
+    methods use them to label real energy/time axes; without a provider
+    they fall back to array-index axes.
     """
 
     #
-    def __init__(self, *, slots: list[SavedFitSlot]) -> None:
+    def __init__(
+        self,
+        *,
+        slots: list[SavedFitSlot],
+        files: Sequence[Any] | None = None,
+    ) -> None:
         self._slots: tuple[SavedFitSlot, ...] = tuple(slots)
+        self._files_by_fp: dict[tuple[Any, ...], Any] = {}
+        for f in files or ():
+            fp = self._provider_fp_key(f)
+            if fp is not None:
+                self._files_by_fp[fp] = f
+
+    #
+    @staticmethod
+    def _provider_fp_key(f: Any) -> tuple[Any, ...] | None:
+        """
+        Fingerprint key for an axes provider, or ``None`` if unavailable.
+
+        ``SavedFile.fingerprint`` is a dict attribute; the live
+        ``trspecfit.File.fingerprint`` is a method that raises when the
+        file has no data — such files produced no slots, so skipping them
+        is safe.
+        """
+
+        fingerprint = getattr(f, "fingerprint", None)
+        if callable(fingerprint):
+            try:
+                fingerprint = fingerprint()
+            except ValueError:
+                return None
+        if isinstance(fingerprint, dict):
+            return _fp_key(fingerprint)
+        return None
+
+    #
+    def _provider_for(self, slot: SavedFitSlot) -> Any | None:
+        """Axes/data provider (``SavedFile`` or live ``File``) for this slot's file."""
+
+        return self._files_by_fp.get(_fp_key(slot.file_fingerprint))
+
+    #
+    def _axes_for(
+        self, slot: SavedFitSlot, *, full_range: bool = False
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """
+        ``(energy, time)`` on the slot's grid, or ``None`` where unknown.
+
+        Crops the provider's full axes to the slot's selection (same rule
+        as ``fit_io._slot_axes``, tolerant of missing providers/axes).
+        Pass ``full_range=True`` to skip the crop and return the
+        provider's full, uncropped axes instead.
+        """
+
+        provider = self._provider_for(slot)
+        energy = getattr(provider, "energy", None) if provider is not None else None
+        time = getattr(provider, "time", None) if provider is not None else None
+        if energy is not None:
+            energy = np.asarray(energy)
+            if not full_range:
+                e_lim = slot.selection.get("e_lim")
+                if e_lim:
+                    energy = energy[int(e_lim[0]) : int(e_lim[1])]
+        if time is not None:
+            time = np.asarray(time)
+            if time.ndim == 0 or time.size == 0:
+                time = None
+            elif not full_range and slot.fit_type == "2d":
+                t_lim = slot.selection.get("t_lim")
+                if t_lim:
+                    time = time[int(t_lim[0]) : int(t_lim[1])]
+        return energy, time
+
+    #
+    def _full_observed_for(
+        self, slot: SavedFitSlot, provider: Any
+    ) -> np.ndarray | None:
+        """
+        Real, full-range observed array for ``slot``, re-derived from the
+        provider's full ``data`` — or ``None`` if reconstruction isn't
+        possible (missing provider/selection fields; caller falls back to
+        the cropped ``slot.observed``).
+
+        ``sbs``/``2d`` need no re-derivation — the provider's full ``data``
+        already matches (sbs never crops time; 2d's slot is a direct
+        sub-slice of it). ``baseline``/``spectrum`` re-derive the
+        time-reduced spectrum (average or single row) from the persisted
+        selection, mirroring ``File.fit_baseline``/``File.fit_spectrum``.
+        """
+
+        data = getattr(provider, "data", None)
+        if data is None:
+            return None
+        data = np.asarray(data)
+
+        if slot.fit_type in ("sbs", "2d"):
+            return data
+
+        if slot.fit_type == "baseline":
+            base_t_ind = slot.selection.get("base_t_ind")
+            if not base_t_ind:
+                return None
+            return np.asarray(
+                np.mean(data[int(base_t_ind[0]) : int(base_t_ind[1]), :], axis=0)
+            )
+
+        if slot.fit_type == "spectrum":
+            time = getattr(provider, "time", None)
+            if time is None:
+                return None
+            time = np.asarray(time)
+            time_point = slot.selection.get("time_point")
+            time_range = slot.selection.get("time_range")
+            time_type = slot.selection.get("time_type", "abs")
+            try:
+                if time_point is not None:
+                    ind = resolve_time_selection(
+                        time, time_point, time_point, time_type=time_type
+                    )
+                    return np.asarray(data[ind[0], :])
+                if time_range is not None:
+                    ind = resolve_time_selection(
+                        time, time_range[0], time_range[1], time_type=time_type
+                    )
+                    return np.asarray(np.mean(data[ind[0] : ind[1], :], axis=0))
+            except ValueError:
+                return None
+            return None
+
+        return None
+
+    #
+    @staticmethod
+    def _pad_axis(
+        cropped: np.ndarray, full_len: int, lim: list[int] | None, *, axis: int
+    ) -> np.ndarray:
+        """
+        Return ``cropped`` embedded in a ``NaN``-filled array of length
+        ``full_len`` along ``axis``, at the ``lim`` (``[start, stop)``)
+        window. ``lim is None`` means that axis is already full range
+        (the fit ran on the whole axis) — ``cropped`` is returned as-is.
+
+        Used to place a slot's cropped ``fit``/``components`` into the
+        full-range grid without fabricating values outside the fit
+        window — the padding is ``NaN``, never a placeholder.
+        """
+
+        if lim is None:
+            return cropped
+        shape = list(cropped.shape)
+        shape[axis] = full_len
+        full = np.full(tuple(shape), np.nan, dtype=np.result_type(cropped, float))
+        idx: list[slice] = [slice(None)] * cropped.ndim
+        idx[axis] = slice(int(lim[0]), int(lim[1]))
+        full[tuple(idx)] = cropped
+        return full
+
+    #
+    def _config_for(self, slot: SavedFitSlot, config: Any) -> Any:
+        """
+        Resolve the ``PlotConfig`` for a plot call.
+
+        Explicit ``config=`` wins; otherwise the live file's
+        ``plot_config`` when this ``FitResults`` was built from a Project;
+        default ``PlotConfig()`` for loaded archives (styling is
+        deliberately not persisted).
+        """
+
+        if config is not None:
+            return config
+        provider = self._provider_for(slot)
+        live_config = getattr(provider, "plot_config", None)
+        return live_config if live_config is not None else PlotConfig()
 
     #
     @classmethod
@@ -192,7 +398,9 @@ class FitResults:
                 if types_filter is not None and slot.fit_type not in types_filter:
                     continue
                 slots.append(slot)
-        return cls(slots=slots)
+        # SavedFiles are kept (unfiltered) as axes providers for the plot
+        # methods; slots are matched to them by fingerprint at plot time.
+        return cls(slots=slots, files=list(project.files))
 
     #
     def __iter__(self) -> Iterator[SavedFitSlot]:
@@ -292,6 +500,625 @@ class FitResults:
                 f"fit_type={fit_type!r}; use find() and narrow on .selection."
             )
         return matches[0]
+
+    #
+    def _latest_slot(
+        self,
+        *,
+        file: Any,
+        model: str | None,
+        fit_type: str,
+    ) -> SavedFitSlot:
+        """
+        Return the most recent slot matching the filters.
+
+        ``find()`` preserves history order, so the last match is the latest
+        fit — mirroring the live-model convention where each ``fit_*`` call
+        overwrites the previous result of that type. Raises ``ValueError``
+        (not ``LookupError``) with a "run fit_x() first" hint, matching the
+        long-standing accessor contract on ``File``.
+        """
+
+        if fit_type not in _FIT_METHOD_BY_TYPE:
+            raise ValueError(
+                f"Unknown fit_type={fit_type!r}; "
+                "use 'baseline', 'spectrum', 'sbs', or '2d'."
+            )
+        file_name = _resolve_file_arg(file)
+        matches = self.find(
+            file=file_name, model=model, fit_type=cast(FitType, fit_type)
+        )
+        if not matches:
+            parts = [
+                f"{k}={v!r}"
+                for k, v in (("file", file_name), ("model", model))
+                if v is not None
+            ]
+            detail = f" ({', '.join(parts)})" if parts else ""
+            raise ValueError(
+                f"No {fit_type} fit results{detail}. "
+                f"Run {_FIT_METHOD_BY_TYPE[fit_type]}() first."
+            )
+        return matches[-1]
+
+    #
+    def get_fit_results(
+        self,
+        *,
+        file: Any = None,
+        model: str | None = None,
+        fit_type: FitType = "baseline",
+    ) -> pd.DataFrame:
+        """
+        Return the fitted parameters of the latest matching fit.
+
+        Reads the persisted slot (``SavedFitSlot.params``) — works identically
+        on ``Project.results`` and on archives loaded via
+        :meth:`FitResults.load`.
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file (name string or object with ``.name``).
+        model : str, optional
+            Filter to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+            Which fit type to read. When several slots match, the most
+            recent fit wins.
+
+        Returns
+        -------
+        pd.DataFrame
+            For 'baseline', 'spectrum', and '2d': one row per parameter with
+            columns ``['name', 'value', 'stderr', 'init_value', 'min', 'max',
+            'vary', 'expr']``.
+            For 'sbs': one row per time slice with columns = parameter names.
+
+        Raises
+        ------
+        ValueError
+            If no matching fit has been performed (or loaded) yet.
+        """
+
+        slot = self._latest_slot(file=file, model=model, fit_type=fit_type)
+        return slot.params.copy()
+
+    #
+    def get_correlations(
+        self,
+        *,
+        file: Any = None,
+        model: str | None = None,
+        fit_type: FitType = "baseline",
+    ) -> pd.DataFrame:
+        """
+        Return the parameter correlation matrix of the latest matching fit.
+
+        Reads the persisted slot (``SavedFitSlot.correl``). For SbS fits the
+        matrix is slice 0's (the representative slice, like ``conf_ci`` and
+        ``mcmc``).
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file (name string or object with ``.name``).
+        model : str, optional
+            Filter to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+            Which fit type to read (latest matching fit wins).
+
+        Returns
+        -------
+        pd.DataFrame
+            Square matrix indexed by the varying parameter names: 1.0 on the
+            diagonal, lmfit's pairwise correlations off-diagonal.
+
+        Raises
+        ------
+        ValueError
+            If no matching fit exists, or the fit produced no covariance
+            (e.g. Nelder without numdifftools installed, or a project-level
+            joint fit).
+        """
+
+        slot = self._latest_slot(file=file, model=model, fit_type=fit_type)
+        if slot.correl is None:
+            raise ValueError(
+                f"No correlation matrix for the {fit_type} fit: the optimizer "
+                "reported no covariance. Use a covariance-producing method "
+                "(e.g. leastsq, or Nelder with numdifftools installed); "
+                "project-level joint fits do not decompose per file."
+            )
+        return slot.correl.copy()
+
+    #
+    def get_conf_intervals(
+        self,
+        *,
+        file: Any = None,
+        model: str | None = None,
+        fit_type: FitType = "baseline",
+    ) -> pd.DataFrame:
+        """
+        Return the profiled confidence-interval table of the latest matching
+        fit.
+
+        Reads the persisted slot (``SavedFitSlot.conf_ci``). Populated only
+        when the fit ran with ``try_ci=1`` (otherwise an empty DataFrame).
+        For SbS fits the table is slice 0's.
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file (name string or object with ``.name``).
+        model : str, optional
+            Filter to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+            Which fit type to read (latest matching fit wins).
+
+        Returns
+        -------
+        pd.DataFrame
+            The conf_interval table, or an empty DataFrame if ``try_ci`` was
+            off.
+
+        Raises
+        ------
+        ValueError
+            If no matching fit has been performed (or loaded) yet.
+        """
+
+        slot = self._latest_slot(file=file, model=model, fit_type=fit_type)
+        if slot.conf_ci is None:
+            return pd.DataFrame()
+        return slot.conf_ci.copy()
+
+    #
+    def get_mcmc(
+        self,
+        *,
+        file: Any = None,
+        model: str | None = None,
+        fit_type: FitType = "baseline",
+    ) -> MCMCResult:
+        """
+        Return the MCMC outputs (quantile table, chain, acceptance) of the
+        latest matching fit.
+
+        Reads the persisted slot (``SavedFitSlot.mcmc``). Available only when
+        the fit ran with ``mc_settings`` enabling MCMC. For SbS fits the
+        payload is slice 0's.
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file (name string or object with ``.name``).
+        model : str, optional
+            Filter to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+            Which fit type to read (latest matching fit wins).
+
+        Returns
+        -------
+        MCMCResult
+            Bundle of ``table`` (posterior quantiles), ``flatchain``, and
+            ``acceptance_fraction`` (``None`` for slots loaded from schema-2
+            archives, which did not store it).
+
+        Raises
+        ------
+        ValueError
+            If no matching fit exists, or the fit had no MCMC step.
+        """
+
+        slot = self._latest_slot(file=file, model=model, fit_type=fit_type)
+        if slot.mcmc is None:
+            raise ValueError(
+                f"No MCMC results for the {fit_type} fit. Re-run with "
+                "mc_settings=MC(use_mc=1, ...)."
+            )
+        flatchain = slot.mcmc.get("flatchain")
+        ci = slot.mcmc.get("ci")
+        acceptance = slot.mcmc.get("acceptance_fraction")
+        return MCMCResult(
+            table=ci.copy() if ci is not None else pd.DataFrame(),
+            flatchain=flatchain.copy() if flatchain is not None else pd.DataFrame(),
+            acceptance_fraction=(
+                np.asarray(acceptance).copy() if acceptance is not None else None
+            ),
+        )
+
+    #
+    def plot_fit(
+        self,
+        *,
+        file: Any = None,
+        model: str | None = None,
+        fit_type: FitType = "baseline",
+        config: Any = None,
+        show_plot: bool = True,
+        full_range: bool | None = None,
+        show_init: bool | None = None,
+    ) -> None:
+        """
+        Plot the latest matching fit: observed, fit, and residual.
+
+        Reads the persisted slot. 1D fits (baseline / spectrum) render an
+        observed+fit panel over a residual panel vs energy; 2D fits and SbS
+        render the data/fit/residual maps via ``fitlib.plt_fit_res_2d``.
+        Real axes are used when this ``FitResults`` carries an axes
+        provider for the slot's file (always the case for
+        ``Project.results`` and ``FitResults.load``); otherwise array
+        indices.
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file (name string or object with ``.name``).
+        model : str, optional
+            Filter to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+            Which fit type to plot (latest matching fit wins).
+        config : PlotConfig, optional
+            Styling override. Default: the live file's ``plot_config``
+            when available, else ``PlotConfig()``.
+        show_plot : bool, default True
+            Set ``False`` to build without displaying (tests / batch use).
+        full_range : bool, optional
+            Show the full, uncropped data range (re-derived from the
+            file's persisted raw data) instead of just the fit-limits
+            window. Fit/residual/components are drawn only inside the
+            fit window (``NaN`` outside — never a fabricated value),
+            with dashed lines marking the window boundary, matching
+            ``describe_model``'s pre-fit view. Falls back to the
+            cropped, fit-limits-only view when reconstruction isn't
+            possible (e.g. no axes provider for this slot's file).
+            Default: ``config.full_range`` (``PlotConfig`` field,
+            itself ``Project.full_range``-backed; ``True`` out of the
+            box) — pass explicitly to override for one call.
+        show_init : bool, optional
+            Draw the dotted-gold initial-guess overlay (1D fit types
+            only — baseline/spectrum) when the slot has a persisted
+            ``fit_ini``. Default: ``config.show_init`` (``PlotConfig``
+            field, itself ``Project.show_init``-backed; ``True`` out of
+            the box) — pass explicitly to override for one call.
+
+        Raises
+        ------
+        ValueError
+            If no matching fit has been performed (or loaded) yet.
+        """
+
+        slot = self._latest_slot(file=file, model=model, fit_type=fit_type)
+        cfg = self._config_for(slot, config)
+        if full_range is None:
+            full_range = bool(getattr(cfg, "full_range", False))
+        if show_init is None:
+            show_init = bool(getattr(cfg, "show_init", False))
+        observed = np.asarray(slot.observed)
+        fit = np.asarray(slot.fit)
+        components = slot.components
+        fit_ini = slot.fit_ini
+        e_lim: list[int] | None = None
+        t_lim: list[int] | None = None
+
+        if full_range:
+            provider = self._provider_for(slot)
+            full_observed = (
+                self._full_observed_for(slot, provider)
+                if provider is not None
+                else None
+            )
+            energy, time = self._axes_for(slot, full_range=True)
+            if full_observed is not None and energy is not None:
+                n_e_full = energy.shape[0]
+                e_lim = slot.selection.get("e_lim")
+                if slot.fit_type == "2d":
+                    t_lim = slot.selection.get("t_lim")
+                    n_t_full = time.shape[0] if time is not None else fit.shape[0]
+                    fit = self._pad_axis(fit, n_t_full, t_lim, axis=0)
+                    fit = self._pad_axis(fit, n_e_full, e_lim, axis=1)
+                elif slot.fit_type == "sbs":
+                    fit = self._pad_axis(fit, n_e_full, e_lim, axis=1)
+                else:  # baseline / spectrum
+                    fit = self._pad_axis(fit, n_e_full, e_lim, axis=0)
+                    if fit_ini is not None:
+                        fit_ini = self._pad_axis(fit_ini, n_e_full, e_lim, axis=0)
+                if components is not None:
+                    comp_axis = 2 if slot.fit_type == "sbs" else 1
+                    components = self._pad_axis(
+                        components, n_e_full, e_lim, axis=comp_axis
+                    )
+                observed = full_observed
+            else:
+                energy, time = self._axes_for(slot)
+        else:
+            energy, time = self._axes_for(slot)
+
+        if slot.fit_type in ("2d", "sbs"):
+            from trspecfit import fitlib
+
+            fitlib.plt_fit_res_2d(
+                data=observed,
+                fit=fit,
+                x=energy,
+                y=time,
+                x_lim=e_lim,
+                y_lim=t_lim,
+                config=cfg,
+                save_img=0 if show_plot else -2,
+                title=_slot_title(slot),
+            )
+            return
+        self._plot_fit_1d(
+            slot,
+            energy=energy,
+            config=cfg,
+            show_plot=show_plot,
+            observed=observed,
+            fit=fit,
+            components=components,
+            roi=e_lim,
+            fit_ini=fit_ini,
+            show_init=show_init,
+        )
+
+    #
+    @staticmethod
+    def _plot_fit_1d(
+        slot: SavedFitSlot,
+        *,
+        energy: np.ndarray | None,
+        config: Any,
+        show_plot: bool,
+        observed: np.ndarray | None = None,
+        fit: np.ndarray | None = None,
+        components: np.ndarray | None = None,
+        roi: list[int] | None = None,
+        fit_ini: np.ndarray | None = None,
+        show_init: bool = True,
+    ) -> Any:
+        """
+        Observed + fit (with components, when persisted) over a residual panel.
+
+        ``observed``/``fit``/``components`` default to the slot's own
+        (cropped) arrays; pass overrides to render a full-range
+        reconstruction instead (see ``FitResults.plot_fit``'s
+        ``full_range``). ``roi`` draws dashed boundary lines at the given
+        ``[start, stop)`` index window (full-range mode only). ``fit_ini``
+        (default: the slot's own, when ``show_init`` and persisted) draws
+        the dotted-gold initial-guess overlay.
+        """
+
+        import matplotlib.pyplot as plt
+
+        obs = np.asarray(observed if observed is not None else slot.observed).ravel()
+        fit_arr = np.asarray(fit if fit is not None else slot.fit).ravel()
+        comps = components if components is not None else slot.components
+        ini = fit_ini if fit_ini is not None else slot.fit_ini
+        if energy is not None and energy.size == obs.size:
+            x = energy
+            x_label = getattr(config, "x_label", "energy")
+        else:
+            x = np.arange(obs.size)
+            x_label = "index"
+        fig, (ax_fit, ax_res) = plt.subplots(
+            2,
+            1,
+            sharex=True,
+            figsize=(6.0, 5.0),
+            height_ratios=[3, 1],
+        )
+        ax_fit.plot(x, obs, "k.", ms=3, label="observed")
+        if show_init and ini is not None:
+            # NaN entries (full-range mode, outside the fit window) leave a
+            # gap rather than a fabricated value, matching fit/components.
+            ax_fit.plot(
+                x,
+                np.asarray(ini).ravel(),
+                color="#FFD700",
+                linestyle=":",
+                linewidth=2,
+                label="initial guess",
+            )
+        if comps is not None:
+            # schema >= 4: render the persisted per-component decomposition,
+            # matching fitlib.plt_fit_res_1d's live visual style. NaN
+            # entries (full-range mode, outside the fit window) leave a
+            # gap rather than a fabricated value.
+            colors = list(
+                plt.rcParams["axes.prop_cycle"].by_key().get("color", ["#1f77b4"])
+            )
+            names = slot.component_names or [
+                f"component {i}" for i in range(comps.shape[0])
+            ]
+            for p, (peak, name) in enumerate(zip(comps, names, strict=True)):
+                color = colors[p % len(colors)]
+                ax_fit.plot(
+                    x, peak, color=color, linestyle="-", linewidth=2, label=name
+                )
+                ax_fit.fill_between(x, 0, peak, facecolor=color, alpha=0.5)
+            ax_fit.plot(x, fit_arr, "-", lw=1.5, color="#000000", label="fit")
+        else:
+            ax_fit.plot(x, fit_arr, "-", lw=1.5, label="fit")
+        ax_fit.set_ylabel("intensity")
+        ax_fit.legend(fontsize="small")
+        ax_fit.set_title(_slot_title(slot))
+        ax_res.plot(x, obs - fit_arr, "-", lw=1.0)
+        ax_res.axhline(0, color="gray", lw=0.5)
+        ax_res.set_xlabel(x_label)
+        ax_res.set_ylabel("residual")
+        if roi is not None and len(roi) == 2 and x.size:
+            x_start = x[roi[0]]
+            x_end = x[roi[1] - 1] if roi[1] > 0 else x[-1]
+            for ax in (ax_fit, ax_res):
+                ax.axvline(x_start, color="#A9A9A9", linestyle="--")
+                ax.axvline(x_end, color="#A9A9A9", linestyle="--")
+        if getattr(config, "x_dir", "def") == "rev":
+            ax_res.invert_xaxis()
+        fig.tight_layout()
+        if show_plot:
+            plt.show()
+        else:
+            plt.close(fig)
+        return fig
+
+    #
+    def plot_mcmc(
+        self,
+        *,
+        file: Any = None,
+        model: str | None = None,
+        fit_type: FitType = "baseline",
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Plot the MCMC diagnostics of the latest matching fit.
+
+        Renders the two figures ``fit_wrapper`` shows at fit time, from the
+        persisted slot (``SavedFitSlot.mcmc``): the per-walker acceptance
+        fraction and the corner plot of the posterior samples. Works
+        identically on ``Project.results`` and on archives loaded via
+        :meth:`FitResults.load`. The acceptance panel is skipped for slots
+        loaded from schema-2 archives (which did not store
+        ``acceptance_fraction``).
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file (name string or object with ``.name``).
+        model : str, optional
+            Filter to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+            Which fit to plot (latest matching fit wins). For SbS fits the
+            payload is slice 0's.
+        show_plot : bool, default True
+            Set ``False`` to build without displaying (tests / batch use).
+
+        Raises
+        ------
+        ValueError
+            If no matching fit exists, or the fit had no MCMC step.
+        """
+
+        import corner
+        import matplotlib.pyplot as plt
+
+        mcmc = self.get_mcmc(file=file, model=model, fit_type=fit_type)
+        if mcmc.acceptance_fraction is not None:
+            fig_walker, ax = plt.subplots(1, 1, dpi=75)
+            ax.plot(mcmc.acceptance_fraction, "o")
+            ax.set_xlabel("Walker number")
+            ax.set_ylabel("Acceptance fraction")
+            if show_plot:
+                plt.show()
+            else:
+                plt.close(fig_walker)
+        if not mcmc.flatchain.empty:
+            var_names = list(mcmc.flatchain.columns)
+            truths = None
+            if not mcmc.table.empty:
+                best = dict(
+                    zip(
+                        mcmc.table.iloc[:, 0],
+                        mcmc.table["best fit"],
+                        strict=True,
+                    )
+                )
+                truths = [best.get(name) for name in var_names]
+            fig_corner = plt.figure(figsize=(10, 10))
+            corner.corner(
+                mcmc.flatchain,
+                labels=var_names,
+                truths=truths,
+                fig=fig_corner,
+            )
+            if show_plot:
+                plt.show()
+            else:
+                plt.close(fig_corner)
+
+    #
+    def plot_param_evolution(
+        self,
+        *,
+        file: Any = None,
+        model: str | None = None,
+        params: Sequence[str] | None = None,
+        config: Any = None,
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Plot per-parameter evolution vs time for the latest matching SbS fit.
+
+        One panel per parameter, values from the slot's wide per-slice
+        ``params`` frame, x-axis from the file's time axis (array index if
+        no axes provider is available).
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file (name string or object with ``.name``).
+        model : str, optional
+            Filter to a single model name.
+        params : sequence of str, optional
+            Which parameters to plot. Default: the varied parameters (from
+            the slot's ``params_meta``); for slots loaded from schema-2
+            archives (no ``params_meta``), every parameter. Plots nothing
+            if the default resolves to an empty set (all-fixed model).
+        config : PlotConfig, optional
+            Styling override (see :meth:`plot_fit`).
+        show_plot : bool, default True
+            Set ``False`` to build without displaying.
+
+        Raises
+        ------
+        ValueError
+            If no matching SbS fit exists.
+        KeyError
+            If ``params`` names a parameter the fit does not have.
+        """
+
+        slot = self._latest_slot(file=file, model=model, fit_type="sbs")
+        if params is None:
+            if slot.params_meta is not None:
+                params = [
+                    str(name)
+                    for name, vary in zip(
+                        slot.params_meta["name"],
+                        slot.params_meta["vary"],
+                        strict=True,
+                    )
+                    if vary
+                ]
+            else:
+                params = [str(c) for c in slot.params.columns]
+        else:
+            params = [str(p) for p in params]
+            missing = [p for p in params if p not in slot.params.columns]
+            if missing:
+                raise KeyError(
+                    f"Parameter(s) {missing} not in this SbS fit; available: "
+                    f"{list(slot.params.columns)}"
+                )
+        if not params:
+            return
+        cfg = self._config_for(slot, config)
+        _, time = self._axes_for(slot)
+        n_slices = len(slot.params)
+        x = (
+            np.asarray(time)[:n_slices]
+            if time is not None and np.asarray(time).size >= n_slices
+            else np.arange(n_slices)
+        )
+        from trspecfit import fitlib
+
+        fitlib.plt_fit_res_pars(
+            df=slot.params.loc[:, params],
+            x=x,
+            config=cfg,
+            save_img=0 if show_plot else -2,
+        )
 
     #
     def compare_models(
@@ -576,10 +1403,10 @@ class FitResults:
         """
         Plot observed/fit/residual for the selected slots side-by-side.
 
-        Smoke-test-grade visualization: x-axis is array index (no energy /
-        time labels), since slots do not carry the parent file's axes.
-        Users wanting publication-quality plots should build their own from
-        ``slot.observed`` / ``slot.fit``.
+        Uses real energy/time axes when this ``FitResults`` carries an
+        axes provider for the file (always the case for ``Project.results``
+        and ``FitResults.load``); falls back to array indices otherwise.
+        For single-fit plots with full styling, see :meth:`plot_fit`.
 
         Parameters
         ----------
@@ -647,8 +1474,8 @@ class FitResults:
         )
 
     #
-    @staticmethod
     def _plot_residuals_1d(
+        self,
         slots: list[SavedFitSlot],
         file_name: str,
         *,
@@ -670,14 +1497,18 @@ class FitResults:
         for col, slot in enumerate(slots):
             obs = np.asarray(slot.observed).ravel()
             fit = np.asarray(slot.fit).ravel()
-            x = np.arange(obs.size)
+            energy, _ = self._axes_for(slot)
+            if energy is not None and energy.size == obs.size:
+                x, x_label = energy, "energy"
+            else:
+                x, x_label = np.arange(obs.size), "index"
             axs[0, col].plot(x, obs, "k.", ms=3, label="observed")
             axs[0, col].plot(x, fit, "-", lw=1.5, label="fit")
             axs[0, col].set_title(f"{slot.model_name} ({slot.fit_type})")
             axs[0, col].legend(fontsize="small")
             axs[1, col].plot(x, obs - fit, "-", lw=1.0)
             axs[1, col].axhline(0, color="gray", lw=0.5)
-            axs[1, col].set_xlabel("index")
+            axs[1, col].set_xlabel(x_label)
             if col == 0:
                 axs[0, col].set_ylabel("intensity")
                 axs[1, col].set_ylabel("residual")
@@ -690,8 +1521,8 @@ class FitResults:
         return fig
 
     #
-    @staticmethod
     def _plot_residuals_2d(
+        self,
         slots: list[SavedFitSlot],
         file_name: str,
         *,
@@ -721,6 +1552,24 @@ class FitResults:
         )
         im = None
         for col, (slot, res) in enumerate(zip(slots, residuals, strict=True)):
+            energy, time = self._axes_for(slot)
+            extent = None
+            x_label, y_label = "energy index", "time / slice index"
+            if (
+                energy is not None
+                and time is not None
+                and res.ndim == 2
+                and energy.size == res.shape[1]
+                and time.size >= res.shape[0]
+            ):
+                time_view = np.asarray(time)[: res.shape[0]]
+                extent = (
+                    float(energy[0]),
+                    float(energy[-1]),
+                    float(time_view[0]),
+                    float(time_view[-1]),
+                )
+                x_label, y_label = "energy", "time"
             im = axs[0, col].imshow(
                 res,
                 aspect="auto",
@@ -728,11 +1577,12 @@ class FitResults:
                 vmin=-global_max,
                 vmax=global_max,
                 origin="lower",
+                extent=extent,
             )
             axs[0, col].set_title(f"{slot.model_name} ({slot.fit_type})")
-            axs[0, col].set_xlabel("energy index")
+            axs[0, col].set_xlabel(x_label)
             if col == 0:
-                axs[0, col].set_ylabel("time / slice index")
+                axs[0, col].set_ylabel(y_label)
         if im is not None:
             fig.colorbar(im, ax=axs[0, :].tolist(), shrink=0.85)
         fig.suptitle(f"Residuals — {file_name}")

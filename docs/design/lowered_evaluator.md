@@ -942,7 +942,7 @@ Implemented behavior:
 - `File.fit_2d`, `File.fit_baseline`, and `File.fit_spectrum`
   build a graph / plan when `spec_fun_str` is `fit_model_gir` or
   `fit_model_compare`.
-- After fitting, all three methods write `result[1].params` back
+- After fitting, all three methods write `result.par_fin.params` back
   into `model.lmfit_pars` via `par_extract` + `update_value`,
   because `fit_wrapper` optimizes a deepcopy and the GIR path
   does not mutate model state on every residual call.

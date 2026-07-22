@@ -3,13 +3,6 @@
 # Display settings
 show_output: 1
 
-# Auto-export side effects (CSV/PNG written at fit completion) are off here:
-# the six baseline/SbS/2D fits this notebook runs would otherwise each spawn
-# their own CSV/PNG dump, drowning out the model-comparison narrative.
-# Save/load/export demos live in the sibling 11_save_load_export notebook,
-# which %%capture-imports this notebook's fitted state as its preamble.
-auto_export: False
-
 # Axis labels
 e_label: 'Energy (arb. units)'
 t_label: 'Time (arb. units)'

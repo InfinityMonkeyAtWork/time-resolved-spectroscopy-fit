@@ -58,6 +58,25 @@ Fitting Workflow
 .. automethod:: trspecfit.trspecfit.File.fit_2d
 .. automethod:: trspecfit.trspecfit.File.fit_spectrum
 
+Results, Plotting, and Persistence
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+These read the persisted fit record (latest matching fit), so they work
+identically on a live session and on loaded archives — see
+:class:`trspecfit.fit_results.FitResults` for the underlying API.
+
+.. automethod:: trspecfit.trspecfit.File.get_fit_results
+.. automethod:: trspecfit.trspecfit.File.get_correlations
+.. automethod:: trspecfit.trspecfit.File.get_conf_intervals
+.. automethod:: trspecfit.trspecfit.File.get_mcmc
+.. automethod:: trspecfit.trspecfit.File.plot_fit
+.. automethod:: trspecfit.trspecfit.File.plot_param_evolution
+.. automethod:: trspecfit.trspecfit.File.plot_mcmc
+.. automethod:: trspecfit.trspecfit.File.plot_sbs_slices
+.. automethod:: trspecfit.trspecfit.File.compare_models
+.. automethod:: trspecfit.trspecfit.File.save_fit
+.. automethod:: trspecfit.trspecfit.File.export_fit
+
 Utility Methods
 ~~~~~~~~~~~~~~~
 
@@ -66,7 +85,3 @@ Utility Methods
    Most users won't need to call these directly.
 
 .. automethod:: trspecfit.trspecfit.File.model_list_to_name
-.. automethod:: trspecfit.trspecfit.File.model_path
-.. automethod:: trspecfit.trspecfit.File.get_fit_results
-.. automethod:: trspecfit.trspecfit.File.save_sbs_fit
-.. automethod:: trspecfit.trspecfit.File.save_2d_fit

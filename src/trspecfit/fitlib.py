@@ -40,6 +40,7 @@ from trspecfit import spectra
 from trspecfit.config.plot import PlotConfig
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import plot as uplt
+from trspecfit.utils import spawn as uspawn
 
 # Define a type alias for file paths
 type PathLike = str | pathlib.Path
@@ -577,11 +578,7 @@ def fit_wrapper(
     fit_alg_2: str = "leastsq",
     jac_fun: Callable[..., np.ndarray] | None = None,
     show_output: int = 0,
-    save_output: int = 0,
-    save_path: PathLike = "",
-    num_fmt: str = "%.6e",
-    delim: str = ",",
-) -> list[Any]:
+) -> ulmfit.FitOutput:
     """
     Comprehensive fitting wrapper with optimization, CI, and MCMC.
 
@@ -589,7 +586,7 @@ def fit_wrapper(
     - Single or two-stage optimization
     - Confidence interval estimation via lmfit.conf_interval
     - MCMC sampling via lmfit.emcee
-    - Result visualization and export
+    - Result visualization (never writes to disk)
 
     Two-stage fitting (stages=2) is recommended for robust optimization:
     first finds global minimum with Nelder-Mead, then refines locally with
@@ -658,41 +655,22 @@ def fit_wrapper(
 
         - 0: Silent / programmatic / API mode -- no prints
         - 1: Interactive / notebook / UI mode -- show timing, fit results,
-          and confidence intervals
-
-    save_output : {-1, 0, 1}, default=0
-        Save results to files:
-
-        - 0: Don't save
-        - 1: Save all results (parameters, CIs, MCMC, plots)
-        - -1: Same as 1 (for compatibility)
-
-    save_path : str or Path, default=''
-        Base path for saved files (without extension).
-        Files saved: _par_ini.csv, _par_fin.txt, _par_fin.csv,
-        _conf_ci.csv, _emcee_fin.txt, _emcee_flatchain.csv,
-        _emcee_ci.csv, _emcee_walker_acceptance_ratio.png,
-        _emcee_corner_plot.png
-    num_fmt : str, default='%.6e'
-        Float format applied to CSV outputs (pandas ``float_format``).
-    delim : str, default=','
-        Delimiter applied to CSV outputs (pandas ``sep``).
+          confidence intervals, and MCMC diagnostic figures
 
     Returns
     -------
-    list
-        Five-element list containing results:
-        [par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]
+    ulmfit.FitOutput
+        Typed result container with fields:
 
         - **par_ini** (*lmfit.Parameters*) -- Initial parameter guess.
-        - **par_fin** (*lmfit.MinimizerResult or []*) -- Final fit result
+        - **par_fin** (*lmfit.MinimizerResult*) -- Final fit result
           from lmfit.minimize.
         - **conf_ci** (*pd.DataFrame*) -- Confidence intervals from
           lmfit.conf_interval. Columns: ``['par[v]/sigma[>]', '-3σ',
           '-2σ', '-1σ', 'best', '+1σ', '+2σ', '+3σ']``.
           Empty DataFrame if CI not calculated/failed.
-        - **emcee_fin** (*lmfit.MinimizerResult or []*) -- MCMC result
-          from lmfit.emcee. Empty list if MCMC not used.
+        - **emcee_fin** (*lmfit.MinimizerResult or None*) -- MCMC result
+          from lmfit.emcee. None if MCMC not used.
         - **emcee_ci** (*pd.DataFrame*) -- MCMC confidence intervals
           from quantiles of flatchain. Same column structure as conf_ci;
           one row per sampled parameter (varying model params + the
@@ -712,7 +690,7 @@ def fit_wrapper(
     ...     stages=1,
     ...     show_output=1
     ... )
-    >>> par_ini, par_fin, conf_ci, emcee_fin, emcee_ci = results
+    >>> results.par_fin.params  # optimized parameters
 
     >>> # Two-stage fit with confidence intervals
     >>> results = fit_wrapper(
@@ -723,9 +701,7 @@ def fit_wrapper(
     ...     stages=2,
     ...     try_ci=1,
     ...     ci_sigmas=[1, 2, 3],
-    ...     show_output=1,
-    ...     save_output=1,
-    ...     save_path='fit_results/baseline_fit'
+    ...     show_output=1
     ... )
 
     >>> # Fit with MCMC for uncertainty quantification
@@ -757,20 +733,17 @@ def fit_wrapper(
 
     **MCMC Diagnostics:**
     When using MCMC, check:
-    - Acceptance ratios (saved plot): Should be 0.2-0.5
-    - Corner plot (saved): Should show well-defined peaks
+    - Acceptance ratios: Should be 0.2-0.5
+    - Corner plot: Should show well-defined peaks
     - Chain length: Increase steps if distributions look noisy
+
+    Both figures are displayed when show_output=1 and can be reproduced
+    later from the persisted fit slot via FitResults.plot_mcmc().
 
     **Performance Tips:**
     - Use stages=1 for quick fits during model development
     - Use stages=2 for final/publication fits
     - MCMC is slow (minutes for complex models) but provides best uncertainties
-
-    **File Outputs:**
-    When save_output=1:
-    - CSV files: Comma-separated, easy to read in Excel/pandas
-    - TXT files: Human-readable lmfit.fit_report format
-    - PNG files: High-resolution plots for documentation
     """
 
     if ci_sigmas is None:
@@ -800,8 +773,6 @@ def fit_wrapper(
         par_ini = copy.deepcopy(par)
     else:
         par_ini = ulmfit.par_construct(par_names=par_names, par_info=par)
-    # convert par_ini to pandas dataframe and save all lmfit info
-    df_par_ini = ulmfit.par_to_df(par_ini, "ini", par_names)
 
     if show_output >= 1:
         t_0 = time.time()  # start time
@@ -842,6 +813,13 @@ def fit_wrapper(
             method=fit_alg_2, params=par_fin_gm_params, **_method_kws(fit_alg_2)
         )
         par_fin_params = _result_params(par_fin)
+        # Stage 2 starts from stage 1's output, and lmfit's prepare_fit()
+        # unconditionally resets init_value = value at the start of every
+        # stage — restore the true pre-fit seed before it's printed below
+        # or reaches any consumer of FitOutput.par_fin (report_fit's own
+        # "(init = ...)" annotation would otherwise show stage 1's output,
+        # contradicting the persisted archive).
+        ulmfit.restore_true_init_values(par_fin_params, par_ini)
         if show_output >= 1:
             print(f"\nResults local optimization fit (method={fit_alg_2}): ")
             lmfit.report_fit(par_fin_params)
@@ -885,9 +863,10 @@ def fit_wrapper(
         t_emcee0 = time.time()
         # deepcopy first: __lnsigma is an MCMC sampling construct, not a model
         # parameter. _result_params returns the live par_fin.params (stored as
-        # result[1] and consumed downstream as the model-only fit result), so
-        # adding __lnsigma in place would leak it into every consumer of that
-        # result (display, get_fit_results, SbS tables). emcee gets the copy.
+        # FitOutput.par_fin and consumed downstream as the model-only fit
+        # result), so adding __lnsigma in place would leak it into every
+        # consumer of that result (display, get_fit_results, SbS tables).
+        # emcee gets the copy.
         par_fin_params = copy.deepcopy(_result_params(par_fin))
         par_fin_params.add(
             "__lnsigma",
@@ -917,8 +896,14 @@ def fit_wrapper(
             # Linux < 3.14 — deadlock-prone in multithreaded processes.
             # Supply a spawn-backed pool instead (lmfit hands any object
             # with .map to emcee), matching the slice-by-slice executor.
+            # sanitized_spawn_main keeps the spawn workers from re-running a
+            # non-.py __main__ (e.g. a notebook executed via %run), the same
+            # guard the SbS executor uses.
             ctx = multiprocessing.get_context("spawn")
-            with ctx.Pool(mc_settings.workers) as pool:
+            with (
+                uspawn.sanitized_spawn_main(),
+                ctx.Pool(mc_settings.workers) as pool,
+            ):
                 # lmfit annotates workers as int but accepts pool-likes
                 emcee_fin = mini.emcee(workers=cast("int", pool), **emcee_kwargs)
         else:
@@ -937,22 +922,16 @@ def fit_wrapper(
             lmfit.report_fit(emcee_fin_params)
             t_emcee1 = time.time()
             print(f"Time lmfit.emcee: {t_emcee1 - t_emcee0} s")
-        # display per show_output, save per save_output (_finalize_plot
-        # semantics: >= 0 shows, abs == 1 saves, so -2 means neither);
-        # skip figure construction entirely when neither shows nor saves
+        # diagnostics figures are display-only (reproducible later from the
+        # persisted slot via FitResults.plot_mcmc); skip construction when
+        # silent
         if show_output >= 1:
-            emcee_save = save_output
-        else:
-            emcee_save = -1 if abs(save_output) == 1 else -2
-        if emcee_save != -2:
             # acceptance fraction of all walkers (plot)
             fig_emcee_walker, _ax = plt.subplots(1, 1, dpi=75)
             plt.plot(emcee_acceptance_fraction, "o")
             plt.xlabel("Walker number")
             plt.ylabel("Acceptance fraction")
-            uplt._finalize_plot(
-                emcee_save, f"{save_path}_emcee_walker_acceptance_ratio.png"
-            )
+            uplt._finalize_plot(0)
             # draw all combinations of the typically ellipsoidal chi plot
             # [<x=par1, y=par2, z=chi2> plot]
             emcee_truths = [
@@ -966,7 +945,7 @@ def fit_wrapper(
                 truths=emcee_truths,
                 fig=fig_emcee_corner,
             )
-            uplt._finalize_plot(emcee_save, f"{save_path}_emcee_corner_plot.png")
+            uplt._finalize_plot(0)
         # get percentage borders to categorize emcee.flatchain data
         sigma_borders = sigma_start_stop_percent(ci_sigmas)
         # one row per sampled parameter (varying model params + the __lnsigma
@@ -1008,61 +987,15 @@ def fit_wrapper(
         emcee_fin = None
         emcee_ci = pd.DataFrame()
 
-    # optional save (figures are saved above)
-    # [if statements check for empty list/dataframe]
-    if abs(save_output) == 1:
-        # save_path is a file prefix; make sure its directory exists
-        pathlib.Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-        # par_ini (pandas DataFrame) as csv file
-        df_par_ini.to_csv(
-            str(save_path) + "_par_ini.csv",
-            index=False,
-            float_format=num_fmt,
-            sep=delim,
-        )
-        # par_fin as text dump
-        if par_fin:
-            with pathlib.Path(f"{save_path}_par_fin.txt").open("w") as par_fin_file:
-                par_fin_file.write(lmfit.fit_report(par_fin))
-        # par_fin variables as csv file
-        df_par_fin = ulmfit.par_to_df(_result_params(par_fin), "min", par_names)
-        df_par_fin.to_csv(
-            str(save_path) + "_par_fin.csv",
-            index=False,
-            float_format=num_fmt,
-            sep=delim,
-        )
-        # conf_ci using pandas as it is a pd.DataFrame
-        if not conf_ci.empty:
-            conf_ci.to_csv(
-                str(save_path) + "_conf_ci.csv",
-                index=False,
-                float_format=num_fmt,
-                sep=delim,
-            )
-        # emcee_fin (fit_report) as text dump, emcee flatchain as csv
-        if emcee_fin is not None:
-            with pathlib.Path(f"{save_path}_emcee_fin.txt").open("w") as emcee_fin_file:
-                emcee_fin_file.write(lmfit.fit_report(emcee_fin))
-            emcee_flatchain = cast(
-                "pd.DataFrame", getattr(emcee_fin, "flatchain", pd.DataFrame())
-            )
-            emcee_flatchain.to_csv(
-                f"{save_path}_emcee_flatchain.csv",
-                index=False,
-                float_format=num_fmt,
-                sep=delim,
-            )
-        # emcee_ci using pandas as it is a pd.DataFrame
-        if not emcee_ci.empty:
-            emcee_ci.to_csv(
-                str(save_path) + "_emcee_ci.csv",
-                index=False,
-                float_format=num_fmt,
-                sep=delim,
-            )
-
-    return [par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]
+    # cast: lmfit sets result attributes dynamically, so its returns are
+    # opaque to type checkers — TypedMinimizerResult declares what we read
+    return ulmfit.FitOutput(
+        par_ini=par_ini,
+        par_fin=cast("ulmfit.TypedMinimizerResult", par_fin),
+        conf_ci=conf_ci,
+        emcee_fin=cast("ulmfit.TypedMinimizerResult | None", emcee_fin),
+        emcee_ci=emcee_ci,
+    )
 
 
 #
@@ -1072,50 +1005,30 @@ def fit_wrapper(
 
 #
 def results_to_df(
-    results: list[Any],
+    results: list[ulmfit.FitOutput],
     x: ArrayLike | None = None,
     index: ArrayLike | None = None,
     config: PlotConfig | None = None,
-    save_df: int = -2,
-    save_path: PathLike = "",
-    num_fmt: str = "%.6e",
-    delim: str = ",",
 ) -> pd.DataFrame:
     """
-    Convert Slice-by-Slice fit results to DataFrame with parameter plots.
+    Convert Slice-by-Slice fit results to a DataFrame.
 
-    Transforms list of fit results (from slice-by-slice fitting) into
-    a pandas DataFrame with time/index as rows and parameters as columns.
-    Optionally creates individual plots for each parameter vs. time.
+    Pure conversion: transforms a list of fit results (from slice-by-slice
+    fitting) into a pandas DataFrame with time/index as rows and parameters
+    as columns. Saving and plotting are the caller's responsibility
+    (``df.to_csv`` / ``plt_fit_res_pars``).
 
     Parameters
     ----------
-    results : list
-        List of fit results from fit_wrapper, one per time slice.
-        Each element: [par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]
+    results : list of ulmfit.FitOutput
+        Fit results from fit_wrapper, one per time slice.
     x : array-like, optional
         Time axis values. If provided, included as column in DataFrame.
     index : array-like, optional
         Index values (e.g., slice numbers). If provided, included as column.
     config : PlotConfig, optional
-        Plot configuration. If None, uses defaults.
-    save_df : {-2, -1, 0, 1}, default=-2
-        Output mode (standard ``_finalize_plot`` convention):
-
-        - -2: neither save nor show (do nothing)
-        - -1: save ``fit_pars.csv`` + parameter PNGs, do not display
-        - 0: display only (no files written)
-        - 1: save ``fit_pars.csv`` + parameter PNGs and display
-
-        Only *varied* (not fixed) parameters are ever displayed; when saving,
-        every parameter PNG is written regardless of vary state.
-    save_path : str or Path, default=''
-        Directory path for saving files (not full filename) (created if not exists).
-        Files saved: 'fit_pars.csv', '{param_name}.png' for each parameter
-    num_fmt : str, default='%.6e'
-        Float format applied to ``fit_pars.csv`` (pandas ``float_format``).
-    delim : str, default=','
-        Delimiter applied to ``fit_pars.csv`` (pandas ``sep``).
+        Supplies the label of the ``x`` column (``config.y_label``).
+        If None, uses defaults.
 
     Returns
     -------
@@ -1132,8 +1045,6 @@ def results_to_df(
 
     # transform lmfit_wrapper results to dataframe
     df = ulmfit.list_of_par_to_df(results)
-    # get columns names for plot before adding x/index
-    cols_plt = df.columns
 
     # insert x (time) and index data if passed
     if x is not None:
@@ -1141,80 +1052,38 @@ def results_to_df(
     if index is not None:
         df.insert(0, "index", index)
 
-    # get par_fin([1]) of first slice(index=0)
-    # (their "vary" attribute is the same for all)
-    df_par_fin_slice0 = ulmfit.par_to_df(
-        lmfit_params=results[0][1].params, col_type="min"
-    )
-    # Map save_df onto per-parameter save_img flags using the standard
-    # convention (1 save+show, -1 save+close, 0 show only, -2 neither). Only
-    # varied parameters are ever shown; every parameter is saved when saving.
-    do_save = abs(save_df) == 1
-    do_show = save_df >= 0
-    save_array = []
-    for vary in df_par_fin_slice0["vary"]:
-        show_this = do_show and bool(vary)
-        if do_save and show_this:
-            save_array.append(1)
-        elif do_save:
-            save_array.append(-1)
-        elif show_this:
-            save_array.append(0)
-        else:
-            save_array.append(-2)
-
-    if do_save:
-        pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
-        # save the dataframe (index, x axis, parameter1, parameter2, ...
-        df.to_csv(
-            pathlib.Path(save_path) / "fit_pars.csv",
-            float_format=num_fmt,
-            sep=delim,
-        )
-    if do_save or do_show:
-        # plot individual parameters as a function of time (s)
-        plt_fit_res_pars(
-            df=df.loc[:, list(cols_plt)],
-            x=x,
-            config=config,
-            save_img=save_array,
-            save_path=save_path,
-        )
-
     return df
 
 
 #
 def results_to_fit_2d(
-    results: list[Any] | pd.DataFrame,
+    results: list[ulmfit.FitOutput] | pd.DataFrame,
     const: tuple[Any, ...],
     args: tuple[Any, ...],
     parameter_names: list[str] | None = None,
-    num_fmt: str = "%.6e",
-    delim: str = ",",
-    save_2d: int = 0,
-    save_path: PathLike = "",
 ) -> np.ndarray:
     """
     Reconstruct 2D fit spectrum from Slice-by-Slice fit results.
 
-    Takes individual 1D fit results (one per time slice) and stacks them
-    into a complete 2D fit array. This allows visualization and comparison
-    with the measured 2D data for Slice-by-Slice fitting.
+    Pure reconstruction: takes individual 1D fit results (one per time
+    slice) and stacks them into a complete 2D fit array. This allows
+    visualization and comparison with the measured 2D data for
+    Slice-by-Slice fitting. Saving is the caller's responsibility
+    (``np.savetxt``); note that completed SbS fits already persist this
+    array as ``SavedFitSlot.fit``.
 
     Parameters
     ----------
-    results : list or pd.DataFrame
+    results : list of ulmfit.FitOutput or pd.DataFrame
         Fit results, either:
 
-        - list: Output from fit_wrapper for each slice.
-          Each element: ``[par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]``
+        - list: ``fit_wrapper`` output for each slice.
         - pd.DataFrame: From results_to_df() with parameters as columns
 
     parameter_names : list of str, optional
         For DataFrame results: select and order these columns as the
         parameter vector before evaluation. Pass when the DataFrame may
-        carry extra non-parameter columns (e.g. the metrics columns in
+        carry extra non-parameter columns (e.g. the index/time columns in
         ``results_to_df`` output); extra columns are otherwise passed to
         the fit function as parameters. If None, all columns are used in
         DataFrame order. Ignored for list results.
@@ -1226,20 +1095,6 @@ def results_to_fit_2d(
     args : tuple
         Arguments for fit function (model, dim).
         Passed to residual_fun for spectrum generation.
-    num_fmt : str, default='%.6e'
-        Number format for saving (scientific notation with 6 decimals)
-    delim : str, default=','
-        Delimiter for CSV output
-    save_2d : {-1, 0, 1}, default=0
-        Save 2D fit to file:
-
-        - 0: Don't save
-        - 1: Save to CSV
-        - -1: Save to CSV (same as 1)
-
-    save_path : str or Path, default=''
-        Directory path for saving. File saved as: save_path/fit_2d.csv
-        Directory created if doesn't exist.
 
     Returns
     -------
@@ -1267,7 +1122,7 @@ def results_to_fit_2d(
         if isinstance(results, list):
             lst.append(
                 residual_fun(
-                    results[i][1].params,
+                    results[i].par_fin.params,
                     x_const,
                     np.asarray(data_const),
                     fit_fun_const,
@@ -1293,15 +1148,7 @@ def results_to_fit_2d(
                     args=args,
                 )
             )
-    fit_2d = np.asarray(lst)
-    #
-    if abs(save_2d) == 1:
-        pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
-        np.savetxt(
-            pathlib.Path(save_path) / "fit_2d.csv", fit_2d, fmt=num_fmt, delimiter=delim
-        )
-
-    return fit_2d
+    return np.asarray(lst)
 
 
 #
@@ -1314,7 +1161,7 @@ def plt_fit_res_1d(
     x: ArrayLike,
     y: ArrayLike,
     fit_fun_str: str,
-    par_init: Any,
+    par_ini: Any,
     par_fin: Any,
     args: tuple[Any, ...] | None = None,
     *,
@@ -1342,12 +1189,12 @@ def plt_fit_res_1d(
     fit_fun_str : str
         Name of fitting function in ``trspecfit.spectra``
         (e.g., ``'fit_model_mcp'``, ``'fit_model_gir'``)
-    par_init : list or lmfit.Parameters
+    par_ini : list or lmfit.Parameters
         Initial parameter guess. Can be empty list [] if show_init=False.
     par_fin : lmfit.MinimizerResult or lmfit.Parameters or list
         Final fit parameters:
 
-        - lmfit.MinimizerResult: From fit_wrapper result[1]
+        - lmfit.MinimizerResult: From fit_wrapper (``FitOutput.par_fin``)
         - lmfit.Parameters: Manual parameter object
         - list: Empty list shows initial guess only (no final fit)
 
@@ -1426,10 +1273,10 @@ def plt_fit_res_1d(
 
     # Plot initial guess if requested
     if show_init:
-        par_ini = ulmfit.par_extract(par_init, return_type="list")
+        par_ini_vals = ulmfit.par_extract(par_ini, return_type="list")
         plt.plot(
             x_arr,
-            fit_fun(x_arr, par_ini, True, *args),
+            fit_fun(x_arr, par_ini_vals, True, *args),
             color="#FFD700",
             linestyle=":",
             linewidth=2,
@@ -1472,8 +1319,8 @@ def plt_fit_res_1d(
         res = y_arr - fit_fun(x_arr, par_fin_vals, True, *args)
     else:
         # Initial guess only
-        par_ini = ulmfit.par_extract(par_init, return_type="list")
-        res = y_arr - fit_fun(x_arr, par_ini, True, *args)
+        par_ini_vals = ulmfit.par_extract(par_ini, return_type="list")
+        res = y_arr - fit_fun(x_arr, par_ini_vals, True, *args)
 
     # Plot residual (scaled for visibility)
     plt.plot(
@@ -1529,6 +1376,8 @@ def plt_fit_res_2d(
     x: ArrayLike | None = None,
     y: ArrayLike | None = None,
     config: PlotConfig | None = None,
+    *,
+    title: str = "",
     **kwargs: Any,
 ) -> None:
     """
@@ -1550,6 +1399,9 @@ def plt_fit_res_2d(
         Y-axis (time) coordinates. If None, uses row indices.
     config : PlotConfig, optional
         Plot configuration object. If None, uses defaults.
+    title : str, default=''
+        Figure-level title (e.g. file/model identification). Empty means no
+        suptitle, matching prior behavior.
     **kwargs : dict
         Override config attributes for this plot.
 
@@ -1624,7 +1476,12 @@ def plt_fit_res_2d(
     # Determine color scale ranges
     # Data and fit share the same scale for comparison
     if z_lim_top is None:
-        range_dat_fit = [min(np.min(data), np.min(fit)), max(np.max(data), np.max(fit))]
+        # nanmin/nanmax: full_range mode's fit array carries NaN outside
+        # the fit window; identical to min/max when no NaN is present.
+        range_dat_fit = [
+            min(np.min(data), np.nanmin(fit)),
+            max(np.max(data), np.nanmax(fit)),
+        ]
     else:
         range_dat_fit = z_lim_top
 
@@ -1642,6 +1499,8 @@ def plt_fit_res_2d(
         constrained_layout=True,
         figsize=(9, 12),
     )
+    if title:
+        fig.suptitle(title)
 
     # Data panel (uses shared scale)
     axs["left"].pcolormesh(
@@ -1673,9 +1532,9 @@ def plt_fit_res_2d(
     )
     axs["right"].set_title(
         "Fit [min: "
-        + str(f"{np.min(fit):.3E}")
+        + str(f"{np.nanmin(fit):.3E}")
         + ", max: "
-        + str(f"{np.max(fit):.3E}")
+        + str(f"{np.nanmax(fit):.3E}")
         + "]"
     )
 

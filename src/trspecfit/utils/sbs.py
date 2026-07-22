@@ -12,9 +12,7 @@ path (``extract_sbs_seed_template``, ``prepare_sbs_model_for_slice``).
 
 from __future__ import annotations
 
-import contextlib
 import pathlib
-import sys
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -22,11 +20,12 @@ import numpy as np
 import pandas as pd
 
 from trspecfit import fitlib
-from trspecfit.config.plot import PlotConfig
 from trspecfit.utils import lmfit as ulmfit
+from trspecfit.utils import plot as uplt
 
 if TYPE_CHECKING:
     from trspecfit import mcp
+    from trspecfit.trspecfit import File
 
 # These globals are populated only inside ProcessPoolExecutor worker
 # processes by ``sbs_worker_init``. They let workers reuse a single
@@ -108,36 +107,6 @@ def prepare_sbs_model_for_slice(
 
 
 #
-@contextlib.contextmanager
-def sanitized_spawn_main():
-    """Hide a non-importable ``__main__.__file__`` from spawn workers.
-
-    When a notebook is executed via IPython's ``%run example.ipynb``,
-    ``__main__.__file__`` points at the notebook JSON; multiprocessing's
-    spawn ``prepare()`` would re-run that path via ``runpy`` in every
-    worker and crash (the JSON is not Python). SbS workers never need
-    ``__main__`` content — everything they use is installed by
-    ``sbs_worker_init`` from trspecfit modules — so drop the attribute
-    for the pool's lifetime and restore it afterwards. A regular
-    ``python script.py`` main keeps its ``.py`` ``__file__`` untouched.
-    """
-
-    main_mod = sys.modules.get("__main__")
-    if main_mod is None:
-        yield
-        return
-    main_file = getattr(main_mod, "__file__", None)
-    sanitize = main_file is not None and not str(main_file).endswith(".py")
-    if sanitize:
-        del main_mod.__file__
-    try:
-        yield
-    finally:
-        if sanitize:
-            main_mod.__file__ = main_file
-
-
-#
 def sbs_worker_init(
     model: mcp.Model,
     dispatch_args: tuple[Any, ...],
@@ -148,8 +117,8 @@ def sbs_worker_init(
     Runs once per worker process before any task. Stashes the deep-pickled
     model and GIR/MCP dispatch args as worker-local globals so individual
     slice tasks don't have to pay the pickle cost on every submission.
-    Forces matplotlib to the non-interactive Agg backend so the per-slice
-    plot calls inside workers don't try to open a display.
+    Forces matplotlib to the non-interactive Agg backend so nothing in a
+    worker process ever tries to open a display.
     """
 
     global _WORKER_MODEL, _WORKER_DISPATCH_ARGS, _WORKER_SEED_TEMPLATE
@@ -174,11 +143,8 @@ def sbs_fit_one_slice(
     data_base_argmax_energy: float | None,
     fit_fun_str: str,
     stages: int,
-    path_slice: pathlib.Path,
-    plot_config: PlotConfig,
     fit_wrapper_kwargs: dict[str, Any],
-    auto_export: bool = True,
-) -> tuple[int, list[Any]]:
+) -> tuple[int, ulmfit.FitOutput]:
     """Fit one energy slice in a worker process.
 
     Uses worker-local ``_WORKER_MODEL`` and ``_WORKER_DISPATCH_ARGS``
@@ -189,7 +155,7 @@ def sbs_fit_one_slice(
 
     Returns
     -------
-    tuple[int, list]
+    tuple[int, ulmfit.FitOutput]
         (slice_index, fit_wrapper_result) so the caller can reassemble
         out-of-order completions back into slice order.
     """
@@ -201,7 +167,7 @@ def sbs_fit_one_slice(
     dispatch_args = _WORKER_DISPATCH_ARGS
     seed_template = _WORKER_SEED_TEMPLATE
 
-    initial_guess = prepare_sbs_model_for_slice(
+    prepare_sbs_model_for_slice(
         model,
         dispatch_args,
         seed_template,
@@ -226,25 +192,102 @@ def sbs_fit_one_slice(
         par=model.lmfit_pars,
         stages=stages,
         show_output=0,
-        save_output=1 if auto_export else 0,
-        save_path=path_slice,
         **fit_wrapper_kwargs,
     )
 
-    if auto_export:
-        fitlib.plt_fit_res_1d(
-            x=const[0],
-            y=const[1],
-            fit_fun_str=fit_fun_str,
-            par_init=initial_guess,
-            par_fin=result_sbs[1],
-            args=args,
-            plot_sum=False,
-            show_init=True,
-            fit_lim=e_lim,
-            config=plot_config,
-            save_img=-1,
-            save_path=path_slice.with_suffix(".png"),
-        )
-
     return s_i, result_sbs
+
+
+#
+def plot_sbs_slices(
+    file: File,
+    *,
+    model: str | None = None,
+    slices: Sequence[int] | None = None,
+    show_init: bool = True,
+    save_path: str | pathlib.Path | None = None,
+    show_plot: bool = True,
+) -> None:
+    """Render per-slice fit panels for the most recent Slice-by-Slice fit.
+
+    Live-session diagnostic behind ``File.plot_sbs_slices``: each panel
+    shows the slice data, the per-slice seeded initial guess, the final
+    fit, and the component decomposition via ``fitlib.plt_fit_res_1d``.
+    Reads the in-session ``file.results_sbs`` (per-slice ``par_ini`` and
+    final parameters are not persisted in fit slots), so it is not
+    available on archives loaded via ``FitResults.load``.
+
+    ``save_path=None`` means display-only; pass a directory to also write
+    one PNG per slice (named by ``Project.da_slices_fmt``).
+    """
+
+    results_sbs = getattr(file, "results_sbs", None)
+    model_sbs = file.model_sbs
+    if not results_sbs or model_sbs is None:
+        raise ValueError(
+            "No live SbS results on this File. plot_sbs_slices() renders "
+            "per-slice diagnostics from the in-session fit state — run "
+            "fit_slice_by_slice() first (not available from loaded archives)."
+        )
+    if model is not None and model != model_sbs.name:
+        raise ValueError(
+            f'Live SbS results are for model "{model_sbs.name}", not '
+            f'"{model}". Only the most recent fit_slice_by_slice() run is '
+            "available; re-run it with the requested model."
+        )
+    assert file.data is not None and file.energy is not None  # type guard
+
+    n_slices = len(results_sbs)
+    if slices is None:
+        slice_indices = list(range(n_slices))
+    else:
+        slice_indices = [int(s) for s in slices]
+        bad = [s for s in slice_indices if not 0 <= s < n_slices]
+        if bad:
+            raise ValueError(f"Slice indices out of range [0, {n_slices}): {bad}")
+
+    save = save_path is not None
+    if not save and not show_plot:
+        return
+
+    legend = [comp.name for comp in model_sbs.components]
+    # rendering on the mcp path evaluates through the live model and
+    # writes the plotted per-slice values into model_sbs.lmfit_pars
+    # (spectra.fit_model_mcp) — snapshot and restore so a diagnostic
+    # never leaks into later seed_source="model" runs or inspection
+    saved_par_values = ulmfit.par_extract(model_sbs.lmfit_pars, return_type="list")
+    try:
+        for s_i in slice_indices:
+            result_slice = results_sbs[s_i]
+            if file.time is not None:
+                title = f"{file.name} — slice {s_i} (t = {file.time[s_i]:.4g})"
+            else:
+                title = f"{file.name} — slice {s_i}"
+            img_path: str | pathlib.Path
+            if save:
+                assert save_path is not None  # type guard
+                save_img = uplt._save_img_flag(save=True, show=show_plot)
+                img_path = pathlib.Path(save_path) / (
+                    str(file.p.da_slices_fmt % s_i) + ".png"
+                )
+            else:
+                save_img = 0
+                img_path = ""
+            fitlib.plt_fit_res_1d(
+                x=file.energy,
+                y=file.data[s_i],
+                fit_fun_str=file.p.spec_fun_str,
+                par_ini=result_slice.par_ini,
+                par_fin=result_slice.par_fin,
+                args=model_sbs.args,
+                plot_sum=False,
+                show_init=show_init,
+                title=title,
+                fit_lim=file.e_lim,
+                config=file.plot_config,
+                legend=legend,
+                save_img=save_img,
+                save_path=img_path,
+            )
+    finally:
+        model_sbs.update_value(new_par_values=saved_par_values, par_select="all")

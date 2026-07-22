@@ -964,6 +964,10 @@ class TestMCPPickling:
         file.model_active.create_value_1d()
         assert file.model_active.value_1d is not None  # type guard
         file.data_base = file.model_active.value_1d.copy()
+        # file.data backs the fingerprint used for slot capture — without it
+        # the fit completes but records no slot, and the slot-backed get_*
+        # accessors have nothing to read.
+        file.data = file.model_active.value_1d.copy()
         file.e_lim = [0, len(file.energy)]
         return file
 
@@ -1132,7 +1136,9 @@ class TestMCPPickling:
         )
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0, mc_settings=mc)
 
-        emcee_fin = file.model_base.result[3]
+        assert file.model_base.result is not None  # type guard
+        emcee_fin = file.model_base.result.emcee_fin
+        assert emcee_fin is not None  # type guard
         lnsigma = emcee_fin.params["__lnsigma"]
         np.testing.assert_allclose(lnsigma.min, np.log(0.01))
         np.testing.assert_allclose(lnsigma.max, np.log(5.0))
@@ -1140,11 +1146,11 @@ class TestMCPPickling:
     #
     @pytest.mark.slow
     def test_lnsigma_does_not_leak_into_leastsq_result(self):
-        """__lnsigma is an MCMC construct: it must stay out of result[1].
+        """__lnsigma is an MCMC construct: it must stay out of par_fin.
 
         Regression for the in-place mutation in fit_wrapper that injected
-        __lnsigma into par_fin.params (result[1]), leaking it into every
-        downstream consumer of the model-only fit result.
+        __lnsigma into par_fin.params, leaking it into every downstream
+        consumer of the model-only fit result.
         """
 
         from trspecfit.utils.lmfit import MC
@@ -1153,10 +1159,12 @@ class TestMCPPickling:
         mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1)
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0, mc_settings=mc)
 
-        # result[1] = par_fin (leastsq): model parameters only, no __lnsigma
-        assert "__lnsigma" not in file.model_base.result[1].params
-        # result[3] = emcee_fin (MCMC): __lnsigma belongs here
-        assert "__lnsigma" in file.model_base.result[3].params
+        assert file.model_base.result is not None  # type guard
+        assert file.model_base.result.emcee_fin is not None  # type guard
+        # par_fin (leastsq): model parameters only, no __lnsigma
+        assert "__lnsigma" not in file.model_base.result.par_fin.params
+        # emcee_fin (MCMC): __lnsigma belongs here
+        assert "__lnsigma" in file.model_base.result.emcee_fin.params
 
     #
     def test_get_correlations_matrix(self):
@@ -1169,10 +1177,11 @@ class TestMCPPickling:
         file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
 
         corr = file.get_correlations(fit_type="baseline")
+        assert file.model_base.result is not None  # type guard
         varying = [
             p
             for p in file.model_base.parameter_names
-            if file.model_base.result[1].params[p].vary
+            if file.model_base.result.par_fin.params[p].vary
         ]
         assert list(corr.index) == varying
         assert list(corr.columns) == varying
@@ -1209,16 +1218,20 @@ class TestMCPPickling:
             file.get_mcmc(fit_type="baseline")
 
     #
-    def test_accessors_raise_before_fit_and_reject_sbs(self):
-        """Accessors raise before a fit, and reject the per-slice 'sbs' type."""
+    def test_accessors_raise_before_fit(self):
+        """Accessors raise a clear "run fit_x() first" error before a fit —
+        for every fit type, including 'sbs' (served from slots since the
+        results-ownership relocation)."""
 
         from trspecfit.utils.lmfit import MCMCResult  # noqa: F401  (import check)
 
         file = self._make_fittable_file()
         with pytest.raises(ValueError, match="No baseline fit results"):
             file.get_correlations(fit_type="baseline")
-        with pytest.raises(ValueError, match="not available for Slice-by-Slice"):
+        with pytest.raises(ValueError, match="No sbs fit results"):
             file.get_conf_intervals(fit_type="sbs")
+        with pytest.raises(ValueError, match="Unknown fit_type"):
+            file.get_fit_results(fit_type="bogus")  # type: ignore[arg-type]
 
     #
     @pytest.mark.slow
@@ -1254,6 +1267,7 @@ class TestMCPPickling:
         file.model_active.create_value_1d()
         assert file.model_active.value_1d is not None  # type guard
         file.data_base = file.model_active.value_1d.copy()
+        file.data = file.model_active.value_1d.copy()  # fingerprint for slot capture
         file.e_lim = [0, len(file.energy)]
 
         mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1)

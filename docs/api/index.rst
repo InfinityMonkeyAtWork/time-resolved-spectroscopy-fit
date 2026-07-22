@@ -7,6 +7,7 @@ This section contains the auto-generated API documentation.
    :maxdepth: 2
 
    trspecfit
+   fit_results
    mcp
    functions_energy
    functions_time

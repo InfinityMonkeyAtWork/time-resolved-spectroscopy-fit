@@ -54,6 +54,14 @@ class PlotConfig:
         DPI for displaying plots
     dpi_save : int
         DPI for saving plots
+    full_range : bool
+        ``FitResults.plot_fit``: show the full, uncropped data range
+        (fit/residual/components ``NaN``-masked outside the fit window)
+        instead of just the fit-limits window. Overridable per call.
+    show_init : bool
+        ``FitResults.plot_fit``: draw the dotted-gold initial-guess
+        overlay (1D fit types only) when the slot has a persisted
+        ``fit_ini``. Overridable per call.
     z_colormap : str
         Colormap name for 2D plots
     z_colormap_res : str
@@ -142,6 +150,16 @@ class PlotConfig:
 
     # Residual multiplier for 1D fit plots
     res_mult: float = 5
+
+    # FitResults.plot_fit: show the full, uncropped data range (fit/residual/
+    # components NaN-masked outside the fit window) instead of just the
+    # fit-limits window. A per-call full_range= argument overrides this.
+    full_range: bool = True
+
+    # FitResults.plot_fit: draw the dotted-gold initial-guess overlay (1D fit
+    # types only) when the slot has a persisted fit_ini. A per-call
+    # show_init= argument overrides this.
+    show_init: bool = True
 
     # 2D plot settings
     z_colormap: str = "viridis"

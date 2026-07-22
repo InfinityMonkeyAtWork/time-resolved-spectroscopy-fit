@@ -48,7 +48,8 @@ def _run_baseline(
 ) -> FitResult:
     file.fit_baseline(model_name=model_name, stages=2, try_ci=0)
     assert file.model_base is not None  # type guard
-    return FitResult(params=file.model_base.result[1].params)
+    assert file.model_base.result is not None  # type guard
+    return FitResult(params=file.model_base.result.par_fin.params)
 
 
 # ---- Sp: fit_spectrum ----
@@ -69,7 +70,8 @@ def _run_spectrum(
         try_ci=0,
     )
     assert file.model_spec is not None  # type guard
-    return FitResult(params=file.model_spec.result[1].params)
+    assert file.model_spec.result is not None  # type guard
+    return FitResult(params=file.model_spec.result.par_fin.params)
 
 
 # ---- SbS: fit_slice_by_slice ----
@@ -86,7 +88,7 @@ def _run_sbs(file: File, family: Family, model_name: str, variant: str) -> FitRe
         try_ci=0,
     )
     mid = len(file.results_sbs) // 2
-    return FitResult(params=file.results_sbs[mid][1].params)
+    return FitResult(params=file.results_sbs[mid].par_fin.params)
 
 
 # ---- 2D: fit_baseline + (re-add dynamics) + fit_2d ----
@@ -99,7 +101,8 @@ def _run_2d(file: File, family: Family, model_name: str, variant: str) -> FitRes
         family.add_dynamics(file, variant)
     file.fit_2d(model_name=model_name, stages=2, try_ci=0)
     assert file.model_2d is not None  # type guard
-    return FitResult(params=file.model_2d.result[1].params)
+    assert file.model_2d.result is not None  # type guard
+    return FitResult(params=file.model_2d.result.par_fin.params)
 
 
 # ---- registry ----

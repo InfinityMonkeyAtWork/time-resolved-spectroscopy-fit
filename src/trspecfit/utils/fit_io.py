@@ -44,7 +44,18 @@ from trspecfit.fitlib import (
 from trspecfit.utils.hdf5 import require_dataset, require_group
 
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "6"
+# Schema 3 is additive over 2 (slot `correl` dataset, mcmc
+# `acceptance_fraction` dataset). Schema 4 is additive over 3 (slot
+# `components` / `component_names` datasets for 1D fit types — baseline,
+# spectrum, sbs; never present for 2d). Schema 5 is additive over 4 (per-file,
+# not per-slot, optional `aux_axis` dataset). Schema 6 is additive over 5
+# (slot `fit_ini` dataset for all 4 fit types — the model evaluated at the
+# true pre-fit seed, `None` on the project-level joint-fit path; sbs-only
+# `params_init` dataset, per-slice true seed values mirroring
+# `params_stderr`'s shape). The reader accepts all five; the writer still
+# refuses cross-version appends (see _classify_archive_for_write).
+SUPPORTED_READ_VERSIONS = ("2", "3", "4", "5", "6")
 
 # Default noise metadata used when no σ has been set on the File. Mirrors the
 # project.yaml defaults defined in ``Project._set_defaults``; if you change one,
@@ -222,9 +233,65 @@ class SavedFitSlot:
         for SbS / 2D / spectrum; equals ``sigma_data / √N_avg`` for
         baseline (``N_avg`` = number of time slices averaged into
         ``data_base``). ``NaN`` when ``sigma_data`` is ``NaN``.
+    params_meta : pd.DataFrame | None
+        SbS only: shared per-parameter metadata ``[name, vary, min, max,
+        expr]`` — the columns that are slice-invariant by construction
+        (one model, one vary set for every slice). ``None`` for other fit
+        types, whose long-form ``params`` already carry these.
+    params_stderr : pd.DataFrame | None
+        SbS only: per-slice parameter standard errors, same shape/columns
+        as the wide ``params`` frame; ``NaN`` where the optimizer reported
+        none. ``None`` for other fit types (long-form ``params`` has a
+        ``stderr`` column).
+    fit_settings : dict | None
+        Optimizer-configuration provenance: ``{"stages", "fit_alg_1",
+        "fit_alg_2", "try_ci"}``, plus ``{"seed_source", "seed_adapt",
+        "seed_values"}`` for SbS and an ``"mc"`` sub-dict (steps, walkers,
+        burn, thin, ntemps, is_weighted, sigma bounds) when MCMC was
+        enabled. Deliberately excludes execution details that cannot
+        change the result (worker counts). Not part of ``history_key`` —
+        a refit with different settings is still a refit.
     conf_ci : pd.DataFrame | None
+    correl : pd.DataFrame | None
+        Varying-parameter correlation matrix (index == columns == varying
+        parameter names, 1.0 on the diagonal). ``None`` when the optimizer
+        reported no covariance (e.g. Nelder without numdifftools) and for
+        project-level joint fits, whose joint covariance does not decompose
+        per file. For SbS, captured from slice 0 (the representative slice,
+        mirroring ``conf_ci`` / ``mcmc``).
     mcmc : dict | None
-        ``{"flatchain", "ci", "lnsigma"}`` if MCMC ran, else ``None``.
+        ``{"flatchain", "ci", "lnsigma", "acceptance_fraction"}`` if MCMC
+        ran, else ``None``. ``acceptance_fraction`` is emcee's per-walker
+        array (``None`` in slots loaded from schema-2 archives).
+    components : np.ndarray | None
+        Per-component fit curves on the same grid as ``fit``, evaluated at
+        final params. ``None`` for ``fit_type == "2d"`` (no per-component
+        concept there) and for slots loaded from schema < 4 archives.
+        Shape ``(n_components, energy_in_lim)`` for baseline/spectrum;
+        ``(n_slices, n_components, energy_in_lim)`` for sbs.
+    component_names : list of str | None
+        Component labels, same order as ``components``' component axis —
+        ``[comp.name for comp in model.components]`` at fit time. Persisted
+        explicitly rather than parsed from ``params.name`` because a
+        static (``dim == 1``) attached ``par_profile`` splices a nested
+        model's parameters into its host component's name block without
+        adding a distinct ``model.components`` entry, breaking any
+        prefix-based re-derivation. ``None`` exactly when ``components``
+        is ``None``.
+    fit_ini : np.ndarray | None
+        Model evaluated at the true pre-fit seed (``FitOutput.par_ini``),
+        on the same grid as ``fit``. ``None`` on the project-level
+        joint-fit path (no per-file ``par_ini`` there) and for slots
+        loaded from schema < 6 archives. Shape matches ``fit``: for sbs,
+        ``(n_slices, energy_in_lim)`` (every slice, not just slice 0 —
+        the per-slice seed is already available at slot-construction
+        time at no extra cost).
+    params_init : pd.DataFrame | None
+        SbS only: per-slice true initial-guess values, same shape/columns
+        as the wide ``params`` frame's value columns (mirrors
+        ``params_stderr``). ``None`` for other fit types (long-form
+        ``params`` already has an ``init_value`` column) and for slots
+        loaded from schema < 6 archives.
     """
 
     file_fingerprint: dict[str, Any]
@@ -248,7 +315,15 @@ class SavedFitSlot:
     sigma_data: float
     sigma_eff: float
     conf_ci: pd.DataFrame | None = None
+    correl: pd.DataFrame | None = None
     mcmc: dict[str, Any] | None = None
+    params_meta: pd.DataFrame | None = None
+    params_stderr: pd.DataFrame | None = None
+    fit_settings: dict[str, Any] | None = None
+    components: np.ndarray | None = None
+    component_names: list[str] | None = None
+    fit_ini: np.ndarray | None = None
+    params_init: pd.DataFrame | None = None
 
 
 #
@@ -285,6 +360,10 @@ class SavedFile:
         Slots belonging to this file. Tuple (not list) to keep the record
         immutable; the writer accumulates slots into a list and freezes
         on construction.
+    aux_axis : np.ndarray | None
+        Auxiliary physical axis (``File.aux_axis``, e.g. depth) for
+        ``par_profile``-attached models. ``None`` when the file has none
+        (most files) or when loaded from a pre-schema-5 archive.
     """
 
     name: str
@@ -298,6 +377,7 @@ class SavedFile:
     e_lim: list[int] | None
     t_lim: list[int] | None
     slots: tuple[SavedFitSlot, ...]
+    aux_axis: np.ndarray | None = None
 
 
 #
@@ -468,8 +548,9 @@ def _mcmc_payload(
     Build the ``mcmc`` slot payload from ``fit_wrapper``'s emcee outputs.
 
     Returns ``None`` if MCMC did not run (``emcee_fin is None``). Otherwise
-    returns ``{"flatchain", "ci", "lnsigma"}`` matching ``SavedFitSlot.mcmc``.
-    Frames are copied so the slot is invariant to subsequent state changes.
+    returns ``{"flatchain", "ci", "lnsigma", "acceptance_fraction"}`` matching
+    ``SavedFitSlot.mcmc``. Frames and arrays are copied so the slot is
+    invariant to subsequent state changes.
     """
 
     if emcee_fin is None:
@@ -483,7 +564,65 @@ def _mcmc_payload(
     lnsigma_par = params.get("__lnsigma") if params is not None else None
     lnsigma = float(lnsigma_par.value) if lnsigma_par is not None else None
     ci_out = emcee_ci.copy() if not emcee_ci.empty else None
-    return {"flatchain": flatchain_out, "ci": ci_out, "lnsigma": lnsigma}
+    acceptance = getattr(emcee_fin, "acceptance_fraction", None)
+    acceptance_out = (
+        np.array(acceptance, dtype=np.float64) if acceptance is not None else None
+    )
+    return {
+        "flatchain": flatchain_out,
+        "ci": ci_out,
+        "lnsigma": lnsigma,
+        "acceptance_fraction": acceptance_out,
+    }
+
+
+#
+def build_fit_settings(
+    *,
+    stages: int,
+    fit_wrapper_kwargs: dict[str, Any] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """
+    Assemble the provenance dict stored as ``SavedFitSlot.fit_settings``.
+
+    Records the optimizer configuration that can influence the fit result:
+    stage count, per-stage methods, the profiled-CI request, MCMC sampling
+    settings (when enabled), plus any fit-type-specific extras the caller
+    passes verbatim (e.g. SbS ``seed_source`` / ``seed_adapt`` /
+    ``seed_values`` — ``None`` values are kept: "no seed adaptation" is
+    provenance too). Execution details that cannot change the result
+    (SbS / emcee worker counts) are deliberately excluded — serial and
+    parallel dispatch are pinned result-identical by test.
+
+    Defaults mirror ``fitlib.fit_wrapper``'s signature; if you change one,
+    change the other.
+    """
+
+    kwargs = fit_wrapper_kwargs or {}
+    settings: dict[str, Any] = {
+        "stages": int(stages),
+        "fit_alg_1": str(kwargs.get("fit_alg_1", "Nelder")),
+        "fit_alg_2": str(kwargs.get("fit_alg_2", "leastsq")),
+        "try_ci": int(kwargs.get("try_ci", 1)),
+    }
+    mc = kwargs.get("mc_settings")
+    # MC stores its use_mc constructor arg as the use_emcee attribute.
+    if mc is not None and getattr(mc, "use_emcee", False):
+        settings["mc"] = {
+            "use_mc": int(mc.use_emcee),
+            "steps": int(mc.steps),
+            "nwalkers": int(mc.nwalkers),
+            "burn": int(mc.burn),
+            "thin": int(mc.thin),
+            "ntemps": int(mc.ntemps),
+            "is_weighted": bool(mc.is_weighted),
+            "sigma_ini": float(mc.sigma_ini),
+            "sigma_min": float(mc.sigma_min),
+            "sigma_max": float(mc.sigma_max),
+        }
+    settings.update(extra)
+    return settings
 
 
 #
@@ -510,7 +649,12 @@ def _slot_from_baseline(
     sigma_type: str,
     sigma_data: float,
     conf_ci: pd.DataFrame | None = None,
+    correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
+    fit_settings: dict[str, Any] | None = None,
+    components: np.ndarray | None = None,
+    component_names: list[str] | None = None,
+    fit_ini: np.ndarray | None = None,
 ) -> SavedFitSlot:
     """
     Build a SavedFitSlot for a completed baseline fit.
@@ -538,11 +682,16 @@ def _slot_from_baseline(
         fit_alg=fit_alg,
         yaml_filename=yaml_filename,
         conf_ci=conf_ci,
+        correl=correl,
         mcmc=mcmc,
+        fit_settings=fit_settings,
         noise_type=noise_type,
         sigma_source=sigma_source,
         sigma_type=sigma_type,
         sigma_data=sigma_data,
+        components=components,
+        component_names=component_names,
+        fit_ini=fit_ini,
     )
 
 
@@ -567,7 +716,12 @@ def _slot_from_spectrum(
     sigma_type: str,
     sigma_data: float,
     conf_ci: pd.DataFrame | None = None,
+    correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
+    fit_settings: dict[str, Any] | None = None,
+    components: np.ndarray | None = None,
+    component_names: list[str] | None = None,
+    fit_ini: np.ndarray | None = None,
 ) -> SavedFitSlot:
     """Build a SavedFitSlot for a completed spectrum fit.
 
@@ -595,11 +749,16 @@ def _slot_from_spectrum(
         fit_alg=fit_alg,
         yaml_filename=yaml_filename,
         conf_ci=conf_ci,
+        correl=correl,
         mcmc=mcmc,
+        fit_settings=fit_settings,
         noise_type=noise_type,
         sigma_source=sigma_source,
         sigma_type=sigma_type,
         sigma_data=sigma_data,
+        components=components,
+        component_names=component_names,
+        fit_ini=fit_ini,
     )
 
 
@@ -622,14 +781,23 @@ def _slot_from_sbs(
     sigma_type: str,
     sigma_data: float,
     conf_ci: pd.DataFrame | None = None,
+    correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
+    params_meta: pd.DataFrame | None = None,
+    params_stderr: pd.DataFrame | None = None,
+    fit_settings: dict[str, Any] | None = None,
+    components: np.ndarray | None = None,
+    component_names: list[str] | None = None,
+    fit_ini: np.ndarray | None = None,
+    params_init: pd.DataFrame | None = None,
 ) -> SavedFitSlot:
     """
     Build a SavedFitSlot for a completed slice-by-slice fit.
 
-    ``observed`` and ``fit`` are 2D arrays (slices x energy_in_lim). ``metrics``
-    values are per-slice 1D arrays. ``params_df`` is the SbS DataFrame
-    (one row per slice).
+    ``observed`` and ``fit`` are 2D arrays (slices x energy_in_lim).
+    ``metrics`` values are per-slice 1D arrays. ``params_df`` is the SbS
+    DataFrame (one row per slice). ``components`` is 3D
+    ``(n_slices, n_components, energy_in_lim)`` when provided.
     """
 
     selection = {
@@ -673,7 +841,15 @@ def _slot_from_sbs(
         sigma_data=float(sigma_data),
         sigma_eff=float(sigma_eff),
         conf_ci=conf_ci,
+        correl=correl,
         mcmc=mcmc,
+        params_meta=params_meta,
+        params_stderr=params_stderr,
+        fit_settings=fit_settings,
+        components=components,
+        component_names=component_names,
+        fit_ini=fit_ini,
+        params_init=params_init,
     )
 
 
@@ -696,7 +872,10 @@ def _slot_from_2d(
     sigma_type: str,
     sigma_data: float,
     conf_ci: pd.DataFrame | None = None,
+    correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
+    fit_settings: dict[str, Any] | None = None,
+    fit_ini: np.ndarray | None = None,
 ) -> SavedFitSlot:
     """Build a SavedFitSlot for a completed 2D global fit."""
 
@@ -717,11 +896,14 @@ def _slot_from_2d(
         fit_alg=fit_alg,
         yaml_filename=yaml_filename,
         conf_ci=conf_ci,
+        correl=correl,
         mcmc=mcmc,
+        fit_settings=fit_settings,
         noise_type=noise_type,
         sigma_source=sigma_source,
         sigma_type=sigma_type,
         sigma_data=sigma_data,
+        fit_ini=fit_ini,
     )
 
 
@@ -745,11 +927,16 @@ def _build_slot(
     fit_alg: str,
     yaml_filename: str | None,
     conf_ci: pd.DataFrame | None,
+    correl: pd.DataFrame | None,
     mcmc: dict[str, Any] | None,
+    fit_settings: dict[str, Any] | None,
     noise_type: str,
     sigma_source: str,
     sigma_type: str,
     sigma_data: float,
+    components: np.ndarray | None = None,
+    component_names: list[str] | None = None,
+    fit_ini: np.ndarray | None = None,
 ) -> SavedFitSlot:
     """Shared scalar-metric path for baseline / spectrum / 2d."""
 
@@ -790,7 +977,12 @@ def _build_slot(
         sigma_data=float(sigma_data),
         sigma_eff=float(sigma_eff),
         conf_ci=conf_ci,
+        correl=correl,
         mcmc=mcmc,
+        fit_settings=fit_settings,
+        components=components,
+        component_names=component_names,
+        fit_ini=fit_ini,
     )
 
 
@@ -1064,6 +1256,14 @@ _PARAMS_LONG_TYPE_TAGS: list[TypeTag] = [
     "bool",  # vary
     "str",  # expr
 ]
+# SbS shared per-parameter metadata (slice-invariant columns only).
+_PARAMS_META_TYPE_TAGS: list[TypeTag] = [
+    "str",  # name
+    "bool",  # vary
+    "float64",  # min
+    "float64",  # max
+    "str",  # expr
+]
 _METRICS_KEYS = (
     "chi2_raw",
     "chi2_red_raw",
@@ -1254,6 +1454,8 @@ def _write_file_payload(file_group: h5py.Group, sf: SavedFile) -> None:
     file_group.create_dataset("energy", data=np.ascontiguousarray(sf.energy))
     file_group.create_dataset("time", data=np.ascontiguousarray(sf.time))
     file_group.create_dataset("data", data=np.ascontiguousarray(sf.data))
+    if sf.aux_axis is not None:
+        file_group.create_dataset("aux_axis", data=np.ascontiguousarray(sf.aux_axis))
     file_group.create_group("slots")
 
 
@@ -1298,10 +1500,51 @@ def _write_slot(
     slot_group.create_dataset("fit", data=np.ascontiguousarray(slot.fit))
     if slot.fit_type == "sbs":
         _write_metrics_per_slice(slot_group, slot.metrics)
+    if slot.params_meta is not None:
+        _encode_dataframe(
+            slot_group,
+            "params_meta",
+            slot.params_meta,
+            type_tags=_PARAMS_META_TYPE_TAGS,
+        )
+    if slot.params_stderr is not None:
+        _encode_dataframe(
+            slot_group,
+            "params_stderr",
+            slot.params_stderr,
+            type_tags=_all_float64_tags(len(slot.params_stderr.columns)),
+        )
+    if slot.params_init is not None:
+        _encode_dataframe(
+            slot_group,
+            "params_init",
+            slot.params_init,
+            type_tags=_all_float64_tags(len(slot.params_init.columns)),
+        )
     if slot.conf_ci is not None:
         _encode_dataframe(slot_group, "conf_ci", slot.conf_ci)
+    if slot.correl is not None:
+        # Square all-float matrix; index == columns, so only the columns
+        # attr is stored and the reader restores the index from it.
+        _encode_dataframe(
+            slot_group,
+            "correl",
+            slot.correl,
+            type_tags=_all_float64_tags(len(slot.correl.columns)),
+        )
     if slot.mcmc is not None:
         _write_mcmc_group(slot_group, slot.mcmc)
+    if slot.components is not None:
+        slot_group.create_dataset(
+            "components", data=np.ascontiguousarray(slot.components)
+        )
+        assert slot.component_names is not None  # type guard
+        slot_group.create_dataset(
+            "component_names",
+            data=np.array(slot.component_names, dtype=_VLEN_STR),
+        )
+    if slot.fit_ini is not None:
+        slot_group.create_dataset("fit_ini", data=np.ascontiguousarray(slot.fit_ini))
 
 
 #
@@ -1324,6 +1567,8 @@ def _write_slot_metadata(
     meta.attrs["fit_alg"] = slot.fit_alg
     if slot.yaml_filename is not None:
         meta.attrs["yaml_filename"] = slot.yaml_filename
+    if slot.fit_settings is not None:
+        meta.attrs["fit_settings"] = json.dumps(slot.fit_settings, sort_keys=True)
     meta.attrs["timestamp"] = slot.timestamp
     # Noise metadata snapshot at fit time — see SavedFitSlot docstring.
     meta.attrs["noise_type"] = slot.noise_type
@@ -1375,7 +1620,8 @@ def _write_metrics_per_slice(
 
 #
 def _write_mcmc_group(slot_group: h5py.Group, mcmc: dict[str, Any]) -> None:
-    """``mcmc/`` subgroup: flatchain (always), ci (optional), lnsigma attr."""
+    """``mcmc/`` subgroup: flatchain (always), ci / acceptance_fraction
+    (optional), lnsigma attr."""
 
     mcmc_group = slot_group.create_group("mcmc")
     lnsigma = mcmc.get("lnsigma")
@@ -1398,6 +1644,12 @@ def _write_mcmc_group(slot_group: h5py.Group, mcmc: dict[str, Any]) -> None:
     ci = mcmc.get("ci")
     if ci is not None:
         _encode_dataframe(mcmc_group, "ci", ci)
+    acceptance = mcmc.get("acceptance_fraction")
+    if acceptance is not None:
+        mcmc_group.create_dataset(
+            "acceptance_fraction",
+            data=np.asarray(acceptance, dtype=np.float64),
+        )
 
 
 #
@@ -1496,9 +1748,11 @@ def _read_mcmc_group(group: h5py.Group) -> dict[str, Any]:
     """
     Inverse of ``_write_mcmc_group``.
 
-    Returns ``{"flatchain", "ci", "lnsigma"}`` matching the writer's
-    payload. ``lnsigma`` NaN maps back to ``None``; ``ci`` is ``None`` if
-    the optional dataset was not written.
+    Returns ``{"flatchain", "ci", "lnsigma", "acceptance_fraction"}``
+    matching the writer's payload. ``lnsigma`` NaN maps back to ``None``;
+    ``ci`` and ``acceptance_fraction`` are ``None`` if the optional dataset
+    was not written (``acceptance_fraction`` is always absent in schema-2
+    archives).
     """
 
     flatchain_obj = group.get("flatchain")
@@ -1519,7 +1773,18 @@ def _read_mcmc_group(group: h5py.Group) -> dict[str, Any]:
     else:
         v = float(np.asarray(lnsigma_attr).item())
         lnsigma = None if np.isnan(v) else v
-    return {"flatchain": flatchain, "ci": ci, "lnsigma": lnsigma}
+    acc_obj = group.get("acceptance_fraction")
+    acceptance = (
+        np.asarray(require_dataset(acc_obj, "mcmc/acceptance_fraction")[...])
+        if acc_obj is not None
+        else None
+    )
+    return {
+        "flatchain": flatchain,
+        "ci": ci,
+        "lnsigma": lnsigma,
+        "acceptance_fraction": acceptance,
+    }
 
 
 #
@@ -1560,10 +1825,50 @@ def _read_slot(
         if conf_ci_obj is not None
         else None
     )
+    correl_obj = slot_group.get("correl")
+    correl: pd.DataFrame | None = None
+    if correl_obj is not None:
+        correl = _decode_dataframe(require_dataset(correl_obj, "correl"))
+        # Square matrix stores only column labels; index == columns.
+        correl.index = pd.Index(correl.columns)
+    params_meta_obj = slot_group.get("params_meta")
+    params_meta: pd.DataFrame | None = None
+    if params_meta_obj is not None:
+        params_meta = _decode_dataframe(require_dataset(params_meta_obj, "params_meta"))
+        # Same "" ↔ None mapping as long-form params (expr column).
+        _restore_long_params_nones(params_meta)
+    params_stderr_obj = slot_group.get("params_stderr")
+    params_stderr = (
+        _decode_dataframe(require_dataset(params_stderr_obj, "params_stderr"))
+        if params_stderr_obj is not None
+        else None
+    )
+    params_init_obj = slot_group.get("params_init")
+    params_init = (
+        _decode_dataframe(require_dataset(params_init_obj, "params_init"))
+        if params_init_obj is not None
+        else None
+    )
+    fit_settings = (
+        json.loads(_attr_str(a["fit_settings"])) if "fit_settings" in a else None
+    )
     mcmc_obj = slot_group.get("mcmc")
     mcmc = (
         _read_mcmc_group(require_group(mcmc_obj, "mcmc"))
         if mcmc_obj is not None
+        else None
+    )
+    components_obj = slot_group.get("components")
+    components: np.ndarray | None = None
+    component_names: list[str] | None = None
+    if components_obj is not None:
+        components = np.asarray(require_dataset(components_obj, "components")[...])
+        names_obj = require_dataset(slot_group["component_names"], "component_names")
+        component_names = [_to_str_value(v) for v in names_obj[...]]
+    fit_ini_obj = slot_group.get("fit_ini")
+    fit_ini = (
+        np.asarray(require_dataset(fit_ini_obj, "fit_ini")[...])
+        if fit_ini_obj is not None
         else None
     )
 
@@ -1600,7 +1905,15 @@ def _read_slot(
         sigma_data=float(np.asarray(a["sigma_data"]).item()),
         sigma_eff=float(np.asarray(a["sigma_eff"]).item()),
         conf_ci=conf_ci,
+        correl=correl,
         mcmc=mcmc,
+        params_meta=params_meta,
+        params_stderr=params_stderr,
+        fit_settings=fit_settings,
+        components=components,
+        component_names=component_names,
+        fit_ini=fit_ini,
+        params_init=params_init,
     )
 
 
@@ -1626,6 +1939,12 @@ def _read_file(file_group: h5py.Group) -> SavedFile:
     data = np.asarray(require_dataset(file_group["data"], "data")[...])
     energy = np.asarray(require_dataset(file_group["energy"], "energy")[...])
     time = np.asarray(require_dataset(file_group["time"], "time")[...])
+    aux_axis_obj = file_group.get("aux_axis")
+    aux_axis = (
+        np.asarray(require_dataset(aux_axis_obj, "aux_axis")[...])
+        if aux_axis_obj is not None
+        else None
+    )
 
     slot_records: list[SavedFitSlot] = []
     slots_obj = file_group.get("slots")
@@ -1649,6 +1968,7 @@ def _read_file(file_group: h5py.Group) -> SavedFile:
         e_lim=e_lim,
         t_lim=t_lim,
         slots=tuple(slot_records),
+        aux_axis=aux_axis,
     )
 
 
@@ -1661,8 +1981,9 @@ def read_archive(filepath: PathLike | str) -> SavedProject:
     ``File``, or ``Model`` state — the returned ``SavedProject`` is a
     standalone, immutable view of the archive's contents at read time.
 
-    Raises ``ValueError`` if ``schema_version`` does not match the
-    reader's ``SCHEMA_VERSION``.
+    Raises ``ValueError`` if ``schema_version`` is not one of
+    ``SUPPORTED_READ_VERSIONS``. Schema-2 archives load with the schema-3
+    additions (slot ``correl``, mcmc ``acceptance_fraction``) as ``None``.
     """
 
     path = Path(filepath)
@@ -1670,10 +1991,11 @@ def read_archive(filepath: PathLike | str) -> SavedProject:
         meta = require_group(archive["metadata"], "metadata")
         ma = meta.attrs
         schema_version = _attr_str(ma["schema_version"])
-        if schema_version != SCHEMA_VERSION:
+        if schema_version not in SUPPORTED_READ_VERSIONS:
+            supported = ", ".join(repr(v) for v in SUPPORTED_READ_VERSIONS)
             raise ValueError(
                 f"Archive at {path} has schema_version {schema_version!r}; "
-                f"this reader supports {SCHEMA_VERSION!r}."
+                f"this reader supports {supported}."
             )
         files_obj = archive.get("files")
         files: list[SavedFile] = []

@@ -117,9 +117,9 @@ class TestNonFiniteData:
         )
 
         result = fit_file.model_spec.result
-        assert result[1] != []
-        assert result[1].success
-        assert np.isfinite(result[1].chisqr)
+        assert result is not None  # type guard
+        assert result.par_fin.success
+        assert np.isfinite(result.par_fin.chisqr)
 
     #
     def test_nan_in_fit_window_raises_2d(self):
@@ -166,8 +166,8 @@ class TestDegenerateAxes:
         )
 
         result = fit_file.model_spec.result
-        assert result[1] != []
-        assert result[1].nfree < 0  # underdetermined, documented not endorsed
+        assert result is not None  # type guard
+        assert result.par_fin.nfree < 0  # underdetermined, documented not endorsed
 
     #
     def test_single_element_time_axis_fit_2d(self):
@@ -192,5 +192,5 @@ class TestDegenerateAxes:
         fit_file.fit_2d("single_glp", stages=1, try_ci=0)
 
         result = fit_file.model_2d.result
-        assert result[1] != []
-        assert result[1].success
+        assert result is not None  # type guard
+        assert result.par_fin.success

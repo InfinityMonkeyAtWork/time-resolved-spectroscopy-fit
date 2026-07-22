@@ -4,6 +4,7 @@ Utility functions for array operations and data manipulation.
 This module provides utilities for:
 - Scientific number formatting with consistent width
 - Pandas DataFrame item extraction
+- Time-axis index resolution
 - Sign change detection with zero handling
 - Array padding and convolution for signal processing
 - Angular normalization
@@ -201,6 +202,66 @@ def get_item(
 #
 # NumPy/SciPy array operations
 #
+
+
+#
+def resolve_time_selection(
+    time: ArrayLike,
+    t_start: float,
+    t_stop: float,
+    *,
+    time_type: str = "abs",
+) -> list[int]:
+    """
+    Convert time bounds to validated ``[ind_start, ind_stop)`` slice indices.
+
+    For a single time point pass ``t_start == t_stop``. Both bounds are
+    inclusive in the input; the returned stop is exclusive.
+
+    Parameters
+    ----------
+    time : array_like
+        Time axis to resolve against.
+    t_start, t_stop : float
+        Time bounds (absolute values or indices, see ``time_type``).
+    time_type : {'abs', 'ind'}, default='abs'
+        'abs': absolute time stamps. 'ind': time array indices.
+
+    Returns
+    -------
+    list[int]
+        ``[ind_start, ind_stop)``.
+
+    Raises
+    ------
+    ValueError
+        If the result is out of range or empty, or ``time_type`` is
+        unrecognized.
+    """
+
+    time_arr = np.asarray(time)
+    n = len(time_arr)
+    if time_type == "abs":
+        if t_start == t_stop:
+            ind_start = int(np.searchsorted(time_arr, t_start, side="left"))
+            ind_stop = ind_start + 1
+        else:
+            ind_start = int(np.searchsorted(time_arr, t_start, side="left"))
+            ind_stop = int(np.searchsorted(time_arr, t_stop, side="right"))
+    elif time_type == "ind":
+        ind_start = int(t_start)
+        ind_stop = int(t_stop) + 1 if t_start == t_stop else int(t_stop + 1)
+    else:
+        raise ValueError(f"Unknown time_type '{time_type}'. Expected 'abs' or 'ind'.")
+    if ind_start >= ind_stop or ind_start >= n or ind_stop <= 0:
+        raise ValueError(
+            f"Time selection resolves to an empty or out-of-range slice "
+            f"[{ind_start}:{ind_stop}). "
+            f"Time axis has {n} points [{time_arr[0]}, {time_arr[-1]}]."
+        )
+    ind_start = max(ind_start, 0)
+    ind_stop = min(ind_stop, n)
+    return [ind_start, ind_stop]
 
 
 #

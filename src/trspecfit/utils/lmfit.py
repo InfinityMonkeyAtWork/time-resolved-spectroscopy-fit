@@ -13,12 +13,40 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 import lmfit
 import numpy as np
 import pandas as pd
 from lmfit.minimizer import MinimizerResult
+
+if TYPE_CHECKING:
+    #
+    #
+    class TypedMinimizerResult(MinimizerResult):
+        """Annotation-only view of ``lmfit.minimizer.MinimizerResult``.
+
+        lmfit sets result attributes dynamically (``setattr`` in
+        ``__init__`` / ``minimize``), so type checkers see none of them.
+        This subclass declares the ones trspecfit reads; at runtime it IS
+        ``MinimizerResult`` (see the ``else`` branch).
+        """
+
+        params: lmfit.Parameters
+        method: str
+        success: bool
+        errorbars: bool
+        nvarys: int
+        nfree: int
+        chisqr: float
+        redchi: float
+        covar: np.ndarray | None
+        var_names: list[str]
+        # set by Minimizer.emcee only
+        flatchain: pd.DataFrame
+        acceptance_fraction: np.ndarray
+else:
+    TypedMinimizerResult = MinimizerResult
 
 #
 # lmfit parameter creation and extraction
@@ -419,11 +447,65 @@ def par_to_df(
 
 
 #
-def list_of_par_to_df(results: list[Any]) -> pd.DataFrame:
+def restore_true_init_values(
+    result_params: lmfit.Parameters, par_ini: lmfit.Parameters
+) -> None:
+    """
+    Correct ``result_params``' ``init_value`` in place to the true
+    pre-fit seed (``par_ini``).
+
+    Two-stage fitting (``fitlib.fit_wrapper`` stages=2) starts its second
+    stage from stage-1's output, and lmfit's ``prepare_fit`` unconditionally
+    resets ``Parameter.init_value = Parameter.value`` at the start of every
+    stage — so a two-stage result's ``init_value`` reflects stage-1's
+    output, not the true original seed, unless corrected here.
+
+    Parameters
+    ----------
+    result_params : lmfit.Parameters
+        A completed fit's ``result.params`` (mutated in place).
+    par_ini : lmfit.Parameters
+        The true pre-fit seed (``FitOutput.par_ini``).
+    """
+
+    for name, par in result_params.items():
+        if name in par_ini:
+            par.init_value = par_ini[name].value
+
+
+#
+def correl_to_df(lmfit_params: lmfit.Parameters) -> pd.DataFrame:
+    """
+    Build the varying-parameter correlation matrix from lmfit Parameters.
+
+    Parameters
+    ----------
+    lmfit_params : lmfit.Parameters
+        Parameters from a completed fit (pass ``result.params``).
+
+    Returns
+    -------
+    pd.DataFrame
+        Square matrix indexed by the varying parameter names: 1.0 on the
+        diagonal, lmfit's pairwise correlations off-diagonal (0.0 where a
+        pair is uncorrelated or the optimizer reported no covariance).
+    """
+
+    names = [n for n in lmfit_params if lmfit_params[n].vary]
+    mat = pd.DataFrame(np.eye(len(names)), index=names, columns=names, dtype=float)
+    for n in names:
+        for other, corr in (lmfit_params[n].correl or {}).items():
+            if other in mat.columns:
+                mat.loc[n, other] = corr
+    return mat
+
+
+#
+def list_of_par_to_df(results: list[FitOutput]) -> pd.DataFrame:
     """
     Extract parameter values from multiple fit results into DataFrame.
 
-    Collects optimized parameter values from a list of lmfit fit results
+    Collects optimized parameter values from a list of fit results
     (e.g., from slice-by-slice fitting) and organizes them in a DataFrame
     with rows=fits and columns=parameters.
     Assumes all fits have the same parameter names (typical for slice-by-slice).
@@ -431,10 +513,10 @@ def list_of_par_to_df(results: list[Any]) -> pd.DataFrame:
 
     Parameters
     ----------
-    results : list
-        List of fit results from fit_wrapper or similar.
-        Each element is expected to be a tuple/list where element [1] contains
-        the lmfit.MinimizerResult with a .params attribute.
+    results : list of FitOutput
+        Fit results from ``fitlib.fit_wrapper``, one per fit; each
+        ``par_fin`` holds the lmfit.MinimizerResult with a ``.params``
+        attribute.
 
     Returns
     -------
@@ -461,17 +543,131 @@ def list_of_par_to_df(results: list[Any]) -> pd.DataFrame:
     """
 
     # Extract parameter values from each result
-    param_values_list = [par_extract(results[i][1].params) for i in range(len(results))]
+    param_values_list = [par_extract(result.par_fin.params) for result in results]
 
     # Get parameter names from first result (all should be identical)
-    param_names = [k for k, v in results[0][1].params.valuesdict().items()]
+    param_names = list(results[0].par_fin.params.valuesdict())
 
     return pd.DataFrame(param_values_list, columns=param_names)
 
 
 #
+def list_of_par_stderr_to_df(results: list[FitOutput]) -> pd.DataFrame:
+    """
+    Extract per-fit parameter stderr into a DataFrame (NaN where absent).
+
+    Companion to :func:`list_of_par_to_df` with the same shape contract
+    (rows=fits, columns=parameters): collects each fit's per-parameter
+    standard errors instead of the optimized values. lmfit reports
+    ``stderr=None`` when the optimizer produced no covariance; those cells
+    become ``NaN`` so the frame stays numeric.
+
+    Parameters
+    ----------
+    results : list of FitOutput
+        Fit results from ``fitlib.fit_wrapper``; each ``par_fin`` holds
+        the lmfit.MinimizerResult with a ``.params`` attribute.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with rows=individual fits, columns=parameter stderr.
+    """
+
+    param_names = list(results[0].par_fin.params.keys())
+    rows = []
+    for result in results:
+        params = result.par_fin.params
+        rows.append(
+            [
+                float(params[name].stderr)
+                if params[name].stderr is not None
+                else np.nan
+                for name in param_names
+            ]
+        )
+    return pd.DataFrame(rows, columns=param_names)
+
+
+#
+def list_of_par_ini_to_df(results: list[FitOutput]) -> pd.DataFrame:
+    """
+    Extract per-fit true initial-guess values into a DataFrame.
+
+    Companion to :func:`list_of_par_stderr_to_df` with the same shape
+    contract (rows=fits, columns=parameters): collects each fit's true
+    pre-fit seed (``FitOutput.par_ini``) rather than the optimized value.
+    Reads the seed directly, so it is unaffected by
+    ``fitlib.fit_wrapper``'s two-stage ``init_value`` correction.
+
+    Parameters
+    ----------
+    results : list of FitOutput
+        Fit results from ``fitlib.fit_wrapper``; each ``par_ini`` holds
+        the pre-fit ``lmfit.Parameters`` seed (never ``None`` for
+        per-slice SbS results, the only caller of this function).
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with rows=individual fits, columns=parameter init values.
+    """
+
+    param_names = list(results[0].par_fin.params.keys())
+    rows = []
+    for result in results:
+        par_ini = result.par_ini
+        assert par_ini is not None  # type guard
+        rows.append([par_ini[name].value for name in param_names])
+    return pd.DataFrame(rows, columns=param_names)
+
+
+#
 # Configuration and compatibility classes
 #
+
+
+#
+#
+@dataclass(frozen=True)
+class FitOutput:
+    """
+    Typed result of one ``fitlib.fit_wrapper`` optimization run.
+
+    Internal container replacing the historical raw five-element list
+    ``[par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]``. Stored on
+    ``mcp.Model.result`` and, per slice, in ``File.results_sbs``; the
+    authoritative persisted record remains ``SavedFitSlot``.
+
+    Attributes
+    ----------
+    par_ini : lmfit.Parameters or None
+        Initial parameter guess (deep copy, untouched by the fit). None
+        on the project-level joint-fit path, where per-file results are
+        projections of one joint optimization and no per-file initial
+        guess exists.
+    par_fin : lmfit.minimizer.MinimizerResult
+        Final fit result from ``lmfit.minimize`` (annotated as
+        ``TypedMinimizerResult`` for static attribute access). On the
+        project-level joint-fit path this is a minimal
+        ``MinimizerResult`` carrying only ``params`` / ``method`` /
+        ``nvarys``.
+    conf_ci : pd.DataFrame
+        Confidence intervals from ``lmfit.conf_interval`` (columns
+        ``['par[v]/sigma[>]', '-3.0', ..., 'best fit', ..., '+3.0']``).
+        Empty if CI was skipped or failed.
+    emcee_fin : lmfit.minimizer.MinimizerResult or None
+        MCMC sampling result from ``lmfit.emcee``. None if MCMC not used.
+    emcee_ci : pd.DataFrame
+        MCMC confidence intervals (quantiles of the flatchain, same
+        column structure as ``conf_ci``). Empty if MCMC not used.
+    """
+
+    par_ini: lmfit.Parameters | None
+    par_fin: TypedMinimizerResult
+    conf_ci: pd.DataFrame
+    emcee_fin: TypedMinimizerResult | None
+    emcee_ci: pd.DataFrame
 
 
 #
@@ -608,11 +804,11 @@ class MC:
 #
 @dataclass(frozen=True)
 class MCMCResult:
-    """Live MCMC outputs for a single fit (counterpart to the ``MC`` settings).
+    """MCMC outputs for a single fit (counterpart to the ``MC`` settings).
 
-    A read-only view over ``model.result`` (the raw ``lmfit.emcee`` result and
-    its quantile table), returned by ``File.get_mcmc``. Not persisted — see the
-    "results-data ownership boundary" TODO for the planned unified results API.
+    A read-only bundle built from the persisted ``SavedFitSlot.mcmc``
+    payload (schema 3), returned by ``FitResults.get_mcmc`` and the
+    ``File.get_mcmc`` sugar.
 
     Attributes
     ----------
@@ -622,13 +818,14 @@ class MCMCResult:
         nuisance row. Fixed parameters have no posterior and are excluded.
     flatchain : pandas.DataFrame
         Flattened MCMC chain, one column per sampled parameter.
-    acceptance_fraction : numpy.ndarray
-        Per-walker acceptance fraction (healthy range ≈ 0.2–0.5).
+    acceptance_fraction : numpy.ndarray | None
+        Per-walker acceptance fraction (healthy range ≈ 0.2–0.5). ``None``
+        for slots loaded from schema-2 archives, which did not store it.
     """
 
     table: pd.DataFrame
     flatchain: pd.DataFrame
-    acceptance_fraction: np.ndarray
+    acceptance_fraction: np.ndarray | None
 
 
 #

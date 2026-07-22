@@ -257,6 +257,101 @@ class TestBaselineSlot:
         )
         assert k == slot.history_key
 
+    #
+    def test_stages2_init_value_is_true_seed_not_stage1_output(self):
+        """Regression: lmfit resets init_value at the start of every
+        optimization stage, and fit_wrapper's stage 2 starts from stage
+        1's output — so a two-stage result's init_value would silently
+        become stage 1's output unless restore_true_init_values corrects
+        it before the slot is built. _setup_baseline_fit already uses
+        stages=2."""
+
+        truth_project = make_project(name="truth")
+        truth = _make_truth_file(truth_project)
+        data = simulate_noisy(truth.model_active, noise_level=0.01)
+
+        project = make_project(name="fit")
+        file = _make_fit_file(project, data, truth.energy, truth.time)
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+
+        model = next(m for m in file.models if m.name == "single_glp")
+        true_seed = {name: par.value for name, par in model.lmfit_pars.items()}
+        file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+
+        slot = project._fit_history[0]
+        persisted_init = dict(
+            zip(slot.params["name"], slot.params["init_value"], strict=True)
+        )
+        assert persisted_init.keys() == true_seed.keys()
+        for name, seed_value in true_seed.items():
+            assert persisted_init[name] == pytest.approx(seed_value)
+
+    #
+    def test_stages1_init_value_is_true_seed(self):
+        """stages=1 already had correct init_value (no intermediate stage to
+        taint it); confirm the added correction call doesn't change that."""
+
+        truth_project = make_project(name="truth")
+        truth = _make_truth_file(truth_project)
+        data = simulate_noisy(truth.model_active, noise_level=0.01)
+
+        project = make_project(name="fit")
+        file = _make_fit_file(project, data, truth.energy, truth.time)
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+
+        model = next(m for m in file.models if m.name == "single_glp")
+        true_seed = {name: par.value for name, par in model.lmfit_pars.items()}
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+
+        slot = project._fit_history[0]
+        persisted_init = dict(
+            zip(slot.params["name"], slot.params["init_value"], strict=True)
+        )
+        for name, seed_value in true_seed.items():
+            assert persisted_init[name] == pytest.approx(seed_value)
+
+    #
+    def test_stages2_fit_wrapper_result_and_report_show_true_seed(self, capsys):
+        """The fix lives in fitlib.fit_wrapper itself (not the slot
+        extractors), so it must be visible on two things the slot layer
+        doesn't touch: FitOutput.par_fin.params directly (any direct
+        consumer, not just code that passes through
+        _append_baseline_slot), and lmfit.report_fit's own printed
+        "(init = ...)" annotation for the local-optimization stage
+        (previously showed stage 1's output, contradicting the archive)."""
+
+        truth_project = make_project(name="truth")
+        truth = _make_truth_file(truth_project)
+        data = simulate_noisy(truth.model_active, noise_level=0.01)
+
+        project = make_project(name="fit", show_output=1)
+        file = _make_fit_file(project, data, truth.energy, truth.time)
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+
+        model = next(m for m in file.models if m.name == "single_glp")
+        true_seed = {name: par.value for name, par in model.lmfit_pars.items()}
+        capsys.readouterr()  # drop setup output
+        file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+        printed = capsys.readouterr().out
+
+        result = file.model_base.result
+        assert result is not None
+        for name, seed_value in true_seed.items():
+            assert result.par_fin.params[name].init_value == pytest.approx(seed_value)
+
+        # lmfit.report_fit's "(init = <value>)" for the *local optimization*
+        # stage must show the true seed, not stage 1's output. lmfit
+        # formats it with .7g (printfuncs.py:177).
+        local_section = printed.split("Results local optimization fit")[1]
+        for seed_value in true_seed.values():
+            assert f"(init = {seed_value:.7g})" in local_section
+
 
 #
 # --- spectrum slot extraction ------------------------------------------------
@@ -355,6 +450,59 @@ class TestSbSSlot:
         for k in ("chi2", "chi2_red", "r2", "aic", "bic"):
             assert isinstance(slot.metrics[k], np.ndarray)
             assert slot.metrics[k].shape == (len(file.time),)
+        # The slot-backed accessor serves the wide per-slice params frame.
+        sbs_df = file.get_fit_results(fit_type="sbs")
+        pd.testing.assert_frame_equal(sbs_df, slot.params)
+        assert len(sbs_df) == len(file.time)
+        # Shared per-parameter metadata, column-aligned with the wide frame.
+        assert slot.params_meta is not None  # type guard
+        assert list(slot.params_meta.columns) == ["name", "vary", "min", "max", "expr"]
+        assert list(slot.params_meta["name"]) == list(slot.params.columns)
+        assert bool(slot.params_meta["vary"].any())
+        # Per-slice stderr mirrors the wide params frame's shape.
+        assert slot.params_stderr is not None  # type guard
+        assert slot.params_stderr.shape == slot.params.shape
+        assert list(slot.params_stderr.columns) == list(slot.params.columns)
+        # Provenance records the SbS seeding recipe.
+        assert slot.fit_settings is not None  # type guard
+        assert slot.fit_settings["seed_source"] == "model"
+        assert slot.fit_settings["seed_adapt"] is None
+        assert slot.fit_settings["seed_values"] is None
+        assert slot.fit_settings["stages"] == 1
+
+    #
+    @pytest.mark.slow
+    def test_sbs_slot_records_explicit_dict_seed(self):
+        """Explicit dict seeds land in fit_settings as the normalized,
+        parameter-ordered float list (regression: the raw dict used to be
+        np.asarray()'d, which raised TypeError at slot capture)."""
+
+        truth_project = make_project(name="truth")
+        truth = _make_truth_file(truth_project)
+        data = simulate_clean(truth.model_active)
+
+        project = make_project(name="fit")
+        project.spec_fun_str = "fit_model_mcp"
+        file = _make_fit_file(project, data, truth.energy, truth.time)
+        model = file.model_active
+        seed_values = {
+            name: model.lmfit_pars[name].value for name in model.parameter_names
+        }
+        file.fit_slice_by_slice(
+            "single_glp",
+            n_workers=1,
+            seed_source="explicit",
+            seed_values=seed_values,
+            seed_adapt=None,
+            try_ci=0,
+        )
+
+        settings = project._fit_history[0].fit_settings
+        assert settings is not None  # type guard
+        assert settings["seed_source"] == "explicit"
+        assert settings["seed_values"] == [
+            float(seed_values[name]) for name in model.parameter_names
+        ]
 
     #
     @pytest.mark.slow
@@ -436,7 +584,7 @@ class TestTwoDSlot:
 
 #
 class TestMcmcPayload:
-    """fit_wrapper's emcee outputs (result[3]/[4]) flow into SavedFitSlot.mcmc.
+    """fit_wrapper's emcee outputs (emcee_fin/emcee_ci) flow into SavedFitSlot.mcmc.
 
     Without this wiring the slot's ``mcmc`` field stays None even when MCMC
     actually ran — see _mcmc_payload in utils/fit_io.py.
@@ -444,7 +592,7 @@ class TestMcmcPayload:
 
     #
     @pytest.mark.slow
-    def test_baseline_slot_captures_mcmc(self):
+    def test_baseline_slot_captures_mcmc(self, tmp_path):
         from trspecfit.utils.lmfit import MC
 
         truth_project = make_project(name="truth")
@@ -462,16 +610,202 @@ class TestMcmcPayload:
 
         slot = project._fit_history[0]
         assert slot.mcmc is not None
-        assert set(slot.mcmc.keys()) == {"flatchain", "ci", "lnsigma"}
+        assert set(slot.mcmc.keys()) == {
+            "flatchain",
+            "ci",
+            "lnsigma",
+            "acceptance_fraction",
+        }
         assert slot.mcmc["flatchain"] is not None
         assert slot.mcmc["ci"] is not None
         assert slot.mcmc["lnsigma"] is not None
+        # emcee's acceptance fraction is per-walker.
+        acceptance = slot.mcmc["acceptance_fraction"]
+        assert acceptance is not None  # type guard
+        assert acceptance.shape == (32,)
+        # MCMC settings land in the fit_settings provenance.
+        assert slot.fit_settings is not None  # type guard
+        assert slot.fit_settings["mc"]["steps"] == 20
+        assert slot.fit_settings["mc"]["nwalkers"] == 32
+        assert slot.fit_settings["mc"]["burn"] == 5
+
+        # acceptance_fraction survives the archive round-trip (schema 3).
+        archive_path = tmp_path / "mcmc.fit.h5"
+        project.save_fits(archive_path, show_output=0)
+        loaded_results = FitResults.load(archive_path)
+        loaded = next(iter(loaded_results))
+        assert loaded.mcmc is not None  # type guard
+        np.testing.assert_array_equal(loaded.mcmc["acceptance_fraction"], acceptance)
+
+        # ... and the slot-backed accessor serves it from the loaded archive.
+        mcmc_res = loaded_results.get_mcmc(file="fit", fit_type="baseline")
+        assert mcmc_res.acceptance_fraction is not None  # type guard
+        np.testing.assert_array_equal(mcmc_res.acceptance_fraction, acceptance)
+        assert not mcmc_res.table.empty
+        assert not mcmc_res.flatchain.empty
+
+        # plot_mcmc reproduces the fit-time diagnostics from the persisted
+        # payload — live history and loaded archive alike.
+        import matplotlib.pyplot as plt
+
+        n_figs = len(plt.get_fignums())
+        file.plot_mcmc(fit_type="baseline", show_plot=False)
+        loaded_results.plot_mcmc(file="fit", fit_type="baseline", show_plot=False)
+        assert len(plt.get_fignums()) == n_figs
 
     #
     def test_baseline_slot_mcmc_none_when_mcmc_skipped(self):
         project, _ = _setup_baseline_fit()  # try_ci=0, no MCMC
         slot = project._fit_history[0]
         assert slot.mcmc is None
+
+
+#
+# --- fit_settings provenance ---------------------------------------------------
+#
+
+
+#
+class TestFitSettingsProvenance:
+    """Every fit type records its optimizer configuration in the slot."""
+
+    #
+    def test_baseline_slot_records_fit_settings(self):
+        project, _ = _setup_baseline_fit()  # stages=2, try_ci=0
+        slot = project._fit_history[0]
+        assert slot.fit_settings == {
+            "stages": 2,
+            "fit_alg_1": "Nelder",
+            "fit_alg_2": "leastsq",
+            "try_ci": 0,
+        }
+        # Non-sbs slots carry no sbs-only payloads.
+        assert slot.params_meta is None
+        assert slot.params_stderr is None
+
+    #
+    def test_fit_settings_records_custom_algorithms(self):
+        truth_project = make_project(name="truth")
+        truth = _make_truth_file(truth_project)
+        data = simulate_noisy(truth.model_active, noise_level=0.01)
+        project = make_project(name="fit")
+        file = _make_fit_file(project, data, truth.energy, truth.time)
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+        file.fit_baseline(
+            model_name="single_glp", stages=1, fit_alg_1="leastsq", try_ci=0
+        )
+        settings = project._fit_history[0].fit_settings
+        assert settings is not None  # type guard
+        assert settings["fit_alg_1"] == "leastsq"
+        assert settings["stages"] == 1
+
+
+#
+# --- slot-backed get_* accessors ----------------------------------------------
+#
+
+
+#
+class TestSlotBackedAccessors:
+    """FitResults.get_fit_results / get_correlations / get_conf_intervals /
+    get_mcmc read the latest matching SavedFitSlot; the File.get_* methods
+    are thin sugar delegating with file=self."""
+
+    #
+    def test_file_sugar_matches_fitresults_accessor(self):
+        project, file = _setup_baseline_fit()
+        via_file = file.get_fit_results(fit_type="baseline")
+        via_results = project.results.get_fit_results(file=file, fit_type="baseline")
+        pd.testing.assert_frame_equal(via_file, via_results)
+        # ... and both match the slot payload.
+        pd.testing.assert_frame_equal(via_file, project._fit_history[0].params)
+
+    #
+    def test_returned_frame_is_a_copy(self):
+        """Accessors hand out copies — mutating the return value must not
+        desynchronize the persisted slot."""
+
+        project, file = _setup_baseline_fit()
+        df = file.get_fit_results(fit_type="baseline")
+        df.loc[0, "value"] = -999.0
+        assert project._fit_history[0].params.loc[0, "value"] != -999.0
+
+    #
+    def test_get_mcmc_payload_is_a_copy(self):
+        """get_mcmc must not alias the slot's stored arrays/frames —
+        np.asarray on an ndarray is a no-copy passthrough (regression)."""
+
+        import dataclasses
+
+        project, _ = _setup_baseline_fit()
+        payload = {
+            "flatchain": pd.DataFrame({"GLP_01_A": [1.0, 2.0]}),
+            "ci": pd.DataFrame({"par[v]/sigma[>]": ["GLP_01_A"], "best fit": [1.5]}),
+            "lnsigma": None,
+            "acceptance_fraction": np.array([0.3, 0.4]),
+        }
+        slot = dataclasses.replace(project._fit_history[0], mcmc=payload)
+        res = FitResults(slots=[slot]).get_mcmc(fit_type="baseline")
+
+        assert res.acceptance_fraction is not None  # type guard
+        res.acceptance_fraction[0] = -1.0
+        res.flatchain.loc[0, "GLP_01_A"] = -999.0
+        res.table.loc[0, "best fit"] = -999.0
+        np.testing.assert_array_equal(
+            payload["acceptance_fraction"], np.array([0.3, 0.4])
+        )
+        assert payload["flatchain"].loc[0, "GLP_01_A"] == 1.0
+        assert payload["ci"].loc[0, "best fit"] == 1.5
+
+    #
+    def test_latest_slot_wins_after_refit(self):
+        project, file = _setup_baseline_fit()
+        assert file.data_base is not None  # type guard
+        # Refit against rescaled data: same (file, model, fit_type, selection)
+        # → a second slot appends, and the accessors must serve the newer one.
+        file.data_base = file.data_base * 1.5
+        file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+        assert len(project._fit_history) == 2
+
+        df = file.get_fit_results(fit_type="baseline")
+        pd.testing.assert_frame_equal(df, project._fit_history[-1].params)
+        first_values = project._fit_history[0].params["value"].to_numpy()
+        assert not np.allclose(df["value"].to_numpy(), first_values)
+
+    #
+    def test_get_correlations_raises_without_covariance(self):
+        """A slot with correl=None (covariance-less optimizer, project joint
+        fit) must produce a clear error, not a fabricated identity matrix."""
+
+        import dataclasses
+
+        project, _ = _setup_baseline_fit()
+        slot = dataclasses.replace(project._fit_history[0], correl=None)
+        results = FitResults(slots=[slot])
+        with pytest.raises(ValueError, match="reported no covariance"):
+            results.get_correlations(fit_type="baseline")
+
+    #
+    def test_get_mcmc_tolerates_missing_acceptance(self):
+        """Slots loaded from schema-2 archives carry acceptance_fraction=None;
+        get_mcmc must still serve table/flatchain."""
+
+        import dataclasses
+
+        project, _ = _setup_baseline_fit()
+        v2_payload = {
+            "flatchain": pd.DataFrame({"GLP_01_A": [1.0, 2.0]}),
+            "ci": None,
+            "lnsigma": None,
+            "acceptance_fraction": None,
+        }
+        slot = dataclasses.replace(project._fit_history[0], mcmc=v2_payload)
+        res = FitResults(slots=[slot]).get_mcmc(fit_type="baseline")
+        assert res.acceptance_fraction is None
+        assert res.table.empty
+        assert list(res.flatchain.columns) == ["GLP_01_A"]
 
 
 #
@@ -1307,6 +1641,429 @@ class TestFitResultsCompareModelsSigmaColumns:
         assert df["chi2_red_raw"].iloc[0] == pytest.approx(per_slice_raw)
         # aggregate calibrated = per_slice_raw / σ²
         assert df["chi2_red"].iloc[0] == pytest.approx(per_slice_raw / sigma**2)
+
+
+#
+class TestPlotFitAPI:
+    """FitResults.plot_fit / plot_param_evolution and the File.* sugar."""
+
+    #
+    def test_plot_fit_1d_uses_real_axes_and_config(self):
+        import matplotlib.pyplot as plt
+
+        _, file = _setup_baseline_fit()
+        file.plot_fit(fit_type="baseline")  # show under Agg keeps the fig live
+        fig = plt.gcf()
+        try:
+            line_x = fig.axes[0].lines[0].get_xdata()
+            np.testing.assert_array_equal(line_x, np.asarray(file.energy))
+            assert fig.axes[1].get_xlabel() == file.plot_config.x_label
+        finally:
+            plt.close("all")
+
+    #
+    def test_plot_fit_2d_passes_real_axes(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from trspecfit import fitlib
+
+        mock_2d = MagicMock()
+        monkeypatch.setattr(fitlib, "plt_fit_res_2d", mock_2d)
+
+        project, file = _setup_baseline_fit()
+        file.add_time_dependence(
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml="models/file_time.yaml",
+            dynamics_model=["MonoExpPos"],
+        )
+        file.fit_2d("single_glp", stages=1, try_ci=0)
+        mock_2d.reset_mock()
+
+        project.results.plot_fit(file=file, fit_type="2d", show_plot=False)
+        assert mock_2d.call_count == 1
+        kwargs = mock_2d.call_args.kwargs
+        np.testing.assert_array_equal(kwargs["x"], np.asarray(file.energy))
+        np.testing.assert_array_equal(kwargs["y"], np.asarray(file.time))
+        assert kwargs["save_img"] == -2  # show_plot=False
+
+    #
+    def test_plot_fit_from_loaded_archive_has_axes(self, tmp_path):
+        import matplotlib.pyplot as plt
+
+        project, file = _setup_baseline_fit()
+        archive_path = tmp_path / "plot.fit.h5"
+        project.save_fits(archive_path, show_output=0)
+
+        loaded = FitResults.load(archive_path)
+        loaded.plot_fit(file=file.name, fit_type="baseline")
+        fig = plt.gcf()
+        try:
+            line_x = fig.axes[0].lines[0].get_xdata()
+            np.testing.assert_array_equal(line_x, np.asarray(file.energy))
+        finally:
+            plt.close("all")
+
+    #
+    def test_plot_fit_1d_renders_components_when_present(self):
+        """schema >= 4: components/component_names present -> one line +
+        one fill_between per component, plus the observed/fit lines."""
+
+        import dataclasses
+
+        import matplotlib.pyplot as plt
+
+        obs = np.array([1.0, 2.0, 3.0, 4.0])
+        comp_a = np.array([0.6, 1.2, 1.8, 2.4])
+        comp_b = np.array([0.4, 0.8, 1.2, 1.6])
+        slot = dataclasses.replace(
+            _slot_stub(),
+            observed=obs,
+            fit=comp_a + comp_b,
+            components=np.stack([comp_a, comp_b], axis=0),
+            component_names=["peak_a", "peak_b"],
+        )
+        fig = FitResults._plot_fit_1d(slot, energy=None, config=None, show_plot=False)
+        try:
+            ax_fit = fig.axes[0]
+            labels = [line.get_label() for line in ax_fit.lines]
+            assert "peak_a" in labels
+            assert "peak_b" in labels
+            assert "fit" in labels
+            assert "observed" in labels
+            # one fill_between per component
+            assert len(ax_fit.collections) == 2
+            fit_line = next(line for line in ax_fit.lines if line.get_label() == "fit")
+            np.testing.assert_array_equal(fit_line.get_ydata(), comp_a + comp_b)
+        finally:
+            plt.close(fig)
+
+    #
+    def test_plot_fit_1d_falls_back_to_lean_when_components_none(self):
+        """Older-schema slots (components=None) keep the sum-only rendering."""
+
+        import matplotlib.pyplot as plt
+
+        slot = _slot_stub()
+        assert slot.components is None
+        fig = FitResults._plot_fit_1d(slot, energy=None, config=None, show_plot=False)
+        try:
+            ax_fit = fig.axes[0]
+            labels = [line.get_label() for line in ax_fit.lines]
+            assert labels == ["observed", "fit"]
+            assert len(ax_fit.collections) == 0
+        finally:
+            plt.close(fig)
+
+    #
+    def test_plot_fit_1d_full_range_masks_outside_roi_and_draws_boundary(self):
+        """full_range overrides: NaN outside the ROI leaves a gap (never a
+        fabricated value); roi draws dashed boundary lines on both panels."""
+
+        import matplotlib.pyplot as plt
+
+        x = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+        obs_full = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        fit_full = np.array([np.nan, np.nan, 2.9, 3.9, np.nan, np.nan])
+        slot = _slot_stub()
+        fig = FitResults._plot_fit_1d(
+            slot,
+            energy=x,
+            config=None,
+            show_plot=False,
+            observed=obs_full,
+            fit=fit_full,
+            roi=[2, 4],
+        )
+        try:
+            ax_fit, ax_res = fig.axes
+            fit_line = next(line for line in ax_fit.lines if line.get_label() == "fit")
+            np.testing.assert_array_equal(fit_line.get_ydata(), fit_full)
+            # residual is NaN wherever fit is NaN (obs - NaN = NaN), no
+            # special-cased padding logic needed; residual is plotted first,
+            # before the boundary vlines
+            res_line = ax_res.lines[0]
+            np.testing.assert_array_equal(
+                np.isnan(res_line.get_ydata()), np.isnan(fit_full)
+            )
+            # dashed boundary lines at the ROI edges, on both panels
+            dashed_x = {
+                float(line.get_xdata()[0])
+                for line in ax_fit.lines
+                if line.get_linestyle() == "--"
+            }
+            assert dashed_x == {x[2], x[3]}
+        finally:
+            plt.close(fig)
+
+    #
+    def test_plot_fit_1d_full_range_defaults_match_cropped_view(self):
+        """Omitting the overrides (full_range=False path) renders exactly
+        the slot's own cropped arrays — unchanged from before full_range
+        existed."""
+
+        import dataclasses
+
+        import matplotlib.pyplot as plt
+
+        obs = np.array([1.0, 2.0, 3.0])
+        fit = np.array([1.1, 1.9, 3.2])
+        slot = dataclasses.replace(_slot_stub(), observed=obs, fit=fit)
+        fig = FitResults._plot_fit_1d(slot, energy=None, config=None, show_plot=False)
+        try:
+            ax_fit, ax_res = fig.axes
+            fit_line = next(line for line in ax_fit.lines if line.get_label() == "fit")
+            np.testing.assert_array_equal(fit_line.get_ydata(), fit)
+            assert not any(line.get_linestyle() == "--" for line in ax_fit.lines)
+        finally:
+            plt.close(fig)
+
+    #
+    def test_plot_fit_1d_renders_initial_guess_when_present_and_shown(self):
+        """fit_ini + show_init=True (default) -> dotted-gold "initial
+        guess" line, drawn alongside observed/fit."""
+
+        import dataclasses
+
+        import matplotlib.pyplot as plt
+
+        obs = np.array([1.0, 2.0, 3.0])
+        fit = np.array([1.1, 1.9, 3.2])
+        fit_ini = np.array([0.5, 1.0, 1.5])
+        slot = dataclasses.replace(_slot_stub(), observed=obs, fit=fit, fit_ini=fit_ini)
+        fig = FitResults._plot_fit_1d(slot, energy=None, config=None, show_plot=False)
+        try:
+            ax_fit = fig.axes[0]
+            labels = [line.get_label() for line in ax_fit.lines]
+            assert "initial guess" in labels
+            ini_line = next(
+                line for line in ax_fit.lines if line.get_label() == "initial guess"
+            )
+            np.testing.assert_array_equal(ini_line.get_ydata(), fit_ini)
+            assert ini_line.get_linestyle() == ":"
+            assert ini_line.get_color() == "#FFD700"
+        finally:
+            plt.close(fig)
+
+    #
+    def test_plot_fit_1d_omits_initial_guess_when_show_init_false(self):
+        """A persisted fit_ini is not drawn when show_init=False."""
+
+        import dataclasses
+
+        import matplotlib.pyplot as plt
+
+        slot = dataclasses.replace(_slot_stub(), fit_ini=np.array([0.5, 1.0, 1.5]))
+        fig = FitResults._plot_fit_1d(
+            slot, energy=None, config=None, show_plot=False, show_init=False
+        )
+        try:
+            labels = [line.get_label() for line in fig.axes[0].lines]
+            assert "initial guess" not in labels
+        finally:
+            plt.close(fig)
+
+    #
+    def test_plot_fit_1d_omits_initial_guess_when_absent(self):
+        """show_init=True (default) with no persisted fit_ini draws nothing
+        extra — schema < 6 slots keep the pre-schema-6 rendering."""
+
+        import matplotlib.pyplot as plt
+
+        slot = _slot_stub()
+        assert slot.fit_ini is None
+        fig = FitResults._plot_fit_1d(slot, energy=None, config=None, show_plot=False)
+        try:
+            labels = [line.get_label() for line in fig.axes[0].lines]
+            assert "initial guess" not in labels
+        finally:
+            plt.close(fig)
+
+    #
+    def test_plot_fit_1d_full_range_pads_fit_ini_with_nan(self):
+        """full_range mode: an explicit fit_ini override (NaN outside the
+        fit window, mirroring fit/components) renders with the same gaps."""
+
+        import matplotlib.pyplot as plt
+
+        x = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+        obs_full = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        fit_full = np.array([np.nan, np.nan, 2.9, 3.9, np.nan, np.nan])
+        fit_ini_full = np.array([np.nan, np.nan, 0.8, 1.6, np.nan, np.nan])
+        slot = _slot_stub()
+        fig = FitResults._plot_fit_1d(
+            slot,
+            energy=x,
+            config=None,
+            show_plot=False,
+            observed=obs_full,
+            fit=fit_full,
+            fit_ini=fit_ini_full,
+            roi=[2, 4],
+        )
+        try:
+            ax_fit = fig.axes[0]
+            ini_line = next(
+                line for line in ax_fit.lines if line.get_label() == "initial guess"
+            )
+            np.testing.assert_array_equal(ini_line.get_ydata(), fit_ini_full)
+        finally:
+            plt.close(fig)
+
+    #
+    @staticmethod
+    def _fake_sbs_results(*, vary=(True, False, True)):
+        """FitResults around a synthetic SbS slot (wide params + metadata)."""
+
+        import dataclasses
+
+        project, _ = _setup_baseline_fit()
+        wide = pd.DataFrame(
+            {
+                "A": [1.0, 2.0, 3.0],
+                "B": [4.0, 5.0, 6.0],
+                "C": [7.0, 8.0, 9.0],
+            }
+        )
+        meta = pd.DataFrame(
+            {
+                "name": ["A", "B", "C"],
+                "vary": list(vary),
+                "min": [0.0] * 3,
+                "max": [10.0] * 3,
+                "expr": [None] * 3,
+            }
+        )
+        fake = dataclasses.replace(
+            project._fit_history[0], fit_type="sbs", params=wide, params_meta=meta
+        )
+        return FitResults(slots=[fake])
+
+    #
+    def test_plot_param_evolution_defaults_to_varied(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from trspecfit import fitlib
+
+        mock_pars = MagicMock()
+        monkeypatch.setattr(fitlib, "plt_fit_res_pars", mock_pars)
+
+        results = self._fake_sbs_results(vary=(True, False, True))
+        results.plot_param_evolution(show_plot=False)
+        assert mock_pars.call_count == 1
+        kwargs = mock_pars.call_args.kwargs
+        assert list(kwargs["df"].columns) == ["A", "C"]  # varied only
+        # No axes provider on this FitResults -> index fallback.
+        np.testing.assert_array_equal(kwargs["x"], np.arange(3))
+
+    #
+    def test_plot_param_evolution_explicit_and_missing_params(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from trspecfit import fitlib
+
+        mock_pars = MagicMock()
+        monkeypatch.setattr(fitlib, "plt_fit_res_pars", mock_pars)
+
+        results = self._fake_sbs_results()
+        results.plot_param_evolution(params=["B"], show_plot=False)
+        assert list(mock_pars.call_args.kwargs["df"].columns) == ["B"]
+        with pytest.raises(KeyError, match="not in this SbS fit"):
+            results.plot_param_evolution(params=["nope"], show_plot=False)
+
+    #
+    def test_plot_param_evolution_all_fixed_plots_nothing(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from trspecfit import fitlib
+
+        mock_pars = MagicMock()
+        monkeypatch.setattr(fitlib, "plt_fit_res_pars", mock_pars)
+
+        results = self._fake_sbs_results(vary=(False, False, False))
+        results.plot_param_evolution(show_plot=False)
+        assert mock_pars.call_count == 0
+
+    #
+    def test_plot_residuals_uses_energy_axis_with_provider(self):
+        project, file = _setup_baseline_fit()
+        fig = project.results.plot_residuals(file=file.name, show_plot=False)
+        assert fig.axes[1].get_xlabel() == "energy"
+
+
+#
+class TestPlotMcmc:
+    """FitResults.plot_mcmc renders diagnostics from the slot's mcmc payload
+    (synthetic slots here; the live-fit + loaded-archive path is covered in
+    TestMcmcPayload)."""
+
+    #
+    @staticmethod
+    def _mcmc_results(*, with_acceptance=True):
+        import dataclasses
+
+        n = 40
+        flatchain = pd.DataFrame(
+            {
+                "GLP_01_A": np.linspace(0.9, 1.1, n),
+                "__lnsigma": np.linspace(-2.1, -1.9, n),
+            }
+        )
+        ci = pd.DataFrame(
+            {
+                "par[v]/sigma[>]": ["GLP_01_A", "__lnsigma"],
+                "-1.0": [0.95, -2.05],
+                "best fit": [1.0, -2.0],
+                "+1.0": [1.05, -1.95],
+            }
+        )
+        mcmc = {
+            "flatchain": flatchain,
+            "ci": ci,
+            "lnsigma": -2.0,
+            "acceptance_fraction": (np.full(8, 0.4) if with_acceptance else None),
+        }
+        return FitResults(slots=[dataclasses.replace(_slot_stub(), mcmc=mcmc)])
+
+    #
+    def test_renders_acceptance_and_corner(self):
+        import matplotlib.pyplot as plt
+
+        results = self._mcmc_results()
+        plt.close("all")
+        results.plot_mcmc(file="f1", fit_type="baseline")  # show under Agg
+        try:
+            assert len(plt.get_fignums()) == 2
+        finally:
+            plt.close("all")
+
+    #
+    def test_skips_acceptance_when_absent(self):
+        import matplotlib.pyplot as plt
+
+        # schema-2 archives did not store acceptance_fraction.
+        results = self._mcmc_results(with_acceptance=False)
+        plt.close("all")
+        results.plot_mcmc(file="f1", fit_type="baseline")
+        try:
+            assert len(plt.get_fignums()) == 1  # corner only
+        finally:
+            plt.close("all")
+
+    #
+    def test_show_plot_false_leaves_no_figures(self):
+        import matplotlib.pyplot as plt
+
+        results = self._mcmc_results()
+        n_figs = len(plt.get_fignums())
+        results.plot_mcmc(file="f1", fit_type="baseline", show_plot=False)
+        assert len(plt.get_fignums()) == n_figs
+
+    #
+    def test_raises_without_mcmc_payload(self):
+        results = FitResults(slots=[_slot_stub()])
+        with pytest.raises(ValueError, match="No MCMC results"):
+            results.plot_mcmc(file="f1", fit_type="baseline", show_plot=False)
 
 
 #
