@@ -847,6 +847,7 @@ class FitResults:
                 y_lim=t_lim,
                 config=cfg,
                 save_img=0 if show_plot else -2,
+                title=_slot_title(slot),
             )
             return
         self._plot_fit_1d(
