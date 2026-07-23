@@ -27,7 +27,6 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Any, cast
 
-import corner
 import lmfit
 import matplotlib.pyplot as plt
 import numpy as np
@@ -654,8 +653,12 @@ def fit_wrapper(
         Output mode:
 
         - 0: Silent / programmatic / API mode -- no prints
-        - 1: Interactive / notebook / UI mode -- show timing, fit results,
-          confidence intervals, and MCMC diagnostic figures
+        - 1: Interactive / notebook / UI mode -- print timing, fit
+          results, confidence intervals, and the MCMC report. Builds no
+          figures itself; callers that want the MCMC diagnostic plots
+          call ``FitResults.plot_mcmc()`` (each of
+          ``File.fit_baseline``/``fit_spectrum``/``fit_2d`` does so
+          right after appending the fit slot).
 
     Returns
     -------
@@ -737,8 +740,9 @@ def fit_wrapper(
     - Corner plot: Should show well-defined peaks
     - Chain length: Increase steps if distributions look noisy
 
-    Both figures are displayed when show_output=1 and can be reproduced
-    later from the persisted fit slot via FitResults.plot_mcmc().
+    fit_wrapper itself builds no figures for these -- call
+    FitResults.plot_mcmc() (or File.plot_mcmc()) to render them, from a
+    live session or a loaded archive alike.
 
     **Performance Tips:**
     - Use stages=1 for quick fits during model development
@@ -913,39 +917,17 @@ def fit_wrapper(
             "pd.DataFrame", getattr(emcee_fin, "flatchain", pd.DataFrame())
         )
         emcee_var_names = cast("list[str]", getattr(emcee_fin, "var_names", []))
-        emcee_acceptance_fraction = np.asarray(
-            getattr(emcee_fin, "acceptance_fraction", np.array([]))
-        )
         # lmfit.emcee() results
         if show_output >= 1:
             print("\nResults lmfit.emcee() confidence interval determination:")
             lmfit.report_fit(emcee_fin_params)
             t_emcee1 = time.time()
             print(f"Time lmfit.emcee: {t_emcee1 - t_emcee0} s")
-        # diagnostics figures are display-only (reproducible later from the
-        # persisted slot via FitResults.plot_mcmc); skip construction when
-        # silent
-        if show_output >= 1:
-            # acceptance fraction of all walkers (plot)
-            fig_emcee_walker, _ax = plt.subplots(1, 1, dpi=75)
-            plt.plot(emcee_acceptance_fraction, "o")
-            plt.xlabel("Walker number")
-            plt.ylabel("Acceptance fraction")
-            uplt._finalize_plot(0)
-            # draw all combinations of the typically ellipsoidal chi plot
-            # [<x=par1, y=par2, z=chi2> plot]
-            emcee_truths = [
-                emcee_fin_params.valuesdict().get(par_name)
-                for par_name in emcee_var_names
-            ]
-            fig_emcee_corner = plt.figure(figsize=(10, 10))
-            corner.corner(
-                emcee_flatchain,
-                labels=emcee_var_names,
-                truths=emcee_truths,
-                fig=fig_emcee_corner,
-            )
-            uplt._finalize_plot(0)
+            # Diagnostics figures (walker acceptance, corner plot) are no
+            # longer built here: fit_baseline/fit_spectrum/fit_2d each call
+            # self.plot_mcmc(...) after the slot is appended, the same single
+            # code path FitResults.plot_mcmc uses to re-render from a loaded
+            # archive -- one implementation instead of two that could drift.
         # get percentage borders to categorize emcee.flatchain data
         sigma_borders = sigma_start_stop_percent(ci_sigmas)
         # one row per sampled parameter (varying model params + the __lnsigma

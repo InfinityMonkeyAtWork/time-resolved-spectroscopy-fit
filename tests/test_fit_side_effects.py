@@ -266,8 +266,14 @@ class TestPlotHelperSkipped:
         must not be constructed at all.
         """
 
-        mock_corner = MagicMock()
-        monkeypatch.setattr(fitlib, "corner", mock_corner)
+        # Patches the real corner package directly: the walker/corner
+        # figures now render via FitResults.plot_mcmc (called post-slot
+        # from fit_baseline), which imports corner locally rather than via
+        # fitlib's module-level name.
+        import corner
+
+        mock_corner_fn = MagicMock()
+        monkeypatch.setattr(corner, "corner", mock_corner_fn)
 
         project, file = _baseline_setup(tmp_path, monkeypatch)
         mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1)
@@ -279,7 +285,7 @@ class TestPlotHelperSkipped:
         # deliberately tiny chain; only our banner is under test here
         assert "Progress of lmfit.emcee" not in capsys.readouterr().out
         assert len(plt.get_fignums()) == n_figs
-        assert mock_corner.corner.call_count == 0
+        assert mock_corner_fn.call_count == 0
         assert _list_files(tmp_path) == set()
 
     #

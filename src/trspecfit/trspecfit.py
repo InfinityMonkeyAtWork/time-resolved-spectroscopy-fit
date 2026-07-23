@@ -2695,6 +2695,8 @@ class File:
 
         if self.p.show_output >= 1:
             self.plot_fit(model=model_name, fit_type="baseline")
+            if fit_out.emcee_fin is not None:
+                self.plot_mcmc(model=model_name, fit_type="baseline")
 
         if stages >= 1 and self.p.show_output >= 1:
             fitlib.time_display(
@@ -2898,6 +2900,8 @@ class File:
 
         if show_plot and self.p.show_output >= 1:
             self.plot_fit(model=model_name, fit_type="spectrum")
+            if fit_out.emcee_fin is not None:
+                self.plot_mcmc(model=model_name, fit_type="spectrum")
 
         if stages >= 1 and self.p.show_output >= 1:
             fitlib.time_display(
@@ -4122,6 +4126,8 @@ class File:
         if stages >= 1:
             if self.p.show_output >= 1 and slot_2d is not None:
                 self.plot_fit(model=model_name, fit_type="2d")
+                if fit_out.emcee_fin is not None:
+                    self.plot_mcmc(model=model_name, fit_type="2d")
             if self.p.show_output >= 1:
                 fitlib.time_display(
                     t_start=t_2d, print_str="Time elapsed for 2D model fit: "
