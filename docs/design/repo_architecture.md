@@ -202,8 +202,11 @@ API — the figure a user sees is the one the API reproduces later.
 On-demand diagnostics replace the old fit-time file dumps:
 `FitResults.plot_mcmc` re-renders the emcee walker-acceptance and corner
 figures from the persisted payload (live or loaded archive);
-`File.plot_sbs_slices` renders per-slice fit panels from the live
-`results_sbs` state (live-session only). The pre-0.14 auto-export
+`FitResults.plot_sbs_slices` likewise renders per-slice fit panels from
+the persisted slot (`observed`/`fit`/`fit_ini`/`components`, schema 6+,
+optionally saved to one PNG per slice), with `File.plot_sbs_slices` as
+sugar — no live `Model`/`File` evaluation, matching `plot_fit`. The
+pre-0.14 auto-export
 machinery (`Project.auto_export`, `Project.path_results`,
 `File.model_path`, the legacy `save_sbs_fit` / `save_2d_fit` savers, and
 `fit_wrapper`'s CSV/TXT dump block) was removed.

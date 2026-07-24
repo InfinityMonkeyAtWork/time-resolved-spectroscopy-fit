@@ -195,9 +195,8 @@ class Project:
     Only specified settings need to be included; others use defaults.
 
     **File I/O Settings:**
-    Attributes ext, num_fmt, delim, da_fmt, and da_slices_fmt control file
-    export formats and can be customized per project via YAML or direct
-    attribute assignment.
+    Attributes num_fmt and delim control CSV export formats and can be
+    customized per project via YAML or direct attribute assignment.
     """
 
     #
@@ -268,11 +267,8 @@ class Project:
         self.y_norm = 0
         self.y_scale = None
         # File I/O settings
-        self.ext = ".dat"
         self.num_fmt = "%.6e"
         self.delim = ","
-        self.da_fmt = "%04d"
-        self.da_slices_fmt = "%06d"
         # Advanced settings
         self.spec_fun_str = "fit_model_gir"
         # Noise / sigma defaults — applied to every File at construction time.
@@ -769,11 +765,8 @@ class Project:
             print(f"    dpi_save:   {self.dpi_save}")
             print(f"    res_mult:   {self.res_mult}")
             print("\n  File I/O settings:")
-            print(f"    ext:        {self.ext}")
             print(f"    num_fmt:    {self.num_fmt}")
             print(f"    delim:      {repr(self.delim)}")
-            print(f"    da_fmt:     {self.da_fmt}")
-            print(f"    DA_slices:  {self.da_slices_fmt}")
 
     #
     def _load_config(self, config_file: PathLike) -> None:
@@ -816,6 +809,12 @@ class Project:
                         "the fit-time output tree is gone; save_fits()/"
                         "export_fits() take an explicit path (default "
                         "./fit_results/<name>/)"
+                    ),
+                    "ext": "unused, never wired to any export path; remove it",
+                    "da_fmt": "unused, never wired to any export path; remove it",
+                    "da_slices_fmt": (
+                        "SbS per-slice PNG filenames now use a fixed "
+                        "'{slice_index:06d}.png' convention; remove it"
                     ),
                 }
                 project_key = _key_map.get(normalized_key) or normalized_key
@@ -4414,38 +4413,34 @@ class File:
         *,
         model: str | None = None,
         slices: Sequence[int] | None = None,
-        show_init: bool = True,
+        show_init: bool | None = None,
         save_path: PathLike | None = None,
         show_plot: bool = True,
     ) -> None:
         """
         Plot per-slice fit panels for the most recent Slice-by-Slice fit.
 
-        Each panel shows the slice data, the per-slice seeded initial
-        guess, the final fit, and the component decomposition. Reads the
-        in-session fit state (``results_sbs``), which is richer than the
-        persisted slot but does not survive it: this diagnostic is
-        live-session only and raises on a File without a completed
-        ``fit_slice_by_slice`` run.
+        Sugar for ``self.p.results.plot_sbs_slices(file=self, ...)`` —
+        reads the persisted fit slot and uses this file's axes and
+        ``plot_config``. See :meth:`FitResults.plot_sbs_slices`.
 
         Parameters
         ----------
         model : str, optional
-            Guard against stale expectations: raises if the live SbS
-            results belong to a different model.
+            Restrict to a single model name.
         slices : sequence of int, optional
             Slice indices to render. Default: all slices.
-        show_init : bool, default True
-            Overlay the per-slice initial guess.
+        show_init : bool, optional
+            Overlay the per-slice initial guess. Default: ``config.show_init``.
         save_path : str or Path, optional
-            Directory to write one PNG per slice (named by
-            ``Project.da_slices_fmt``). Default ``None`` = display-only.
+            Directory to write one PNG per slice, named
+            ``{slice_index:06d}.png``. Default ``None`` = display-only.
         show_plot : bool, default True
             Set ``False`` to build without displaying.
         """
 
-        usbs.plot_sbs_slices(
-            self,
+        self.p.results.plot_sbs_slices(
+            file=self,
             model=model,
             slices=slices,
             show_init=show_init,

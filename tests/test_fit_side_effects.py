@@ -120,7 +120,9 @@ class TestRemovedConfigKeys:
     without a trace."""
 
     #
-    @pytest.mark.parametrize("key", ["auto_export", "path_results"])
+    @pytest.mark.parametrize(
+        "key", ["auto_export", "path_results", "ext", "da_fmt", "da_slices_fmt"]
+    )
     def test_removed_key_raises(self, tmp_path, key):
         (tmp_path / "project.yaml").write_text(f"{key}: false\n")
         with pytest.raises(ValueError, match=f"'{key}' was removed"):
@@ -438,9 +440,9 @@ class TestShowInitConfigResolution:
 
 #
 class TestPlotSbsSlices:
-    """File.plot_sbs_slices: on-demand per-slice diagnostics from the live
-    SbS fit state — display-only by default, PNGs only on explicit
-    ``save_path``."""
+    """File.plot_sbs_slices: on-demand per-slice diagnostics, sourced from
+    the persisted fit slot (sugar over ``FitResults.plot_sbs_slices``) —
+    display-only by default, PNGs only on explicit ``save_path``."""
 
     #
     def _sbs_fit(self, tmp_path, monkeypatch):
@@ -469,11 +471,55 @@ class TestPlotSbsSlices:
 
     #
     def test_save_path_writes_one_png_per_slice(self, tmp_path, monkeypatch):
-        project, file = self._sbs_fit(tmp_path, monkeypatch)
+        _, file = self._sbs_fit(tmp_path, monkeypatch)
         out = tmp_path / "slices"
         file.plot_sbs_slices(slices=[0, 2], save_path=out, show_plot=False)
-        expected = {str(project.da_slices_fmt % s) + ".png" for s in (0, 2)}
+        expected = {f"{s:06d}.png" for s in (0, 2)}
         assert {p.name for p in out.iterdir()} == expected
+
+    #
+    def test_archive_save_path_writes_one_png_per_slice(self, tmp_path, monkeypatch):
+        """Archive-portable counterpart: no live File involved at all.
+
+        This is the capability the FitResults/File.plot_sbs_slices split
+        was built for — a loaded archive must be able to write the same
+        per-slice PNGs a live session can, with the same fixed naming.
+        """
+
+        project, file = self._sbs_fit(tmp_path, monkeypatch)
+        archive_path = tmp_path / "sbs.fit.h5"
+        project.save_fits(archive_path, show_output=0)
+
+        loaded = FitResults.load(archive_path)
+        out = tmp_path / "archive_slices"
+        loaded.plot_sbs_slices(
+            model="single_glp", slices=[0, 2], save_path=out, show_plot=False
+        )
+        expected = {f"{s:06d}.png" for s in (0, 2)}
+        assert {p.name for p in out.iterdir()} == expected
+
+    #
+    def test_save_path_honors_configured_dpi(self, tmp_path, monkeypatch):
+        """Saved SbS slice PNGs must scale with ``config.dpi_save``, matching
+        the retired live path's behavior (``fitlib.plt_fit_res_1d`` read
+        ``config.dpi_save``) — a regression risk once saving became a
+        feature of the array-based ``plot_fit_panel_1d`` utility.
+        """
+
+        import matplotlib.image as mpimg
+
+        from trspecfit.config.plot import PlotConfig
+
+        _, file = self._sbs_fit(tmp_path, monkeypatch)
+        low = tmp_path / "low"
+        high = tmp_path / "high"
+        file.plot_config = PlotConfig(dpi_save=100)
+        file.plot_sbs_slices(slices=[0], save_path=low, show_plot=False)
+        file.plot_config = PlotConfig(dpi_save=400)
+        file.plot_sbs_slices(slices=[0], save_path=high, show_plot=False)
+        low_img = mpimg.imread(low / "000000.png")
+        high_img = mpimg.imread(high / "000000.png")
+        assert high_img.shape[0] > low_img.shape[0] * 2
 
     #
     def test_does_not_mutate_model_params(self, tmp_path, monkeypatch):
@@ -501,7 +547,7 @@ class TestPlotSbsSlices:
     #
     def test_raises_on_model_mismatch(self, tmp_path, monkeypatch):
         _, file = self._sbs_fit(tmp_path, monkeypatch)
-        with pytest.raises(ValueError, match="most recent"):
+        with pytest.raises(ValueError, match="No sbs fit results"):
             file.plot_sbs_slices(model="other_model", show_plot=False)
 
     #
@@ -509,6 +555,37 @@ class TestPlotSbsSlices:
         _, file = self._sbs_fit(tmp_path, monkeypatch)
         with pytest.raises(ValueError, match="out of range"):
             file.plot_sbs_slices(slices=[9999], show_plot=False)
+
+    #
+    def test_older_sbs_fit_retrievable_by_model_name(self, tmp_path, monkeypatch):
+        """Deliberate improvement over the retired live-only path: today's
+        (soon-to-be-former) live implementation could only ever see the
+        single most recent ``results_sbs``/``model_sbs`` and raised on any
+        other model name. Routing through ``FitResults._latest_slot``
+        scans the full fit history instead, so an older SbS fit stays
+        retrievable by name after a newer one has run.
+        """
+
+        project, file = self._sbs_fit(tmp_path, monkeypatch)
+        file.load_model(model_yaml="models/file_energy.yaml", model_info="single_gauss")
+        file.fit_baseline(model_name="single_gauss", stages=1, try_ci=0)
+        file.fit_slice_by_slice(
+            "single_gauss",
+            n_workers=1,
+            seed_source="model",
+            seed_adapt=None,
+            try_ci=0,
+        )
+
+        plt.close("all")
+        try:
+            file.plot_sbs_slices(model="single_glp", slices=[0], show_plot=False)
+            slot = project.results.get(
+                file=file.name, model="single_glp", fit_type="sbs"
+            )
+            assert slot.model_name == "single_glp"
+        finally:
+            plt.close("all")
 
 
 #

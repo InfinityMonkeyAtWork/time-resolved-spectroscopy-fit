@@ -7,12 +7,14 @@ worker to install a shared model and dispatch args as worker-local
 globals, and ``sbs_fit_one_slice`` consumes them to fit a single slice.
 
 The module also exposes the seed-handling helpers used in the serial
-path (``extract_sbs_seed_template``, ``prepare_sbs_model_for_slice``).
+path (``extract_sbs_seed_template``, ``prepare_sbs_model_for_slice``) and
+the per-slice plot bookkeeping shared by ``File.plot_sbs_slices`` and
+``FitResults.plot_sbs_slices`` (``resolve_sbs_slice_indices``,
+``sbs_slice_title``).
 """
 
 from __future__ import annotations
 
-import pathlib
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -21,11 +23,9 @@ import pandas as pd
 
 from trspecfit import fitlib
 from trspecfit.utils import lmfit as ulmfit
-from trspecfit.utils import plot as uplt
 
 if TYPE_CHECKING:
     from trspecfit import mcp
-    from trspecfit.trspecfit import File
 
 # These globals are populated only inside ProcessPoolExecutor worker
 # processes by ``sbs_worker_init``. They let workers reuse a single
@@ -70,6 +70,36 @@ def extract_sbs_seed_template(
             f"Expected {len(parameter_names)} values, got {len(out)}."
         )
     return out
+
+
+#
+def resolve_sbs_slice_indices(n_slices: int, slices: Sequence[int] | None) -> list[int]:
+    """Normalize a ``plot_sbs_slices(slices=...)`` argument to concrete indices.
+
+    ``None`` means all slices, ``[0, n_slices)``. Raises ``ValueError``
+    listing every out-of-range index at once (not just the first).
+    """
+
+    if slices is None:
+        return list(range(n_slices))
+    slice_indices = [int(s) for s in slices]
+    bad = [s for s in slice_indices if not 0 <= s < n_slices]
+    if bad:
+        raise ValueError(f"Slice indices out of range [0, {n_slices}): {bad}")
+    return slice_indices
+
+
+#
+def sbs_slice_title(
+    base_title: str, s_i: int, time: np.ndarray | None, n_slices: int
+) -> str:
+    """Per-slice panel title: ``base_title`` plus the slice index and,
+    when a matching time axis is available, its time value.
+    """
+
+    if time is not None and time.shape[0] == n_slices:
+        return f"{base_title} — slice {s_i} (t = {time[s_i]:.4g})"
+    return f"{base_title} — slice {s_i}"
 
 
 #
@@ -196,98 +226,3 @@ def sbs_fit_one_slice(
     )
 
     return s_i, result_sbs
-
-
-#
-def plot_sbs_slices(
-    file: File,
-    *,
-    model: str | None = None,
-    slices: Sequence[int] | None = None,
-    show_init: bool = True,
-    save_path: str | pathlib.Path | None = None,
-    show_plot: bool = True,
-) -> None:
-    """Render per-slice fit panels for the most recent Slice-by-Slice fit.
-
-    Live-session diagnostic behind ``File.plot_sbs_slices``: each panel
-    shows the slice data, the per-slice seeded initial guess, the final
-    fit, and the component decomposition via ``fitlib.plt_fit_res_1d``.
-    Reads the in-session ``file.results_sbs`` (per-slice ``par_ini`` and
-    final parameters are not persisted in fit slots), so it is not
-    available on archives loaded via ``FitResults.load``.
-
-    ``save_path=None`` means display-only; pass a directory to also write
-    one PNG per slice (named by ``Project.da_slices_fmt``).
-    """
-
-    results_sbs = getattr(file, "results_sbs", None)
-    model_sbs = file.model_sbs
-    if not results_sbs or model_sbs is None:
-        raise ValueError(
-            "No live SbS results on this File. plot_sbs_slices() renders "
-            "per-slice diagnostics from the in-session fit state — run "
-            "fit_slice_by_slice() first (not available from loaded archives)."
-        )
-    if model is not None and model != model_sbs.name:
-        raise ValueError(
-            f'Live SbS results are for model "{model_sbs.name}", not '
-            f'"{model}". Only the most recent fit_slice_by_slice() run is '
-            "available; re-run it with the requested model."
-        )
-    assert file.data is not None and file.energy is not None  # type guard
-
-    n_slices = len(results_sbs)
-    if slices is None:
-        slice_indices = list(range(n_slices))
-    else:
-        slice_indices = [int(s) for s in slices]
-        bad = [s for s in slice_indices if not 0 <= s < n_slices]
-        if bad:
-            raise ValueError(f"Slice indices out of range [0, {n_slices}): {bad}")
-
-    save = save_path is not None
-    if not save and not show_plot:
-        return
-
-    legend = [comp.name for comp in model_sbs.components]
-    # rendering on the mcp path evaluates through the live model and
-    # writes the plotted per-slice values into model_sbs.lmfit_pars
-    # (spectra.fit_model_mcp) — snapshot and restore so a diagnostic
-    # never leaks into later seed_source="model" runs or inspection
-    saved_par_values = ulmfit.par_extract(model_sbs.lmfit_pars, return_type="list")
-    try:
-        for s_i in slice_indices:
-            result_slice = results_sbs[s_i]
-            if file.time is not None:
-                title = f"{file.name} — slice {s_i} (t = {file.time[s_i]:.4g})"
-            else:
-                title = f"{file.name} — slice {s_i}"
-            img_path: str | pathlib.Path
-            if save:
-                assert save_path is not None  # type guard
-                save_img = uplt._save_img_flag(save=True, show=show_plot)
-                img_path = pathlib.Path(save_path) / (
-                    str(file.p.da_slices_fmt % s_i) + ".png"
-                )
-            else:
-                save_img = 0
-                img_path = ""
-            fitlib.plt_fit_res_1d(
-                x=file.energy,
-                y=file.data[s_i],
-                fit_fun_str=file.p.spec_fun_str,
-                par_ini=result_slice.par_ini,
-                par_fin=result_slice.par_fin,
-                args=model_sbs.args,
-                plot_sum=False,
-                show_init=show_init,
-                title=title,
-                fit_lim=file.e_lim,
-                config=file.plot_config,
-                legend=legend,
-                save_img=save_img,
-                save_path=img_path,
-            )
-    finally:
-        model_sbs.update_value(new_par_values=saved_par_values, par_select="all")

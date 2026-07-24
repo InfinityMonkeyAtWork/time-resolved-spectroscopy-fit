@@ -801,6 +801,102 @@ def plot_1d(
 
 
 #
+def plot_fit_panel_1d(
+    *,
+    x: NDArray[Any],
+    observed: NDArray[Any],
+    fit: NDArray[Any],
+    components: NDArray[Any] | None = None,
+    component_names: Sequence[str] | None = None,
+    fit_ini: NDArray[Any] | None = None,
+    show_init: bool = True,
+    roi: list[int] | None = None,
+    title: str = "",
+    x_label: str = "energy",
+    x_dir: str = "def",
+    show_plot: bool = True,
+    save_path: PathLike | None = None,
+    dpi_save: int = 300,
+) -> Any:
+    """
+    Observed + fit (with components, when given) over a residual panel.
+
+    Array-in/figure-out renderer for a single persisted (or live-derived)
+    1D fit result — used both for a whole baseline/spectrum/2d fit and for
+    one Slice-by-Slice slice. ``components`` (shape
+    ``(n_components, x.size)``) draws the per-component decomposition
+    plus a black sum line; without it, ``fit`` is drawn alone. ``fit_ini``
+    draws the dotted-gold initial-guess overlay when ``show_init``. ``roi``
+    draws dashed boundary lines at the given ``[start, stop)`` index
+    window (for full-range reconstructions where ``x`` spans more than
+    the fit window). NaN entries in any array leave a gap rather than a
+    fabricated value.
+
+    Returns the built ``Figure`` regardless of ``show_plot``/``save_path``
+    — callers that only display or save still get it back (e.g. for
+    direct test inspection after a suppressed/closed display).
+    """
+
+    obs = np.asarray(observed).ravel()
+    fit_arr = np.asarray(fit).ravel()
+    fig, (ax_fit, ax_res) = plt.subplots(
+        2,
+        1,
+        sharex=True,
+        figsize=(6.0, 5.0),
+        height_ratios=[3, 1],
+    )
+    ax_fit.plot(x, obs, "k.", ms=3, label="observed")
+    if show_init and fit_ini is not None:
+        ax_fit.plot(
+            x,
+            np.asarray(fit_ini).ravel(),
+            color="#FFD700",
+            linestyle=":",
+            linewidth=2,
+            label="initial guess",
+        )
+    if components is not None:
+        colors = list(
+            plt.rcParams["axes.prop_cycle"].by_key().get("color", ["#1f77b4"])
+        )
+        names = component_names or [
+            f"component {i}" for i in range(components.shape[0])
+        ]
+        for p, (peak, name) in enumerate(zip(components, names, strict=True)):
+            color = colors[p % len(colors)]
+            ax_fit.plot(x, peak, color=color, linestyle="-", linewidth=2, label=name)
+            ax_fit.fill_between(x, 0, peak, facecolor=color, alpha=0.5)
+        ax_fit.plot(x, fit_arr, "-", lw=1.5, color="#000000", label="fit")
+    else:
+        ax_fit.plot(x, fit_arr, "-", lw=1.5, label="fit")
+    ax_fit.set_ylabel("intensity")
+    ax_fit.legend(fontsize="small")
+    ax_fit.set_title(title)
+    ax_res.plot(x, obs - fit_arr, "-", lw=1.0)
+    ax_res.axhline(0, color="gray", lw=0.5)
+    ax_res.set_xlabel(x_label)
+    ax_res.set_ylabel("residual")
+    if roi is not None and len(roi) == 2 and x.size:
+        x_start = x[roi[0]]
+        x_end = x[roi[1] - 1] if roi[1] > 0 else x[-1]
+        for ax in (ax_fit, ax_res):
+            ax.axvline(x_start, color="#A9A9A9", linestyle="--")
+            ax.axvline(x_end, color="#A9A9A9", linestyle="--")
+    if x_dir == "rev":
+        ax_res.invert_xaxis()
+    fig.tight_layout()
+
+    save_img = (
+        -2
+        if save_path is None and not show_plot
+        else _save_img_flag(save=save_path is not None, show=show_plot)
+    )
+    _finalize_plot(save_img, save_path or "", dpi_save)
+    return fig
+
+
+#
 def _apply_axis_settings(
     ax: matplotlib.axes.Axes,
     x_type: str | None = None,

@@ -28,7 +28,6 @@ import hashlib
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from os import PathLike
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -43,6 +42,7 @@ from trspecfit.fitlib import (
 )
 from trspecfit.utils.hdf5 import require_dataset, require_group
 
+PathLike = str | Path
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
 SCHEMA_VERSION = "6"
 # Schema 3 is additive over 2 (slot `correl` dataset, mcmc

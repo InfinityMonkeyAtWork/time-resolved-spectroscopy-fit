@@ -20,8 +20,8 @@ fit_type + selection_json. Name-based query inputs (``file=...``,
 
 from __future__ import annotations
 
+import pathlib
 from collections.abc import Iterator, Sequence
-from os import PathLike
 from typing import Any, Literal, cast
 
 import numpy as np
@@ -32,6 +32,7 @@ from trspecfit.utils.arrays import resolve_time_selection
 from trspecfit.utils.fit_io import SavedFile, SavedFitSlot, read_archive
 from trspecfit.utils.lmfit import MCMCResult
 
+PathLike = str | pathlib.Path
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
 SbsAggregation = Literal["median", "mean", "sum", "long"]
 
@@ -877,6 +878,8 @@ class FitResults:
         roi: list[int] | None = None,
         fit_ini: np.ndarray | None = None,
         show_init: bool = True,
+        title: str | None = None,
+        save_path: str | pathlib.Path | None = None,
     ) -> Any:
         """
         Observed + fit (with components, when persisted) over a residual panel.
@@ -884,13 +887,18 @@ class FitResults:
         ``observed``/``fit``/``components`` default to the slot's own
         (cropped) arrays; pass overrides to render a full-range
         reconstruction instead (see ``FitResults.plot_fit``'s
-        ``full_range``). ``roi`` draws dashed boundary lines at the given
-        ``[start, stop)`` index window (full-range mode only). ``fit_ini``
-        (default: the slot's own, when ``show_init`` and persisted) draws
-        the dotted-gold initial-guess overlay.
+        ``full_range``), or a single SbS slice (see
+        ``FitResults.plot_sbs_slices``). ``roi`` draws dashed boundary
+        lines at the given ``[start, stop)`` index window (full-range
+        mode only). ``fit_ini`` (default: the slot's own, when
+        ``show_init`` and persisted) draws the dotted-gold initial-guess
+        overlay. ``title`` overrides the default ``_slot_title(slot)``.
+        ``save_path`` writes a PNG in addition to (or instead of, per
+        ``show_plot``) displaying. Thin wrapper: resolves slot defaults,
+        then renders via ``utils.plot.plot_fit_panel_1d``.
         """
 
-        import matplotlib.pyplot as plt
+        from trspecfit.utils import plot as uplt
 
         obs = np.asarray(observed if observed is not None else slot.observed).ravel()
         fit_arr = np.asarray(fit if fit is not None else slot.fit).ravel()
@@ -902,66 +910,110 @@ class FitResults:
         else:
             x = np.arange(obs.size)
             x_label = "index"
-        fig, (ax_fit, ax_res) = plt.subplots(
-            2,
-            1,
-            sharex=True,
-            figsize=(6.0, 5.0),
-            height_ratios=[3, 1],
+        return uplt.plot_fit_panel_1d(
+            x=x,
+            observed=obs,
+            fit=fit_arr,
+            components=comps,
+            component_names=slot.component_names,
+            fit_ini=ini,
+            show_init=show_init,
+            roi=roi,
+            title=title if title is not None else _slot_title(slot),
+            x_label=x_label,
+            x_dir=getattr(config, "x_dir", "def"),
+            show_plot=show_plot,
+            save_path=save_path,
+            dpi_save=getattr(config, "dpi_save", 300),
         )
-        ax_fit.plot(x, obs, "k.", ms=3, label="observed")
-        if show_init and ini is not None:
-            # NaN entries (full-range mode, outside the fit window) leave a
-            # gap rather than a fabricated value, matching fit/components.
-            ax_fit.plot(
-                x,
-                np.asarray(ini).ravel(),
-                color="#FFD700",
-                linestyle=":",
-                linewidth=2,
-                label="initial guess",
+
+    #
+    def plot_sbs_slices(
+        self,
+        *,
+        file: Any = None,
+        model: str | None = None,
+        slices: Sequence[int] | None = None,
+        config: Any = None,
+        show_init: bool | None = None,
+        save_path: str | pathlib.Path | None = None,
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Plot per-slice fit panels for the latest matching Slice-by-Slice fit.
+
+        Archive-portable counterpart to the live ``File.plot_sbs_slices``:
+        each panel shows the slice's observed data, seeded initial guess,
+        final fit, and component decomposition, sourced entirely from the
+        persisted slot (``SavedFitSlot.observed``/``fit``/``fit_ini``/
+        ``components``, schema 6+) — no live ``Model``/``File`` is
+        evaluated, so this works identically on ``Project.results`` and on
+        archives loaded via :meth:`FitResults.load`.
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file (name string or object with ``.name``).
+        model : str, optional
+            Filter to a single model name.
+        slices : sequence of int, optional
+            Slice indices to render. Default: all slices.
+        config : PlotConfig, optional
+            Styling override. Default: the live file's ``plot_config``
+            when available, else ``PlotConfig()``.
+        show_init : bool, optional
+            Draw the dotted-gold initial-guess overlay when the slot has
+            a persisted ``fit_ini`` (schema 6+; older archives silently
+            skip it). Default: ``config.show_init``.
+        save_path : str or Path, optional
+            Directory to write one PNG per slice, named ``{slice_index:06d}.png``
+            (fixed convention — no configurable format). Default ``None``
+            = display-only.
+        show_plot : bool, default True
+            Set ``False`` to build without displaying (tests / batch use).
+
+        Raises
+        ------
+        ValueError
+            If no matching SbS fit has been performed (or loaded) yet, or
+            ``slices`` contains an out-of-range index.
+        """
+
+        from trspecfit.utils import sbs as usbs
+
+        slot = self._latest_slot(file=file, model=model, fit_type="sbs")
+        cfg = self._config_for(slot, config)
+        if show_init is None:
+            show_init = bool(getattr(cfg, "show_init", False))
+        observed = np.asarray(slot.observed)
+        fit_arr = np.asarray(slot.fit)
+        fit_ini = slot.fit_ini
+        components = slot.components
+        n_slices = observed.shape[0]
+        slice_indices = usbs.resolve_sbs_slice_indices(n_slices, slices)
+
+        energy, time = self._axes_for(slot)
+        base_title = _slot_title(slot)
+        for s_i in slice_indices:
+            title = usbs.sbs_slice_title(base_title, s_i, time, n_slices)
+            slice_save_path = (
+                pathlib.Path(save_path) / f"{s_i:06d}.png"
+                if save_path is not None
+                else None
             )
-        if comps is not None:
-            # schema >= 4: render the persisted per-component decomposition,
-            # matching fitlib.plt_fit_res_1d's live visual style. NaN
-            # entries (full-range mode, outside the fit window) leave a
-            # gap rather than a fabricated value.
-            colors = list(
-                plt.rcParams["axes.prop_cycle"].by_key().get("color", ["#1f77b4"])
+            self._plot_fit_1d(
+                slot,
+                energy=energy,
+                config=cfg,
+                show_plot=show_plot,
+                observed=observed[s_i],
+                fit=fit_arr[s_i],
+                components=components[s_i] if components is not None else None,
+                fit_ini=fit_ini[s_i] if fit_ini is not None else None,
+                show_init=show_init,
+                title=title,
+                save_path=slice_save_path,
             )
-            names = slot.component_names or [
-                f"component {i}" for i in range(comps.shape[0])
-            ]
-            for p, (peak, name) in enumerate(zip(comps, names, strict=True)):
-                color = colors[p % len(colors)]
-                ax_fit.plot(
-                    x, peak, color=color, linestyle="-", linewidth=2, label=name
-                )
-                ax_fit.fill_between(x, 0, peak, facecolor=color, alpha=0.5)
-            ax_fit.plot(x, fit_arr, "-", lw=1.5, color="#000000", label="fit")
-        else:
-            ax_fit.plot(x, fit_arr, "-", lw=1.5, label="fit")
-        ax_fit.set_ylabel("intensity")
-        ax_fit.legend(fontsize="small")
-        ax_fit.set_title(_slot_title(slot))
-        ax_res.plot(x, obs - fit_arr, "-", lw=1.0)
-        ax_res.axhline(0, color="gray", lw=0.5)
-        ax_res.set_xlabel(x_label)
-        ax_res.set_ylabel("residual")
-        if roi is not None and len(roi) == 2 and x.size:
-            x_start = x[roi[0]]
-            x_end = x[roi[1] - 1] if roi[1] > 0 else x[-1]
-            for ax in (ax_fit, ax_res):
-                ax.axvline(x_start, color="#A9A9A9", linestyle="--")
-                ax.axvline(x_end, color="#A9A9A9", linestyle="--")
-        if getattr(config, "x_dir", "def") == "rev":
-            ax_res.invert_xaxis()
-        fig.tight_layout()
-        if show_plot:
-            plt.show()
-        else:
-            plt.close(fig)
-        return fig
 
     #
     def plot_mcmc(
