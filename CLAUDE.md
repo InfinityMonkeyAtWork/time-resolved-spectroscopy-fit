@@ -23,6 +23,7 @@
   - **Authoring / User-facing layer** (`mcp.py`, `trspecfit.py`, `simulator.py`, and YAML parsing in `utils/parsing.py`): Optimize for readability, human-usability, validation, and clear errors. Performance is not prioritized here.
   - **Compiled Hot-Path layer** (`graph_ir.py`, `eval_1d.py`, `eval_2d.py`, and numeric bodies in `functions/`): Performance-critical and array-oriented. Avoid Python objects and model-structure branching in inner loops.
 - **Bridge & Logic:** `spectra.py` bridges fitting to the compiled evaluator. `fitlib.py` drives `lmfit`, CI, MCMC, and fit-result plotting.
+- **Fit-to-Slot Boundary:** Slot construction never reimplements evaluation, fit-window slicing, parameter projection, or metric calculation—reuse the canonical helpers. Copy optimizer-owned output; never reconstruct it from live model state. See `docs/design/repo_architecture.md`.
 - **Registries:** Check `config/`, `functions/`, and `utils/` for shared registries and helpers before adding new ones.
 - **Source of Truth:** Treat `docs/design/supported_models.md` as the source of truth for supported model combinations, expressions, and compositions.
 - **Module Map:** Full reference at `docs/design/repo_architecture.md`.

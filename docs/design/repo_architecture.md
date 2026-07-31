@@ -135,8 +135,11 @@ results-ownership contract: everything a user asks about a completed fit
 is answered from slots, never from live `Model.result`. Two construction
 paths: `FitResults.load(path)` for loaded archives and the
 `Project.results` property for in-session work; both also attach
-fingerprint-matched axes providers (`SavedFile`s / live `File`s) so plots
-carry real energy/time axes. A `FitResults` is frozen at construction
+fingerprint-matched presentation providers (`SavedFile`s / live `File`s)
+supplying energy/time axes and full uncropped data; live `File` providers
+also supply `plot_config` styling when available. Without a provider,
+plotting falls back to the slot's cropped data, index axes, and default
+styling; result access remains available. A `FitResults` is frozen at construction
 (the underlying slot list is copied), so `r1 = p.results;
 <run another fit>; r2 = p.results` gives two distinct snapshots — `r1`
 does not see the new slot. Query API: `find` / `get` / `files` /
@@ -176,6 +179,25 @@ fit_slice_by_slice / fit_2d  ────► result ───►  _slot_from_<fi
 HDF5 archive ────► reader ────► FitResults (FitResults.load / Project.load_fits)
                                 Independent of _fit_history; never merged in.
 ```
+
+### The fit-to-slot capture boundary
+
+A slot-specific evaluator, fit-window slicer, parameter projector, or metric
+implementation is never acceptable. Slot construction reuses the canonical
+helpers used by fitting.
+
+The `_slot_from_<fit_type>` call is the capture point. Every argument crossing
+that boundary must already be resolved from live `File` and `Model` state, and
+the constructed `SavedFitSlot` owns its required copies. Nothing downstream
+may consult live state to complete a slot's fit payload. `FitResults` may
+consult an attached provider for presentation context—axes, full-range data,
+and live styling—which is not slot state.
+
+| Category | Slot rule |
+|---|---|
+| Optimizer-owned output | Copy exactly from the optimizer output; never reconstruct it from live model state. |
+| File/model metadata | Copy at the capture point through one shared helper. |
+| Derived arrays and metrics | Materialize only through the canonical helpers shared with fitting. |
 
 **Two different I/O directions, two different surfaces:**
 
