@@ -4,7 +4,7 @@ orphan: true
 
 # First-class joint fit results
 
-Status: **decisions settled.** Branch `joint-fit-result`.
+Status: **implemented** on branch `joint-fit-result` (companion #3 remains open).
 
 This records the semantic and public-API decisions behind the in-memory result
 of `Project.fit_2d`; mechanisms belong in code and exact assertions in tests.
@@ -195,7 +195,7 @@ atomicity guarantee above covers publication only.
 ## Companion changes
 
 Each is broken on `main` today, independent of joint results, and gets its own
-commit:
+commit. #1, #2, #4, and #5 landed with this branch; #3 remains open:
 
 1. Joint projections carry meaningless `aic`/`bic`/`chi2_red*`, because the
    per-file `MinimizerResult` carries the joint `nvarys`

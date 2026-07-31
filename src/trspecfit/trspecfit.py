@@ -211,10 +211,13 @@ class Project:
 
         self._config_file: PathLike | None = None
         self.files: list[File] = []
-        self._project_fit_result: ulmfit.FitOutput | None = None
         # Append-only log of completed fit slots, populated eagerly at fit
         # completion by the _slot_from_<fit_type> helpers in utils/fit_io.py.
         self._fit_history: list[fit_io.SavedFitSlot] = []
+        # Append-only log of project-level joint fit records; one entry per
+        # successful Project.fit_2d, published together with its per-file
+        # projection slots in _fit_history (one bundle).
+        self._joint_fit_history: list[fit_io.JointFitResult] = []
 
         # Set defaults first
         self._set_defaults()
@@ -289,15 +292,21 @@ class Project:
         """
         Snapshot view over the in-session fit history.
 
-        Returns a fresh ``FitResults`` wrapping a copy of ``_fit_history``;
-        subsequent fits append to the log and do not affect previously
-        returned ``FitResults``. Object identity is unstable
-        (``p.results is p.results`` is False); the contents at a given access
-        are fixed. The live ``File`` objects are passed along as axes /
-        plot-config providers for the plot methods.
+        Returns a fresh ``FitResults`` wrapping a copy of ``_fit_history``
+        and of ``_joint_fit_history``; subsequent fits append to the logs
+        and do not affect previously returned ``FitResults``. Object
+        identity is unstable (``p.results is p.results`` is False); the
+        contents at a given access are fixed. The live ``File`` objects are
+        passed along as axes / plot-config providers for the plot methods.
+        Joint records are reachable via ``find_joint`` / ``get_joint``;
+        iteration and ``len`` stay per-file-slot.
         """
 
-        return FitResults(slots=list(self._fit_history), files=list(self.files))
+        return FitResults(
+            slots=list(self._fit_history),
+            files=list(self.files),
+            joint=list(self._joint_fit_history),
+        )
 
     #
     def save_fits(
@@ -1338,7 +1347,7 @@ class Project:
         model_name: str,
         stages: int = 2,
         **fit_wrapper_kwargs,
-    ) -> None:
+    ) -> fit_io.JointFitResult:
         """
         Fit all files simultaneously with shared/independent parameters.
 
@@ -1346,6 +1355,11 @@ class Project:
         once, and distributes final results back to each file's model.
         Parameter sharing is controlled by the ``vary`` field in each
         model's YAML (``"project"``/``"file"``/``"static"``).
+
+        Every successful call captures one ``JointFitResult`` (combined
+        parameter table, parameter maps, joint uncertainty and MCMC,
+        whole-objective metrics) plus one per-file 2d projection slot,
+        published together to the project histories.
 
         Parameters
         ----------
@@ -1355,6 +1369,14 @@ class Project:
             Number of optimization stages (see ``fitlib.fit_wrapper``).
         **fit_wrapper_kwargs
             Additional keyword arguments passed to ``fitlib.fit_wrapper``.
+
+        Returns
+        -------
+        fit_io.JointFitResult
+            The captured joint record — the same object appended to the
+            history, so ignoring the return value stays valid; it remains
+            reachable via ``Project.results.find_joint()`` /
+            ``get_joint()``.
         """
 
         t_start = time.time()
@@ -1461,8 +1483,8 @@ class Project:
         # get_fit_results("2d") work on project-fitted files.
         mapping = project_fit_info["mapping"]
         models = project_fit_info["models"]
-        joint_result = result.par_fin
-        final_pars = joint_result.params
+        joint_par_fin = result.par_fin
+        final_pars = joint_par_fin.params
         for proj_name, file_idx, local_name in mapping:
             if proj_name in final_pars:
                 models[file_idx].lmfit_pars[local_name].value = final_pars[
@@ -1476,7 +1498,7 @@ class Project:
         # the projection slots' count-dependent metrics stay NaN. conf_ci is
         # an empty DataFrame so the slot builder's `conf_ci.empty` check
         # works without branching.
-        joint_method = str(getattr(joint_result, "method", "unknown"))
+        joint_method = str(getattr(joint_par_fin, "method", "unknown"))
         for f, model in zip(self.files, models, strict=True):
             f.model_2d = model
             assert model is not None  # type guard
@@ -1498,40 +1520,52 @@ class Project:
                 emcee_fin=None,
                 emcee_ci=pd.DataFrame(),
             )
-            # const/args mirror File.fit_2d so _append_2d_slot can evaluate
+            # const/args mirror File.fit_2d so the slot builder can evaluate
             # the per-file fit grid via fitlib.residual_fun. Per-file
             # re-evaluation always uses the interpreter — the fused JAX
             # closures cover the whole project, not single files.
             model.const = (f.energy, f.data, "fit_model_mcp", 0, f.e_lim, f.t_lim)
             model.args = (model, 2)
 
-        self._project_fit_result = result
-
-        # Append a per-file 2D slot to Project._fit_history so the joint fit
-        # is discoverable via Project.results, matching the File.fit_2d()
-        # entry point.
+        # Build the per-file projection slots and the joint record first;
+        # publish to either history only after every piece exists, so a
+        # capture failure publishes neither (one optimization, one bundle).
         joint_fit_settings = fit_io.build_fit_settings(
             stages=stages, fit_wrapper_kwargs=fit_wrapper_kwargs
         )
-        slots_2d: list[fit_io.SavedFitSlot | None] = [
-            f._append_2d_slot(
+        slots_2d: list[fit_io.SavedFitSlot] = []
+        for f in self.files:
+            slot = f._build_2d_slot(
                 model_name=model_name,
                 fit_fun_str="fit_model_mcp",
                 fit_settings=joint_fit_settings,
             )
-            for f in self.files
-        ]
+            assert slot is not None  # type guard — par_fin.params is always set
+            slots_2d.append(slot)
+        joint_record = fit_io._joint_result_from_project_fit(
+            model_name=model_name,
+            mapping=mapping,
+            slots=slots_2d,
+            fit_output=result,
+            fit_settings=joint_fit_settings,
+        )
+        self._fit_history.extend(slots_2d)
+        self._joint_fit_history.append(joint_record)
 
         if self.show_output >= 1:
             fitlib.time_display(
                 t_start=t_start,
                 print_str="Time elapsed for project-level 2D fit: ",
             )
-            # Show each file's data/fit/residual maps inline from its slot.
-            if slots_2d:
-                for f, slot in zip(self.files, slots_2d, strict=True):
-                    if slot is not None:
-                        f.plot_fit(model=model_name, fit_type="2d")
+            # Show each file's data/fit/residual maps inline from its slot,
+            # then the joint MCMC diagnostics when a posterior was sampled
+            # (mirrors File.fit_2d's fit-time plotting).
+            for f in self.files:
+                f.plot_fit(model=model_name, fit_type="2d")
+            if joint_record.mcmc is not None:
+                self.results.plot_joint_mcmc(model=model_name)
+
+        return joint_record
 
 
 #
@@ -3654,6 +3688,30 @@ class File:
     ) -> fit_io.SavedFitSlot | None:
         """Build and append a SavedFitSlot for a completed 2D global fit."""
 
+        slot = self._build_2d_slot(
+            model_name=model_name,
+            fit_fun_str=fit_fun_str,
+            fit_settings=fit_settings,
+        )
+        if slot is not None:
+            self.p._fit_history.append(slot)
+        return slot
+
+    #
+    def _build_2d_slot(
+        self,
+        *,
+        model_name: str,
+        fit_fun_str: str,
+        fit_settings: dict[str, Any] | None = None,
+    ) -> fit_io.SavedFitSlot | None:
+        """
+        Build a SavedFitSlot for a completed 2D global fit without
+        publishing it. ``Project.fit_2d`` builds all projection slots (and
+        the joint record) before appending anything, so a capture failure
+        publishes neither history.
+        """
+
         assert self.model_2d is not None  # type guard
         assert self.data is not None  # type guard
         assert self.energy is not None  # type guard
@@ -3742,7 +3800,6 @@ class File:
             fit_settings=fit_settings,
             fit_ini=fit_ini_arr,
         )
-        self.p._fit_history.append(slot)
         return slot
 
     #

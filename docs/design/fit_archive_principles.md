@@ -584,14 +584,13 @@ variant table, export — to traverse two locations forever.
 
 The joint record is **represented in schema 7**, not reserved for a later
 version. Schema 7 **consumes** a first-class joint result; it does not create
-one. Producing that record — promoting the shared result from a transient on
-`Project._project_fit_result` to a captured object that survives the
-`fit_2d()` call — is upstream work, tracked as the two "Project-level shared
-parameter fit" TODO items and sequenced ahead of the conversion (see
-"Sequencing"). The raw material is already computed: that transient is a
-`FitOutput` carrying `par_ini`, `par_fin` (hence correlation, covariance,
-AIC/BIC, ndata), `conf_ci`, `emcee_fin`, and `emcee_ci`, while today only the
-per-file projections reach `_fit_history`.
+one. Producing that record was sequenced ahead of the conversion (see
+"Sequencing") and landed on branch `joint-fit-result` (2026-07-31, decisions
+in [joint_fit_result.md](joint_fit_result.md)): every `Project.fit_2d` now
+captures a `JointFitResult` — combined parameter table, per-file parameter
+maps, joint `conf_ci`/`correl` (correlation over covariance), joint MCMC, and
+whole-objective metrics — into `Project._joint_fit_history`, published
+together with the per-file projection slots as one bundle.
 
 Designing the on-disk shape while that in-memory object was still transient was
 the wrong order, and an earlier draft of this document did exactly that. The
@@ -1382,8 +1381,9 @@ a transient discarded after `fit_2d()`, which is the wrong order.
    including whether that uncertainty is stored as correlation, covariance, or
    both.
    Schema 7 cannot be finalized before this — it would have nothing to
-   serialize. Tracked as the two "Project-level shared parameter fit" TODO
-   items.
+   serialize. **Done** on branch `joint-fit-result` (2026-07-31): the record
+   is `JointFitResult` (correlation chosen over covariance), decisions in
+   [joint_fit_result.md](joint_fit_result.md).
 4. **Schema 7.** With the object model settled, the wire format largely falls
    out. Array ownership (Principle 4) is local to the capture path and ships
    with it — it does **not** wait on the systemic array-mutation TODO, which

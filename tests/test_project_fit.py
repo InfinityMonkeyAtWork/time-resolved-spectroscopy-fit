@@ -11,7 +11,7 @@ matplotlib.use("Agg")
 
 import numpy as np
 import pytest
-from _utils import make_project, simulate_clean
+from _utils import make_project, simulate_clean, simulate_noisy
 
 from trspecfit import File
 
@@ -781,14 +781,19 @@ class TestPackProjectTheta:
 
 
 #
-def _make_shared_tau_project(*, spec_fun_str, grids=None, show_output=0):
+def _make_shared_tau_project(
+    *, spec_fun_str, grids=None, show_output=0, noise_level=0.0
+):
     """Build a ready-to-fit 2-file project with shared tau, per-file A.
 
-    Simulates noiseless data from two truth files (differing amplitudes,
-    identical tau) and assembles fit files via the real workflow.
-    ``grids`` optionally gives per-file ``(energy, time_ax)`` pairs for
+    Simulates data from two truth files (differing amplitudes, identical
+    tau) and assembles fit files via the real workflow. ``grids``
+    optionally gives per-file ``(energy, time_ax)`` pairs for
     heterogeneous-grid tests. ``show_output`` is applied after setup so
-    baseline fits stay silent.
+    baseline fits stay silent. Data is noiseless by default; pass a
+    positive ``noise_level`` for tests that need a covariance-producing
+    fit (an exact zero-residual fit makes leastsq's error-bar estimation
+    fail).
     """
 
     if grids is None:
@@ -804,10 +809,210 @@ def _make_shared_tau_project(*, spec_fun_str, grids=None, show_output=0):
         zip(grids, amplitudes, seeds, strict=True)
     ):
         truth = _make_truth_file(amplitude=amplitude, energy=energy, time_ax=time_ax)
-        data = simulate_clean(truth.model_active, seed=seed)
+        if noise_level > 0:
+            data = simulate_noisy(
+                truth.model_active, noise_level=noise_level, seed=seed
+            )
+        else:
+            data = simulate_clean(truth.model_active, seed=seed)
         _make_fit_file(project, data, truth.energy, truth.time, name=f"file_{i}")
     project.show_output = show_output
     return project
+
+
+#
+#
+class TestJointFitResult:
+    """Project.fit_2d captures one JointFitResult plus one projection slot
+    per file, published as one bundle (docs/design/joint_fit_result.md)."""
+
+    #
+    @pytest.mark.slow
+    def test_bundle_projections_and_metrics(self):
+        # Noisy data so leastsq produces a covariance (an exact fit to
+        # noiseless data makes error-bar estimation fail).
+        project = _make_shared_tau_project(
+            spec_fun_str="fit_model_gir", noise_level=0.05
+        )
+        record = project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
+
+        # One record, appended to the joint history, returned as-is.
+        assert project._joint_fit_history == [record]
+        assert record.model_name == "project_glp"
+        assert record.files == ("file_0", "file_1")
+
+        # One projection per file; the record holds the same slot objects
+        # that were appended to the per-file history.
+        slots_2d = [s for s in project._fit_history if s.fit_type == "2d"]
+        assert len(record.projections) == len(slots_2d) == 2
+        assert {id(p.slot) for p in record.projections} == {id(s) for s in slots_2d}
+
+        # The parameter map is data, total for the file — readers look up,
+        # they never parse the fileNN_ prefix convention.
+        proj_0 = record.projections[0]
+        assert proj_0.slot.file_name == "file_0"
+        pmap = proj_0.parameter_map
+        assert pmap["GLP_01_x0_expFun_01_tau"] == "GLP_01_x0_expFun_01_tau"
+        assert pmap["file00_GLP_01_A"] == "GLP_01_A"
+        assert set(pmap.values()) == set(proj_0.slot.params["name"])
+
+        # The combined table carries the optimizer names.
+        names = list(record.params["name"])
+        assert "GLP_01_x0_expFun_01_tau" in names
+        assert "file00_GLP_01_A" in names and "file01_GLP_01_A" in names
+
+        # The joint record owns the whole-objective metrics; the
+        # projections' count-dependent metrics are undefined because the
+        # joint parameter count does not decompose by file.
+        assert np.isfinite(record.metrics["chi2_raw"])
+        assert np.isfinite(record.metrics["chi2_red_raw"])
+        assert np.isfinite(record.metrics["aic"])
+        assert np.isfinite(record.metrics["bic"])
+        assert np.isnan(record.metrics["r2"])
+        chi2_raw_sum = 0.0
+        for p in record.projections:
+            m = p.slot.metrics
+            assert np.isfinite(m["chi2_raw"]) and np.isfinite(m["r2"])
+            for key in ("chi2_red_raw", "chi2_red", "aic", "bic"):
+                assert np.isnan(m[key]), key
+            chi2_raw_sum += m["chi2_raw"]
+        assert np.isclose(record.metrics["chi2_raw"], chi2_raw_sum)
+
+        # Shared payloads live on the record only.
+        assert record.correl is not None  # leastsq produced a covariance
+        for p in record.projections:
+            assert p.slot.conf_ci is None
+            assert p.slot.correl is None
+            assert p.slot.mcmc is None
+
+        # compare_models: structurally undefined cells are NaN; the valid
+        # per-file cells in the same rows are unaffected.
+        df = project.results.compare_models(fit_type="2d")
+        assert bool(df["chi2_red_raw"].isna().all())
+        assert bool(df["r2"].notna().all())
+
+    #
+    @pytest.mark.slow
+    def test_one_file_project_fit_is_joint(self):
+        """A one-file project fit still yields a joint record: it came
+        through the project-scoped path."""
+
+        project = make_project(name="project_fit")
+        truth = _make_truth_file()
+        clean = simulate_clean(truth.model_active)
+        _make_fit_file(project, clean, truth.energy, truth.time, name="only")
+
+        record = project.fit_2d(model_name="project_glp", stages=1, try_ci=0)
+
+        assert record.files == ("only",)
+        assert len(record.projections) == 1
+        assert project.results.get_joint(model="project_glp") is record
+
+    #
+    @pytest.mark.slow
+    def test_snapshot_isolation_across_refits(self):
+        project = _make_shared_tau_project(spec_fun_str="fit_model_gir")
+        first = project.fit_2d(model_name="project_glp", stages=1, try_ci=0)
+        before = project.results
+        second = project.fit_2d(model_name="project_glp", stages=1, try_ci=0)
+
+        # Histories append; an older snapshot does not see the newer fit.
+        assert project._joint_fit_history == [first, second]
+        assert before.find_joint() == [first]
+        assert project.results.find_joint() == [first, second]
+        with pytest.raises(LookupError, match="2 joint fit records"):
+            project.results.get_joint(model="project_glp")
+
+    #
+    @pytest.mark.slow
+    def test_capture_is_a_snapshot(self):
+        project = _make_shared_tau_project(spec_fun_str="fit_model_gir")
+        record = project.fit_2d(model_name="project_glp", stages=1, try_ci=0)
+
+        tau = "GLP_01_x0_expFun_01_tau"
+        fitted = record.params.set_index("name").loc[tau, "value"]
+        m = project.files[0].select_model("project_glp")
+        assert m is not None  # type guard
+        m.lmfit_pars[tau].value = -123.0
+        assert record.params.set_index("name").loc[tau, "value"] == fitted
+
+    #
+    @pytest.mark.slow
+    def test_capture_failure_publishes_neither_history(self, monkeypatch):
+        project = _make_shared_tau_project(spec_fun_str="fit_model_gir")
+        n_before = len(project._fit_history)
+
+        def boom(**kwargs):
+            raise RuntimeError("capture failure")
+
+        monkeypatch.setattr(
+            "trspecfit.utils.fit_io._joint_result_from_project_fit", boom
+        )
+        with pytest.raises(RuntimeError, match="capture failure"):
+            project.fit_2d(model_name="project_glp", stages=1, try_ci=0)
+
+        assert len(project._fit_history) == n_before  # no 2d slots published
+        assert project._joint_fit_history == []
+
+    #
+    @pytest.mark.slow
+    def test_joint_mcmc_survives_capture(self):
+        """The joint posterior lands on the record (previously computed and
+        thrown away); projections never carry a chain."""
+
+        import matplotlib.pyplot as plt
+
+        from trspecfit.utils.lmfit import MC, MCMCResult
+
+        project = _make_shared_tau_project(spec_fun_str="fit_model_gir")
+        # nwalkers > 2 * n_varying for emcee's red-blue move.
+        mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1, workers=1)
+        record = project.fit_2d(
+            model_name="project_glp", stages=1, try_ci=0, mc_settings=mc
+        )
+
+        assert isinstance(record.mcmc, MCMCResult)
+        assert record.mcmc.lnsigma is not None
+        cols = set(record.mcmc.flatchain.columns)
+        assert "GLP_01_x0_expFun_01_tau" in cols  # shared, unprefixed
+        assert {"file00_GLP_01_A", "file01_GLP_01_A"} <= cols
+        assert "__lnsigma" in cols
+        assert record.mcmc.acceptance_fraction is not None  # type guard
+        assert record.mcmc.acceptance_fraction.shape == (32,)
+        assert all(p.slot.mcmc is None for p in record.projections)
+
+        # The joint chain renders through the shared MCMC primitive.
+        n_figs = len(plt.get_fignums())
+        project.results.plot_joint_mcmc(model="project_glp", show_plot=False)
+        assert len(plt.get_fignums()) == n_figs
+
+    #
+    @pytest.mark.slow
+    def test_weighted_joint_mcmc_has_no_lnsigma(self):
+        """is_weighted=True: the joint chain samples only the combined model
+        parameters — no likelihood-free __lnsigma dimension (it only enters
+        lmfit's log-probability for unweighted sampling)."""
+
+        from trspecfit.utils.lmfit import MC
+
+        project = _make_shared_tau_project(spec_fun_str="fit_model_gir")
+        mc = MC(
+            use_mc=1,
+            steps=20,
+            nwalkers=32,
+            burn=5,
+            thin=1,
+            workers=1,
+            is_weighted=True,
+        )
+        record = project.fit_2d(
+            model_name="project_glp", stages=1, try_ci=0, mc_settings=mc
+        )
+
+        assert record.mcmc is not None  # type guard
+        assert record.mcmc.lnsigma is None
+        assert "__lnsigma" not in record.mcmc.flatchain.columns
+        assert "__lnsigma" not in list(record.mcmc.table.iloc[:, 0])
 
 
 #
@@ -831,12 +1036,15 @@ class TestProjectFitJax:
         pytest.importorskip("jax")
 
         results = {}
+        records = {}
         for spec_fun_str in ("fit_model_gir", "fit_model_jax"):
             project = _make_shared_tau_project(spec_fun_str=spec_fun_str, show_output=1)
             # exercise per-file fit windows on one file
             project.files[0].e_lim = [2, 28]
             project.files[0].t_lim = [1, 23]
-            project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
+            records[spec_fun_str] = project.fit_2d(
+                model_name="project_glp", stages=2, try_ci=0
+            )
 
             backend = "JAX" if spec_fun_str == "fit_model_jax" else "interpreter"
             assert f"({backend} backend)" in capsys.readouterr().out
@@ -858,6 +1066,23 @@ class TestProjectFitJax:
 
         tau_jax = results["fit_model_jax"][0]["GLP_01_x0_expFun_01_tau"]
         assert np.isclose(tau_jax, self.TRUE_TAU, atol=0.01)
+
+        # Backend equivalence of the captured joint record: same shape,
+        # same projections, same combined parameter names/values.
+        rec_gir = records["fit_model_gir"]
+        rec_jax = records["fit_model_jax"]
+        assert rec_gir.files == rec_jax.files
+        assert [p.parameter_map for p in rec_gir.projections] == [
+            p.parameter_map for p in rec_jax.projections
+        ]
+        assert list(rec_gir.params["name"]) == list(rec_jax.params["name"])
+        np.testing.assert_allclose(
+            rec_gir.params["value"].to_numpy(dtype=float),
+            rec_jax.params["value"].to_numpy(dtype=float),
+            rtol=1e-6,
+            atol=1e-9,
+        )
+        assert set(rec_gir.metrics) == set(rec_jax.metrics)
 
     #
     def test_heterogeneous_grids_fuse(self, capsys):

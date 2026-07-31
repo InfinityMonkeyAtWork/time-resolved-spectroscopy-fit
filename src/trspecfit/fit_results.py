@@ -30,6 +30,7 @@ import pandas as pd
 from trspecfit.config.plot import PlotConfig
 from trspecfit.utils.arrays import resolve_time_selection
 from trspecfit.utils.fit_io import (
+    JointFitResult,
     SavedFile,
     SavedFitSlot,
     mcmc_result_from_payload,
@@ -191,6 +192,13 @@ class FitResults:
     (``Project.results``), matched to slots by fingerprint. The plot
     methods use them to label real energy/time axes; without a provider
     they fall back to array-index axes.
+
+    ``joint`` optionally supplies the project-level ``JointFitResult``
+    records (``Project.results`` passes the in-session joint history;
+    loaded archives currently carry none). Joint records are reachable
+    via :meth:`find_joint` / :meth:`get_joint` / :meth:`plot_joint_mcmc`
+    only — iteration and ``len()`` stay per-file-slot, since mixing joint
+    records in would count one optimization N+1 times.
     """
 
     #
@@ -199,8 +207,10 @@ class FitResults:
         *,
         slots: list[SavedFitSlot],
         files: Sequence[Any] | None = None,
+        joint: Sequence[JointFitResult] | None = None,
     ) -> None:
         self._slots: tuple[SavedFitSlot, ...] = tuple(slots)
+        self._joint: tuple[JointFitResult, ...] = tuple(joint or ())
         self._files_by_fp: dict[tuple[Any, ...], Any] = {}
         for f in files or ():
             fp = self._provider_fp_key(f)
@@ -422,10 +432,14 @@ class FitResults:
     def __repr__(self) -> str:
         n = len(self._slots)
         files = self.files()
-        return (
+        out = (
             f"FitResults({n} slot{'s' if n != 1 else ''}, "
-            f"{len(files)} file{'s' if len(files) != 1 else ''})"
+            f"{len(files)} file{'s' if len(files) != 1 else ''}"
         )
+        if self._joint:
+            n_joint = len(self._joint)
+            out += f", {n_joint} joint fit{'s' if n_joint != 1 else ''}"
+        return out + ")"
 
     #
     def files(self) -> list[str]:
@@ -506,6 +520,98 @@ class FitResults:
             raise LookupError(
                 f"{len(matches)} slots match file={file!r}, model={model!r}, "
                 f"fit_type={fit_type!r}; use find() and narrow on .selection."
+            )
+        return matches[0]
+
+    #
+    @staticmethod
+    def _canonical_files_arg(files: Any) -> tuple[str, ...] | None:
+        """
+        Normalize a joint ``files=`` filter to unique sorted names.
+
+        Accepts ``None`` (no filter), a single item, or a sequence of
+        items — name strings, ``SavedFile``, or live ``File`` objects.
+        """
+
+        if files is None:
+            return None
+        if isinstance(files, str) or not isinstance(files, Sequence):
+            files = [files]
+        resolved: list[str] = []
+        for f in files:
+            name = _resolve_file_arg(f)
+            if name is None:
+                raise TypeError(
+                    "files= entries must be str, SavedFile, or have a "
+                    ".name attribute; got None"
+                )
+            resolved.append(name)
+        return tuple(sorted(set(resolved)))
+
+    #
+    def find_joint(
+        self,
+        *,
+        model: str | None = None,
+        files: Any = None,
+    ) -> list[JointFitResult]:
+        """
+        Return all project-level joint fit records matching the filters.
+
+        Parameters
+        ----------
+        model : str, optional
+            Restrict to records that fit this model name.
+        files : str | SavedFile | trspecfit.File | Sequence | None
+            Restrict to records whose full participant set matches. A
+            single item or a sequence; the input is canonicalized
+            (unique names, sorted) and compared against the record's
+            complete file set — a strict subset does not match.
+
+        Returns
+        -------
+        list of JointFitResult
+            In history order (oldest first). Empty when this
+            ``FitResults`` carries no joint records (e.g. loaded
+            archives, which cannot reconstruct them yet).
+        """
+
+        canonical = self._canonical_files_arg(files)
+        out: list[JointFitResult] = []
+        for record in self._joint:
+            if model is not None and record.model_name != model:
+                continue
+            if canonical is not None and tuple(sorted(record.files)) != canonical:
+                continue
+            out.append(record)
+        return out
+
+    #
+    def get_joint(
+        self,
+        *,
+        model: str | None = None,
+        files: Any = None,
+    ) -> JointFitResult:
+        """
+        Return the unique joint fit record matching the filters.
+
+        Raises ``LookupError`` if 0 or >1 records match, mirroring
+        :meth:`get`. For multi-match scenarios (repeated project fits of
+        the same model), use :meth:`find_joint` and pick by position or
+        ``timestamp``.
+        """
+
+        matches = self.find_joint(model=model, files=files)
+        if not matches:
+            raise LookupError(
+                f"No joint fit record matches model={model!r}, files={files!r}."
+            )
+        if len(matches) > 1:
+            raise LookupError(
+                f"{len(matches)} joint fit records match model={model!r}, "
+                f"files={files!r}; use find_joint() and pick by position "
+                f"or timestamp."
             )
         return matches[0]
 
@@ -1052,10 +1158,71 @@ class FitResults:
             If no matching fit exists, or the fit had no MCMC step.
         """
 
+        mcmc = self.get_mcmc(file=file, model=model, fit_type=fit_type)
+        self._render_mcmc_result(mcmc, show_plot=show_plot)
+
+    #
+    def plot_joint_mcmc(
+        self,
+        *,
+        model: str | None = None,
+        files: Any = None,
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Plot the MCMC diagnostics of the latest matching joint fit.
+
+        Renders the joint posterior — per-walker acceptance fraction and
+        the corner plot over the combined parameter names — through the
+        same primitive as :meth:`plot_mcmc`. The joint chain lives only
+        on the ``JointFitResult`` (projections carry no ``mcmc``
+        payload), so this is the one path to the joint posterior.
+
+        Parameters
+        ----------
+        model : str, optional
+            Restrict to records that fit this model name.
+        files : str | SavedFile | trspecfit.File | Sequence | None
+            Restrict to records whose full participant set matches (see
+            :meth:`find_joint`). When several records match, the latest
+            wins.
+        show_plot : bool, default True
+            Set ``False`` to build without displaying (tests / batch use).
+
+        Raises
+        ------
+        ValueError
+            If no matching joint fit exists, or it had no MCMC step.
+        """
+
+        matches = self.find_joint(model=model, files=files)
+        if not matches:
+            raise ValueError(
+                "No project-level joint fit results. Run Project.fit_2d() first."
+            )
+        record = matches[-1]
+        if record.mcmc is None:
+            raise ValueError(
+                "No MCMC results for the joint fit. Re-run "
+                "Project.fit_2d with mc_settings=MC(use_mc=1, ...)."
+            )
+        self._render_mcmc_result(record.mcmc, show_plot=show_plot)
+
+    #
+    @staticmethod
+    def _render_mcmc_result(mcmc: MCMCResult, *, show_plot: bool) -> None:
+        """
+        Walker-acceptance and corner figures from an ``MCMCResult``.
+
+        The single rendering primitive behind :meth:`plot_mcmc` (per-file
+        slots) and :meth:`plot_joint_mcmc` (joint records). The
+        acceptance panel is skipped when ``acceptance_fraction`` is
+        ``None`` (schema-2 archives did not store it).
+        """
+
         import corner
         import matplotlib.pyplot as plt
 
-        mcmc = self.get_mcmc(file=file, model=model, fit_type=fit_type)
         if mcmc.acceptance_fraction is not None:
             fig_walker, ax = plt.subplots(1, 1, dpi=75)
             ax.plot(mcmc.acceptance_fraction, "o")

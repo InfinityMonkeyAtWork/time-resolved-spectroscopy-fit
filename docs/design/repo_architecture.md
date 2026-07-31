@@ -143,7 +143,12 @@ styling; result access remains available. A `FitResults` is frozen at constructi
 (the underlying slot list is copied), so `r1 = p.results;
 <run another fit>; r2 = p.results` gives two distinct snapshots — `r1`
 does not see the new slot. Query API: `find` / `get` / `files` /
-`models` / iteration. Accessors (latest matching slot; `File.get_*` is
+`models` / iteration. Project-level joint fit records
+(`JointFitResult`, carried alongside the slots by `Project.results`)
+have their own surface — `find_joint` / `get_joint` /
+`plot_joint_mcmc`; iteration and `len()` stay per-file-slot so one
+optimization is never counted N+1 times. Accessors (latest matching
+slot; `File.get_*` is
 thin sugar): `get_fit_results` / `get_correlations` /
 `get_conf_intervals` / `get_mcmc`. Comparison: `compare_models` (returns
 a metrics DataFrame; refuses to compare slots whose `observed_sha256`
@@ -179,6 +184,13 @@ fit_slice_by_slice / fit_2d  ────► result ───►  _slot_from_<fi
 HDF5 archive ────► reader ────► FitResults (FitResults.load / Project.load_fits)
                                 Independent of _fit_history; never merged in.
 ```
+
+`Project.fit_2d` additionally captures one `JointFitResult` per
+optimization (combined parameter table, per-file parameter maps, joint
+`conf_ci`/`correl`/MCMC, whole-objective metrics) into the parallel
+append-only `Project._joint_fit_history`, published together with its
+per-file projection slots as one bundle — a capture failure publishes
+neither. Decisions in [joint_fit_result.md](joint_fit_result.md).
 
 ### The fit-to-slot capture boundary
 
@@ -323,7 +335,10 @@ directly.
 ### `utils/fit_io.py`
 
 Fit-results persistence. Owns the `SavedProject` / `SavedFile` /
-`SavedFitSlot` dataclasses (the on-disk data model), the four
+`SavedFitSlot` dataclasses (the on-disk data model), the in-memory
+project-level joint record (`JointFitResult` / `JointFitProjection`,
+built by `_joint_result_from_project_fit` — schema 7 later serializes
+and reconstructs this same type), the four
 per-fit-type slot extractors (`_slot_from_baseline`,
 `_slot_from_spectrum`, `_slot_from_sbs`, `_slot_from_2d` — all called
 once at fit completion with copied snapshot args, never live `Model`

@@ -21,6 +21,8 @@ from _utils import make_project, simulate_clean, simulate_noisy
 
 from trspecfit import File, FitResults
 from trspecfit.utils.fit_io import (
+    JointFitProjection,
+    JointFitResult,
     SavedFitSlot,
     _compute_sigma_eff,
     build_selection_json,
@@ -1003,6 +1005,135 @@ def _slot_stub(
         sigma_data=sigma_data_f,
         sigma_eff=sigma_eff,
     )
+
+
+#
+def _joint_record_stub(
+    *,
+    model_name="m",
+    file_names=("f1", "f2"),
+    mcmc=None,
+    timestamp="2026-04-30T00:00:00+00:00",
+):
+    """Build a minimal JointFitResult for query-API tests (no real fit)."""
+
+    projections = tuple(
+        JointFitProjection(
+            parameter_map={},
+            slot=_slot_stub(file_name=name, model_name=model_name, fit_type="2d"),
+        )
+        for name in sorted(file_names)
+    )
+    return JointFitResult(
+        model_name=model_name,
+        projections=projections,
+        params=pd.DataFrame(),
+        metrics={},
+        fit_alg="leastsq",
+        fit_settings={},
+        timestamp=timestamp,
+        mcmc=mcmc,
+    )
+
+
+#
+class TestFitResultsJointQueryAPI:
+    """find_joint / get_joint / plot_joint_mcmc read the joint records
+    carried alongside the per-file slots; iteration and len() stay
+    slot-only (a joint record would otherwise count one optimization
+    N+1 times)."""
+
+    #
+    def test_find_joint_filters_in_history_order(self):
+        r1 = _joint_record_stub(model_name="m1")
+        r2 = _joint_record_stub(model_name="m2")
+        r3 = _joint_record_stub(model_name="m1")
+        results = FitResults(slots=[], joint=[r1, r2, r3])
+        assert results.find_joint() == [r1, r2, r3]
+        assert results.find_joint(model="m1") == [r1, r3]
+        assert results.find_joint(model="nope") == []
+
+    #
+    def test_find_joint_files_matches_full_participant_set(self):
+        record = _joint_record_stub(file_names=("b", "a"))
+        results = FitResults(slots=[], joint=[record])
+        # canonicalized: order and duplicates don't matter
+        assert results.find_joint(files=["b", "a"]) == [record]
+        assert results.find_joint(files=["a", "b", "a"]) == [record]
+        # a strict subset or superset does not match
+        assert results.find_joint(files="a") == []
+        assert results.find_joint(files=["a", "b", "c"]) == []
+
+    #
+    def test_find_joint_files_accepts_name_objects(self):
+        record = _joint_record_stub(file_names=("f1",))
+
+        class _Named:
+            name = "f1"
+
+        results = FitResults(slots=[], joint=[record])
+        assert results.find_joint(files=_Named()) == [record]
+
+    #
+    def test_get_joint_raises_on_zero_and_multiple(self):
+        record = _joint_record_stub(model_name="m1")
+        twin = _joint_record_stub(model_name="m1")
+        results = FitResults(slots=[], joint=[record, twin])
+        with pytest.raises(LookupError, match="2 joint fit records"):
+            results.get_joint(model="m1")
+        with pytest.raises(LookupError, match="No joint fit record"):
+            results.get_joint(model="nope")
+        only = FitResults(slots=[], joint=[record])
+        assert only.get_joint(model="m1") is record
+
+    #
+    def test_iteration_and_len_stay_slot_only(self):
+        slot = _slot_stub()
+        record = _joint_record_stub()
+        results = FitResults(slots=[slot], joint=[record])
+        assert len(results) == 1
+        assert list(results) == [slot]
+        assert "1 joint fit" in repr(results)
+
+    #
+    def test_plot_joint_mcmc_no_record_raises(self):
+        results = FitResults(slots=[])
+        with pytest.raises(ValueError, match="No project-level joint fit"):
+            results.plot_joint_mcmc()
+
+    #
+    def test_plot_joint_mcmc_without_chain_raises(self):
+        results = FitResults(slots=[], joint=[_joint_record_stub()])
+        with pytest.raises(ValueError, match="No MCMC results for the joint fit"):
+            results.plot_joint_mcmc()
+
+    #
+    def test_plot_joint_mcmc_renders_latest_chain(self):
+        import matplotlib.pyplot as plt
+
+        from trspecfit.utils.lmfit import MCMCResult
+
+        n = 30
+        mcmc = MCMCResult(
+            table=pd.DataFrame(
+                {"par[v]/sigma[>]": ["tau", "__lnsigma"], "best fit": [5.0, -2.0]}
+            ),
+            flatchain=pd.DataFrame(
+                {
+                    "tau": np.linspace(4.9, 5.1, n),
+                    "__lnsigma": np.linspace(-2.1, -1.9, n),
+                }
+            ),
+            acceptance_fraction=np.full(8, 0.35),
+            lnsigma=-2.0,
+        )
+        older = _joint_record_stub()
+        latest = _joint_record_stub(mcmc=mcmc)
+        results = FitResults(slots=[], joint=[older, latest])
+        n_figs = len(plt.get_fignums())
+        # latest matching record wins; suppressed figures are closed again
+        results.plot_joint_mcmc(show_plot=False)
+        assert len(plt.get_fignums()) == n_figs
 
 
 #

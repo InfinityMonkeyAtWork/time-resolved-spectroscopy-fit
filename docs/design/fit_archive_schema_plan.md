@@ -173,13 +173,13 @@ and every schema-2-through-6 fallback branch is deleted rather than left inert.
   forced a second format break immediately after this one.
 
   **Schema 7 serializes a first-class joint result; it does not produce one.**
-  Promoting the shared result from a transient on
-  `Project._project_fit_result` to a captured object that survives the
-  `fit_2d()` call is the upstream prerequisite (see "Prerequisites"). The raw
-  material is already computed — that transient is a `FitOutput` carrying
-  `par_ini`, `par_fin` (hence correlation, covariance, AIC/BIC, ndata),
-  `conf_ci`, `emcee_fin`, and `emcee_ci` — but today only the per-file
-  projections reach `_fit_history`. The fields below are what the archive
+  That upstream prerequisite (see "Prerequisites") landed on branch
+  `joint-fit-result` (2026-07-31, decisions in
+  [joint_fit_result.md](joint_fit_result.md)): every `Project.fit_2d` now
+  captures a `JointFitResult` — combined parameter table, per-file parameter
+  maps, joint `conf_ci`/`correl`/MCMC, whole-objective metrics — into
+  `Project._joint_fit_history`, published together with the per-file
+  projection slots. The fields below are what the archive
   stores *given* a settled record; the prerequisite branch decides what that
   record contains, and this layout follows it.
 

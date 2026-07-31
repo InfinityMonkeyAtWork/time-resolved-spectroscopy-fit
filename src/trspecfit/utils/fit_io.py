@@ -23,10 +23,11 @@ DataFrames) — never live ``Model`` or ``File`` references — so they cannot b
 broken by post-fit cleanup that overwrites live state.
 """
 
+import copy
 import datetime
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -40,6 +41,7 @@ from trspecfit.fitlib import (
     plt_fit_res_2d,
     plt_fit_res_pars,
 )
+from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils.hdf5 import require_dataset, require_group
 from trspecfit.utils.lmfit import MCMCResult
 
@@ -417,6 +419,103 @@ class SavedProject:
     timestamp_created: str
     timestamp_updated: str
     files: tuple[SavedFile, ...]
+
+
+#
+@dataclass(frozen=True)
+class JointFitProjection:
+    """
+    One file's view of a project-level joint fit.
+
+    Attributes
+    ----------
+    parameter_map : Mapping[str, str]
+        Combined (optimizer) parameter name -> local (per-file model)
+        parameter name, total in both directions for this file: every
+        combined parameter that feeds this file appears as a key, every
+        local model parameter appears as a value. Readers look names up
+        here; they never parse the ``fileNN_`` prefix convention.
+    slot : SavedFitSlot
+        The per-file 2d slot capturing this file's observed/fitted
+        arrays, projected parameter values, selection, noise metadata,
+        and per-file residual metrics. ``slot.file_name`` is the
+        projection's captured identity (no second copy is stored).
+        Projections never carry ``conf_ci`` / ``correl`` / ``mcmc`` —
+        joint uncertainty lives on the ``JointFitResult`` only.
+    """
+
+    parameter_map: Mapping[str, str]
+    slot: SavedFitSlot
+
+
+#
+@dataclass(frozen=True)
+class JointFitResult:
+    """
+    In-memory record of one successful ``Project.fit_2d`` optimization.
+
+    One optimization produces one ``JointFitResult`` plus one projection
+    per participating file, published together as one bundle (a one-file
+    project fit is still a joint result: it came through the
+    project-scoped path). The record owns everything belonging to the
+    optimization as a whole; the projections own the per-file payloads.
+    Returned by ``Project.fit_2d`` and queryable via
+    ``FitResults.find_joint`` / ``get_joint``.
+
+    Attributes
+    ----------
+    model_name : str
+        The common model name fitted on every file.
+    projections : tuple[JointFitProjection, ...]
+        One per participating file, in canonical (sorted) file-name
+        order. The parameter map, not tuple position, carries the
+        association with optimizer parameters.
+    params : pd.DataFrame
+        Authoritative combined parameter table (``par_to_df`` ``"min"``
+        columns) in optimizer order. ``init_value`` is the effective
+        optimizer-entry value — after baseline-result injection,
+        project-sharing resolution, and expression evaluation — not the
+        value authored in YAML.
+    metrics : Mapping[str, float]
+        Whole-objective metrics; see ``_joint_result_from_project_fit``.
+    fit_alg : str
+        Final-stage optimizer method.
+    fit_settings : Mapping[str, Any]
+        Optimizer-configuration provenance (see ``build_fit_settings``).
+    timestamp : str
+        ISO 8601 UTC timestamp of record construction.
+    conf_ci : pd.DataFrame | None
+        Joint profiled confidence intervals; ``None`` when CI was
+        skipped or failed.
+    correl : pd.DataFrame | None
+        Joint varying-parameter correlation matrix; ``None`` when the
+        optimizer produced no covariance. With ``stderr`` in ``params``
+        this recovers covariance as ``correl(i,j)·stderr(i)·stderr(j)``
+        (covariance itself is deliberately not stored — storing both
+        invites disagreement).
+    mcmc : MCMCResult | None
+        The joint posterior; its ``lnsigma`` is a single nuisance scale
+        over the concatenated residual — never a per-file σ, never
+        back-filled into a projection, never used to calibrate metrics.
+    """
+
+    model_name: str
+    projections: tuple[JointFitProjection, ...]
+    params: pd.DataFrame
+    metrics: Mapping[str, float]
+    fit_alg: str
+    fit_settings: Mapping[str, Any]
+    timestamp: str
+    conf_ci: pd.DataFrame | None = None
+    correl: pd.DataFrame | None = None
+    mcmc: MCMCResult | None = None
+
+    #
+    @property
+    def files(self) -> tuple[str, ...]:
+        """Participating file names, derived from the projections."""
+
+        return tuple(p.slot.file_name for p in self.projections)
 
 
 #
@@ -940,6 +1039,101 @@ def _slot_from_2d(
         sigma_type=sigma_type,
         sigma_data=sigma_data,
         fit_ini=fit_ini,
+    )
+
+
+#
+def _joint_result_from_project_fit(
+    *,
+    model_name: str,
+    mapping: Sequence[tuple[str, int, str]],
+    slots: Sequence[SavedFitSlot],
+    fit_output: ulmfit.FitOutput,
+    fit_settings: dict[str, Any] | None,
+) -> JointFitResult:
+    """
+    Build the ``JointFitResult`` for a completed ``Project.fit_2d``.
+
+    ``slots`` are the per-file projection slots in file-index order
+    (matching ``mapping``'s ``file_idx``); ``fit_output`` is the joint
+    ``fitlib.fit_wrapper`` result. Frames and arrays are copied here — no
+    lmfit reference survives into the record. Raises ``ValueError`` when
+    the pieces do not form one consistent bundle; the caller publishes
+    nothing in that case.
+
+    Whole-objective metrics come from ``compute_fit_metrics`` over the
+    concatenated prediction (not lmfit's ``aic``/``bic``), so joint and
+    per-file numbers stay comparable by construction. ``chi2`` is the sum
+    of the projections' σ-calibrated values (it sums cleanly across
+    heterogeneous per-file noise scales; NaN unless every file's σ is
+    valid), ``chi2_red`` divides it by the joint DoF, and ``r2`` is NaN —
+    it would depend on an arbitrary global mean across separate
+    measurements.
+    """
+
+    par_fin = fit_output.par_fin
+    params_df = ulmfit.par_to_df(par_fin.params, col_type="min")
+
+    # Per-file combined -> local maps, keyed by file index.
+    maps_by_idx: dict[int, dict[str, str]] = {}
+    for combined_name, file_idx, local_name in mapping:
+        maps_by_idx.setdefault(int(file_idx), {})[combined_name] = local_name
+    if sorted(maps_by_idx) != list(range(len(slots))):
+        raise ValueError(
+            f"Joint-fit capture: mapping covers file indices "
+            f"{sorted(maps_by_idx)} but {len(slots)} projection slot(s) "
+            f"were built."
+        )
+
+    projections: list[JointFitProjection] = []
+    for file_idx, slot in enumerate(slots):
+        if slot.model_name != model_name:
+            raise ValueError(
+                f"Joint-fit capture: slot for file {slot.file_name!r} "
+                f"records model {slot.model_name!r}, expected "
+                f"{model_name!r}."
+            )
+        parameter_map = maps_by_idx[file_idx]
+        if set(parameter_map.values()) != set(slot.params["name"]):
+            raise ValueError(
+                f"Joint-fit capture: the parameter map for file "
+                f"{slot.file_name!r} does not cover its model parameters "
+                f"exactly."
+            )
+        projections.append(JointFitProjection(parameter_map=parameter_map, slot=slot))
+    # Canonical file-name order; the map, not tuple position, carries the
+    # association with optimizer parameters.
+    projections.sort(key=lambda p: p.slot.file_name)
+
+    concat_observed = np.concatenate([np.asarray(s.observed).ravel() for s in slots])
+    concat_fit = np.concatenate([np.asarray(s.fit).ravel() for s in slots])
+    joint_nvarys = int(getattr(par_fin, "nvarys", 0))
+    metrics = compute_fit_metrics(
+        observed=concat_observed,
+        fit=concat_fit,
+        n_free_pars=joint_nvarys,
+    )
+    chi2 = float(sum(float(s.metrics["chi2"]) for s in slots))
+    dof = concat_observed.size - joint_nvarys
+    metrics["chi2"] = chi2
+    metrics["chi2_red"] = chi2 / dof if dof > 0 else float("nan")
+    metrics["r2"] = float("nan")
+
+    conf_ci = fit_output.conf_ci
+    mcmc_payload = _mcmc_payload(fit_output.emcee_fin, fit_output.emcee_ci)
+    return JointFitResult(
+        model_name=model_name,
+        projections=tuple(projections),
+        params=params_df,
+        metrics=metrics,
+        fit_alg=str(getattr(par_fin, "method", "unknown")),
+        fit_settings=copy.deepcopy(fit_settings) if fit_settings else {},
+        timestamp=_now_iso(),
+        conf_ci=conf_ci.copy() if not conf_ci.empty else None,
+        correl=ulmfit.correl_from_result(par_fin),
+        mcmc=(
+            mcmc_result_from_payload(mcmc_payload) if mcmc_payload is not None else None
+        ),
     )
 
 

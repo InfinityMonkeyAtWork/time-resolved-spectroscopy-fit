@@ -41,6 +41,12 @@ All `get_*` / `plot_*` result accessors read the persisted fit record
 (latest matching fit), so they work identically on a live session and on
 archives loaded via `FitResults.load(path)`.
 
+Multi-file joint fits (`project.fit_2d(model_name=...)`, sharing
+parameters marked `vary: project` across files) return a
+`JointFitResult` — combined parameter table, per-file parameter maps,
+joint uncertainty/MCMC, whole-objective metrics — also reachable via
+`project.results.find_joint()` / `get_joint()` / `plot_joint_mcmc()`.
+
 Simulation mirrors this: build a model the same way, then use
 `trspecfit.Simulator` (`simulate_1d`, `simulate_2d`, `simulate_n`) to
 generate clean or noisy synthetic data from it.
