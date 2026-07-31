@@ -29,7 +29,12 @@ import pandas as pd
 
 from trspecfit.config.plot import PlotConfig
 from trspecfit.utils.arrays import resolve_time_selection
-from trspecfit.utils.fit_io import SavedFile, SavedFitSlot, read_archive
+from trspecfit.utils.fit_io import (
+    SavedFile,
+    SavedFitSlot,
+    mcmc_result_from_payload,
+    read_archive,
+)
 from trspecfit.utils.lmfit import MCMCResult
 
 PathLike = str | pathlib.Path
@@ -46,9 +51,11 @@ _FIT_METHOD_BY_TYPE: dict[str, str] = {
 
 # Default columns. Dynamic: which set is used depends on whether any matched
 # slot carries a finite ``sigma_data``. ``chi2_red_raw`` is the lmfit-unweighted
-# diagnostic (always populated); ``chi2_red`` is the σ-calibrated value
-# (≈ 1 for a fit at the noise floor) and is only meaningful when a sigma was
-# set on the File at fit time.
+# diagnostic; ``chi2_red`` is the σ-calibrated value (≈ 1 for a fit at the
+# noise floor) and is only meaningful when a sigma was set on the File at fit
+# time. Count-dependent metrics (``chi2_red_raw``, ``chi2_red``, ``aic``,
+# ``bic``) are structurally NaN on the per-file projections of a project-level
+# joint fit — the joint parameter count does not decompose by file.
 DEFAULT_METRICS_NO_SIGMA: tuple[str, ...] = ("chi2_red_raw", "r2", "aic", "bic")
 DEFAULT_METRICS_WITH_SIGMA: tuple[str, ...] = (
     "chi2_red_raw",
@@ -702,9 +709,10 @@ class FitResults:
         Returns
         -------
         MCMCResult
-            Bundle of ``table`` (posterior quantiles), ``flatchain``, and
+            Bundle of ``table`` (posterior quantiles), ``flatchain``,
             ``acceptance_fraction`` (``None`` for slots loaded from schema-2
-            archives, which did not store it).
+            archives, which did not store it), and ``lnsigma`` (``None``
+            when the sampling was weighted).
 
         Raises
         ------
@@ -718,16 +726,7 @@ class FitResults:
                 f"No MCMC results for the {fit_type} fit. Re-run with "
                 "mc_settings=MC(use_mc=1, ...)."
             )
-        flatchain = slot.mcmc.get("flatchain")
-        ci = slot.mcmc.get("ci")
-        acceptance = slot.mcmc.get("acceptance_fraction")
-        return MCMCResult(
-            table=ci.copy() if ci is not None else pd.DataFrame(),
-            flatchain=flatchain.copy() if flatchain is not None else pd.DataFrame(),
-            acceptance_fraction=(
-                np.asarray(acceptance).copy() if acceptance is not None else None
-            ),
-        )
+        return mcmc_result_from_payload(slot.mcmc)
 
     #
     def plot_fit(
@@ -1195,12 +1194,17 @@ class FitResults:
         - no sigma:  ``chi2_red_raw, r2, aic, bic``
         - with sigma: ``chi2_red_raw, sigma_eff, chi2_red, r2, aic, bic``
 
-        ``chi2_red_raw`` is always present (the lmfit-unweighted diagnostic);
-        ``chi2_red`` is the σ-calibrated value (≈ 1 for a fit at the noise
-        floor). Names are stable — the same column always carries the same
-        kind of value across calls, sessions, and loaded archives. There is
-        no per-call ``sigma=`` kwarg by design; persistent state on the File
-        is the only sigma source.
+        ``chi2_red_raw`` is the lmfit-unweighted diagnostic; ``chi2_red`` is
+        the σ-calibrated value (≈ 1 for a fit at the noise floor). Cells that
+        are structurally undefined for a slot are ``NaN`` — on the per-file
+        projections of a project-level joint fit that is every
+        count-dependent metric (``chi2_red_raw``, ``chi2_red``, ``aic``,
+        ``bic``), because the joint parameter count does not decompose by
+        file; the joint record owns the whole-objective values. Names are
+        stable — the same column always carries the same kind of value
+        across calls, sessions, and loaded archives. There is no per-call
+        ``sigma=`` kwarg by design; persistent state on the File is the
+        only sigma source.
 
         Parameters
         ----------

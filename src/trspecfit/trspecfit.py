@@ -1469,18 +1469,20 @@ class Project:
                     proj_name
                 ].value
 
-        # method/nvarys come from the joint optimizer; per-file stderr/CI are
+        # method comes from the joint optimizer; per-file stderr/CI are
         # absent by design (joint covariance does not decompose cleanly per
-        # file). conf_ci is an empty DataFrame so _append_2d_slot's
-        # `conf_ci.empty` check works without branching.
+        # file), and so is nvarys — the joint varying-parameter count does
+        # not decompose by file either, so the placeholder carries none and
+        # the projection slots' count-dependent metrics stay NaN. conf_ci is
+        # an empty DataFrame so the slot builder's `conf_ci.empty` check
+        # works without branching.
         joint_method = str(getattr(joint_result, "method", "unknown"))
-        joint_nvarys = int(getattr(joint_result, "nvarys", 0))
         for f, model in zip(self.files, models, strict=True):
             f.model_2d = model
             assert model is not None  # type guard
             assert f.energy is not None and f.data is not None  # type guard
             # Per-file FitOutput whose par_fin is a minimal MinimizerResult
-            # (params/method/nvarys only, no covar): the joint optimization
+            # (params/method only, no covar/nvarys): the joint optimization
             # has no per-file initial guess, and project fits do not run
             # per-file MCMC, so those fields are inert (None / empty).
             model.result = ulmfit.FitOutput(
@@ -1490,7 +1492,6 @@ class Project:
                     MinimizerResult(
                         params=model.lmfit_pars,
                         method=joint_method,
-                        nvarys=joint_nvarys,
                     ),
                 ),
                 conf_ci=pd.DataFrame(),
@@ -3365,14 +3366,7 @@ class File:
             par_names=self.model_base.parameter_names,
         )
         conf_ci = fit_out.conf_ci
-        # correl only when the optimizer produced a covariance matrix —
-        # otherwise the matrix would misreport "no covariance" as
-        # "uncorrelated" (identity + zeros).
-        correl = (
-            ulmfit.correl_to_df(result_fin.params)
-            if getattr(result_fin, "covar", None) is not None
-            else None
-        )
+        correl = ulmfit.correl_from_result(result_fin)
         mcmc = fit_io._mcmc_payload(fit_out.emcee_fin, fit_out.emcee_ci)
         slot = fit_io._slot_from_baseline(
             file_fingerprint=self.fingerprint(),
@@ -3480,11 +3474,7 @@ class File:
             par_names=self.model_spec.parameter_names,
         )
         conf_ci = fit_out.conf_ci
-        correl = (
-            ulmfit.correl_to_df(result_fin.params)
-            if getattr(result_fin, "covar", None) is not None
-            else None
-        )
+        correl = ulmfit.correl_from_result(result_fin)
         mcmc = fit_io._mcmc_payload(fit_out.emcee_fin, fit_out.emcee_ci)
         slot = fit_io._slot_from_spectrum(
             file_fingerprint=self.fingerprint(),
@@ -3616,11 +3606,7 @@ class File:
             self.results_sbs[0].emcee_fin,
             self.results_sbs[0].emcee_ci,
         )
-        slice0_correl = (
-            ulmfit.correl_to_df(slice0_result.params)
-            if getattr(slice0_result, "covar", None) is not None
-            else None
-        )
+        slice0_correl = ulmfit.correl_from_result(slice0_result)
         # Shared per-parameter metadata (vary/bounds/expr are slice-invariant;
         # captured from slice 0) and per-slice stderr — both column-aligned
         # with the wide params frame.
@@ -3728,12 +3714,12 @@ class File:
         # covar is absent on the project-fit path (minimal MinimizerResult)
         # and for covariance-less optimizers; correl stays None there,
         # mirroring the per-file absence of stderr / conf_ci.
-        correl = (
-            ulmfit.correl_to_df(result_fin.params)
-            if getattr(result_fin, "covar", None) is not None
-            else None
-        )
+        correl = ulmfit.correl_from_result(result_fin)
         mcmc = fit_io._mcmc_payload(fit_out.emcee_fin, fit_out.emcee_ci)
+        # nvarys is absent on the project-fit path (the joint count does not
+        # decompose by file) — n_free_pars=None makes the count-dependent
+        # metrics NaN on the projection slot.
+        nvarys = getattr(result_fin, "nvarys", None)
         slot = fit_io._slot_from_2d(
             file_fingerprint=self.fingerprint(),
             file_name=self.name,
@@ -3745,7 +3731,7 @@ class File:
             fit=fit_arr,
             e_lim=e_lim,
             t_lim=t_lim,
-            n_free_pars=int(getattr(result_fin, "nvarys", 0)),
+            n_free_pars=int(nvarys) if nvarys is not None else None,
             noise_type=self.noise_type,
             sigma_source=self.sigma_source,
             sigma_type=self.sigma_type,

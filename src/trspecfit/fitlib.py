@@ -69,7 +69,7 @@ def compute_fit_metrics(
     *,
     observed: np.ndarray,
     fit: np.ndarray,
-    n_free_pars: int,
+    n_free_pars: int | None,
     sigma_eff: float | None = None,
 ) -> dict[str, float]:
     """
@@ -91,9 +91,13 @@ def compute_fit_metrics(
         cropped ``data`` for sbs/2d). Any shape; the array is flattened.
     fit : ndarray
         Model evaluated at final parameters. Must broadcast to ``observed``.
-    n_free_pars : int
+    n_free_pars : int or None
         Number of varying (non-fixed, non-expression) parameters in the fit.
-        Used as ``nvarys`` in the AIC/BIC and reduced-χ² formulas.
+        Used as ``nvarys`` in the AIC/BIC and reduced-χ² formulas. ``None``
+        means the parameter count is undefined for this data view — the
+        per-file projections of a project-level joint fit, where the joint
+        count does not decompose by file — and every count-dependent metric
+        (``chi2_red_raw``, ``chi2_red``, ``aic``, ``bic``) is ``NaN``.
     sigma_eff : float, optional
         Effective noise σ on the fit's data view (per-pixel for SbS/2D,
         ``σ_pixel / √N_avg`` for baseline). When ``None`` / ``NaN`` /
@@ -105,9 +109,9 @@ def compute_fit_metrics(
     dict
         ``{"chi2_raw", "chi2_red_raw", "chi2", "chi2_red", "r2", "aic",
         "bic"}``. ``chi2_red_raw``, ``aic``, ``bic`` are ``NaN`` when
-        ``ndata <= n_free_pars`` or ``chi2_raw == 0`` (degenerate fits);
-        ``chi2`` / ``chi2_red`` are additionally ``NaN`` when ``sigma_eff``
-        is missing or invalid.
+        ``n_free_pars`` is ``None``, ``ndata <= n_free_pars``, or
+        ``chi2_raw == 0`` (degenerate fits); ``chi2`` / ``chi2_red`` are
+        additionally ``NaN`` when ``sigma_eff`` is missing or invalid.
     """
 
     residual = np.asarray(observed) - np.asarray(fit)
@@ -118,16 +122,21 @@ def compute_fit_metrics(
     ss_tot = float(np.sum((obs_flat - obs_flat.mean()) ** 2))
     r2 = float("nan") if ss_tot == 0.0 else 1.0 - chi2_raw / ss_tot
 
-    dof = ndata - n_free_pars
-    chi2_red_raw = chi2_raw / dof if dof > 0 else float("nan")
-
-    if chi2_raw > 0 and ndata > 0:
-        log_chi2_per_n = math.log(chi2_raw / ndata)
-        aic = ndata * log_chi2_per_n + 2 * n_free_pars
-        bic = ndata * log_chi2_per_n + math.log(ndata) * n_free_pars
-    else:
+    if n_free_pars is None:
+        chi2_red_raw = float("nan")
         aic = float("nan")
         bic = float("nan")
+    else:
+        dof = ndata - n_free_pars
+        chi2_red_raw = chi2_raw / dof if dof > 0 else float("nan")
+
+        if chi2_raw > 0 and ndata > 0:
+            log_chi2_per_n = math.log(chi2_raw / ndata)
+            aic = ndata * log_chi2_per_n + 2 * n_free_pars
+            bic = ndata * log_chi2_per_n + math.log(ndata) * n_free_pars
+        else:
+            aic = float("nan")
+            bic = float("nan")
 
     if sigma_eff is None or not np.isfinite(sigma_eff) or sigma_eff <= 0:
         chi2 = float("nan")
@@ -872,12 +881,16 @@ def fit_wrapper(
         # consumer of that result (display, get_fit_results, SbS tables).
         # emcee gets the copy.
         par_fin_params = copy.deepcopy(_result_params(par_fin))
-        par_fin_params.add(
-            "__lnsigma",
-            value=np.log(mc_settings.sigma_ini),
-            min=np.log(mc_settings.sigma_min),
-            max=np.log(mc_settings.sigma_max),
-        )
+        if not mc_settings.is_weighted:
+            # __lnsigma only enters lmfit's log-probability for unweighted
+            # sampling; adding it to a weighted run would sample a flat,
+            # likelihood-free direction and report a meaningless posterior.
+            par_fin_params.add(
+                "__lnsigma",
+                value=np.log(mc_settings.sigma_ini),
+                min=np.log(mc_settings.sigma_min),
+                max=np.log(mc_settings.sigma_max),
+            )
         if show_output >= 1:
             print(
                 "\nProgress of lmfit.emcee confidence interval determination\n"

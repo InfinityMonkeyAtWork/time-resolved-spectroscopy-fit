@@ -26,6 +26,30 @@ def _make_1d_model_file():
 
 #
 #
+class TestComputeFitMetricsUndefinedCount:
+    """``n_free_pars=None`` marks the parameter count as undefined — the
+    per-file projections of a project-level joint fit, whose joint count
+    does not decompose by file."""
+
+    #
+    def test_count_dependent_metrics_nan_others_unchanged(self):
+        observed = np.array([1.0, 2.0, 3.0, 4.0])
+        fit = np.array([1.1, 1.9, 3.2, 3.8])
+        m_none = fitlib.compute_fit_metrics(
+            observed=observed, fit=fit, n_free_pars=None, sigma_eff=0.5
+        )
+        for key in ("chi2_red_raw", "chi2_red", "aic", "bic"):
+            assert np.isnan(m_none[key]), key
+        m_two = fitlib.compute_fit_metrics(
+            observed=observed, fit=fit, n_free_pars=2, sigma_eff=0.5
+        )
+        for key in ("chi2_raw", "chi2", "r2"):
+            assert np.isfinite(m_none[key]), key
+            assert m_none[key] == m_two[key], key
+
+
+#
+#
 class TestResultsToFit2D:
     """DataFrame-path column handling in results_to_fit_2d."""
 

@@ -637,12 +637,14 @@ class TestMcmcPayload:
         assert loaded.mcmc is not None  # type guard
         np.testing.assert_array_equal(loaded.mcmc["acceptance_fraction"], acceptance)
 
-        # ... and the slot-backed accessor serves it from the loaded archive.
+        # ... and the slot-backed accessor serves it from the loaded archive,
+        # including the persisted lnsigma noise scale.
         mcmc_res = loaded_results.get_mcmc(file="fit", fit_type="baseline")
         assert mcmc_res.acceptance_fraction is not None  # type guard
         np.testing.assert_array_equal(mcmc_res.acceptance_fraction, acceptance)
         assert not mcmc_res.table.empty
         assert not mcmc_res.flatchain.empty
+        assert mcmc_res.lnsigma == pytest.approx(slot.mcmc["lnsigma"])
 
         # plot_mcmc reproduces the fit-time diagnostics from the persisted
         # payload — live history and loaded archive alike.
@@ -652,6 +654,44 @@ class TestMcmcPayload:
         file.plot_mcmc(fit_type="baseline", show_plot=False)
         loaded_results.plot_mcmc(file="fit", fit_type="baseline", show_plot=False)
         assert len(plt.get_fignums()) == n_figs
+
+    #
+    @pytest.mark.slow
+    def test_weighted_mcmc_has_no_lnsigma(self):
+        """__lnsigma only enters lmfit's log-probability for unweighted
+        sampling — a weighted run (is_weighted=True) must not add and sample
+        a likelihood-free nuisance dimension."""
+
+        from trspecfit.utils.lmfit import MC
+
+        truth_project = make_project(name="truth")
+        truth = _make_truth_file(truth_project)
+        data = simulate_noisy(truth.model_active, noise_level=0.01)
+
+        project = make_project(name="fit")
+        file = _make_fit_file(project, data, truth.energy, truth.time)
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+        mc = MC(
+            use_mc=1,
+            steps=20,
+            nwalkers=32,
+            burn=5,
+            thin=1,
+            workers=1,
+            is_weighted=True,
+        )
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0, mc_settings=mc)
+
+        slot = project._fit_history[0]
+        assert slot.mcmc is not None  # type guard
+        assert slot.mcmc["lnsigma"] is None
+        assert "__lnsigma" not in slot.mcmc["flatchain"].columns
+        assert "__lnsigma" not in list(slot.mcmc["ci"].iloc[:, 0])
+        res = project.results.get_mcmc(file="fit", fit_type="baseline")
+        assert res.lnsigma is None
+        assert "__lnsigma" not in res.flatchain.columns
 
     #
     def test_baseline_slot_mcmc_none_when_mcmc_skipped(self):
@@ -786,6 +826,23 @@ class TestSlotBackedAccessors:
         results = FitResults(slots=[slot])
         with pytest.raises(ValueError, match="reported no covariance"):
             results.get_correlations(fit_type="baseline")
+
+    #
+    def test_get_mcmc_serves_lnsigma(self):
+        """The persisted lnsigma noise scale reaches the MCMCResult — the
+        accessor previously dropped it (lossy for every fit type)."""
+
+        import dataclasses
+
+        payload = {
+            "flatchain": pd.DataFrame({"GLP_01_A": [1.0, 2.0]}),
+            "ci": None,
+            "lnsigma": -2.0,
+            "acceptance_fraction": None,
+        }
+        slot = dataclasses.replace(_slot_stub(), mcmc=payload)
+        res = FitResults(slots=[slot]).get_mcmc(fit_type="baseline")
+        assert res.lnsigma == -2.0
 
     #
     def test_get_mcmc_tolerates_missing_acceptance(self):

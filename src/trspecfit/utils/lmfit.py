@@ -501,6 +501,33 @@ def correl_to_df(lmfit_params: lmfit.Parameters) -> pd.DataFrame:
 
 
 #
+def correl_from_result(result: Any) -> pd.DataFrame | None:
+    """
+    Correlation matrix of a completed fit, or ``None`` without covariance.
+
+    Wraps ``correl_to_df`` behind the covariance guard shared by every slot
+    capture path: when the optimizer produced no covariance matrix (e.g.
+    Nelder without numdifftools, or the minimal per-file result of a
+    project-level joint fit), returns ``None`` rather than an identity
+    matrix that would misreport "no covariance" as "uncorrelated".
+
+    Parameters
+    ----------
+    result : lmfit.minimizer.MinimizerResult
+        A completed fit result (``FitOutput.par_fin``).
+
+    Returns
+    -------
+    pd.DataFrame or None
+        See ``correl_to_df``; ``None`` when ``result.covar`` is absent.
+    """
+
+    if getattr(result, "covar", None) is None:
+        return None
+    return correl_to_df(result.params)
+
+
+#
 def list_of_par_to_df(results: list[FitOutput]) -> pd.DataFrame:
     """
     Extract parameter values from multiple fit results into DataFrame.
@@ -804,11 +831,12 @@ class MC:
 #
 @dataclass(frozen=True)
 class MCMCResult:
-    """MCMC outputs for a single fit (counterpart to the ``MC`` settings).
+    """MCMC outputs for a single optimization (counterpart to ``MC`` settings).
 
-    A read-only bundle built from the persisted ``SavedFitSlot.mcmc``
-    payload (schema 3), returned by ``FitResults.get_mcmc`` and the
-    ``File.get_mcmc`` sugar.
+    A read-only bundle built by ``fit_io.mcmc_result_from_payload`` from the
+    persisted mcmc payload — one type shared by the per-file slot path
+    (``FitResults.get_mcmc`` / the ``File.get_mcmc`` sugar) and the
+    project-level joint path (``JointFitResult.mcmc``).
 
     Attributes
     ----------
@@ -821,11 +849,17 @@ class MCMCResult:
     acceptance_fraction : numpy.ndarray | None
         Per-walker acceptance fraction (healthy range ≈ 0.2–0.5). ``None``
         for slots loaded from schema-2 archives, which did not store it.
+    lnsigma : float | None
+        Final value of the ``__lnsigma`` nuisance parameter — a single
+        noise scale over the sampled residual (for a joint fit: the
+        concatenated residual, never a per-file σ). ``None`` when the
+        sampling was weighted (no nuisance parameter).
     """
 
     table: pd.DataFrame
     flatchain: pd.DataFrame
     acceptance_fraction: np.ndarray | None
+    lnsigma: float | None = None
 
 
 #

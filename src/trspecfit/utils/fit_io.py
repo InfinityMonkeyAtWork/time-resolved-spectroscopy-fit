@@ -41,6 +41,7 @@ from trspecfit.fitlib import (
     plt_fit_res_pars,
 )
 from trspecfit.utils.hdf5 import require_dataset, require_group
+from trspecfit.utils.lmfit import MCMCResult
 
 PathLike = str | Path
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
@@ -198,10 +199,14 @@ class SavedFitSlot:
         ``{"chi2_raw", "chi2_red_raw", "chi2", "chi2_red", "r2", "aic",
         "bic"}``. Scalar floats for baseline/spectrum/2d. For SbS, each
         value is a 1D ``np.ndarray`` of length ``n_slices``. ``chi2_raw``
-        and ``chi2_red_raw`` are the unweighted lmfit-convention diagnostics
-        (always populated). ``chi2`` and ``chi2_red`` are the σ-calibrated
+        and ``chi2_red_raw`` are the unweighted lmfit-convention
+        diagnostics. ``chi2`` and ``chi2_red`` are the σ-calibrated
         versions (``≈ 1`` for a fit at the noise floor) and are ``NaN``
-        when no sigma was supplied at fit time.
+        when no sigma was supplied at fit time. For the per-file 2d
+        projections of a project-level joint fit, the count-dependent
+        metrics ``chi2_red_raw`` / ``chi2_red`` / ``aic`` / ``bic`` are
+        ``NaN`` — the joint parameter count does not decompose by file
+        (the joint record owns the whole-objective values).
     observed : np.ndarray
         Data view that was fit against (cropped to ``e_lim`` / ``t_lim`` where
         applicable). ``observed.shape == fit.shape`` always.
@@ -577,6 +582,32 @@ def _mcmc_payload(
 
 
 #
+def mcmc_result_from_payload(payload: dict[str, Any]) -> MCMCResult:
+    """
+    Build an ``MCMCResult`` from a persisted mcmc payload dict.
+
+    The single decoder for the ``{"flatchain", "ci", "lnsigma",
+    "acceptance_fraction"}`` payload produced by ``_mcmc_payload`` — used by
+    both the per-file slot path (``FitResults.get_mcmc``) and the
+    project-level joint path (``JointFitResult.mcmc``). Frames and arrays
+    are copied so the returned bundle never aliases the stored record.
+    """
+
+    flatchain = payload.get("flatchain")
+    ci = payload.get("ci")
+    acceptance = payload.get("acceptance_fraction")
+    lnsigma = payload.get("lnsigma")
+    return MCMCResult(
+        table=ci.copy() if ci is not None else pd.DataFrame(),
+        flatchain=flatchain.copy() if flatchain is not None else pd.DataFrame(),
+        acceptance_fraction=(
+            np.asarray(acceptance).copy() if acceptance is not None else None
+        ),
+        lnsigma=float(lnsigma) if lnsigma is not None else None,
+    )
+
+
+#
 def build_fit_settings(
     *,
     stages: int,
@@ -866,7 +897,7 @@ def _slot_from_2d(
     fit: np.ndarray,
     e_lim: list[int] | None,
     t_lim: list[int] | None,
-    n_free_pars: int,
+    n_free_pars: int | None,
     noise_type: str,
     sigma_source: str,
     sigma_type: str,
@@ -877,7 +908,12 @@ def _slot_from_2d(
     fit_settings: dict[str, Any] | None = None,
     fit_ini: np.ndarray | None = None,
 ) -> SavedFitSlot:
-    """Build a SavedFitSlot for a completed 2D global fit."""
+    """Build a SavedFitSlot for a completed 2D global fit.
+
+    ``n_free_pars`` is ``None`` on the project-level joint-fit path (the
+    joint parameter count does not decompose by file), which makes the
+    count-dependent metrics ``NaN`` — see ``compute_fit_metrics``.
+    """
 
     selection = {
         "e_lim": list(e_lim) if e_lim else None,
@@ -923,7 +959,7 @@ def _build_slot(
     params: pd.DataFrame,
     observed: np.ndarray,
     fit: np.ndarray,
-    n_free_pars: int,
+    n_free_pars: int | None,
     fit_alg: str,
     yaml_filename: str | None,
     conf_ci: pd.DataFrame | None,
