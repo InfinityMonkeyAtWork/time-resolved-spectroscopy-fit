@@ -3317,6 +3317,32 @@ class File:
     # ------------------------------------------------------------------
 
     #
+    def _slot_capture_meta(self, result_fin: Any) -> dict[str, Any]:
+        """
+        File/model metadata shared by every slot-capture site.
+
+        The one place the capture boundary copies File-level identity,
+        noise state, and the optimizer's method/nvarys — splat into the
+        ``_slot_from_<fit_type>`` builders so the four fit types cannot
+        drift apart. ``n_free_pars`` is ``None`` when the result carries
+        no ``nvarys`` (the minimal per-file result of a project-level
+        joint fit — the joint count does not decompose by file), which
+        makes the count-dependent metrics NaN.
+        """
+
+        nvarys = getattr(result_fin, "nvarys", None)
+        return {
+            "file_fingerprint": self.fingerprint(),
+            "file_name": self.name,
+            "fit_alg": str(getattr(result_fin, "method", "unknown")),
+            "n_free_pars": int(nvarys) if nvarys is not None else None,
+            "noise_type": self.noise_type,
+            "sigma_source": self.sigma_source,
+            "sigma_type": self.sigma_type,
+            "sigma_data": self.sigma_data,
+        }
+
+    #
     def _append_baseline_slot(
         self,
         *,
@@ -3403,21 +3429,14 @@ class File:
         correl = ulmfit.correl_from_result(result_fin)
         mcmc = fit_io._mcmc_payload(fit_out.emcee_fin, fit_out.emcee_ci)
         slot = fit_io._slot_from_baseline(
-            file_fingerprint=self.fingerprint(),
-            file_name=self.name,
+            **self._slot_capture_meta(result_fin),
             model_name=model_name,
-            fit_alg=str(getattr(result_fin, "method", "unknown")),
             yaml_filename=self.model_base.yaml_f_name,
             params_df=params_df,
             observed=observed,
             fit=fit_arr,
             base_t_ind=list(self.base_t_ind),
             e_lim=e_lim,
-            n_free_pars=int(getattr(result_fin, "nvarys", 0)),
-            noise_type=self.noise_type,
-            sigma_source=self.sigma_source,
-            sigma_type=self.sigma_type,
-            sigma_data=self.sigma_data,
             conf_ci=conf_ci if not conf_ci.empty else None,
             correl=correl,
             mcmc=mcmc,
@@ -3511,10 +3530,8 @@ class File:
         correl = ulmfit.correl_from_result(result_fin)
         mcmc = fit_io._mcmc_payload(fit_out.emcee_fin, fit_out.emcee_ci)
         slot = fit_io._slot_from_spectrum(
-            file_fingerprint=self.fingerprint(),
-            file_name=self.name,
+            **self._slot_capture_meta(result_fin),
             model_name=model_name,
-            fit_alg=str(getattr(result_fin, "method", "unknown")),
             yaml_filename=self.model_spec.yaml_f_name,
             params_df=params_df,
             observed=observed,
@@ -3523,11 +3540,6 @@ class File:
             time_range=time_range,
             time_type=time_type,
             e_lim=e_lim,
-            n_free_pars=int(getattr(result_fin, "nvarys", 0)),
-            noise_type=self.noise_type,
-            sigma_source=self.sigma_source,
-            sigma_type=self.sigma_type,
-            sigma_data=self.sigma_data,
             conf_ci=conf_ci if not conf_ci.empty else None,
             correl=correl,
             mcmc=mcmc,
@@ -3649,21 +3661,14 @@ class File:
         )
         params_stderr = ulmfit.list_of_par_stderr_to_df(self.results_sbs)
         slot = fit_io._slot_from_sbs(
-            file_fingerprint=self.fingerprint(),
-            file_name=self.name,
+            **self._slot_capture_meta(slice0_result),
             model_name=model_name,
-            fit_alg=str(getattr(slice0_result, "method", "unknown")),
             yaml_filename=self.model_sbs.yaml_f_name,
             params_df=params_df,
             observed=observed,
             fit=fit_arr,
             e_lim=e_lim,
             t_lim=None,
-            n_free_pars=int(getattr(slice0_result, "nvarys", 0)),
-            noise_type=self.noise_type,
-            sigma_source=self.sigma_source,
-            sigma_type=self.sigma_type,
-            sigma_data=self.sigma_data,
             conf_ci=slice0_conf_ci if not slice0_conf_ci.empty else None,
             correl=slice0_correl,
             mcmc=slice0_mcmc,
@@ -3774,26 +3779,15 @@ class File:
         # mirroring the per-file absence of stderr / conf_ci.
         correl = ulmfit.correl_from_result(result_fin)
         mcmc = fit_io._mcmc_payload(fit_out.emcee_fin, fit_out.emcee_ci)
-        # nvarys is absent on the project-fit path (the joint count does not
-        # decompose by file) — n_free_pars=None makes the count-dependent
-        # metrics NaN on the projection slot.
-        nvarys = getattr(result_fin, "nvarys", None)
         slot = fit_io._slot_from_2d(
-            file_fingerprint=self.fingerprint(),
-            file_name=self.name,
+            **self._slot_capture_meta(result_fin),
             model_name=model_name,
-            fit_alg=str(getattr(result_fin, "method", "unknown")),
             yaml_filename=self.model_2d.yaml_f_name,
             params_df=params_df,
             observed=observed,
             fit=fit_arr,
             e_lim=e_lim,
             t_lim=t_lim,
-            n_free_pars=int(nvarys) if nvarys is not None else None,
-            noise_type=self.noise_type,
-            sigma_source=self.sigma_source,
-            sigma_type=self.sigma_type,
-            sigma_data=self.sigma_data,
             conf_ci=conf_ci if not conf_ci.empty else None,
             correl=correl,
             mcmc=mcmc,
