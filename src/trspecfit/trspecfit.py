@@ -98,18 +98,6 @@ ModelRef = str | int | list[str]
 
 
 #
-def _fp_key(fingerprint: dict[str, Any]) -> tuple[Any, ...]:
-    """Hashable key for a file fingerprint (used for slot grouping/match)."""
-
-    return (
-        fingerprint["data_sha256"],
-        fingerprint["energy_sha256"],
-        fingerprint["time_sha256"],
-        tuple(int(x) for x in fingerprint["shape"]),
-    )
-
-
-#
 def _to_str_set(arg: str | Sequence[str] | None) -> set[str] | None:
     """Normalize a string-or-sequence filter arg to a set; ``None`` → no filter."""
 
@@ -518,8 +506,7 @@ class Project:
 
         filtered: list[fit_io.SavedFitSlot] = []
         for slot in self._fit_history:
-            slot_id = (_fp_key(slot.file_fingerprint), slot.file_name)
-            if file_ids is not None and slot_id not in file_ids:
+            if file_ids is not None and slot.file_name not in file_ids:
                 continue
             if models_filter is not None and slot.model_name not in models_filter:
                 continue
@@ -531,15 +518,13 @@ class Project:
         if not snapshot:
             return None
 
-        # Group slots by source file identity (fingerprint + file_name) so
-        # two distinct Project.files with byte-identical raw arrays but
-        # different names are kept separate. Project enforces unique
-        # File.name in-session, so name disambiguates fingerprint
-        # collisions; the archive's full identity tuple is
-        # (fingerprint, name, original_path) — see fit_archive_schema.md.
-        by_id: dict[tuple[tuple[Any, ...], str], list[fit_io.SavedFitSlot]] = {}
+        # Group slots by file identity — the guarded, unique File.name
+        # (fit_archive_principles.md, Principle 1). The fingerprint is a
+        # version stamp and deliberately not part of the key: slots fit
+        # before and after a data correction belong to the same file.
+        by_id: dict[str, list[fit_io.SavedFitSlot]] = {}
         for s in snapshot:
-            by_id.setdefault((_fp_key(s.file_fingerprint), s.file_name), []).append(s)
+            by_id.setdefault(s.file_name, []).append(s)
 
         saved_files: list[fit_io.SavedFile] = []
         for slots in by_id.values():
@@ -611,13 +596,11 @@ class Project:
     def _resolve_save_file_filter(
         self,
         arg: "int | str | File | Sequence[int | str | File] | None",
-    ) -> set[tuple[tuple[Any, ...], str]] | None:
+    ) -> set[str] | None:
         """
-        Map a ``file=...`` arg for :meth:`save_fits` to a set of slot-identity
-        keys ``(fingerprint_key, file_name)``. Both components are matched
-        against the slot to disambiguate two ``Project.files`` with
-        byte-identical raw arrays but distinct names. Returns ``None`` if
-        ``arg`` is ``None`` (no filter).
+        Map a ``file=...`` arg for :meth:`save_fits` to a set of file
+        names — the slot-identity key (unique and guarded in-session).
+        Returns ``None`` if ``arg`` is ``None`` (no filter).
         """
 
         if arg is None:
@@ -627,7 +610,7 @@ class Project:
             items = [arg]
         else:
             items = arg
-        keys: set[tuple[tuple[Any, ...], str]] = set()
+        keys: set[str] = set()
         for item in items:
             if isinstance(item, int):
                 f = self.files[item]
@@ -639,31 +622,28 @@ class Project:
                 raise TypeError(
                     f"Unsupported file filter entry type: {type(item).__name__}"
                 )
-            keys.add((_fp_key(f.fingerprint()), f.name))
+            keys.add(f.name)
         return keys
 
     #
     def _find_file_for_slot(self, slot: fit_io.SavedFitSlot) -> "File | None":
         """
-        Look up the live ``File`` whose name and fingerprint match a slot.
+        Look up the live ``File`` whose name matches a slot.
 
-        Both name and fingerprint must match; either alone can produce a
-        false positive when (a) the user has two byte-identical files in
-        the project under different names, or (b) a file was renamed
-        post-fit so the slot's name no longer matches the live one. The
-        slot's recorded ``file_name`` is the authoritative in-session
-        identity (Project enforces unique names), and the fingerprint
-        cross-checks that the live arrays still match.
+        Name alone is identity: it is unique within the Project and
+        guarded against reassignment (fit_archive_principles.md,
+        Principle 1). The slot's fingerprint is deliberately not
+        consulted — it is a version stamp that moves under data
+        corrections, and requiring it to match made results recorded
+        before ``subtract_dark()`` / ``calibrate_data()`` unsaveable.
         """
 
-        target_fp = _fp_key(slot.file_fingerprint)
         for f in self.files:
             if f.name != slot.file_name:
                 continue
             if f.data is None or f.energy is None:
                 continue
-            if _fp_key(f.fingerprint()) == target_fp:
-                return f
+            return f
         return None
 
     #

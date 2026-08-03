@@ -1274,26 +1274,21 @@ def collapse_history_to_snapshot(slots: list[SavedFitSlot]) -> list[SavedFitSlot
 
 
 #
-def _find_file_by_fingerprint(
+def _find_file_by_name(
     archive: h5py.File | h5py.Group,
-    fingerprint: dict[str, Any],
-    *,
-    name: str | None = None,
-    original_path: str | None = None,
+    name: str,
 ) -> h5py.Group | None:
     """
-    Look up a file group inside an archive.
+    Look up a file group inside an archive by its ``name`` attr.
 
-    Matches on the file fingerprint (``data_sha256`` + ``energy_sha256`` +
-    ``time_sha256`` + ``shape``). When ``name`` and/or ``original_path`` are
-    given, the candidate group's metadata attrs must also match those
-    values; this is how the writer enforces the
-    ``(fingerprint, name, original_path)`` identity rule from
-    ``docs/design/fit_archive_schema.md``. Read-side callers may omit the
-    tie-break args for fingerprint-only matching.
+    The name is the file's identity (fit_archive_principles.md,
+    Principle 1); the archived fingerprint attrs are version stamps and
+    deliberately not matched — a live file whose data was corrected after
+    an earlier save must still resolve to its existing group on append.
+    Every supported schema (2-6) stores the ``name`` attr.
 
     Returns the first matching ``files/<id>/`` group in positional-key
-    order, or ``None`` if no candidate satisfies all supplied predicates.
+    order, or ``None``.
     """
 
     files_obj = archive.get("files")
@@ -1303,21 +1298,8 @@ def _find_file_by_fingerprint(
     for key in sorted(files_group.keys()):
         fg = require_group(files_group[key], f"files/{key}")
         meta = require_group(fg["metadata"], f"files/{key}/metadata")
-        if str(meta.attrs.get("data_sha256", "")) != fingerprint["data_sha256"]:
-            continue
-        if str(meta.attrs.get("energy_sha256", "")) != fingerprint["energy_sha256"]:
-            continue
-        if str(meta.attrs.get("time_sha256", "")) != fingerprint["time_sha256"]:
-            continue
-        archived_shape = tuple(int(x) for x in meta.attrs.get("shape", []))
-        if archived_shape != tuple(fingerprint["shape"]):
-            continue
-        if name is not None and str(meta.attrs.get("name", "")) != name:
-            continue
-        if original_path is not None:
-            if str(meta.attrs.get("original_path", "")) != original_path:
-                continue
-        return fg
+        if str(meta.attrs.get("name", "")) == name:
+            return fg
     return None
 
 
@@ -1549,12 +1531,7 @@ def write_archive(
         _write_top_metadata(archive, project, is_new=is_new)
         files_group = archive.require_group("files")
         for sf in project.files:
-            file_group = _find_file_by_fingerprint(
-                archive,
-                sf.fingerprint,
-                name=sf.name,
-                original_path=sf.original_path,
-            )
+            file_group = _find_file_by_name(archive, sf.name)
             if file_group is None:
                 key = _next_positional_key(files_group)
                 file_group = files_group.create_group(key)
@@ -1624,12 +1601,7 @@ def _precheck_slot_collisions(archive: h5py.File, project: SavedProject) -> None
     """
 
     for sf in project.files:
-        existing_fg = _find_file_by_fingerprint(
-            archive,
-            sf.fingerprint,
-            name=sf.name,
-            original_path=sf.original_path,
-        )
+        existing_fg = _find_file_by_name(archive, sf.name)
         if existing_fg is None:
             continue
         file_ref = _file_ref(existing_fg)

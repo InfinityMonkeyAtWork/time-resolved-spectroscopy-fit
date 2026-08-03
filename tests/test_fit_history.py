@@ -85,6 +85,31 @@ def _setup_baseline_fit():
 
 
 #
+def test_save_fits_survives_data_correction(tmp_path):
+    """Correcting data after a fit must not orphan the earlier slots.
+
+    The verified defect behind fit_archive_principles.md Principle 1:
+    slot->file lookup required the content fingerprint to match, so
+    subtract_dark() after a fit made save_fits() raise and abort the
+    whole save. Identity is the guarded name; the stored fingerprint is
+    a version stamp that legitimately diverges.
+    """
+
+    project, file = _setup_baseline_fit()
+    assert file.energy is not None  # type guard
+    file.subtract_dark(np.full(file.energy.size, 0.1))
+    # The live fingerprint now diverges from the slot's recorded stamp...
+    slot = project._fit_history[0]
+    assert file.fingerprint()["data_sha256"] != slot.file_fingerprint["data_sha256"]
+    # ...and the save still succeeds, resolved by name.
+    archive_path = tmp_path / "corrected.fit.h5"
+    project.save_fits(archive_path, show_output=0)
+    loaded = FitResults.load(archive_path)
+    assert len(loaded) == 1
+    assert next(iter(loaded)).file_name == file.name
+
+
+#
 # --- identity helpers --------------------------------------------------------
 #
 

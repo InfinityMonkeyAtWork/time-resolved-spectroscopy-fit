@@ -81,7 +81,7 @@ def test_baseline_full_range_reconstructs_real_data(tmp_path) -> None:
     fit_file.p.save_fits(archive_path, show_output=0)
     loaded = FitResults.load(archive_path)  # no live File
     slot = next(iter(loaded))
-    provider = next(iter(loaded._files_by_fp.values()))
+    provider = next(iter(loaded._files_by_name.values()))
 
     e_lim = slot.selection["e_lim"]
     b0, b1 = slot.selection["base_t_ind"]
@@ -146,7 +146,7 @@ def test_spectrum_full_range_reconstructs_real_data(
     fit_file.p.save_fits(archive_path, show_output=0)
     loaded = FitResults.load(archive_path)
     slot = next(iter(loaded))
-    provider = next(iter(loaded._files_by_fp.values()))
+    provider = next(iter(loaded._files_by_name.values()))
 
     if expected_ref == "point":
         expected_obs = provider.data[10, :]
@@ -193,7 +193,7 @@ def test_sbs_full_range_reconstructs_real_data(tmp_path) -> None:
     fit_file.p.save_fits(archive_path, show_output=0)
     loaded = FitResults.load(archive_path)
     slot = next(s for s in loaded if s.fit_type == "sbs")
-    provider = next(iter(loaded._files_by_fp.values()))
+    provider = next(iter(loaded._files_by_name.values()))
 
     full_obs = loaded._full_observed_for(slot, provider)
     np.testing.assert_array_equal(full_obs, provider.data)
@@ -235,7 +235,7 @@ def test_2d_full_range_reconstructs_real_data(tmp_path) -> None:
     fit_file.p.save_fits(archive_path, fit_type="2d", show_output=0)
     loaded = FitResults.load(archive_path)
     slot = next(iter(loaded))
-    provider = next(iter(loaded._files_by_fp.values()))
+    provider = next(iter(loaded._files_by_name.values()))
 
     full_obs = loaded._full_observed_for(slot, provider)
     np.testing.assert_array_equal(full_obs, provider.data)

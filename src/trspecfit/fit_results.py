@@ -85,18 +85,6 @@ def _to_str_set(arg: str | Sequence[str] | None) -> set[str] | None:
 
 
 #
-def _fp_key(fingerprint: dict[str, Any]) -> tuple[Any, ...]:
-    """Hashable key for a file fingerprint (mirrors trspecfit._fp_key)."""
-
-    return (
-        fingerprint["data_sha256"],
-        fingerprint["energy_sha256"],
-        fingerprint["time_sha256"],
-        tuple(int(x) for x in fingerprint["shape"]),
-    )
-
-
-#
 def _resolve_file_arg(file: Any) -> str | None:
     """
     Normalize ``file`` filter input to a name string.
@@ -211,39 +199,19 @@ class FitResults:
     ) -> None:
         self._slots: tuple[SavedFitSlot, ...] = tuple(slots)
         self._joint: tuple[JointFitResult, ...] = tuple(joint or ())
-        self._files_by_fp: dict[tuple[Any, ...], Any] = {}
+        # Providers are matched to slots by file name — the guarded,
+        # unique identity (fit_archive_principles.md, Principle 1).
+        self._files_by_name: dict[str, Any] = {}
         for f in files or ():
-            fp = self._provider_fp_key(f)
-            if fp is not None:
-                self._files_by_fp[fp] = f
-
-    #
-    @staticmethod
-    def _provider_fp_key(f: Any) -> tuple[Any, ...] | None:
-        """
-        Fingerprint key for an axes provider, or ``None`` if unavailable.
-
-        ``SavedFile.fingerprint`` is a dict attribute; the live
-        ``trspecfit.File.fingerprint`` is a method that raises when the
-        file has no data — such files produced no slots, so skipping them
-        is safe.
-        """
-
-        fingerprint = getattr(f, "fingerprint", None)
-        if callable(fingerprint):
-            try:
-                fingerprint = fingerprint()
-            except ValueError:
-                return None
-        if isinstance(fingerprint, dict):
-            return _fp_key(fingerprint)
-        return None
+            name = getattr(f, "name", None)
+            if isinstance(name, str):
+                self._files_by_name[name] = f
 
     #
     def _provider_for(self, slot: SavedFitSlot) -> Any | None:
         """Axes/data provider (``SavedFile`` or live ``File``) for this slot's file."""
 
-        return self._files_by_fp.get(_fp_key(slot.file_fingerprint))
+        return self._files_by_name.get(slot.file_name)
 
     #
     def _axes_for(
@@ -1457,28 +1425,25 @@ class FitResults:
     @staticmethod
     def _check_observed_consistency(slots: list[SavedFitSlot]) -> None:
         """
-        Raise if two slots in the same ``(file_fingerprint, file_name, fit_type)``
-        group disagree on ``observed_sha256``.
+        Raise if two slots in the same ``(file_name, fit_type)`` group
+        disagree on ``observed_sha256``.
 
         Different ``observed`` arrays mean different ndata or different data
         views — AIC/BIC/chi2 across them are not comparable. Catches
         e_lim/t_lim/base_t_ind/time_point mismatches via the data hash even
         when ``selection_json`` would also differ.
 
-        ``file_name`` is part of the grouping key (not just fingerprint)
-        because Project identity treats two ``Project.files`` with
-        byte-identical raw arrays but different names as distinct files
-        (matches ``history_key`` / ``archive_slot_key`` semantics, which
-        also fold ``file_name`` in). A project-wide
-        ``compare_models(fit_type=...)`` across replicate files would
-        otherwise raise a false "different data views" error.
+        ``file_name`` is the identity key (unique and guarded in-session);
+        replicate files with byte-identical raw arrays group separately by
+        name, so a project-wide ``compare_models(fit_type=...)`` across
+        them does not raise a false "different data views" error.
         """
 
-        groups: dict[tuple[Any, str, str], list[SavedFitSlot]] = {}
+        groups: dict[tuple[str, str], list[SavedFitSlot]] = {}
         for slot in slots:
-            key = (_fp_key(slot.file_fingerprint), slot.file_name, slot.fit_type)
+            key = (slot.file_name, slot.fit_type)
             groups.setdefault(key, []).append(slot)
-        for (_fp, file_name, ft), group in groups.items():
+        for (file_name, ft), group in groups.items():
             shas = {s.observed_sha256 for s in group}
             if len(shas) > 1:
                 names = sorted({s.model_name for s in group})
