@@ -124,9 +124,11 @@ class TestIdentityHelpers:
     def test_file_fingerprint_tracks_corrections(self):
         """File.fingerprint() must reflect the current ``self.data``.
 
-        Regression: an earlier cache held the pre-correction hash so slots
-        recorded after subtract_dark / calibrate_data inherited a stale
-        history_key.
+        The fingerprint is a version stamp, never identity
+        (fit_archive_principles.md, Principle 1): it must move under data
+        corrections so a slot's stored stamp can report staleness against
+        the live file, while ``history_key`` — composed from the guarded
+        name — stays put.
         """
 
         rng = np.random.default_rng(0)
@@ -158,23 +160,15 @@ class TestIdentityHelpers:
 
     #
     def test_history_key_changes_with_selection(self):
-        fp = {
-            "data_sha256": "x",
-            "energy_sha256": "y",
-            "time_sha256": "z",
-            "shape": (5,),
-        }
         s1 = build_selection_json("spectrum", time_point=0.5, e_lim=None)
         s2 = build_selection_json("spectrum", time_point=1.5, e_lim=None)
         k1 = compute_history_key(
-            file_fingerprint=fp,
             file_name="f1",
             model_name="m",
             fit_type="spectrum",
             selection_json=s1,
         )
         k2 = compute_history_key(
-            file_fingerprint=fp,
             file_name="f1",
             model_name="m",
             fit_type="spectrum",
@@ -251,7 +245,6 @@ class TestBaselineSlot:
         slot = project._fit_history[0]
         # Recompute and verify it matches.
         k = compute_history_key(
-            file_fingerprint=slot.file_fingerprint,
             file_name=slot.file_name,
             model_name=slot.model_name,
             fit_type=slot.fit_type,
@@ -956,7 +949,6 @@ def _slot_stub(
         )
     selection_json = build_selection_json(fit_type, **selection)
     history_key = compute_history_key(
-        file_fingerprint=fp,
         file_name=file_name,
         model_name=model_name,
         fit_type=fit_type,
