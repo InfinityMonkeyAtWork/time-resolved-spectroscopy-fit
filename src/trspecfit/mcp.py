@@ -176,8 +176,23 @@ class Model:
     """
 
     #
+    @property
+    def name(self) -> str:
+        """Model name — identity within its parent File, set at construction."""
+
+        return self._name
+
+    #
+    @name.setter
+    def name(self, value: str) -> None:
+        raise AttributeError(
+            "Model.name is the model's identity and cannot be reassigned; "
+            "it is set at construction (the YAML model key)."
+        )
+
+    #
     def __init__(self, model_name: str = "test") -> None:
-        self.name: str = model_name
+        self._name: str = model_name
         # file name of yaml file containing model details
         self.yaml_f_name: str | None = None
         # functions of spectral components of fit

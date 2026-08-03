@@ -1279,6 +1279,50 @@ class TestFileNameAndProjectAccess:
         assert project["data"].path == "scan1/data.csv"
         assert project["data_2"].path == "scan2/data.csv"
 
+    #
+    def test_file_name_reassignment_raises(self):
+        """File.name is identity — a silent rename would orphan every slot
+        recorded under the old name (fit_archive_principles.md, Principle 1)."""
+
+        project = make_project(name="guard")
+        file = File(parent_project=project, path="scan1/data.csv")
+        with pytest.raises(AttributeError, match="identity"):
+            file.name = "renamed"
+        assert file.name == "data"
+
+    #
+    def test_project_name_reassignment_raises(self):
+        project = make_project(name="guard")
+        with pytest.raises(AttributeError, match="identity"):
+            project.name = "renamed"
+        assert project.name == "guard"
+
+    #
+    def test_model_name_reassignment_raises(self):
+        project = make_project(name="guard")
+        file = File(parent_project=project, energy=np.linspace(80, 90, 10))
+        file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+        model = file.model_active
+        assert model is not None  # type guard
+        with pytest.raises(AttributeError, match="identity"):
+            model.name = "renamed"
+        assert model.name == "single_glp"
+
+    #
+    def test_duplicate_model_name_raises(self):
+        """load_model must not register two models with one name — every
+        name-based lookup (select_model, slot model_name) would silently
+        take the first. Pins the existing load-time guard."""
+
+        project = make_project(name="guard")
+        file = File(parent_project=project, energy=np.linspace(80, 90, 10))
+        file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+        with pytest.raises(ValueError, match="already exists"):
+            file.load_model(
+                model_yaml="models/file_energy.yaml", model_info="single_glp"
+            )
+        assert len(file.models) == 1
+
 
 #
 #
@@ -1617,6 +1661,18 @@ class TestProjectConfigLoading:
         config = tmp_path / "project.yaml"
         config.write_text("show_output: [unclosed\n")
         with pytest.raises(ValueError, match="Failed to load config"):
+            Project(path=tmp_path, config_file="project.yaml")
+
+    #
+    def test_config_name_key_raises(self, tmp_path):
+        """Project.name is identity — a YAML `name:` key must not rename
+        the project through the generic config-setattr path."""
+
+        from trspecfit import Project
+
+        config = tmp_path / "project.yaml"
+        config.write_text("name: renamed\n")
+        with pytest.raises(ValueError, match="cannot rename the project"):
             Project(path=tmp_path, config_file="project.yaml")
 
     #

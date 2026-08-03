@@ -142,8 +142,9 @@ contents — those legitimately change under corrections. So:
   participate in identity.
 
 The same rule applies one level down: **model names must be unique within a
-`File` and guarded.** They are not today — `trspecfit.py:2111` appends to
-`File.models` unconditionally, unlike `File.__init__`'s duplicate-name guard.
+`File` and guarded.** Uniqueness is enforced at load time (`File.load_model`
+rejects a name that `select_model` already resolves); the missing half was
+the mutation guard, closed together with `File.name`'s.
 
 ### What this deletes
 

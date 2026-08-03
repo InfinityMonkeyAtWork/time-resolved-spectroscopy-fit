@@ -207,7 +207,7 @@ class Project:
         config_file: PathLike | None = "project.yaml",
     ) -> None:
         self.path = pathlib.Path(path) if path is not None else pathlib.Path("test")
-        self.name = name
+        self._name = name
 
         self._config_file: PathLike | None = None
         self.files: list[File] = []
@@ -281,6 +281,21 @@ class Project:
         self.sigma_source: str = fit_io.SIGMA_SOURCE_USER
         self.sigma_type: str = fit_io.SIGMA_TYPE_CONSTANT
         self.sigma_data: float = float("nan")
+
+    #
+    @property
+    def name(self) -> str:
+        """Project name — archive-level identity, set at construction."""
+
+        return self._name
+
+    #
+    @name.setter
+    def name(self, value: str) -> None:
+        raise AttributeError(
+            "Project.name is the project's identity and cannot be "
+            "reassigned; pass name= at construction."
+        )
 
     #
     def __repr__(self) -> str:
@@ -832,6 +847,12 @@ class Project:
                     raise ValueError(
                         f"Config key '{key}' was removed in v0.14.0: "
                         f"{_removed_keys[project_key]}. "
+                        f"Remove it from {config_path}."
+                    )
+                if project_key == "name":
+                    raise ValueError(
+                        f"Config key 'name' cannot rename the project: "
+                        f"Project.name is identity, set at construction. "
                         f"Remove it from {config_path}."
                     )
                 if hasattr(self, project_key):
@@ -1694,15 +1715,16 @@ class File:
         # pass parent project or (default) create a functioning test project environment
         self.p = parent_project if parent_project is not None else Project(path=None)
         self.path = path  # path to load/save [?] data from
-        self.name = name if name is not None else pathlib.Path(path).stem
+        file_name = name if name is not None else pathlib.Path(path).stem
         # Check for duplicate names before registering
         existing = [f.name for f in self.p.files]
-        if self.name in existing:
+        if file_name in existing:
             raise ValueError(
-                f'Duplicate file name "{self.name}". '
+                f'Duplicate file name "{file_name}". '
                 f"Pass an explicit name= to disambiguate "
-                f'(e.g. name="{self.name}_2").'
+                f'(e.g. name="{file_name}_2").'
             )
+        self._name = file_name
         self.p.files.append(self)  # register with parent project
         self._plot_config: PlotConfig | None = None  # create plot config from project
         self.data = data  # (time-[optional] and) energy-dependent data to fit
@@ -1784,6 +1806,21 @@ class File:
         """Allow setting a custom config for this File"""
 
         self._plot_config = config
+
+    #
+    @property
+    def name(self) -> str:
+        """File name — identity within its Project, set at construction."""
+
+        return self._name
+
+    #
+    @name.setter
+    def name(self, value: str) -> None:
+        raise AttributeError(
+            "File.name is the file's identity and cannot be reassigned; "
+            "pass name= at construction."
+        )
 
     #
     def __repr__(self) -> str:
