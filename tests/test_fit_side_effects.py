@@ -317,8 +317,8 @@ class TestPlotHelperSkipped:
 
 #
 class TestFullRangeConfigResolution:
-    """full_range is a real PlotConfig field (Project.full_range-backed,
-    True out of the box), not a value hardcoded at each live call site.
+    """full_range is a real PlotConfig field on the project-owned config
+    (True out of the box), not a value hardcoded at each live call site.
     Every live post-fit display call (fit_baseline/fit_spectrum/
     fit_slice_by_slice/fit_2d/Project.fit_baselines/Project.fit_2d) now
     omits full_range entirely and inherits whatever FitResults.plot_fit
@@ -331,7 +331,7 @@ class TestFullRangeConfigResolution:
     #
     def test_project_default_is_true(self):
         project = _make_abs_project()
-        assert project.full_range is True
+        assert project.plot_config.full_range is True
 
     #
     def test_live_baseline_display_uses_full_range_when_config_true(
@@ -356,7 +356,7 @@ class TestFullRangeConfigResolution:
         import matplotlib.pyplot as plt
 
         project, file = _baseline_setup(tmp_path, monkeypatch, show_output=1)
-        project.full_range = False
+        project.plot_config.full_range = False
         e = file.energy
         file.set_fit_limits([float(e[5]), float(e[-6])], show_plot=False)
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
@@ -385,15 +385,15 @@ class TestFullRangeConfigResolution:
 #
 class TestShowInitConfigResolution:
     """show_init mirrors full_range's PlotConfig-field precedent exactly:
-    Project.show_init-backed, True out of the box, resolved once by
-    FitResults.plot_fit rather than hardcoded at a live call site. A
+    a field on the project-owned config, True out of the box, resolved
+    once by FitResults.plot_fit rather than hardcoded at a live call site. A
     baseline fit now persists fit_ini (schema 6), so the live post-fit
     display can render the dotted-gold "initial guess" overlay."""
 
     #
     def test_project_default_is_true(self):
         project = _make_abs_project()
-        assert project.show_init is True
+        assert project.plot_config.show_init is True
 
     #
     def test_live_baseline_display_shows_initial_guess_when_config_true(
@@ -416,7 +416,7 @@ class TestShowInitConfigResolution:
         import matplotlib.pyplot as plt
 
         project, file = _baseline_setup(tmp_path, monkeypatch, show_output=1)
-        project.show_init = False
+        project.plot_config.show_init = False
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
         try:
             labels = [line.get_label() for line in plt.gcf().axes[0].lines]
@@ -508,15 +508,21 @@ class TestPlotSbsSlices:
 
         import matplotlib.image as mpimg
 
-        from trspecfit.config.plot import PlotConfig
-
         _, file = self._sbs_fit(tmp_path, monkeypatch)
         low = tmp_path / "low"
         high = tmp_path / "high"
-        file.plot_config = PlotConfig(dpi_save=100)
-        file.plot_sbs_slices(slices=[0], save_path=low, show_plot=False)
-        file.plot_config = PlotConfig(dpi_save=400)
-        file.plot_sbs_slices(slices=[0], save_path=high, show_plot=False)
+        file.plot_sbs_slices(
+            slices=[0],
+            save_path=low,
+            show_plot=False,
+            config=file.p.plot_config.copy(dpi_save=100),
+        )
+        file.plot_sbs_slices(
+            slices=[0],
+            save_path=high,
+            show_plot=False,
+            config=file.p.plot_config.copy(dpi_save=400),
+        )
         low_img = mpimg.imread(low / "000000.png")
         high_img = mpimg.imread(high / "000000.png")
         assert high_img.shape[0] > low_img.shape[0] * 2

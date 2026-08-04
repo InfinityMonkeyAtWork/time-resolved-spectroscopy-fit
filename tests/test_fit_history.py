@@ -1862,7 +1862,7 @@ class TestPlotFitAPI:
         try:
             line_x = fig.axes[0].lines[0].get_xdata()
             np.testing.assert_array_equal(line_x, np.asarray(file.energy))
-            assert fig.axes[1].get_xlabel() == file.plot_config.x_label
+            assert fig.axes[1].get_xlabel() == file.p.plot_config.x_label
         finally:
             plt.close("all")
 

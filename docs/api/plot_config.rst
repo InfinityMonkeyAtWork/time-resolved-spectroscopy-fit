@@ -36,7 +36,7 @@ reuse the resulting config across plots.
    from trspecfit.utils import plot as uplt
 
    project = Project(path='my_project', config_file='project.yaml')
-   config = PlotConfig.from_project(project)
+   config = project.plot_config
 
    # All plots use project settings
    uplt.plot_1d(data, x, config=config)
@@ -60,7 +60,7 @@ interactive analysis.
 
 .. code-block:: python
 
-   default_config = PlotConfig.from_project(project)
+   default_config = project.plot_config
    pub_config = default_config.copy(dpi_save=600, dpi_plot=150)
    talk_config = default_config.copy(ticksize=14)
 

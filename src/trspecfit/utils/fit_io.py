@@ -36,6 +36,7 @@ import h5py
 import numpy as np
 import pandas as pd
 
+from trspecfit.config.plot import PlotConfig
 from trspecfit.fitlib import (
     compute_fit_metrics,
     plt_fit_res_2d,
@@ -2446,7 +2447,7 @@ def _export_2d_slot(
     *,
     num_fmt: str,
     delim: str,
-    plot_config: Any,
+    plot_config: PlotConfig,
 ) -> None:
     """Write CSVs and the data/fit/residual map PNG for a 2D slot."""
 
@@ -2481,7 +2482,7 @@ def _export_sbs_param_evolution(
     *,
     num_fmt: str,
     delim: str,
-    plot_config: Any,
+    plot_config: PlotConfig,
 ) -> None:
     """
     Write ``fit_pars.csv`` (per-slice param values) and per-parameter PNGs.
@@ -2524,7 +2525,7 @@ def _export_slot(
     *,
     num_fmt: str,
     delim: str,
-    plot_config: Any,
+    plot_config: PlotConfig,
 ) -> None:
     """Write one slot's CSV/PNG payload into ``slot_dir`` (must exist)."""
 
@@ -2587,38 +2588,13 @@ def _export_slot(
 
 
 #
-def _resolve_plot_config(
-    plot_config: Any,
-    file_name: str,
-) -> Any:
-    """
-    Pick the ``PlotConfig`` for a single ``SavedFile``.
-
-    Accepts a ``PlotConfig`` (used for every file), a ``dict`` keyed by
-    ``SavedFile.name`` (per-file lookup with default fallback for missing
-    keys), or ``None`` (default ``PlotConfig`` for everything).
-    """
-
-    if isinstance(plot_config, dict):
-        cfg = plot_config.get(file_name)
-        if cfg is not None:
-            return cfg
-        plot_config = None
-    if plot_config is None:
-        from trspecfit.config.plot import PlotConfig
-
-        return PlotConfig()
-    return plot_config
-
-
-#
 def write_csv_export(
     root: PathLike | str,
     *,
     project: SavedProject,
     num_fmt: str = "%.6e",
     delim: str = ",",
-    plot_config: Any = None,
+    plot_config: PlotConfig | None = None,
     overwrite: bool = False,
 ) -> int:
     """
@@ -2643,16 +2619,10 @@ def write_csv_export(
     num_fmt, delim : str
         Number format and delimiter for ``np.savetxt`` /
         ``DataFrame.to_csv``.
-    plot_config : PlotConfig | dict[str, PlotConfig] | None
-        Drives PNG styling.
-
-        - ``PlotConfig`` — applied to every file.
-        - ``dict[file_name, PlotConfig]`` — per-file lookup; missing keys
-          fall back to a default ``PlotConfig``.
-        - ``None`` — default ``PlotConfig`` for all files.
-
-        ``Project.export_fits`` builds the dict form by reading each live
-        ``File.plot_config``, so per-file styling is preserved.
+    plot_config : PlotConfig | None
+        Drives PNG styling; one config for every file (presentation is
+        project-owned). ``Project.export_fits`` passes the project's
+        config; ``None`` falls back to default ``PlotConfig()``.
     overwrite : bool, default False
         Per-slot directory: a non-empty target dir raises
         ``FileExistsError`` unless True. Pre-checked across all slots
@@ -2664,6 +2634,16 @@ def write_csv_export(
         Number of slot directories written.
     """
 
+    if plot_config is not None and not isinstance(plot_config, PlotConfig):
+        # Fail before any filesystem mutation (mkdir / overwrite clearing) —
+        # a partial export after a destructive clear is the worst outcome.
+        raise TypeError(
+            f"plot_config must be a PlotConfig or None, got "
+            f"{type(plot_config).__name__}. Per-file config dicts were "
+            f"removed in v0.14.0 — presentation is project-owned (one "
+            f"config for every file)."
+        )
+
     root_path = Path(root)
     root_path.mkdir(parents=True, exist_ok=True)
 
@@ -2673,7 +2653,7 @@ def write_csv_export(
     written_paths: set[Path] = set()
     n_written = 0
     for sf in project.files:
-        sf_plot_config = _resolve_plot_config(plot_config, sf.name)
+        sf_plot_config = plot_config if plot_config is not None else PlotConfig()
         for slot in sf.slots:
             slot_dir = slot_dirs[id(slot)]
             if slot_dir in written_paths:

@@ -78,7 +78,11 @@ from tqdm import tqdm
 from trspecfit import fitlib, mcp
 
 # standardized plotting configuration
-from trspecfit.config.plot import PlotConfig
+from trspecfit.config.plot import (
+    PLOT_FIELD_NAMES,
+    PLOT_TUPLE_FIELDS,
+    PlotConfig,
+)
 from trspecfit.fit_results import FitResults
 
 # function library for energy, time, and profile components
@@ -152,8 +156,6 @@ class Project:
     ----------
     path : Path
         Base project directory containing data and configuration
-    name : str
-        Name for this analysis run
     files : list of File
         All File instances registered with this Project
     show_output : int
@@ -174,8 +176,9 @@ class Project:
     Notes
     -----
     **Plot Configuration:**
-    Plot-related attributes (axis labels, directions, colormaps, DPI, etc.)
-    are used to construct PlotConfig objects. See trspecfit.config.plot.PlotConfig
+    Presentation is project-owned: ``Project.plot_config`` is the one
+    PlotConfig instance, resolved at render time (set fields on it or
+    override per call with ``config=``). See trspecfit.config.plot.PlotConfig
     for full documentation of available plot settings.
 
     **YAML Configuration:**
@@ -214,49 +217,68 @@ class Project:
         if config_file is not None:
             self._load_config(config_file)
 
+    # Removed flat presentation attributes (v0.14.0): writes must fail
+    # loudly with a migration pointer, mirroring _load_config's
+    # _removed_keys — a silent inert assignment would leave plots
+    # rendering defaults with no error.
+    _REMOVED_PLOT_ATTRS = frozenset(
+        PLOT_FIELD_NAMES | {"e_label", "t_label", "dpi_plt"}
+    ) - {"plot_config"}
+    _PLOT_ATTR_RENAMES = {  # noqa: RUF012 — class-level constant
+        "e_label": "x_label",
+        "t_label": "y_label",
+        "dpi_plt": "dpi_plot",
+    }
+
+    #
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in self._REMOVED_PLOT_ATTRS:
+            field = self._PLOT_ATTR_RENAMES.get(name, name)
+            raise AttributeError(
+                f"Project.{name} was removed in v0.14.0: presentation is "
+                f"project-owned — set project.plot_config.{field} instead."
+            )
+        super().__setattr__(name, value)
+
+    #
+    @property
+    def plot_config(self) -> PlotConfig:
+        """The one project-owned presentation config (see PlotConfig)."""
+
+        return self._plot_config
+
+    #
+    @plot_config.setter
+    def plot_config(self, value: PlotConfig) -> None:
+        if not isinstance(value, PlotConfig):
+            raise TypeError(
+                f"Project.plot_config must be a PlotConfig, got "
+                f"{type(value).__name__}. In project.yaml, put presentation "
+                f"keys at the top level rather than under a plot_config: "
+                f"mapping."
+            )
+        current = getattr(self, "_plot_config", None)
+        if current is None:
+            self._plot_config = value
+        else:
+            # Adopt in place: the config object's identity is stable for
+            # the Project's lifetime, so held FitResults views keep
+            # resolving the current styling at render time.
+            current.adopt(value)
+
     #
     def _set_defaults(self) -> None:
         """Set default project configuration."""
 
         self.show_output = 1
-        # Plot settings
-        self.e_label = "Energy"
-        self.t_label = "Time"
-        self.z_label = "Intensity"
-        self.x_dir = "def"
-        self.x_type = "lin"
-        self.y_dir = "def"
-        self.y_type = "lin"
-        self.z_colormap = "viridis"
-        self.z_colormap_res = "RdBu_r"
-        self.z_colorbar = "ver"
-        self.z_type = "lin"
-        self.dpi_plt = 100
-        self.dpi_save = 300
-        self.res_mult = 5
-        self.full_range = True
-        self.show_init = True
-        self.title = ""
-        self.x_lim = None
-        self.y_lim = None
-        self.data_slice = None
-        self.z_lim = None
-        self.colors = None
-        self.linestyles = None
-        self.linewidths = None
-        self.markers = None
-        self.markersizes = None
-        self.alphas = None
-        self.legend = None
-        self.waterfall = 0
-        self.vlines = None
-        self.hlines = None
-        self.refline_color = "#000000"
-        self.refline_style = ":"
-        self.ticksize = None
-        self.panel_size = (4.0, 3.0)
-        self.y_norm = 0
-        self.y_scale = None
+        # Presentation: one project-owned PlotConfig, resolved at render
+        # time (fit_archive_principles.md, Principle 2). Field defaults
+        # live on PlotConfig; only the axis labels are project-flavored.
+        self.plot_config = PlotConfig(
+            x_label="Energy",
+            y_label="Time",
+            z_label="Intensity",
+        )
         # File I/O settings
         self.num_fmt = "%.6e"
         self.delim = ","
@@ -309,6 +331,7 @@ class Project:
             slots=list(self._fit_history),
             files=list(self.files),
             joint=list(self._joint_fit_history),
+            config=self.plot_config,
         )
 
     #
@@ -460,20 +483,12 @@ class Project:
         else:
             root = pathlib.Path(filepath)
 
-        # Per-file plot_config preserves File.plot_config customizations
-        # (axis labels, colormaps, etc.) — the fit methods use
-        # self.plot_config for inline display, and export keeps that contract.
-        plot_configs: dict[str, Any] = {}
-        for sf in project.files:
-            live = self._find_file_for_slot(sf.slots[0])
-            if live is not None and live.plot_config is not None:
-                plot_configs[sf.name] = live.plot_config
         n_written = fit_io.write_csv_export(
             root,
             project=project,
             num_fmt=self.num_fmt,
             delim=self.delim,
-            plot_config=plot_configs,
+            plot_config=self.plot_config,
             overwrite=overwrite,
         )
         if show_output:
@@ -735,7 +750,7 @@ class Project:
                 except ValueError:
                     axes_ok = False
                 if files_2d and axes_ok:
-                    config = files_2d[0].plot_config
+                    config = self.plot_config
                     datasets = [f.data for f in files_2d if f.data is not None]
                     uplt.plot_2d_grid(
                         datasets=datasets,
@@ -753,21 +768,22 @@ class Project:
                     )
 
         if detail >= 2:
-            print("\n  Plot settings:")
-            print(f"    e_label:    {self.e_label}")
-            print(f"    t_label:    {self.t_label}")
-            print(f"    z_label:    {self.z_label}")
-            print(f"    x_dir:      {self.x_dir}")
-            print(f"    x_type:     {self.x_type}")
-            print(f"    y_dir:      {self.y_dir}")
-            print(f"    y_type:     {self.y_type}")
-            print(f"    z_colormap: {self.z_colormap}")
-            print(f"    z_colormap_res: {self.z_colormap_res}")
-            print(f"    z_colorbar: {self.z_colorbar}")
-            print(f"    z_type:     {self.z_type}")
-            print(f"    dpi_plt:    {self.dpi_plt}")
-            print(f"    dpi_save:   {self.dpi_save}")
-            print(f"    res_mult:   {self.res_mult}")
+            cfg = self.plot_config
+            print("\n  Plot settings (project-owned PlotConfig):")
+            print(f"    x_label:    {cfg.x_label}")
+            print(f"    y_label:    {cfg.y_label}")
+            print(f"    z_label:    {cfg.z_label}")
+            print(f"    x_dir:      {cfg.x_dir}")
+            print(f"    x_type:     {cfg.x_type}")
+            print(f"    y_dir:      {cfg.y_dir}")
+            print(f"    y_type:     {cfg.y_type}")
+            print(f"    z_colormap: {cfg.z_colormap}")
+            print(f"    z_colormap_res: {cfg.z_colormap_res}")
+            print(f"    z_colorbar: {cfg.z_colorbar}")
+            print(f"    z_type:     {cfg.z_type}")
+            print(f"    dpi_plot:   {cfg.dpi_plot}")
+            print(f"    dpi_save:   {cfg.dpi_save}")
+            print(f"    res_mult:   {cfg.res_mult}")
             print("\n  File I/O settings:")
             print(f"    num_fmt:    {self.num_fmt}")
             print(f"    delim:      {repr(self.delim)}")
@@ -799,10 +815,12 @@ class Project:
             # Update attributes from config
             for key, value in config.items():
                 normalized_key = key.replace("-", "_")
+                # Historical project-attribute spellings stay valid in
+                # YAML; canonical names are the PlotConfig fields.
                 _key_map = {
-                    "x_label": "e_label",
-                    "y_label": "t_label",
-                    "dpi_plot": "dpi_plt",
+                    "e_label": "x_label",
+                    "t_label": "y_label",
+                    "dpi_plt": "dpi_plot",
                 }
                 _removed_keys = {
                     "auto_export": (
@@ -835,7 +853,13 @@ class Project:
                         f"Project.name is identity, set at construction. "
                         f"Remove it from {config_path}."
                     )
-                if hasattr(self, project_key):
+                if project_key in PLOT_FIELD_NAMES:
+                    # Presentation keys land on the project-owned config.
+                    # Tuple-typed fields arrive as YAML lists.
+                    if project_key in PLOT_TUPLE_FIELDS and value is not None:
+                        value = tuple(value)
+                    setattr(self.plot_config, project_key, value)
+                elif hasattr(self, project_key):
                     setattr(self, project_key, value)
                 else:
                     if self.show_output >= 1:
@@ -1654,8 +1678,6 @@ class File:
         Extracted 1D spectrum for individual spectrum fitting
     spec_t_abs, spec_t_ind : list
         Time bounds for spectrum extraction (absolute values and indices)
-    plot_config : PlotConfig
-        Plot configuration (created from parent Project on first access)
 
     Notes
     -----
@@ -1706,7 +1728,6 @@ class File:
             )
         self._name = file_name
         self.p.files.append(self)  # register with parent project
-        self._plot_config: PlotConfig | None = None  # create plot config from project
         self.data = data  # (time-[optional] and) energy-dependent data to fit
         self.data_raw: np.ndarray | None = data.copy() if data is not None else None
         self.dim = 0 if data is None else data.ndim  # 1/2 D for energy/+time
@@ -1768,24 +1789,25 @@ class File:
         if self.energy is not None:
             self.set_fit_limits(energy_limits=None, show_plot=False)
 
+    #
     @property
     def plot_config(self) -> PlotConfig:
-        """
-        Get plot config for this File.
+        """Removed in v0.14.0 — presentation is project-owned."""
 
-        Created from parent Project on first access. File can then customize
-        persistently (e.g., for different time axes across files).
-        """
+        raise AttributeError(
+            "File.plot_config was removed in v0.14.0: presentation is "
+            "project-owned — use file.p.plot_config, or pass config= to "
+            "the plot call."
+        )
 
-        if self._plot_config is None:
-            self._plot_config = PlotConfig.from_project(self.p)
-        return self._plot_config
-
+    #
     @plot_config.setter
-    def plot_config(self, config: PlotConfig) -> None:
-        """Allow setting a custom config for this File"""
-
-        self._plot_config = config
+    def plot_config(self, value: PlotConfig) -> None:
+        raise AttributeError(
+            "File.plot_config was removed in v0.14.0: presentation is "
+            "project-owned — set fields on file.p.plot_config, or pass "
+            "config= to the plot call."
+        )
 
     #
     @property
@@ -1856,7 +1878,7 @@ class File:
                 "Pass time= when constructing File."
             )
 
-        config = self.plot_config
+        config = self.p.plot_config
 
         if self.dim == 1:
             uplt.plot_1d(
@@ -2228,7 +2250,7 @@ class File:
                 show_init=False,
                 title=title_mod,
                 fit_lim=self.e_lim,
-                config=self.plot_config,
+                config=self.p.plot_config,
                 legend=[comp.name for comp in mod.components],
             )
 
@@ -2246,7 +2268,7 @@ class File:
                 fit=mod.value_2d,
                 x=self.energy,
                 y=self.time,
-                config=self.plot_config,
+                config=self.p.plot_config,
                 x_lim=self.e_lim,
                 y_lim=self.t_lim,
                 title=title_mod,
@@ -2489,8 +2511,8 @@ class File:
                     self.data_base,
                 ],
                 x=self.energy,
-                config=self.plot_config,
-                y_label=self.plot_config.z_label,  # intensity, not the t_label
+                config=self.p.plot_config,
+                y_label=self.p.plot_config.z_label,  # intensity, not the t_label
                 title=(
                     f"Baseline data: t in [{t_lo:.4g}, {t_hi:.4g}] "
                     f"(idx: [{self.base_t_ind[0]}, {self.base_t_ind[1] - 1}])"
@@ -2572,8 +2594,8 @@ class File:
                 uplt.plot_1d(
                     data=[self.data, y_cut],
                     x=[energy, x_cut],
-                    config=self.plot_config,
-                    y_label=self.plot_config.z_label,  # intensity, not the t_label
+                    config=self.p.plot_config,
+                    y_label=self.p.plot_config.z_label,  # intensity, not the t_label
                     waterfall=(np.max(np.abs(y_cut)) - np.min(np.abs(y_cut))) / 8,
                     legend=["all", "cut"],
                     vlines=self.e_lim_abs,
@@ -2589,7 +2611,7 @@ class File:
                     data=self.data,
                     x=energy,
                     y=self.time,
-                    config=self.plot_config,
+                    config=self.p.plot_config,
                     vlines=self.e_lim_abs,
                     hlines=self.t_lim_abs,
                 )
@@ -4359,7 +4381,8 @@ class File:
         Plot the latest matching fit: observed, fit, and residual.
 
         Sugar for ``self.p.results.plot_fit(file=self, ...)`` — reads the
-        persisted fit slot and uses this file's axes and ``plot_config``.
+        persisted fit slot and uses this file's axes and the project's
+        ``plot_config``.
         See :meth:`FitResults.plot_fit`.
 
         Parameters
@@ -4370,7 +4393,7 @@ class File:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
             Which fit to plot.
         config : PlotConfig, optional
-            Styling override; defaults to this file's ``plot_config``.
+            Styling override; defaults to the project's ``plot_config``.
         show_plot : bool, default True
             Set ``False`` to build without displaying.
         full_range : bool, optional
@@ -4415,7 +4438,7 @@ class File:
         params : sequence of str, optional
             Which parameters to plot (default: varied parameters).
         config : PlotConfig, optional
-            Styling override; defaults to this file's ``plot_config``.
+            Styling override; defaults to the project's ``plot_config``.
         show_plot : bool, default True
             Set ``False`` to build without displaying.
         """
@@ -4467,6 +4490,7 @@ class File:
         *,
         model: str | None = None,
         slices: Sequence[int] | None = None,
+        config: PlotConfig | None = None,
         show_init: bool | None = None,
         save_path: PathLike | None = None,
         show_plot: bool = True,
@@ -4484,6 +4508,8 @@ class File:
             Restrict to a single model name.
         slices : sequence of int, optional
             Slice indices to render. Default: all slices.
+        config : PlotConfig, optional
+            Styling override; defaults to the project's ``plot_config``.
         show_init : bool, optional
             Overlay the per-slice initial guess. Default: ``config.show_init``.
         save_path : str or Path, optional
@@ -4497,6 +4523,7 @@ class File:
             file=self,
             model=model,
             slices=slices,
+            config=config,
             show_init=show_init,
             save_path=save_path,
             show_plot=show_plot,

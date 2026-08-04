@@ -365,7 +365,7 @@ def plot_2d(
     >>> plot_2d(data, x=energy, y=time)
 
     >>> # With configuration
-    >>> config = PlotConfig.from_project(project)
+    >>> config = project.plot_config
     >>> plot_2d(data, x, y, config=config)
 
     >>> # Slice data and set color scale
@@ -598,7 +598,7 @@ def plot_1d(
     >>> plot_1d([data1, data2], x=energy)
 
     >>> # With project configuration
-    >>> config = PlotConfig.from_project(project)
+    >>> config = project.plot_config
     >>> plot_1d(data, x, config=config)
 
     >>> # Waterfall plot with custom styling

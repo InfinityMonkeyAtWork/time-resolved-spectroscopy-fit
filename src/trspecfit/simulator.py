@@ -1234,7 +1234,7 @@ class Simulator:
             0: display, 1: save+display, -1: save only, -2: close (no display/save)
         config : PlotConfig, optional
             Override the model's inherited plot configuration for this call.
-            If None, uses the model's own plot_config.
+            If None, uses the project-owned plot_config.
         **plot_kwargs : dict
             Per-call overrides for any PlotConfig field (e.g. ``z_colormap``,
             ``ticksize``). Applied on top of *config*.

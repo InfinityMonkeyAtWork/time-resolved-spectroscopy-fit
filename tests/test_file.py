@@ -1460,12 +1460,9 @@ class TestDescribeWaterfall:
         """Waterfall plot should use z_label/z_type for y axis, not time settings."""
 
         file = self._make_file(n_time=5)
-        file.p.z_label = "Absorbance"
-        file.p.z_type = "log"
-        file.p.y_dir = "rev"
-        file.p.y_type = "lin"
-        # Reset cached config so it picks up the new project settings
-        file._plot_config = None
+        file.p.plot_config.update(
+            z_label="Absorbance", z_type="log", y_dir="rev", y_type="lin"
+        )
         with unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d:
             file.describe()
         _, kwargs = mock_1d.call_args

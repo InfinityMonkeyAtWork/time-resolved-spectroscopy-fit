@@ -5,11 +5,17 @@
 > **Superseded in part.** The `PlotConfig` design below — file-level, captured
 > with the first completed slot, one config per `SavedFile`, non-retroactive —
 > is superseded by `docs/design/fit_archive_principles.md`, which specifies a
-> single **project-owned** config resolved at render time. Steps 1, 2, and 7
-> need rewriting against it (step 1's frozen-config regression tests and step
-> 7's "first completed fit wins" rule no longer apply). The
-> renderer-consolidation work — steps 4, 5, 6, 8 — is unaffected and remains
-> valid. Do not implement the config sections as written.
+> single **project-owned** config resolved at render time. **The live-session
+> half of that design landed 2026-08-03** (branch `fit-archive-schema-7`):
+> `Project.plot_config` is the one real config, `File.plot_config` and
+> `PlotConfig.from_project` are deleted, and `FitResults` receives the
+> resolving config at construction. What remains of the config work is the
+> schema-7 on-disk payload (serialization + decode on load). Steps 1, 2, and
+> 7 below still need rewriting against that reality before being worked (step
+> 1's frozen-config regression tests and step 7's "first completed fit wins"
+> rule no longer apply). The renderer-consolidation work — steps 4, 5, 6, 8 —
+> is unaffected and remains valid. Do not implement the config sections as
+> written.
 
 ### Goal
 

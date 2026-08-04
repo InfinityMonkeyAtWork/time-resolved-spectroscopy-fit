@@ -135,11 +135,12 @@ results-ownership contract: everything a user asks about a completed fit
 is answered from slots, never from live `Model.result`. Two construction
 paths: `FitResults.load(path)` for loaded archives and the
 `Project.results` property for in-session work; both also attach
-fingerprint-matched presentation providers (`SavedFile`s / live `File`s)
-supplying energy/time axes and full uncropped data; live `File` providers
-also supply `plot_config` styling when available. Without a provider,
-plotting falls back to the slot's cropped data, index axes, and default
-styling; result access remains available. A `FitResults` is frozen at construction
+name-matched presentation providers (`SavedFile`s / live `File`s)
+supplying energy/time axes and full uncropped data. Styling is the
+project-owned `PlotConfig`, passed at construction (`Project.results`
+passes the live one; loaded archives carry none until schema 7). Without
+a provider, plotting falls back to the slot's cropped data and index
+axes; result access remains available. A `FitResults` is frozen at construction
 (the underlying slot list is copied), so `r1 = p.results;
 <run another fit>; r2 = p.results` gives two distinct snapshots — `r1`
 does not see the new slot. Query API: `find` / `get` / `files` /
@@ -202,8 +203,9 @@ The `_slot_from_<fit_type>` call is the capture point. Every argument crossing
 that boundary must already be resolved from live `File` and `Model` state, and
 the constructed `SavedFitSlot` owns its required copies. Nothing downstream
 may consult live state to complete a slot's fit payload. `FitResults` may
-consult an attached provider for presentation context—axes, full-range data,
-and live styling—which is not slot state.
+consult an attached provider for presentation context—axes and full-range
+data—and renders with its construction-time `PlotConfig`; neither is slot
+state.
 
 | Category | Slot rule |
 |---|---|
@@ -260,8 +262,10 @@ function, register it here.**
 ### `config/plot.py`
 
 `PlotConfig` dataclass. The single source of truth for plot appearance
-(axis labels/limits/direction, colormaps, DPI, etc.). Inheritance chain:
-Project defaults → File overrides → Model inherits → per-call overrides.
+(axis labels/limits/direction, colormaps, DPI, etc.). Presentation is
+project-owned (fit_archive_principles.md, Principle 2): one
+`Project.plot_config` instance, resolved at render time, with per-call
+`config=` overrides — files and models hold no configs of their own.
 Use `PlotConfig` whenever you add a plotting function — do not invent new
 keyword arguments for styling.
 

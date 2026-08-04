@@ -175,7 +175,7 @@ class FitResults:
     Construction is keyword-only (``FitResults(slots=...)``); users normally
     obtain instances via ``Project.results`` or ``FitResults.load(path)``.
 
-    ``files`` optionally supplies per-file axes / plot-config providers —
+    ``files`` optionally supplies per-file axes providers —
     ``SavedFile`` records (load path) or live ``trspecfit.File`` objects
     (``Project.results``), matched to slots by fingerprint. The plot
     methods use them to label real energy/time axes; without a provider
@@ -196,9 +196,15 @@ class FitResults:
         slots: list[SavedFitSlot],
         files: Sequence[Any] | None = None,
         joint: Sequence[JointFitResult] | None = None,
+        config: PlotConfig | None = None,
     ) -> None:
         self._slots: tuple[SavedFitSlot, ...] = tuple(slots)
         self._joint: tuple[JointFitResult, ...] = tuple(joint or ())
+        # The resolving presentation config: a PlotConfig, never a Project
+        # (this module is deliberately a leaf in the import graph).
+        # Project.results passes the live project-owned config;
+        # loaded archives carry none until schema 7 persists it.
+        self._config: PlotConfig | None = config
         # Providers are matched to slots by file name — the guarded,
         # unique identity (fit_archive_principles.md, Principle 1).
         self._files_by_name: dict[str, Any] = {}
@@ -334,17 +340,15 @@ class FitResults:
         """
         Resolve the ``PlotConfig`` for a plot call.
 
-        Explicit ``config=`` wins; otherwise the live file's
-        ``plot_config`` when this ``FitResults`` was built from a Project;
-        default ``PlotConfig()`` for loaded archives (styling is
-        deliberately not persisted).
+        Explicit ``config=`` wins; otherwise the config this
+        ``FitResults`` was constructed with (``Project.results`` passes
+        the project-owned config); default ``PlotConfig()`` for loaded
+        archives, which persist no styling until schema 7.
         """
 
         if config is not None:
             return config
-        provider = self._provider_for(slot)
-        live_config = getattr(provider, "plot_config", None)
-        return live_config if live_config is not None else PlotConfig()
+        return self._config if self._config is not None else PlotConfig()
 
     #
     @classmethod
@@ -834,8 +838,8 @@ class FitResults:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
             Which fit type to plot (latest matching fit wins).
         config : PlotConfig, optional
-            Styling override. Default: the live file's ``plot_config``
-            when available, else ``PlotConfig()``.
+            Styling override. Default: the project-owned ``plot_config``
+            this ``FitResults`` was built with, else ``PlotConfig()``.
         show_plot : bool, default True
             Set ``False`` to build without displaying (tests / batch use).
         full_range : bool, optional
@@ -847,15 +851,15 @@ class FitResults:
             ``describe_model``'s pre-fit view. Falls back to the
             cropped, fit-limits-only view when reconstruction isn't
             possible (e.g. no axes provider for this slot's file).
-            Default: ``config.full_range`` (``PlotConfig`` field,
-            itself ``Project.full_range``-backed; ``True`` out of the
-            box) — pass explicitly to override for one call.
+            Default: ``config.full_range`` (a field on the
+            project-owned ``PlotConfig``; ``True`` out of the box) —
+            pass explicitly to override for one call.
         show_init : bool, optional
             Draw the dotted-gold initial-guess overlay (1D fit types
             only — baseline/spectrum) when the slot has a persisted
-            ``fit_ini``. Default: ``config.show_init`` (``PlotConfig``
-            field, itself ``Project.show_init``-backed; ``True`` out of
-            the box) — pass explicitly to override for one call.
+            ``fit_ini``. Default: ``config.show_init`` (a field on the
+            project-owned ``PlotConfig``; ``True`` out of the box) —
+            pass explicitly to override for one call.
 
         Raises
         ------
@@ -1032,8 +1036,8 @@ class FitResults:
         slices : sequence of int, optional
             Slice indices to render. Default: all slices.
         config : PlotConfig, optional
-            Styling override. Default: the live file's ``plot_config``
-            when available, else ``PlotConfig()``.
+            Styling override. Default: the project-owned ``plot_config``
+            this ``FitResults`` was built with, else ``PlotConfig()``.
         show_init : bool, optional
             Draw the dotted-gold initial-guess overlay when the slot has
             a persisted ``fit_ini`` (schema 6+; older archives silently

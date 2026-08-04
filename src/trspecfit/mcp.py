@@ -105,8 +105,6 @@ class Model:
 
     Attributes
     ----------
-    name : str
-        Model identifier
     yaml_f_name : str or None
         Name of YAML file this model was loaded from (without extension)
     peak_fcts : list
@@ -280,10 +278,10 @@ class Model:
     @property
     def plot_config(self) -> PlotConfig:
         """
-        Get plot configuration from parent File.
+        Get the project-owned plot configuration.
 
-        Models inherit plot settings from their parent File, ensuring
-        consistent plotting across all models for the same dataset.
+        Resolves through ``parent_file.p`` — presentation state has one
+        owner (the Project) and is resolved at render time.
 
         Returns
         -------
@@ -292,7 +290,7 @@ class Model:
         """
 
         if hasattr(self, "parent_file") and self.parent_file is not None:
-            return cast("PlotConfig", self.parent_file.plot_config)
+            return cast("PlotConfig", self.parent_file.p.plot_config)
 
         # Fallback to defaults if no parent
         return PlotConfig()
@@ -1083,7 +1081,7 @@ class Model:
             Path for saving figure (if save_img != 0)
         config : PlotConfig, optional
             Override the model's inherited plot configuration for this call.
-            If None, uses the model's own plot_config.
+            If None, uses the project-owned plot_config.
         **plot_kwargs : dict
             Per-call overrides for any PlotConfig field (e.g. ``colors``,
             ``ticksize``, ``legend``). Applied on top of *config*.
@@ -1168,7 +1166,7 @@ class Model:
             Color scale limits (min, max)
         config : PlotConfig, optional
             Override the model's inherited plot configuration for this call.
-            If None, uses the model's own plot_config.
+            If None, uses the project-owned plot_config.
         **plot_kwargs : dict
             Per-call overrides for any PlotConfig field (e.g. ``z_colormap``,
             ``ticksize``). Applied on top of *config*.

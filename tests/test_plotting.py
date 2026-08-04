@@ -54,25 +54,21 @@ class TestPlotConfig:
         assert config.z_colormap == "viridis"
 
     #
-    def test_every_field_settable_via_project(self):
-        """Every PlotConfig field must have a Project counterpart.
+    def test_every_field_settable_via_yaml(self):
+        """Every PlotConfig field must be routable from project.yaml.
 
-        Project.yaml keys only apply to existing Project attributes, and
-        PlotConfig.from_project only copies fields the Project has — a
-        PlotConfig field without a Project default is silently unsettable
-        from project.yaml.
+        Project._load_config routes presentation keys through
+        PLOT_FIELD_NAMES onto the project-owned config — a PlotConfig
+        field missing from that set would be silently unsettable from
+        project.yaml.
         """
 
         from dataclasses import fields
 
-        project = make_project(name="cfg-coverage")
-        aliases = {"x_label": "e_label", "y_label": "t_label", "dpi_plot": "dpi_plt"}
-        missing = [
-            f.name
-            for f in fields(PlotConfig)
-            if not hasattr(project, aliases.get(f.name, f.name))
-        ]
-        assert missing == [], f"PlotConfig fields without Project defaults: {missing}"
+        from trspecfit.config.plot import PLOT_FIELD_NAMES
+
+        missing = [f.name for f in fields(PlotConfig) if f.name not in PLOT_FIELD_NAMES]
+        assert missing == [], f"PlotConfig fields not YAML-routable: {missing}"
 
     #
     def test_custom_creation(self):
@@ -84,30 +80,32 @@ class TestPlotConfig:
         assert config.x_dir == "rev"
 
     #
-    def test_from_project(self):
-        """Test creating config from Project"""
+    def test_project_owns_one_config(self):
+        """Project holds one real PlotConfig with project-flavored labels."""
 
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Project(path=tmpdir, name="test")
-            config = PlotConfig.from_project(project)
-            assert config.x_label == project.e_label
-            assert config.y_label == project.t_label
-            assert config.dpi_plot == project.dpi_plt
-            assert config.z_type == project.z_type
+            config = project.plot_config
+            assert isinstance(config, PlotConfig)
+            assert config.x_label == "Energy"
+            assert config.y_label == "Time"
+            assert config.z_label == "Intensity"
+            # every render resolves the same instance
+            assert project.plot_config is config
 
     #
-    def test_from_project_with_overrides(self):
-        """Test creating config from Project with overrides"""
+    def test_project_config_copy_overrides(self):
+        """Per-call restyling: copy() the project config with overrides."""
 
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Project(path=tmpdir, name="test")
-            config = PlotConfig.from_project(
-                project, x_label="Overridden", dpi_plot=250
-            )
+            config = project.plot_config.copy(x_label="Overridden", dpi_plot=250)
             assert config.x_label == "Overridden"
             assert config.dpi_plot == 250
-            # Other values should still come from project
-            assert config.y_label == project.t_label
+            # Other values still come from the project config
+            assert config.y_label == project.plot_config.y_label
+            # ... and the project-owned instance is untouched
+            assert project.plot_config.x_label == "Energy"
 
     #
     def test_update(self):
@@ -526,47 +524,94 @@ class TestPlotConfigHierarchy:
     """Test config propagation through Project -> File -> Model hierarchy"""
 
     #
-    def test_file_inherits_from_project(self):
-        """Test that File inherits plot config from Project"""
+    def test_model_resolves_project_config(self):
+        """Models resolve the one project-owned config at render time —
+        File-level configs no longer exist (presentation has one owner,
+        fit_archive_principles.md Principle 2)."""
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Create project with custom settings
-            project = Project(path=tmpdir, name="test")
-            project.e_label = "Binding Energy (eV)"
-            project.t_label = "Delay (ps)"
-            project.x_dir = "rev"
+        project = make_project(name="owned-config")
+        project.plot_config.update(
+            x_label="Binding Energy (eV)", y_label="Delay (ps)", x_dir="rev"
+        )
 
-            # Create file
-            x = np.linspace(0, 10, 50)
-            y = np.linspace(0, 5, 30)
-            data = np.random.default_rng().standard_normal((30, 50))
-            file = File(parent_project=project, data=data, energy=x, time=y)
+        x = np.linspace(0, 10, 50)
+        file = File(parent_project=project, energy=x)
+        file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+        model = file.model_active
+        assert model is not None  # type guard
 
-            # Check that file inherits project settings
-            config = file.plot_config
-            assert config.x_label == "Binding Energy (eV)"
-            assert config.y_label == "Delay (ps)"
-            assert config.x_dir == "rev"
+        # Model.plot_config resolves through parent_file.p — the same
+        # instance, so later project-level restyling is seen everywhere.
+        assert model.plot_config is project.plot_config
+        assert model.plot_config.x_label == "Binding Energy (eV)"
+        assert not hasattr(file, "plot_config")
+
+
+#
+#
+class TestRemovedPresentationAPIs:
+    """Removed presentation APIs fail loudly with migration pointers —
+    a silent inert assignment would leave plots rendering defaults with
+    no error (mirrors _load_config's _removed_keys convention)."""
 
     #
-    def test_file_can_customize_config(self):
-        """Test that File can customize its config persistently"""
+    def test_project_flat_attribute_write_raises(self):
+        project = make_project(name="removed-attrs")
+        with pytest.raises(AttributeError, match=r"plot_config\.full_range"):
+            project.full_range = False
+        with pytest.raises(AttributeError, match=r"plot_config\.x_label"):
+            project.e_label = "Custom"  # renamed field: pointer maps the alias
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            project = Project(path=tmpdir, name="test")
-            x = np.linspace(0, 10, 50)
-            data = np.random.default_rng().standard_normal(50)
-            file = File(parent_project=project, data=data, energy=x)
+    #
+    def test_file_plot_config_read_and_write_raise(self):
+        project = make_project(name="removed-file-config")
+        file = File(parent_project=project, energy=np.linspace(80, 90, 10))
+        with pytest.raises(AttributeError, match="project-owned"):
+            _ = file.plot_config
+        with pytest.raises(AttributeError, match="project-owned"):
+            file.plot_config = PlotConfig()
 
-            # Customize file's config
-            file.plot_config.update(x_label="Custom Energy", dpi_plot=200)
+    #
+    def test_project_plot_config_rejects_non_config(self):
+        project = make_project(name="typed-config")
+        with pytest.raises(TypeError, match="must be a PlotConfig"):
+            # deliberate wrong type — the runtime guard is the subject
+            project.plot_config = {"x_dir": "rev"}  # type: ignore[assignment]
 
-            # Verify customization persists
-            assert file.plot_config.x_label == "Custom Energy"
-            assert file.plot_config.dpi_plot == 200
+    #
+    def test_yaml_nested_plot_config_mapping_fails_loudly(self, tmp_path):
+        """A plot_config: mapping in project.yaml must fail construction,
+        not silently replace the config object with a dict."""
 
-            # Verify project unchanged
-            assert project.e_label != "Custom Energy"
+        (Path(tmp_path) / "project.yaml").write_text("plot_config:\n  x_dir: rev\n")
+        with pytest.raises(ValueError, match="must be a PlotConfig"):
+            Project(path=tmp_path, name="test")
+
+    #
+    def test_assignment_adopts_in_place(self):
+        """Whole-object assignment keeps the config's identity, so held
+        FitResults views keep resolving current styling at render time."""
+
+        project = make_project(name="adopt")
+        before = project.plot_config
+        results = project.results
+        project.plot_config = PlotConfig(x_label="New Label")
+        assert project.plot_config is before  # identity stable
+        assert project.plot_config.x_label == "New Label"
+        assert results._config is project.plot_config  # held view sees it
+
+    #
+    def test_copy_is_deep(self):
+        """Derived variants never alias the source's mutable fields."""
+
+        source = PlotConfig(colors=["red"], vlines=[1.0])
+        variant = source.copy(dpi_save=600)
+        assert variant.colors is not None  # type guard
+        assert variant.vlines is not None  # type guard
+        variant.colors.append("blue")
+        variant.vlines.append(2.0)
+        assert source.colors == ["red"]
+        assert source.vlines == [1.0]
 
 
 #
@@ -617,19 +662,18 @@ class TestPlotConfigFromYAML:
 
     #
     def test_project_loads_yaml_values(self):
-        """Project attributes reflect non-default YAML values."""
+        """The project-owned PlotConfig reflects non-default YAML values,
+        with YAML lists coerced to tuples for tuple-typed fields."""
 
         with tempfile.TemporaryDirectory() as tmpdir:
             self._make_project_dir(tmpdir)
             project = Project(path=tmpdir, name="test")
 
-            assert project.e_label == "Binding energy (eV)"
-            assert project.t_label == "Delay (ps)"
-            assert project.z_label == "Counts"
-            assert project.x_dir == "rev"
-            assert project.z_colormap == "RdBu"
-            assert project.x_lim == [63.0, -2.6]
-            assert project.y_lim == [-0.5, 5.0]
+            for attr, expected in self.EXPECTED.items():
+                assert getattr(project.plot_config, attr) == expected, (
+                    f"plot_config.{attr}: expected {expected!r}, "
+                    f"got {getattr(project.plot_config, attr)!r}"
+                )
 
     #
     def test_project_accepts_hyphenated_limit_keys(self, capsys):
@@ -644,14 +688,13 @@ class TestPlotConfigFromYAML:
             captured = capsys.readouterr()
             assert "Unknown config key 'x-lim'" not in captured.out
             assert "Unknown config key 'y-lim'" not in captured.out
-            assert project.x_lim == [63.0, -2.6]
-            assert project.y_lim == [-0.5, 5.0]
-            assert PlotConfig.from_project(project).x_lim == (63.0, -2.6)
-            assert PlotConfig.from_project(project).y_lim == (-0.5, 5.0)
+            assert project.plot_config.x_lim == (63.0, -2.6)
+            assert project.plot_config.y_lim == (-0.5, 5.0)
 
     #
-    def test_file_plot_config_inherits_yaml(self):
-        """File.plot_config must carry every non-default YAML value."""
+    def test_file_has_no_own_config(self):
+        """File-level configs are gone: presentation has one owner and a
+        File resolves it through its parent Project."""
 
         with tempfile.TemporaryDirectory() as tmpdir:
             self._make_project_dir(tmpdir)
@@ -663,16 +706,13 @@ class TestPlotConfigFromYAML:
                 time=np.linspace(0, 100, 30),
             )
 
-            config = file.plot_config
-            for attr, expected in self.EXPECTED.items():
-                assert getattr(config, attr) == expected, (
-                    f"File.plot_config.{attr}: "
-                    f"expected {expected!r}, got {getattr(config, attr)!r}"
-                )
+            assert not hasattr(file, "plot_config")
+            assert file.p.plot_config is project.plot_config
 
     #
     def test_model_plot_config_inherits_yaml(self):
-        """Model.plot_config must match File.plot_config."""
+        """Model.plot_config must carry every non-default YAML value
+        (resolved through the project-owned config)."""
 
         with tempfile.TemporaryDirectory() as tmpdir:
             self._make_project_dir(tmpdir)
@@ -734,8 +774,7 @@ class TestPlotConfigPropagation:
         """Create a project/file/model with a reversed energy axis."""
 
         project = make_project()
-        project.x_dir = x_dir
-        project.e_label = "Binding Energy (eV)"
+        project.plot_config.update(x_dir=x_dir, x_label="Binding Energy (eV)")
 
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 201)
@@ -782,7 +821,7 @@ class TestPlotConfigPropagation:
         """Component.plot() should not double-flip when x_lim is already reversed."""
 
         file = self._make_file_with_model(x_dir="rev")
-        file.plot_config = file.plot_config.copy(x_lim=(63.0, -2.6))
+        file.p.plot_config.update(x_lim=(63.0, -2.6))
         assert file.model_active is not None  # type guard
         component = file.model_active.components[0]
 
@@ -904,8 +943,7 @@ class TestHighLevelPlotOverrides:
         """Return a File with a loaded energy model, default x_dir='def'."""
 
         project = make_project()
-        project.e_label = "Binding Energy (eV)"
-        project.x_dir = "def"
+        project.plot_config.update(x_label="Binding Energy (eV)", x_dir="def")
 
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 201)
