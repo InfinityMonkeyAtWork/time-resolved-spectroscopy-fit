@@ -173,6 +173,43 @@ def test_save_after_correction_reversal_archives_matching_slot(tmp_path):
 
 
 #
+def test_append_same_name_different_content_raises(tmp_path):
+    """Appending a same-name file with different content is an integrity error.
+
+    Without the guard, write_archive files the new slots under the first
+    name-matched group — the old data, axes, and fingerprint. The raise
+    is unconditional (overwrite= is slot-scoped and does not authorize
+    re-associating a measurement) and pre-mutation: the failed append
+    leaves the archive byte-identical.
+    """
+
+    project, file = _setup_baseline_fit()
+    archive_path = tmp_path / "append.fit.h5"
+    project.save_fits(archive_path, show_output=0)
+    before = read_archive(archive_path)
+    before_bytes = archive_path.read_bytes()
+    # Correct + refit: the incoming payload now carries different content.
+    assert file.energy is not None  # type guard
+    file.subtract_dark(np.full(file.energy.size, 0.1))
+    file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+    for overwrite in (False, True):
+        with (
+            pytest.warns(UserWarning, match="stale fit slot"),
+            pytest.raises(ValueError, match="different content"),
+        ):
+            project.save_fits(archive_path, overwrite=overwrite, show_output=0)
+    # Diagnostic (decoded) checks first, so a real mutation is named...
+    after = read_archive(archive_path)
+    assert after.timestamp_updated == before.timestamp_updated
+    assert len(after.files) == len(before.files) == 1
+    assert len(after.files[0].slots) == len(before.files[0].slots) == 1
+    # ...then the full promised contract: byte-identical afterwards (a
+    # pass above with a diff here would point at h5py rewriting
+    # internals on the write-mode open, not at a payload mutation).
+    assert archive_path.read_bytes() == before_bytes
+
+
+#
 # --- identity helpers --------------------------------------------------------
 #
 

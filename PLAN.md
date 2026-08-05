@@ -65,7 +65,7 @@ instead of silent.
       set, so a collision is not constructible through the public API
       (theoretical per the proportionality rule); the key is retired wholesale
       in schema 7.
-- [ ] **A3. Append integrity** (finding 2 — `fit_io.py:1534`).
+- [x] **A3. Append integrity** (finding 2 — `fit_io.py:1534`).
       `write_archive` drops incoming slots into the first name-matched file
       group without comparing content, so appending a same-name file with
       different data stores the new slot under the old group's data, axes,

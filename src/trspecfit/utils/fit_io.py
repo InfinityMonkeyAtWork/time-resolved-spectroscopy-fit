@@ -1563,6 +1563,11 @@ def write_archive(
     - **Pre-check on append.** All slot collisions are detected before any
       mutation, so a single conflicting slot does not leave half the
       payload written.
+    - **File-content integrity.** File groups are matched by name; an
+      incoming file whose content fingerprint differs from its stored
+      group raises ``ValueError`` in **both** overwrite modes, before any
+      mutation — ``overwrite=`` is slot-scoped and does not authorize
+      filing fits under another measurement's data.
     """
 
     path = Path(filepath)
@@ -1570,8 +1575,10 @@ def write_archive(
 
     with h5py.File(path, "a") as archive:
         is_new = _classify_archive_for_write(archive, project, path=path)
-        if not is_new and not overwrite:
-            _precheck_slot_collisions(archive, project)
+        if not is_new:
+            _precheck_file_content(archive, project, path=path)
+            if not overwrite:
+                _precheck_slot_collisions(archive, project)
         _write_top_metadata(archive, project, is_new=is_new)
         files_group = archive.require_group("files")
         for sf in project.files:
@@ -1634,6 +1641,47 @@ def _classify_archive_for_write(
             f"path or remove the existing file."
         )
     return True
+
+
+#
+def _precheck_file_content(
+    archive: h5py.File, project: SavedProject, *, path: Path
+) -> None:
+    """
+    Raise ``ValueError`` if an incoming file's content differs from the
+    stored group it would append into.
+
+    File groups are matched by name (Principle 1), so without this check
+    a reused name — or a corrected file re-saved to the same path —
+    would file new slots under another data payload's group. The check is
+    unconditional: ``overwrite=`` is slot-scoped and does not authorize
+    re-associating a measurement. Runs before any mutation, so a failed
+    append leaves the archive byte-untouched.
+    """
+
+    for sf in project.files:
+        existing_fg = _find_file_by_name(archive, sf.name)
+        if existing_fg is None:
+            continue
+        meta = require_group(existing_fg["metadata"], "metadata")
+        a = meta.attrs
+        stored = {
+            "data_sha256": _attr_str(a["data_sha256"]),
+            "energy_sha256": _attr_str(a["energy_sha256"]),
+            "time_sha256": _attr_str(a["time_sha256"]),
+            "shape": tuple(int(x) for x in np.asarray(a["shape"]).ravel()),
+        }
+        if fingerprint_stamp(stored) != fingerprint_stamp(sf.fingerprint):
+            raise ValueError(
+                f"Archive {path} already stores file {sf.name!r} with "
+                f"different content (data/axes fingerprint mismatch). "
+                f"Appending would file new fits under data they did not "
+                f"run against — either the name was reused for a "
+                f"different measurement, or the file's data was corrected "
+                f"since the earlier save (the archive stores one data "
+                f"payload per file; schema 7 lifts this). Save to a new "
+                f"archive path."
+            )
 
 
 #
