@@ -80,7 +80,7 @@ instead of silent.
       a data correction (or a true name reuse) raises under both
       ``overwrite`` modes; the archive — including its timestamps — is
       untouched.
-- [ ] **A4. Load-path provider association** (finding 4 —
+- [x] **A4. Load-path provider association** (finding 4 —
       `fit_results.py:204`). `_files_by_name` collapses same-name `SavedFile`
       providers, but schemas 2–6 legitimately contain same-name groups
       distinguished by fingerprint/path — earlier slots then resolve to the

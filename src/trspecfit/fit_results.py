@@ -176,10 +176,11 @@ class FitResults:
     obtain instances via ``Project.results`` or ``FitResults.load(path)``.
 
     ``files`` optionally supplies per-file axes providers —
-    ``SavedFile`` records (load path) or live ``trspecfit.File`` objects
-    (``Project.results``), matched to slots by fingerprint. The plot
-    methods use them to label real energy/time axes; without a provider
-    they fall back to array-index axes.
+    ``SavedFile`` records (load path), matched to their own slots by
+    parent association (each record owns the slots read from its file
+    group), or live ``trspecfit.File`` objects (``Project.results``),
+    matched by name. The plot methods use them to label real energy/time
+    axes; without a provider they fall back to array-index axes.
 
     ``joint`` optionally supplies the project-level ``JointFitResult``
     records (``Project.results`` passes the in-session joint history;
@@ -205,10 +206,23 @@ class FitResults:
         # Project.results passes the live project-owned config;
         # loaded archives carry none until schema 7 persists it.
         self._config: PlotConfig | None = config
-        # Providers are matched to slots by file name — the guarded,
-        # unique identity (fit_archive_principles.md, Principle 1).
+        # SavedFile providers own their slots — retain that parent
+        # association per slot object, so legacy archives (schemas 2-6
+        # allowed same-name groups distinguished only by content) cannot
+        # collapse onto one group's axes/data. Archive records get ONLY
+        # that association: a slot not owned by any record (copied or
+        # reconstructed — unsupported) gets no provider and falls back
+        # to index axes, never to a same-name guess. Live File providers
+        # carry no slots and are matched by name — the guarded, unique
+        # identity (fit_archive_principles.md, Principle 1).
+        self._provider_by_slot: dict[int, Any] = {}
         self._files_by_name: dict[str, Any] = {}
         for f in files or ():
+            slots_owned = getattr(f, "slots", None)
+            if slots_owned is not None:
+                for s in slots_owned:
+                    self._provider_by_slot[id(s)] = f
+                continue
             name = getattr(f, "name", None)
             if isinstance(name, str):
                 self._files_by_name[name] = f
@@ -217,6 +231,9 @@ class FitResults:
     def _provider_for(self, slot: SavedFitSlot) -> Any | None:
         """Axes/data provider (``SavedFile`` or live ``File``) for this slot's file."""
 
+        provider = self._provider_by_slot.get(id(slot))
+        if provider is not None:
+            return provider
         return self._files_by_name.get(slot.file_name)
 
     #
@@ -418,8 +435,9 @@ class FitResults:
         """
         List unique file names across slots (insertion order).
 
-        Names are display strings (``SavedFitSlot.file_name``); identity is
-        fingerprint-based internally.
+        Names are ``SavedFitSlot.file_name`` — the file identity
+        (guarded unique in-session; fit_archive_principles.md,
+        Principle 1).
         """
 
         seen: dict[str, None] = {}

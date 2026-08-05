@@ -23,6 +23,7 @@ from trspecfit import File, FitResults
 from trspecfit.utils.fit_io import (
     JointFitProjection,
     JointFitResult,
+    SavedFile,
     SavedFitSlot,
     _compute_sigma_eff,
     build_selection_json,
@@ -207,6 +208,97 @@ def test_append_same_name_different_content_raises(tmp_path):
     # pass above with a diff here would point at h5py rewriting
     # internals on the write-mode open, not at a payload mutation).
     assert archive_path.read_bytes() == before_bytes
+
+
+#
+def test_same_name_providers_resolve_by_parent_association():
+    """Each archived slot resolves to its own SavedFile's axes.
+
+    Schemas 2-6 could store several same-name file groups distinguished
+    only by content. A purely name-keyed provider map collapses them
+    (last one wins), silently serving one group's axes/data to another
+    group's slots; the parent association from the archive — a SavedFile
+    owns the slots read from its group — must be preserved instead.
+    """
+
+    slot_a = _slot_stub(file_name="dup", model_name="m1")
+    slot_b = _slot_stub(file_name="dup", model_name="m2")
+    e_a = np.linspace(0.0, 1.0, 5)
+    e_b = np.linspace(10.0, 20.0, 5)
+
+    def saved_file(energy, slot):
+        data = np.zeros(5)
+        return SavedFile(
+            name="dup",
+            original_path="dup.h5",
+            dim=1,
+            shape=(5,),
+            fingerprint=compute_file_fingerprint(data=data, energy=energy, time=None),
+            data=data,
+            energy=energy,
+            time=np.array([], dtype=np.float64),
+            e_lim=None,
+            t_lim=None,
+            slots=(slot,),
+        )
+
+    sf_a = saved_file(e_a, slot_a)
+    sf_b = saved_file(e_b, slot_b)
+    results = FitResults(slots=[slot_a, slot_b], files=[sf_a, sf_b])
+    # Invariant check on the association: a name-keyed map would send
+    # slot_a to sf_b (the later same-name provider).
+    assert results._provider_for(slot_a) is sf_a
+    assert results._provider_for(slot_b) is sf_b
+    # A slot not owned by any archive record (copied/reconstructed —
+    # unsupported) gets no provider (index-axes fallback), never a
+    # same-name guess.
+    slot_c = _slot_stub(file_name="dup", model_name="m1")
+    results_c = FitResults(slots=[slot_c], files=[sf_a, sf_b])
+    assert results_c._provider_for(slot_c) is None
+
+
+#
+def test_legacy_same_name_groups_load_with_own_axes(tmp_path):
+    """A loaded legacy archive's same-name groups keep their own axes.
+
+    Schemas 2-6 could store several same-name file groups; the writer
+    now refuses to create them, so one is forged by renaming a group in
+    place. Loading must resolve each slot to its own group's axes/data
+    through the parent association preserved by read_archive() and
+    FitResults.load() — a name-keyed lookup would serve the last
+    group's arrays to both slots.
+    """
+
+    import h5py
+
+    truth_project = make_project(name="truth")
+    truth = _make_truth_file(truth_project)
+    data = simulate_noisy(truth.model_active, noise_level=0.01)
+
+    project = make_project(name="fit")
+    assert truth.energy is not None  # type guard
+    energy_a = truth.energy
+    energy_b = truth.energy + 0.5
+    file_a = _make_fit_file(project, data, energy_a, truth.time, name="A")
+    file_b = _make_fit_file(project, data.copy(), energy_b, truth.time, name="B")
+    for f in (file_a, file_b):
+        f.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
+        f.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+
+    archive_path = tmp_path / "legacy.fit.h5"
+    project.save_fits(archive_path, show_output=0)
+    # Forge the legacy shape: rename group B ("files/000001") to "A".
+    with h5py.File(archive_path, "a") as archive:
+        archive["files/000001/metadata"].attrs["name"] = "A"
+
+    loaded = FitResults.load(archive_path)
+    assert [s.file_name for s in loaded] == ["A", "A"]
+    slot_0, slot_1 = iter(loaded)
+    prov_0 = loaded._provider_for(slot_0)
+    prov_1 = loaded._provider_for(slot_1)
+    assert prov_0 is not None and prov_1 is not None  # type guard
+    np.testing.assert_array_equal(prov_0.energy, energy_a)
+    np.testing.assert_array_equal(prov_1.energy, energy_b)
 
 
 #

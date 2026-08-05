@@ -326,7 +326,7 @@ def test_baseline_roundtrip(family_id: str, tmp_path) -> None:
     _assert_slot_round_tripped(loaded_slot, original)
 
     # --- per-file aux_axis (schema 5; None unless the family needs it) -----
-    provider = next(iter(loaded_results._files_by_name.values()))
+    provider = loaded_results._provider_for(loaded_slot)
     if family.needs_aux:
         assert fit_file.aux_axis is not None
         np.testing.assert_array_equal(provider.aux_axis, fit_file.aux_axis)
@@ -747,7 +747,7 @@ def test_reader_accepts_schema_v4_archive(tmp_path) -> None:
 
     loaded = FitResults.load(archive_path)
     assert len(loaded) == 1
-    provider = next(iter(loaded._files_by_name.values()))
+    provider = loaded._provider_for(next(iter(loaded)))
     assert provider.aux_axis is None
 
 
