@@ -362,8 +362,9 @@ class SavedFile:
     shape : tuple[int, ...]
         ``data.shape``.
     fingerprint : dict
-        ``{"data_sha256", "energy_sha256", "time_sha256", "shape"}``.
-        Authoritative file identity across machines.
+        ``{"data_sha256", "energy_sha256", "time_sha256", "shape"}`` — a
+        version stamp hashing exactly the arrays stored in this record;
+        identity is ``name`` (fit_archive_principles.md, Principle 1).
     data : np.ndarray
     energy : np.ndarray
     time : np.ndarray

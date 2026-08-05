@@ -91,7 +91,7 @@ instead of silent.
       now guarded. This is schema plan §FitResults item 1 done early. Test: a
       legacy archive with two same-name groups resolves each slot to its own
       group's axes.
-- [ ] **A5. Truth-up docs and stale identity claims** (finding 6).
+- [x] **A5. Truth-up docs and stale identity claims** (finding 6).
       `fit_archive_schema.md:290` still specifies fingerprint-based
       `history_key` recomputation; the reader (`fit_io.py:2081`) uses the new
       algorithm for all schemas 2–6. Update the schema doc's recompute

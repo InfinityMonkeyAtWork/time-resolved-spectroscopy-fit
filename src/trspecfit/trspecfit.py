@@ -362,7 +362,7 @@ class Project:
             Restrict to slots whose live ``Project.files`` entry matches.
             ``int`` indexes into ``self.files``; ``str`` matches
             ``File.name``; ``File`` is taken directly. Resolved to file
-            fingerprints, then matched against ``slot.file_fingerprint``.
+            names, then matched against ``slot.file_name``.
         model : str | sequence, optional
             String filter on ``slot.model_name``.
         fit_type : str | sequence, optional

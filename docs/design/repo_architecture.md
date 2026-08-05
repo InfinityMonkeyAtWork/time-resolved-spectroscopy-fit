@@ -347,7 +347,7 @@ per-fit-type slot extractors (`_slot_from_baseline`,
 `_slot_from_spectrum`, `_slot_from_sbs`, `_slot_from_2d` — all called
 once at fit completion with copied snapshot args, never live `Model`
 references), the identity helpers (`compute_file_fingerprint`,
-`compute_history_key`, `compute_archive_slot_key`,
+`fingerprint_stamp`, `compute_history_key`, `compute_archive_slot_key`,
 `build_selection_json`, `compute_observed_sha256`), the
 snapshot-collapse helper (`collapse_history_to_snapshot`), and the
 HDF5 reader/writer (`read_archive`, `write_archive`) plus the CSV/PNG

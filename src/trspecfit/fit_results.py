@@ -13,9 +13,11 @@ at the moment of construction. ``Project.results`` returns a fresh wrapper per
 access (``FitResults(slots=list(self._fit_history))``); subsequent fits append
 to ``_fit_history`` and do **not** affect previously-returned ``FitResults``.
 
-Identity is internally keyed by file fingerprint (multi-sha) + model name +
-fit_type + selection_json. Name-based query inputs (``file=...``,
-``model=...``) resolve to fingerprint at lookup time.
+Slot identity is the framed ``history_key`` — ``(file_name, version
+stamp, model_name, fit_type, selection_json)``; see
+``fit_io.compute_history_key``. Query inputs (``file=...``,
+``model=...``) match the slots' display fields (``file_name``,
+``model_name``) directly.
 """
 
 from __future__ import annotations
@@ -406,7 +408,7 @@ class FitResults:
                     continue
                 slots.append(slot)
         # SavedFiles are kept (unfiltered) as axes providers for the plot
-        # methods; slots are matched to them by fingerprint at plot time.
+        # methods; each slot resolves to its parent record at plot time.
         return cls(slots=slots, files=list(project.files))
 
     #
@@ -1410,7 +1412,7 @@ class FitResults:
         ------
         ValueError
             If two or more slots in the filtered result share
-            ``(file_fingerprint, fit_type)`` but disagree on
+            ``(file_name, fit_type)`` but disagree on
             ``observed_sha256``. Same fit type on the same file must run
             against the same observed grid for AIC/BIC comparisons to be
             meaningful — typically this happens when the user mixes refits

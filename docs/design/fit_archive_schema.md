@@ -186,38 +186,44 @@ Notes:
   fabricated, since only the archived data (not the model) is available
   outside it.
 - `data_sha256`, `energy_sha256`, `time_sha256` together with `shape`
-  form the `file_fingerprint` used to match an archive's file to a
-  `Project.files[*]` (or to another archive). See
-  `compute_file_fingerprint` in `utils/fit_io.py`. `aux_axis` is not part
-  of the fingerprint — file identity stays `data`/`energy`/`time`-based.
+  form the `file_fingerprint` — a **version stamp** of the stored
+  content, never identity (fit_archive_principles.md, Principle 1;
+  identity is the `name` attr). It hashes exactly the arrays written to
+  this file group. See `compute_file_fingerprint` and
+  `fingerprint_stamp` in `utils/fit_io.py`. `aux_axis` is not part of
+  the fingerprint.
 - `aux_axis` is omitted entirely when `File.aux_axis is None` (most
   files — only `par_profile`-attached models use it), following the
   same omit-when-`None` rule as the optional slot datasets, not the
   "empty array" convention used for `time` on 1D files.
 
-### Identity collisions
+### Identity and collisions
 
-Two distinct rules apply, in two different directions:
+File identity is the `name` attr (fit_archive_principles.md,
+Principle 1); the fingerprint attrs are version stamps of the stored
+content. Two rules, two directions:
 
-- **Archive uniqueness (write side).** A file group's effective identity
-  is `(file_fingerprint, name, original_path)`. Two source files with
-  byte-identical `data` / `energy` / `time` but different `name` or
-  `original_path` are stored in **separate** file groups. Files agreeing
-  on all three are treated as the same file (one group, slots merge).
-  This means the writer's "find existing file group" lookup
-  (`_find_file_by_fingerprint`) must compare `name` / `original_path`
-  in addition to fingerprint when more than one candidate matches.
+- **Write side.** The writer's "find existing file group" lookup
+  (`_find_file_by_name`) matches by `name` alone, in positional-key
+  order. An incoming file that matches a group by name but differs in
+  content stamp raises `ValueError` before any mutation, in **both**
+  `overwrite` modes (`_precheck_file_content`) — a reused name, or a
+  corrected file re-saved to the same path, cannot file new slots under
+  another payload's data. The stored fingerprint is recomputed from the
+  arrays actually written, and slots whose fit-time stamp differs from
+  the file's current data are skipped with a warning at save time —
+  schema 6 stores one data payload per file, so such fits cannot be
+  archived faithfully beside it.
 
-- **Live-Project matching (read side).** When a `FitResults` archive is
-  loaded and the caller wants to align archive files with
-  `Project.files[*]`, fingerprint is the primary key, and `name` /
-  `original_path` are tie-breakers if multiple candidates match. The
-  loader does not require an exact `original_path` match — that path is
-  baked at save time and may not exist on the loading machine.
-
-The asymmetry is deliberate: at write time we want strict separation of
-intentionally-distinct files; at read time we want forgiving matching
-that survives copying the archive between machines.
+- **Read side.** Two real consumers, two mechanisms. `Project.results`
+  serves in-session slots with live `File` providers, matched by the
+  guarded name. `FitResults.load` serves archived slots with
+  `SavedFile` providers — each slot keeps the parent association to its
+  own record, so legacy archives (earlier writers could store several
+  same-name groups) never serve one group's arrays to another group's
+  slots. There is no archive-to-live-`Project` alignment path
+  (`Project.load_fits` is an independent `FitResults.load` delegate);
+  `original_path` is a breadcrumb and never participates in any lookup.
 
 ## Slot group
 
@@ -281,20 +287,26 @@ save time once the file's archive position is known:
 archive_slot_key = sha256(file_ref | model_name | fit_type | selection_json)
 ```
 
-Both keys exist for the same logical purpose (uniquely identify a slot);
-they use different file-identity tokens because in-memory and on-disk
-identity primitives differ (multi-sha fingerprint vs archive-local
-positional path). `archive_slot_key` is what the writer's slot-scoped
+Both keys exist for the same logical purpose (uniquely identify a
+slot). `history_key` is a framed JSON hash of `(file_name, version
+stamp, model_name, fit_type, selection_json)` — see
+`compute_history_key`. `archive_slot_key` is keyed by the archive-local
+positional path and carries no version stamp, which loses nothing: a
+file group stores exactly one data payload, so the stamp is constant
+within it. `archive_slot_key` is what the writer's slot-scoped
 overwrite check (`_find_slot_by_archive_key`) compares against.
 
-`history_key` is also persisted as a non-authoritative attr (a debugging
-aid for archive inspection and round-trip tests), but the reader
-**recomputes** it from
-`(file_fingerprint, model_name, fit_type, selection_json)` and uses the
-recomputed value for the `SavedFitSlot`. The on-disk value is ignored
-on read; it exists only so an external inspector (e.g. a notebook
-poking at the HDF5 directly) can correlate slots to in-session history
-without redoing the hash.
+`history_key` is also persisted as a non-authoritative attr (a
+debugging aid for archive inspection), but the reader **recomputes** it
+from the file group's `name` and fingerprint attrs plus the slot's
+identity attrs, and uses the recomputed value for the `SavedFitSlot`.
+Recomputation always applies the *current* algorithm to every supported
+schema (2–6): on-disk values written by earlier versions are ignored,
+so in-memory keys stay mutually consistent within a session regardless
+of which version saved the archive. The on-disk value exists only so an
+external inspector (e.g. a notebook poking at the HDF5 directly) can
+correlate slots to the in-session history of the version that saved
+them.
 
 ## `params` dataset
 
@@ -575,7 +587,7 @@ Per slot, the reader produces a `SavedFitSlot` with:
 | `selection`          | `json.loads(metadata.selection_json)`                          |
 | `selection_json`     | slot `metadata.selection_json` attr                            |
 | `observed_sha256`    | slot `metadata.observed_sha256` attr                           |
-| `history_key`        | recomputed from `file_fingerprint + model_name + fit_type + selection_json` |
+| `history_key`        | recomputed — framed hash of `(file_name, version stamp, model_name, fit_type, selection_json)` |
 | `params`             | `params` dataset (+ its `columns` attr) → DataFrame            |
 | `params_meta`        | `params_meta` dataset → DataFrame, or `None` if absent         |
 | `params_stderr`      | `params_stderr` dataset → DataFrame, or `None` if absent       |

@@ -1291,15 +1291,17 @@ original field existed to catch a mismatch between the derivation and reality
 ("silent grid drift if `selection` ever fails to capture a view detail"), and a
 derived hash cannot do that.
 
-**The guard's logic stays; its grouping key changes.**
+**The guard's logic stays; its grouping key changed.**
 `_check_observed_consistency`
 ([fit_results.py:1287-1322](../../src/trspecfit/fit_results.py#L1287)) already
 implements exactly this rule — raise when one group holds more than one view.
-But it groups by `(file_fingerprint, file_name, fit_type)`, and Principle 1
+It used to group by `(file_fingerprint, file_name, fit_type)`; Principle 1
 demoted `file_fingerprint` from identity to a version stamp, so it no longer
-belongs in an identity key. Group by `(file_name, fit_type)` and let
-`fit_view_sha256` do the data discrimination: group by identity, discriminate
-by view. Collapse and prune operations must respect the same grouping.
+belongs in an identity key, and the regrouping to `(file_name, fit_type)`
+landed with the identity guards (2026-08-03). What remains for schema 7 is
+`observed_sha256` → `fit_view_sha256` doing the data discrimination: group by
+identity, discriminate by view. Collapse and prune operations must respect
+the same grouping.
 
 **σ does not enter the grouping key.** It gates which *metrics* may be compared
 within a group:
