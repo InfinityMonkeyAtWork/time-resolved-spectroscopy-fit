@@ -509,8 +509,10 @@ class Project:
         Apply the standard filter + collapse pipeline to ``_fit_history``
         and return a fully-populated ``SavedProject``.
 
-        Returns ``None`` when no slots survive the filter so callers can
-        emit a "nothing to do" message and short-circuit. Used by
+        Returns ``None`` when no slots survive the filter — or when every
+        survivor is stale (fitted against data the live file no longer
+        holds) — so callers can emit a "nothing to do" message and
+        short-circuit. Used by
         :meth:`save_fits` and :meth:`export_fits` so both go through the
         identical filter / collapse / file-grouping logic.
         """
@@ -552,13 +554,46 @@ class Project:
                 )
             assert live.data is not None  # type guard
             assert live.energy is not None  # type guard
+            # The payload must hash what it stores: recompute the
+            # fingerprint from the live arrays being archived. Slots whose
+            # fit-time stamp differs were fitted against data this archive
+            # does not contain — schema 6 stores one data payload per
+            # file, so they cannot be represented faithfully and are
+            # skipped (loudly) rather than stored under the wrong data.
+            fingerprint = live.fingerprint()
+            stamp = fit_io.fingerprint_stamp(fingerprint)
+            current: list[fit_io.SavedFitSlot] = []
+            stale: list[fit_io.SavedFitSlot] = []
+            for s in slots:
+                if fit_io.fingerprint_stamp(s.file_fingerprint) == stamp:
+                    current.append(s)
+                else:
+                    stale.append(s)
+            if stale:
+                skipped = ", ".join(
+                    f"{s.model_name}/{s.fit_type} ({s.timestamp})" for s in stale
+                )
+                warnings.warn(
+                    f"Skipping {len(stale)} stale fit slot(s) for file "
+                    f"{live.name!r}: {skipped}. The file's current data "
+                    f"differs from the data these fits ran against, and "
+                    f"the archive stores one data payload per file, so "
+                    f"they cannot be saved faithfully beside it. Restore "
+                    f"the fit-time correction state (subtract_dark / "
+                    f"calibrate_data / reset_dark / reset_calibration) or "
+                    f"re-fit the current data; the slots remain in the "
+                    f"in-session history.",
+                    stacklevel=3,
+                )
+            if not current:
+                continue
             saved_files.append(
                 fit_io.SavedFile(
                     name=live.name,
                     original_path=str(live.path),
                     dim=int(live.dim),
                     shape=tuple(int(x) for x in live.data.shape),
-                    fingerprint=slots[0].file_fingerprint,
+                    fingerprint=fingerprint,
                     data=live.data,
                     energy=live.energy,
                     time=(
@@ -568,10 +603,13 @@ class Project:
                     ),
                     e_lim=list(live.e_lim) if live.e_lim else None,
                     t_lim=list(live.t_lim) if live.t_lim else None,
-                    slots=tuple(slots),
+                    slots=tuple(current),
                     aux_axis=live.aux_axis,
                 )
             )
+
+        if not saved_files:
+            return None
 
         now = fit_io._now_iso()
         return fit_io.SavedProject(
@@ -2324,8 +2362,9 @@ class File:
         Multi-sha content fingerprint of this file.
 
         Recomputed on every call so corrections that mutate ``self.data``
-        (subtract_dark, calibrate_data, reset_corrections) propagate into
-        slot identity. Sha256 over typical data is sub-ms; the cost is
+        (subtract_dark, calibrate_data, reset_dark, reset_calibration)
+        propagate into slot identity. Sha256 over typical data is
+        sub-ms; the cost is
         negligible compared to a fit, and a stale cache silently collapses
         pre- and post-correction slots into the same ``history_key``.
         """

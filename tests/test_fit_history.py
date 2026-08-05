@@ -28,6 +28,8 @@ from trspecfit.utils.fit_io import (
     build_selection_json,
     compute_file_fingerprint,
     compute_history_key,
+    fingerprint_stamp,
+    read_archive,
 )
 
 
@@ -85,28 +87,89 @@ def _setup_baseline_fit():
 
 
 #
-def test_save_fits_survives_data_correction(tmp_path):
-    """Correcting data after a fit must not orphan the earlier slots.
+def test_save_after_correction_skips_stale_slots(tmp_path):
+    """A slot fitted before a data correction is skipped with a warning.
 
-    The verified defect behind fit_archive_principles.md Principle 1:
-    slot->file lookup required the content fingerprint to match, so
-    subtract_dark() after a fit made save_fits() raise and abort the
-    whole save. Identity is the guarded name; the stored fingerprint is
-    a version stamp that legitimately diverges.
+    The Principle 1 defect made this save abort entirely; resolving by
+    name fixed that, but schema 6 stores one data payload per file, so a
+    pre-correction fit cannot be archived faithfully beside corrected
+    data. The writer must say what it skipped, write nothing silently
+    inconsistent, and leave the in-session history intact.
     """
 
     project, file = _setup_baseline_fit()
     assert file.energy is not None  # type guard
     file.subtract_dark(np.full(file.energy.size, 0.1))
-    # The live fingerprint now diverges from the slot's recorded stamp...
+    # The live fingerprint now diverges from the slot's recorded stamp.
     slot = project._fit_history[0]
     assert file.fingerprint()["data_sha256"] != slot.file_fingerprint["data_sha256"]
-    # ...and the save still succeeds, resolved by name.
     archive_path = tmp_path / "corrected.fit.h5"
-    project.save_fits(archive_path, show_output=0)
+    # The warning must name what it skipped, not just count it.
+    with pytest.warns(UserWarning, match=r"stale fit slot.*single_glp/baseline"):
+        project.save_fits(archive_path, show_output=0)
+    assert not archive_path.exists()
+    assert len(project._fit_history) == 1
+
+
+#
+def test_save_after_correction_and_refit_archives_consistently(tmp_path):
+    """After a correction + refit, the archive hashes what it stores.
+
+    The refit slot carries the corrected data's stamp, so it is saved;
+    the payload fingerprint must verify against the archived arrays
+    rather than echoing any slot's fit-time stamp.
+    """
+
+    project, file = _setup_baseline_fit()
+    assert file.energy is not None  # type guard
+    file.subtract_dark(np.full(file.energy.size, 0.1))
+    file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+    # Correction variants are distinct fits (version stamp in the key)...
+    k1, k2 = (s.history_key for s in project._fit_history)
+    assert k1 != k2
+    archive_path = tmp_path / "corrected.fit.h5"
+    # ...so the pre-correction slot survives collapse and reaches the
+    # writer, which skips it loudly (schema 6 cannot store it beside the
+    # corrected payload).
+    with pytest.warns(UserWarning, match="stale fit slot"):
+        project.save_fits(archive_path, show_output=0)
+    saved = read_archive(archive_path)
+    sf = saved.files[0]
+    recomputed = compute_file_fingerprint(data=sf.data, energy=sf.energy, time=sf.time)
+    assert fingerprint_stamp(recomputed) == fingerprint_stamp(sf.fingerprint)
     loaded = FitResults.load(archive_path)
     assert len(loaded) == 1
     assert next(iter(loaded)).file_name == file.name
+
+
+#
+def test_save_after_correction_reversal_archives_matching_slot(tmp_path):
+    """reset_dark() restores raw data; the raw fit is what gets saved.
+
+    Collapse must not discard the raw slot in favor of the corrected
+    refit: the version stamp keeps the two fits distinct, and the writer
+    keeps whichever matches the file's current data — here the *older*
+    slot, while the corrected refit is skipped with a warning.
+    """
+
+    project, file = _setup_baseline_fit()
+    assert file.energy is not None  # type guard
+    raw_stamp = fingerprint_stamp(file.fingerprint())
+    file.subtract_dark(np.full(file.energy.size, 0.1))
+    file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+    file.reset_dark()
+    assert fingerprint_stamp(file.fingerprint()) == raw_stamp
+    archive_path = tmp_path / "reversed.fit.h5"
+    with pytest.warns(UserWarning, match="stale fit slot"):
+        project.save_fits(archive_path, show_output=0)
+    saved = read_archive(archive_path)
+    sf = saved.files[0]
+    assert len(sf.slots) == 1
+    # The archived slot is the raw fit, consistent with the archived data.
+    assert fingerprint_stamp(sf.fingerprint) == raw_stamp
+    assert fingerprint_stamp(sf.slots[0].file_fingerprint) == raw_stamp
+    recomputed = compute_file_fingerprint(data=sf.data, energy=sf.energy, time=sf.time)
+    assert fingerprint_stamp(recomputed) == raw_stamp
 
 
 #
@@ -138,6 +201,21 @@ class TestIdentityHelpers:
         fp = compute_file_fingerprint(data=d, energy=e, time=None)
         assert fp["time_sha256"] == ""
         assert fp["shape"] == (10,)
+
+    #
+    def test_fingerprint_stamp_normalizes_shape(self):
+        d = np.arange(10, dtype=float)
+        e = np.linspace(0, 1, 10)
+        fp = compute_file_fingerprint(data=d, energy=e, time=None)
+        as_list = {**fp, "shape": list(fp["shape"])}
+        assert fingerprint_stamp(as_list) == fingerprint_stamp(fp)
+
+    #
+    def test_fingerprint_stamp_differs_on_content(self):
+        e = np.linspace(0, 1, 10)
+        fp1 = compute_file_fingerprint(data=np.zeros(10), energy=e, time=None)
+        fp2 = compute_file_fingerprint(data=np.ones(10), energy=e, time=None)
+        assert fingerprint_stamp(fp1) != fingerprint_stamp(fp2)
 
     #
     def test_selection_json_is_deterministic(self):
@@ -185,19 +263,78 @@ class TestIdentityHelpers:
 
     #
     def test_history_key_changes_with_selection(self):
+        fp = compute_file_fingerprint(
+            data=np.zeros(3), energy=np.arange(3.0), time=None
+        )
         s1 = build_selection_json("spectrum", time_point=0.5, e_lim=None)
         s2 = build_selection_json("spectrum", time_point=1.5, e_lim=None)
         k1 = compute_history_key(
             file_name="f1",
+            file_fingerprint=fp,
             model_name="m",
             fit_type="spectrum",
             selection_json=s1,
         )
         k2 = compute_history_key(
             file_name="f1",
+            file_fingerprint=fp,
             model_name="m",
             fit_type="spectrum",
             selection_json=s2,
+        )
+        assert k1 != k2
+
+    #
+    def test_history_key_frames_name_fields(self):
+        """("a|b", "c") vs ("a", "b|c") must not collide (framed encoding).
+
+        The old unframed ``|`` join made these two configurations hash
+        identically; principles §"Composite keys must preserve structure"
+        requires tagged records. Both names are user-controlled (file
+        stem, YAML key), so the collision was constructible.
+        """
+
+        fp = compute_file_fingerprint(
+            data=np.zeros(3), energy=np.arange(3.0), time=None
+        )
+        s = build_selection_json("spectrum", time_point=0.5, e_lim=None)
+        k1 = compute_history_key(
+            file_name="a|b",
+            file_fingerprint=fp,
+            model_name="c",
+            fit_type="spectrum",
+            selection_json=s,
+        )
+        k2 = compute_history_key(
+            file_name="a",
+            file_fingerprint=fp,
+            model_name="b|c",
+            fit_type="spectrum",
+            selection_json=s,
+        )
+        assert k1 != k2
+
+    #
+    def test_history_key_changes_with_version_stamp(self):
+        """A fit against corrected data is a distinct fit (Principle 3)."""
+
+        e = np.arange(3.0)
+        fp_raw = compute_file_fingerprint(data=np.zeros(3), energy=e, time=None)
+        fp_cor = compute_file_fingerprint(data=np.ones(3), energy=e, time=None)
+        s = build_selection_json("spectrum", time_point=0.5, e_lim=None)
+        k1 = compute_history_key(
+            file_name="f",
+            file_fingerprint=fp_raw,
+            model_name="m",
+            fit_type="spectrum",
+            selection_json=s,
+        )
+        k2 = compute_history_key(
+            file_name="f",
+            file_fingerprint=fp_cor,
+            model_name="m",
+            fit_type="spectrum",
+            selection_json=s,
         )
         assert k1 != k2
 
@@ -271,6 +408,7 @@ class TestBaselineSlot:
         # Recompute and verify it matches.
         k = compute_history_key(
             file_name=slot.file_name,
+            file_fingerprint=slot.file_fingerprint,
             model_name=slot.model_name,
             fit_type=slot.fit_type,
             selection_json=slot.selection_json,
@@ -975,6 +1113,7 @@ def _slot_stub(
     selection_json = build_selection_json(fit_type, **selection)
     history_key = compute_history_key(
         file_name=file_name,
+        file_fingerprint=fp,
         model_name=model_name,
         fit_type=fit_type,
         selection_json=selection_json,

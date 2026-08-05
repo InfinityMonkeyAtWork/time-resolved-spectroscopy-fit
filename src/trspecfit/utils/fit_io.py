@@ -172,9 +172,10 @@ class SavedFitSlot:
         ``{"data_sha256", "energy_sha256", "time_sha256", "shape"}`` — a
         **version stamp** of the file content the fit ran against, never
         identity (fit_archive_principles.md, Principle 1). Divergence from
-        the live file's current fingerprint means the result predates a
-        data correction (e.g. ``subtract_dark``) — a reportable staleness
-        fact, not a lookup failure.
+        the live file's current fingerprint means the result was fitted
+        against a different file state — a correction applied, or reset,
+        since the fit — a reportable staleness fact, not a lookup
+        failure.
     file_name : str
         The file's identity (``File.name`` — unique within the Project and
         guarded against reassignment).
@@ -195,11 +196,11 @@ class SavedFitSlot:
         Hash of ``observed.tobytes()`` — defensive cross-check guarding against
         silent grid drift if ``selection`` ever fails to capture a view detail.
     history_key : str
-        ``sha256(file_name | model_name | fit_type | selection_json)``.
-        Composed from the guarded name chain only — the content
-        fingerprint is deliberately excluded so a refit after a data
-        correction collapses onto the same key. Used by snapshot collapse
-        and in-session dedup.
+        Framed hash of ``(file_name, version stamp, model_name, fit_type,
+        selection_json)`` — see ``compute_history_key``. The stamp keeps
+        fits against different correction states distinct; resolution of
+        the owning file stays name-based. Used by snapshot collapse and
+        in-session dedup.
     params : pd.DataFrame
         ``[name, value, init_value, stderr, min, max, vary, expr]``. For SbS,
         a per-slice DataFrame (one row per slice, columns are param values).
@@ -560,6 +561,28 @@ def compute_file_fingerprint(
 
 
 #
+def fingerprint_stamp(fingerprint: dict[str, Any]) -> str:
+    """
+    Canonical string encoding of a file fingerprint (the version stamp).
+
+    JSON with sorted keys and ``shape`` normalized to a list, so equal
+    content yields byte-equal stamps regardless of tuple/list provenance.
+    Used to compare a slot's fit-time stamp against a file's current one.
+    """
+
+    return json.dumps(
+        {
+            "data_sha256": fingerprint["data_sha256"],
+            "energy_sha256": fingerprint["energy_sha256"],
+            "time_sha256": fingerprint["time_sha256"],
+            "shape": [int(x) for x in fingerprint["shape"]],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+#
 def compute_observed_sha256(observed: np.ndarray) -> str:
     """Hash the observed array (defensive cross-check for grid drift)."""
 
@@ -595,6 +618,7 @@ def _json_default(obj: Any) -> Any:
 def compute_history_key(
     *,
     file_name: str,
+    file_fingerprint: dict[str, Any],
     model_name: str,
     fit_type: FitType,
     selection_json: str,
@@ -602,20 +626,33 @@ def compute_history_key(
     """
     In-memory canonical slot key.
 
-    ``sha256(file_name | model_name | fit_type | selection_json)``.
-    Identity is the guarded name chain (fit_archive_principles.md,
-    Principle 1): ``File.name`` is unique within the Project and
-    immutable after construction, so it alone identifies the file. The
-    content fingerprint is deliberately absent — it is a version stamp
-    that legitimately moves under data corrections (subtract_dark,
-    calibration), and folding it into identity made refits of a
-    corrected file collide with nothing and orphan earlier slots.
+    Sha256 over a framed JSON encoding of ``(file_name, version stamp,
+    model_name, fit_type, selection_json)`` — a tagged record, never bare
+    ``|`` concatenation, so content cannot bleed across field boundaries
+    (fit_archive_principles.md, "Composite keys must preserve structure").
 
-    Slots with the same key represent re-fits of the same view of the
-    same file; snapshot save keeps only the latest per key.
+    Identity is the guarded name chain (Principle 1): ``File.name`` alone
+    resolves the file, and slot→file lookup never uses content. The
+    fingerprint enters as a **version stamp** — part of fit identity, not
+    file identity (Principle 3): a fit against corrected data is a
+    distinct fit, so correction variants keep their own keys instead of
+    collapsing to latest-per-key, while name-based lookup keeps them
+    attached to their file.
+
+    Slots with the same key are literal re-runs of one configuration on
+    one data state; snapshot save keeps only the latest per key.
     """
 
-    payload = f"{file_name}|{model_name}|{fit_type}|{selection_json}"
+    payload = json.dumps(
+        [
+            file_name,
+            fingerprint_stamp(file_fingerprint),
+            model_name,
+            fit_type,
+            selection_json,
+        ],
+        separators=(",", ":"),
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -630,10 +667,14 @@ def compute_archive_slot_key(
     """
     On-disk canonical slot key.
 
-    ``sha256(file_ref | model_name | fit_type | selection_json)``. Differs
-    from ``history_key`` only in the file-identity token: in-memory uses the
-    multi-sha fingerprint; on-disk uses the archive-local positional path
-    (e.g. ``"files/000000"``). See ``docs/design/fit_archive_schema.md``.
+    ``sha256(file_ref | model_name | fit_type | selection_json)``. The
+    on-disk counterpart of ``history_key``, keyed by the archive-local
+    positional path (e.g. ``"files/000000"``) and carrying no version
+    stamp — schema 6 stores one data payload per file, so the stamp is
+    constant within a group. The unframed ``|`` join is tolerable only
+    because ``file_ref`` is writer-generated and ``fit_type`` is a closed
+    literal set; the key is retired wholesale in schema 7 (single stored
+    handle). See ``docs/design/fit_archive_schema.md``.
     """
 
     payload = f"{file_ref}|{model_name}|{fit_type}|{selection_json}"
@@ -948,6 +989,7 @@ def _slot_from_sbs(
     selection_json = build_selection_json("sbs", **selection)
     history_key = compute_history_key(
         file_name=file_name,
+        file_fingerprint=file_fingerprint,
         model_name=model_name,
         fit_type="sbs",
         selection_json=selection_json,
@@ -1183,6 +1225,7 @@ def _build_slot(
     selection_json = build_selection_json(fit_type, **selection)
     history_key = compute_history_key(
         file_name=file_name,
+        file_fingerprint=file_fingerprint,
         model_name=model_name,
         fit_type=fit_type,
         selection_json=selection_json,
@@ -2082,6 +2125,7 @@ def _read_slot(
     # history_key is recomputed per schema; on-disk value is debug-only.
     history_key = compute_history_key(
         file_name=file_name,
+        file_fingerprint=file_fingerprint,
         model_name=model_name,
         fit_type=fit_type,
         selection_json=selection_json,
