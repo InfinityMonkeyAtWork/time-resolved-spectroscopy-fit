@@ -126,8 +126,12 @@ Follow `docs/design/fit_archive_schema_plan.md` §Execution order; steps 1–2
 are done (identity guards, PlotConfig refactor). Checklist mirrors its
 numbering — scope details live there, not here:
 
-- [ ] **B3. `PlotConfig` (de)serialization** — canonical JSON helpers,
-      round-trip tests first. Entirely new code (no to_dict/from_dict exists).
+- [x] **B3. `PlotConfig` (de)serialization** — done 2026-08-05:
+      `PlotConfig.to_json`/`from_json`, deterministic (sorted keys), tuple
+      fields validated (two-element numeric) and restored on read, unknown
+      keys / NaN-Infinity constants / non-JSON values raise naming the
+      field, missing keys keep defaults. B6 stores the payload on
+      `project/`; B7 decodes it.
 - [ ] **B4. Hash construction** — the two independent families (identity →
       `optimization_hash` → `handle`; comparability → `fit_view_sha256`),
       unit-tested with no I/O. Tagged encodings only (A2 sets the precedent).

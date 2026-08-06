@@ -520,6 +520,120 @@ class TestPlot2D:
 
 #
 #
+class TestPlotConfigSerialization:
+    """to_json/from_json — the schema-7 project payload (round-trip first)."""
+
+    #
+    def _custom_config(self):
+        """One value from every field category (tuple, nested list,
+        list, scalar, None-able left None)."""
+
+        return PlotConfig(
+            x_label="Energy (eV)",
+            x_dir="rev",
+            x_lim=(83.0, 87.0),
+            z_lim=(0.0, 1.5),
+            panel_size=(5.0, 2.5),
+            data_slice=[[0, 10], [2, 8]],
+            colors=["#112233", "tab:orange"],
+            linewidths=[1.0, 2.5],
+            full_range=False,
+            waterfall=0.25,
+            ticksize=11.0,
+            dpi_save=600,
+        )
+
+    #
+    def test_round_trip_defaults(self):
+        assert PlotConfig.from_json(PlotConfig().to_json()) == PlotConfig()
+
+    #
+    def test_round_trip_custom_restores_types(self):
+        config = self._custom_config()
+        loaded = PlotConfig.from_json(config.to_json())
+        assert loaded == config
+        # Tuple-typed fields come back as tuples, not JSON lists...
+        assert isinstance(loaded.x_lim, tuple)
+        assert isinstance(loaded.z_lim, tuple)
+        assert isinstance(loaded.panel_size, tuple)
+        # ...list-typed fields stay lists.
+        assert loaded.data_slice == [[0, 10], [2, 8]]
+        assert isinstance(loaded.data_slice, list)
+
+    #
+    def test_payload_is_deterministic(self):
+        """Same field state gives identical payloads (sorted keys).
+
+        Deliberately narrower than "equal configs encode identically":
+        waterfall=0 and waterfall=0.0 are == but encode as 0 vs 0.0.
+        Nothing compares payload bytes (presentation is outside
+        identity), so numeric normalization is not worth a per-field
+        type registry.
+        """
+
+        a = self._custom_config()
+        b = self._custom_config()
+        assert a.to_json() == b.to_json()
+
+    #
+    def test_nan_infinity_constants_rejected(self):
+        """to_json cannot produce NaN/Infinity; from_json must not
+        accept them through Python's permissive decoder."""
+
+        with pytest.raises(ValueError, match="NaN"):
+            PlotConfig.from_json('{"waterfall": NaN}')
+        with pytest.raises(ValueError, match="Infinity"):
+            PlotConfig.from_json('{"ticksize": Infinity}')
+
+    #
+    def test_tuple_field_payload_validated(self):
+        """Tuple fields: two-element numeric array or null, loudly."""
+
+        with pytest.raises(ValueError, match="x_lim"):
+            PlotConfig.from_json('{"x_lim": "ab"}')  # no silent ("a","b")
+        with pytest.raises(ValueError, match="x_lim"):
+            PlotConfig.from_json('{"x_lim": [1, 2, 3]}')
+        with pytest.raises(ValueError, match="panel_size"):
+            PlotConfig.from_json('{"panel_size": 4.0}')
+        with pytest.raises(ValueError, match="y_lim"):
+            PlotConfig.from_json('{"y_lim": [0, true]}')
+        assert PlotConfig.from_json('{"x_lim": null}').x_lim is None
+
+    #
+    def test_unknown_key_raises(self):
+        payload = PlotConfig().to_json().replace('"x_label"', '"x_labl"')
+        with pytest.raises(ValueError, match="x_labl"):
+            PlotConfig.from_json(payload)
+
+    #
+    def test_missing_keys_keep_defaults(self):
+        """A payload written before a field existed still loads."""
+
+        loaded = PlotConfig.from_json('{"x_label": "E"}')
+        assert loaded.x_label == "E"
+        assert loaded.dpi_plot == 100
+        assert loaded.panel_size == (4.0, 3.0)
+
+    #
+    def test_non_json_value_raises_naming_field(self):
+        config = PlotConfig().update(colors=[object()])
+        with pytest.raises(TypeError, match="colors"):
+            config.to_json()
+
+    #
+    def test_nan_value_raises_naming_field(self):
+        config = PlotConfig(waterfall=float("nan"))
+        with pytest.raises(ValueError, match="waterfall"):
+            config.to_json()
+
+    #
+    def test_non_object_payload_raises(self):
+        with pytest.raises(ValueError, match="object"):
+            PlotConfig.from_json("[1, 2]")
+
+
+#
+#
 class TestPlotConfigHierarchy:
     """Test config propagation through Project -> File -> Model hierarchy"""
 
