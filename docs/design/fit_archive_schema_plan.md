@@ -4,7 +4,10 @@ orphan: true
 
 # Fit-archive schema 7 — conversion plan
 
-Status: **planned, not implemented.** Branch `fit-archive-schema-7`.
+Status: **in execution** on branch `fit-archive-schema-7`; the live checklist
+is `PLAN.md` Part B. Execution steps 1–3 have landed, and PLAN.md Part A
+applied several schema-7 identity rules to the schema-6 writer/reader early.
+Reconciled against the landed `JointFitResult` record on 2026-08-05.
 
 This document is the **conversion plan**: what changes on disk, what changes in
 the object model, in what order, and what proves it. It deliberately does not
@@ -52,10 +55,12 @@ it is rewritten as the self-contained schema-7 spec and this plan moves to
     │       │     optimization_hash : str      # 64 hex; shared with every projection
     │       │     input_files       : str      # JSON; scope == "project"
     │       │     model_structure   : str      # JSON; N per-file entries
+    │       │     model_name        : str      # display; identity lives in model_structure
     │       │     projections       : str      # JSON: records; see "projection records"
     │       │     label       (opt) : str      # the bundle's only label
     │       │     fit_alg, fit_settings, timestamp
-    │       │     aic, bic, chi2_raw, chi2_red_raw   # whole-objective
+    │       │     chi2_raw, chi2_red_raw, chi2, chi2_red, aic, bic
+    │       │                                  # whole-objective; r2 omitted
     │       ├── params                         # combined; long format, incl. init_value
     │       ├── conf_ci             (opt)
     │       ├── correl              (opt)      # joint correlation matrix
@@ -173,27 +178,28 @@ and every schema-2-through-6 fallback branch is deleted rather than left inert.
   forced a second format break immediately after this one.
 
   **Schema 7 serializes a first-class joint result; it does not produce one.**
-  That upstream prerequisite (see "Prerequisites") landed on branch
-  `joint-fit-result` (2026-07-31, decisions in
+  That upstream prerequisite landed 2026-07-31 (decisions in
   [joint_fit_result.md](joint_fit_result.md)): every `Project.fit_2d` now
-  captures a `JointFitResult` — combined parameter table, per-file parameter
-  maps, joint `conf_ci`/`correl`/MCMC, whole-objective metrics — into
-  `Project._joint_fit_history`, published together with the per-file
-  projection slots. The fields below are what the archive
-  stores *given* a settled record; the prerequisite branch decides what that
-  record contains, and this layout follows it.
+  captures a `JointFitResult` — combined parameter table, per-projection
+  parameter maps, joint `conf_ci`/`correl`/MCMC, whole-objective metrics —
+  into `Project._joint_fit_history`, published together with the per-file
+  projection slots as one bundle. The layout above follows that record. The
+  whole-objective metrics are the six the record's metric-ownership table
+  defines; `r2` is structurally undefined for a joint result and omitted on
+  disk (the reader rehydrates it as `NaN`), whereas a `NaN` `chi2`/`chi2_red`
+  — some projection's σ invalid — is a stored value, not an omission.
 
   Rules, per Principle 3:
 
   - **Ownership is two-level.** The joint record owns the combined parameter
-    table, joint correlation/CI/MCMC, joint optimizer settings,
-    whole-objective AIC/BIC, and the projection list. Projections own their
+    table, joint correlation/CI/MCMC, joint optimizer settings, the
+    whole-objective metrics, and the projection list. Projections own their
     per-file arrays and σ. Payloads are disjoint; a projection has no
     `correl` / `conf_ci` /
     `mcmc` to conflict over.
   - **Projection parameter tables are materialized views** of the combined
-    result through the sharing map — validated against it, never independently
-    overwritten.
+    result through the parameter map — validated against it, never
+    independently overwritten.
   - **Mutation is one transaction over the bundle**: validate the joint record
     and every projection, then apply all or none. This is **logical
     atomicity** — it does not survive process interruption or an HDF5 error
@@ -223,41 +229,36 @@ enumerates groups to find insertion points.
 
 #### Projection records
 
-Sorting projections by file name would discard the association to optimizer
-order, and the combined parameter names encode *position*, not name:
-`proj_name = f"file{file_idx:02d}_{local_name}"`
-([trspecfit.py:1202](../../src/trspecfit/trspecfit.py#L1202)), indexed by
-`enumerate(self.files)`. Project-level shared parameters stay unprefixed
-([:1156](../../src/trspecfit/trspecfit.py#L1156)). So the sharing map is **not**
-recoverable from names alone, and without it the materialized-view invariant
-cannot be validated.
+The parameter map is data, not a naming convention
+([joint_fit_result.md](joint_fit_result.md)): combined optimizer names encode
+file *position* (`file{idx:02d}_{local}`; project-shared parameters
+unprefixed), and each landed `JointFitProjection` already stores the exact
+combined → local relation as `parameter_map`. The archive persists that map;
+readers look names up and **never parse a `fileNN_` prefix**. (An earlier
+draft of this plan stored a `parameter_prefix` per projection instead; the
+record superseded it.)
 
-Each projection is therefore a named record carrying its prefix:
+Each projection is a named record in the `projections` JSON attr:
 
 ```json
-{"file_name": "A", "handle": "…", "parameter_prefix": "file00_"}
+{"file_name": "A", "handle": "…",
+ "parameter_map": {"file00_Gauss_01_A": "Gauss_01_A", "Gauss_01_x0": "Gauss_01_x0"}}
 ```
 
-- A prefixed combined parameter belongs to exactly one projection:
-  `file00_Gauss_01_A` → file `A`, local `Gauss_01_A`.
-- An **unprefixed** combined parameter is project-shared and maps to that same
-  local name in every projection.
-- Static and file-varying parameters follow the same prefix rule.
+- A project-shared (unprefixed) combined parameter appears in **every**
+  projection's map, under the same key in each; static and file-varying
+  parameters follow the same map, no special casing.
+- Records stay sorted by file name for canonicality — the map, not the
+  ordering, carries the association with optimizer parameters.
 
-Storing the prefix beats storing `file_index`: readers never reproduce the
-`f"file{index:02d}_"` formatting rule, so a future change to it cannot
-retroactively misparse existing archives. Records stay sorted by file name for
-canonicality — the stored prefix, not the ordering, carries the association.
-
-**Strip the declared prefix exactly once; never pattern-match `fileNN_`.** A
-component legitimately named `file00` would otherwise be mangled: the combined
-name `file00_file00_Gauss_01_A` must yield local `file00_Gauss_01_A`.
-
-Writer and reader validate that prefixes are unique, that every prefixed
-combined parameter matches exactly one declared projection, and that every
-projection's local parameters appear in the combined table under its prefix —
-the mapping must be total in both directions. That is what makes the
-materialized-view invariant checkable rather than asserted.
+Writer and reader validate that each map is **total in both directions** —
+every combined parameter feeding the file appears as a key, and the value set
+equals the projection slot's parameter names exactly — and that every
+combined parameter resolves in at least one projection. That is what makes
+the materialized-view invariant checkable rather than asserted. Capture
+enforces only the local half today (each map's value set equals its slot's
+parameter names, `_joint_result_from_project_fit`); the combined-side checks
+are the writer's and reader's to add.
 
 ### File group
 
@@ -373,9 +374,11 @@ to be 2d, but keying on scope means a future project-level SbS needs no change
 here.
 
 Consumer consequence: three of the four entries in `DEFAULT_METRICS_NO_SIGMA`
-([fit_results.py:52](../../src/trspecfit/fit_results.py#L52)) are in the omitted
-set, so `compare_models` must drop those columns when any matched slot lacks
-them rather than surfacing a `KeyError` or a column of `None`.
+(`fit_results.py`) are in the omitted set. `compare_models` already renders
+structurally undefined cells as `NaN` (landed with the joint-result branch);
+dropping a column only when **every** matched row lacks the metric is still
+unimplemented and belongs to step 9. The reader rehydrates omitted attrs as
+`NaN` so both behaviors work from one input shape.
 
 ### Conventions
 
@@ -398,14 +401,19 @@ Drops `e_lim`, `t_lim`, `data`, and the three-sha `fingerprint` dict. Gains
 All arrays are **copies, read-only** — the ownership boundary that makes this a
 snapshot rather than a view (Principle 4).
 
-### `SavedJointFit` (new)
+### `JointFitResult` (extended — no parallel `SavedJointFit`)
 
-`optimization_hash`, `input_files`, `model_structure`, `projections`
-(ordered `(file_name, handle)` pairs), `params` (combined, long format),
-`conf_ci`, `correl`, `mcmc`, `fit_alg`, `fit_settings`, `timestamp`, `label`,
-and the whole-objective metrics. Frozen, arrays copied like every other record.
+`JointFitResult` is the semantic type in memory and after an archive load
+([joint_fit_result.md](joint_fit_result.md) §Object model); schema 7 extends
+it rather than minting a `Saved*` twin. Already landed: `model_name`,
+`projections` (tuple of `JointFitProjection` — parameter map + slot, in
+canonical file-name order), `params` (combined, long format), `metrics`,
+`fit_alg`, `fit_settings`, `timestamp`, `conf_ci`, `correl`, `mcmc`. Schema 7
+adds the identity and label fields: `optimization_hash`, `input_files`,
+`model_structure`, `label`. The bundle's slot handles live on the projection
+slots themselves. Frozen, arrays copied like every other record.
 
-`SavedProject` gains `joint: tuple[SavedJointFit, ...]`.
+`SavedProject` gains `joint: tuple[JointFitResult, ...]`.
 
 ### `SavedFitSlot`
 
@@ -423,16 +431,16 @@ sequence_index, text)` — mirroring the group encoding above.
 
 ### `FitResults`
 
-1. **Hold `(SavedFile, SavedFitSlot)` pairs**, not a fingerprint dictionary.
-   `_files_by_fp` ([fit_results.py:197](../../src/trspecfit/fit_results.py#L197))
-   collapses byte-identical files; the parent link is already correct on disk
-   and should be retained rather than re-derived from a hash.
+1. **Hold `(SavedFile, SavedFitSlot)` pairs**, not a fingerprint dictionary —
+   **done early** (PLAN.md A4): loaded slots retain their parent `SavedFile`
+   association; a name lookup remains only for live `File` providers, where
+   uniqueness is guarded.
 2. **Carry the resolving `PlotConfig`.** `Project.results` passes the live
-   `Project.plot_config`; `FitResults.load` passes the config decoded from
-   `project/`. One rule: a `FitResults` renders with its project's config. Pass
-   a `PlotConfig` and a project name, never a `Project` — `fit_results.py` is
-   deliberately a leaf in the import graph
-   ([fit_results.py:96-99](../../src/trspecfit/fit_results.py#L96)).
+   `Project.plot_config` (landed with the config refactor); `FitResults.load`
+   passes the config decoded from `project/` (step 7). One rule: a
+   `FitResults` renders with its project's config. Pass a `PlotConfig` and a
+   project name, never a `Project` — `fit_results.py` is deliberately a leaf
+   in the import graph.
 3. **Query layer** per Principle 6: slot handles with prefix matching, the
    variant table with constant columns suppressed, pairwise input/output diffs,
    `select=` on save and export, explicit pruning. Comparability grouping
@@ -464,24 +472,15 @@ produces its **first** slot. Nothing is read from live state at save time.
 
 ## Live-session changes
 
-- **`Project` holds a real `PlotConfig`** instead of ~35 flat attributes
-  scraped by `PlotConfig.from_project`. Removes the field-walking, the
-  tuple-coercion case, and the `x_label`/`e_label`, `dpi_plot`/`dpi_plt` alias
-  map duplicated in
-  [config/plot.py:216-220](../../src/trspecfit/config/plot.py#L216) and
-  [trspecfit.py:798-802](../../src/trspecfit/trspecfit.py#L798). `project.yaml`
-  keys stay unchanged — the YAML is a user artifact.
-- **`File.plot_config` is deleted.** The 22 `src` read sites become
-  `self.p.plot_config`; `Model.plot_config`
-  ([mcp.py:280](../../src/trspecfit/mcp.py#L280)) resolves through
-  `parent_file.p`.
-- **[trspecfit.py:734](../../src/trspecfit/trspecfit.py#L734)** — the
-  project-level 2D plot's `files_2d[0].plot_config` hack is deleted.
-- **`export_fits`' per-file `plot_configs` dict**
-  ([trspecfit.py:451-458](../../src/trspecfit/trspecfit.py#L451)) and
-  `_resolve_plot_config`'s per-file lookup
-  ([fit_io.py:2474](../../src/trspecfit/utils/fit_io.py#L2474)) collapse to one
-  config.
+**Landed with the config refactor (`7befe82`):** `Project` holds a real
+`PlotConfig` (the `from_project` field-walking, tuple-coercion case, and alias
+maps are gone; `project.yaml` keys unchanged — the YAML is a user artifact);
+`File.plot_config` is deleted and every read site resolves through the
+project; the project-level 2D plot's `files_2d[0].plot_config` hack and
+`export_fits`' per-file `plot_configs` dict are gone.
+
+Still open:
+
 - **A corrected-data reconstruction helper in `utils/`**, imported by both
   `fit_results` and `trspecfit` rather than owned by either. Needed for
   `full_range=True`, which shows corrected data outside the fit window where
@@ -506,6 +505,12 @@ Both are pure live-object-model work with no schema change, so existing
 archives keep reading throughout. The `PlotConfig` refactor is independent of
 them and can proceed in parallel.
 
+**Status: landed.** Name guards (`ccb4da0`), name-based slot→file lookup
+(`d6b2cf9`), and the version-stamp demotion (`ef0339a`) — corrected by
+PLAN.md A2 (`e0b1975`): the stamp left **file** identity but stays part of
+**fit** identity, hashed via a tagged JSON-list encoding in
+`compute_history_key`.
+
 ## Deferred / non-goals
 
 - **Model rehydration.** `model_yaml` is provenance; it is not a complete
@@ -522,12 +527,14 @@ them and can proceed in parallel.
 
 ## Execution order
 
-1. **Prerequisites** — the identity guards above.
+1. **Prerequisites** — the identity guards above. **Done** (see
+   Prerequisites status).
 2. **Live-session config refactor** — `Project.plot_config` as a real field;
    delete `File.plot_config` and update all read sites; the four per-file-config
-   tests are rewritten against the project.
+   tests are rewritten against the project. **Done** (`7befe82`).
 3. **`PlotConfig` (de)serialization** — canonical JSON helpers, round-trip
-   tests first.
+   tests first. **Done** (`1ef39ff`): strict, deterministic
+   `PlotConfig.to_json`/`from_json`.
 4. **Hash construction** — unit-tested independently of any I/O. Two
    independent families, not one chain:
 
@@ -546,7 +553,8 @@ them and can proceed in parallel.
    instruction.** `sha256(x + y + z)` means "hash a canonical **tagged**
    encoding of these fields" — named or length-prefixed records — never string
    concatenation, which would make `("ab", "c")` and `("a", "bc")` collide.
-   Every tuple gets a stated ordering rule: `input_files` and joint
+   The precedent landed with PLAN.md A2: `compute_history_key` hashes a tagged
+   JSON-list encoding. Every tuple gets a stated ordering rule: `input_files` and joint
    `projections` sorted by file name, dynamics attachments sorted by target
    parameter, submodel tuples and the parameter table in model order,
    `model_structure`'s per-file entries sorted by file name.
@@ -558,8 +566,9 @@ them and can proceed in parallel.
 5. **Object model** — the `SavedProject` / `SavedFile` / `SavedFitSlot` field
    changes, with copy-and-freeze at capture.
 6. **Writer** — `project/` group; nested `files/`; project-name check on append;
-   same-name/different-content raise; new file and slot datasets; compression;
-   the collision rules — four cases, not two:
+   same-name/different-content raise (prototyped at schema 6 by PLAN.md A3:
+   unconditional, pre-mutation, both `overwrite` modes); new file and slot
+   datasets; compression; the collision rules — four cases, not two:
 
    | Fitted params | Attachment state | Behavior |
    |---|---|---|
@@ -578,11 +587,12 @@ them and can proceed in parallel.
 8. **Capture** — first-slot `SavedFile` capture; per-slot correction snapshots;
    and serialization of the first-class joint result delivered by the
    prerequisite branch, alongside the N projections `Project.fit_2d` already
-   emits. This step *consumes* that record — it does not implement it. If the
-   prerequisite lands with a different record shape than the layout above
-   assumes, the layout follows the record, not the reverse.
+   emits. This step *consumes* that record — it does not implement it. The
+   record landed 2026-07-31 and this plan was reconciled to it on 2026-08-05:
+   parameter maps instead of prefixes, `JointFitResult` extended in place
+   instead of a `SavedJointFit`, six whole-objective metrics.
 9. **`FitResults` query layer** — handles, variant table, diffs, `select=`,
-   pruning, the regrouped comparability check. Two behaviors that are easy to
+   pruning, the regrouped comparability check. Behaviors that are easy to
    omit and produce silently wrong output:
 
    - **σ-scaled metrics are withheld when `sigma_eff` is inconsistent** across
@@ -592,6 +602,11 @@ them and can proceed in parallel.
      conflicting σ values in the message. For `select="best", by="chi2_red"`,
      **raise** — a bad ranking there picks a winner and discards or omits the
      loser, which is worse than a missing column.
+   - **All-undefined metric columns are dropped.** A structurally undefined
+     cell renders as `NaN` (landed); a column is dropped only when **every**
+     matched row lacks the metric, so one joint projection never suppresses
+     valid values in the other rows. Today `compare_models` always emits the
+     default columns, all-`NaN` ones included.
    - **Joint fits diff at the bundle level.** Diff two joint fits by their
      joint records, never by a pair of projections: a projection's parameter
      table is a materialized view of the combined result, so diffing
@@ -654,17 +669,17 @@ Beyond round-tripping every field at schema 7:
   projections, every projection carrying `joint_ref`; the degenerate one-file
   project fit also gets one. `select=` on a single projection expands to the
   bundle; `drop()` on one raises. A joint record whose projection reference
-  does not resolve fails the integrity check at save. Joint covariance and a
+  does not resolve fails the integrity check at save. Joint correlation and a
   joint MCMC chain round-trip. Two joint fits differing only in shared
   parameter state show that difference in a bundle-level diff.
 - **Joint comparability** — a two-file joint fit over byte-identical files
   under different names produces a two-entry comparability tuple, not one.
   This is the multiplicity case a set would collapse.
-- **Sharing map** — a joint fit's projection records recover local parameter
-  names from combined ones; a component legitimately named `file00` round-trips
-  (strip the declared prefix once, never pattern-match); the mapping validates
-  total in both directions; a projection whose parameter table disagrees with
-  the combined result fails validation.
+- **Parameter map** — a joint fit's projection records recover local
+  parameter names from combined ones by map lookup; a component legitimately
+  named `file00` round-trips (nothing anywhere pattern-matches `fileNN_`);
+  the mapping validates total in both directions; a projection whose
+  parameter table disagrees with the combined result fails validation.
 - **Per-file model structure** — a joint fit where A uses `frequency=0.25` and
   B uses `0.5` under one model name hashes differently from one where both use
   `0.25`. This is the case a single global `model_structure` would miss.
@@ -684,14 +699,9 @@ Beyond round-tripping every field at schema 7:
 
 ## Interaction with the current `PLAN.md`
 
-`PLAN.md` carries a banner marking its `PlotConfig` sections superseded. Full
-mapping:
-
-| `PLAN.md` step | Effect |
-|---|---|
-| 1 (regression tests) | Per-file-config and frozen-config tests are obsolete; the live-mutation and byte-identical-file tests survive |
-| 2 (per-file `SavedFile` capture) | Retained; the `PlotConfig` half is dropped, and capture has one path rather than two |
-| 3 (slot-to-file association) | Retained, subsumed by the `FitResults` change above |
-| 4, 5, 6, 8 (renderer consolidation) | Unaffected — orthogonal to the schema |
-| 7 (persist and resolve `PlotConfig`) | Dissolved; replaced by a project-owned config resolved at render time |
-| 9, 10, 11 | Retained, with the schema-7 doc and test scope folded in |
+`PLAN.md` has since been restructured around this milestone: Part A (landed)
+applied wire-compatible identity rules to schema 6 early, Part B mirrors
+§Execution order as B3–B12, and Part C queues the renderer-consolidation
+steps this section's original mapping table declared orthogonal. That table
+described the pre-restructure `PLAN.md` and is preserved in git history
+(`61e2be5`).

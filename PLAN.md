@@ -9,9 +9,9 @@ working checklist; it references that document rather than restating it.
 Sequencing status (principles §Sequencing): step 1 (identity guards —
 `ccb4da0`, `ef0339a`, `d6b2cf9`), step 2 (project-owned `PlotConfig` —
 `7befe82`), and step 3 (first-class joint results — `61bcd61`, `67587e3`) are
-**done**. What remains is Part A below (review-findings hardening) and Part B
-(schema 7 itself). Part C (renderer consolidation) is queued behind the
-milestone and orthogonal to it.
+**done**. Part A below (review-findings hardening) is also done; what remains
+is Part B (schema 7 itself). Part C (renderer consolidation) is queued behind
+the milestone and orthogonal to it.
 
 ### Part A — integrity hardening (verified review findings)
 
@@ -122,9 +122,15 @@ Decision points (resolved 2026-08-04):
 
 ### Part B — schema 7 conversion
 
-Follow `docs/design/fit_archive_schema_plan.md` §Execution order; steps 1–2
-are done (identity guards, PlotConfig refactor). Checklist mirrors its
-numbering — scope details live there, not here:
+Follow `docs/design/fit_archive_schema_plan.md` §Execution order; steps 1–3
+are done (identity guards, PlotConfig refactor and serialization). The schema
+plan was reconciled against the landed `JointFitResult` record on 2026-08-05:
+parameter maps supersede the prefix-based projection records, the record
+extends in place (no `SavedJointFit`), the joint sidecar stores six
+whole-objective metrics plus `model_name`, and `compare_models`' NaN-cell
+rendering is landed while the drop-only-when-all-lack column rule stays a B9
+item. Checklist mirrors the plan's numbering — scope details live there, not
+here:
 
 - [x] **B3. `PlotConfig` (de)serialization** — done 2026-08-05:
       `PlotConfig.to_json`/`from_json`, deterministic (sorted keys), tuple
@@ -136,7 +142,8 @@ numbering — scope details live there, not here:
       `optimization_hash` → `handle`; comparability → `fit_view_sha256`),
       unit-tested with no I/O. Tagged encodings only (A2 sets the precedent).
 - [ ] **B5. Object model** — `SavedProject`/`SavedFile`/`SavedFitSlot` field
-      changes, new `SavedJointFit`, copy-and-freeze at capture.
+      changes, `JointFitResult` extended in place with identity fields (no
+      parallel `SavedJointFit`), copy-and-freeze at capture.
 - [ ] **B6. Writer** — `project/` group, `joint/` sidecar, project-name check,
       same-name/different-content raise (A3 is the schema-6 prototype),
       compression, the four-case collision table.
@@ -144,7 +151,7 @@ numbering — scope details live there, not here:
       pre-7 fallback branch (this retires the A5 legacy-reader note).
 - [ ] **B8. Capture** — first-slot `SavedFile` capture, per-slot correction
       snapshots, serialization of `JointFitResult` (consumes the step-3
-      record; layout follows the record).
+      record; the schema plan is reconciled to its layout).
 - [ ] **B9. `FitResults` query layer** — handles, variant table, diffs,
       `select=`, pruning, regrouped comparability, σ tiers, bundle-level
       joint diffs. (A4 pre-completes the association item.)

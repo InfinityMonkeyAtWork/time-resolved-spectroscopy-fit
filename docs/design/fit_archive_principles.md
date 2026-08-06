@@ -567,7 +567,7 @@ on the format.
 
 Slots stay under their file group. A joint fit writes an ordinary slot into
 each participating file's `slots/`, each carrying a `joint_ref` to a small
-shared record holding the joint parameters, covariance, MCMC, and settings:
+shared record holding the joint parameters, correlation, MCMC, and settings:
 
 ```
 project/
@@ -615,13 +615,16 @@ state:
 
 | Level | Owns | Attachments it may hold |
 |---|---|---|
-| Joint record | combined initial/final parameter table, the sharing map (via per-projection parameter prefixes), joint correlation, joint CI, joint MCMC, joint optimizer settings, whole-objective AIC/BIC, the projection reference list | `conf_ci`, `correl`, `mcmc` |
+| Joint record | combined initial/final parameter table, the sharing map (per-projection combined → local parameter maps), joint correlation, joint CI, joint MCMC, joint optimizer settings, the whole-objective metrics, the projection reference list | `conf_ci`, `correl`, `mcmc` |
+| Projection | `observed`, `fit`, `fit_ini`, `components`, `dark`, `calibration`, residual metrics | σ / noise metadata (per file) |
 
 `correl` is a **correlation** matrix, not a covariance matrix — that is what
-schema 6 stores and what `correl_to_df` produces. Whether the raw covariance
-also deserves its own representation is for the prerequisite branch to decide
-when it settles the joint record's contents; the archive follows.
-| Projection | `observed`, `fit`, `fit_ini`, `components`, `dark`, `calibration`, residual metrics | σ / noise metadata (per file) |
+schema 6 stores and what `correl_to_df` produces. The joint-record branch
+settled the covariance question
+([joint_fit_result.md](joint_fit_result.md)): correlation only — with
+`stderr` in the parameter table it recovers covariance as
+`correl(i,j) · stderr(i) · stderr(j)`, and storing both would invite
+disagreement.
 
 The payloads are disjoint, which is what makes "all or nothing" well defined. A
 projection has no `correl`, `conf_ci`, or `mcmc` to conflict over — those are
@@ -639,8 +642,10 @@ parameter names encode Project.files *position*
 (`f"file{file_idx:02d}_{local_name}"`), not file name, so sorting projections
 canonically by name would sever the association — the fifth instance of the
 composite-key rule above, this time discarding association. Each projection
-record therefore carries its own `parameter_prefix`, and unprefixed combined
-parameters are project-shared.
+record therefore carries its own combined → local `parameter_map`; readers
+look names up rather than parse the prefix convention
+([joint_fit_result.md](joint_fit_result.md)), and a project-shared parameter
+appears under the same unprefixed name in every projection's map.
 
 **Mutation.** One transaction over the whole bundle: validate the joint record
 and every projection first, then enrich or overwrite all of them or none. A
