@@ -683,6 +683,323 @@ def compute_archive_slot_key(
 
 
 #
+# --- schema-7 identity hashes (fit_archive_principles.md, Principle 3) --------
+#
+
+# Quantization applies to the initial-state matrix only; every other hash
+# input is exact (principles §Quantization).
+INITIAL_STATE_SIG_DIGITS = 9
+
+_INPUT_FILE_SCOPES = ("file", "project")
+
+# Fixed sentinel for an absent array (e.g. no aux axis): a JSON string where
+# arrays encode as lists, so "no axis" never collides with a zero-length one.
+_ABSENT_ARRAY = "absent"
+
+
+#
+def _sha256_of_json(payload: Any) -> str:
+    """Sha256 over the compact, key-sorted JSON encoding of ``payload``."""
+
+    text = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+#
+def _array_record(arr: np.ndarray | None) -> list[Any] | str:
+    """Tagged array encoding: ``[dtype, shape, content sha256]`` or sentinel."""
+
+    if arr is None:
+        return _ABSENT_ARRAY
+    a = np.ascontiguousarray(arr)
+    return [
+        str(a.dtype),
+        [int(s) for s in a.shape],
+        hashlib.sha256(a.tobytes()).hexdigest(),
+    ]
+
+
+#
+def _exact_float_text(value: float) -> str:
+    """Exact canonical decimal text (shortest round-trip ``repr``)."""
+
+    return repr(float(value))
+
+
+#
+def _quantized_float_text(value: float) -> str:
+    """
+    Canonical decimal text at ``INITIAL_STATE_SIG_DIGITS`` significant
+    digits, with ``-0.0`` normalized to ``0``. The hash consumes this text,
+    never re-parsed float bytes.
+    """
+
+    f = float(value)
+    if f == 0.0:
+        f = 0.0
+    return f"{f:.{INITIAL_STATE_SIG_DIGITS}g}"
+
+
+#
+def compute_file_content_hash(
+    *,
+    data_raw: np.ndarray,
+    energy: np.ndarray,
+    time: np.ndarray | None,
+    aux_axis: np.ndarray | None,
+) -> str:
+    """
+    Single content hash of a file's immutable payload (schema 7).
+
+    Replaces the multi-sha fingerprint dict: one sha256 over a tagged
+    record of ``data_raw`` (uncorrected), ``energy``, ``time``, and
+    ``aux_axis``, each contributing dtype, shape, and content. ``None``
+    axes contribute a fixed sentinel, so a missing axis is distinguishable
+    from a zero-length one.
+    """
+
+    return _sha256_of_json(
+        [
+            "file_content",
+            _array_record(data_raw),
+            _array_record(energy),
+            _array_record(time),
+            _array_record(aux_axis),
+        ]
+    )
+
+
+#
+def compute_file_version_stamp(
+    *,
+    file_content_hash: str,
+    dark: np.ndarray | None,
+    calibration: np.ndarray | None,
+) -> str:
+    """
+    Version stamp of the data state a fit consumed (schema 7).
+
+    ``sha256(file_content_hash + dark + calibration)`` as a tagged record:
+    the correction state folds into **fit** identity here while file
+    identity stays the guarded name (Principle 3).
+    """
+
+    return _sha256_of_json(
+        [
+            "version_stamp",
+            file_content_hash,
+            _array_record(dark),
+            _array_record(calibration),
+        ]
+    )
+
+
+#
+def encode_input_files(
+    *,
+    scope: str,
+    entries: Sequence[tuple[str, str, str]],
+) -> str:
+    """
+    Canonical ``input_files`` JSON: ``[scope, [[name, stamp, selection]..]]``.
+
+    ``entries`` are ``(file_name, version_stamp, selection_json)`` tuples;
+    they are sorted by file name (canonical order, principles §Composite
+    keys). Duplicate file names raise — file identity is the unique name.
+    Stored verbatim as the slot attr and consumed by
+    ``compute_optimization_hash``.
+    """
+
+    if scope not in _INPUT_FILE_SCOPES:
+        raise ValueError(
+            f"input_files scope must be one of {_INPUT_FILE_SCOPES}, got {scope!r}"
+        )
+    ordered = sorted(entries, key=lambda e: e[0])
+    names = [name for name, _, _ in ordered]
+    if len(set(names)) != len(names):
+        raise ValueError(f"input_files entries contain duplicate file names: {names}")
+    payload = [scope, [[name, stamp, selection] for name, stamp, selection in ordered]]
+    return json.dumps(payload, separators=(",", ":"))
+
+
+#
+def encode_model_structure(
+    entries: Sequence[
+        tuple[str, Sequence[str], Sequence[tuple[str, Sequence[str], float]]]
+    ],
+) -> str:
+    """
+    Canonical ``model_structure`` JSON (schema 7).
+
+    ``entries`` are ``(file_name, energy_models, dynamics)`` per file —
+    one for file scope, N for a joint fit. Names throughout are
+    **top-level YAML model names**, never component names or the joined
+    composite name — component-level structure enters identity through
+    the parameter table instead. ``energy_models`` is the ordered
+    composition list (order is identity). Each dynamics attachment is
+    ``(target_par, submodels, frequency)`` where ``submodels`` is the
+    flat ordered tuple of submodel names — order is what assigns
+    subcycles (principles §model_structure). Files and attachments sort
+    canonically (by file name / target parameter); model and submodel
+    order is preserved. ``frequency`` encodes as exact decimal text.
+    """
+
+    file_names = [name for name, _, _ in entries]
+    if len(set(file_names)) != len(file_names):
+        raise ValueError(
+            f"model_structure entries contain duplicate file names: {file_names}"
+        )
+    encoded_files = []
+    for file_name, energy_models, dynamics in sorted(entries, key=lambda e: e[0]):
+        targets = [target for target, _, _ in dynamics]
+        if len(set(targets)) != len(targets):
+            raise ValueError(
+                f"model_structure for {file_name!r} contains duplicate dynamics "
+                f"targets: {targets}"
+            )
+        encoded_dynamics = [
+            [
+                target,
+                [str(name) for name in submodels],
+                _exact_float_text(frequency),
+            ]
+            for target, submodels, frequency in sorted(dynamics, key=lambda d: d[0])
+        ]
+        encoded_files.append([file_name, [list(energy_models), encoded_dynamics]])
+    return json.dumps(encoded_files, separators=(",", ":"))
+
+
+#
+def encode_optimizer_settings(
+    *,
+    stages: int,
+    fit_alg_1: str,
+    fit_alg_2: str,
+    backend: str,
+    seed: int | None = None,
+    jac_fun_name: str | None = None,
+) -> str:
+    """
+    Keyed optimizer-settings record: only what was actually in force.
+
+    ``stages``, ``fit_alg_1``, and the **effective** evaluator ``backend``
+    are always keyed; ``fit_alg_2`` only when ``stages == 2``; ``seed``
+    only when supplied; ``jac_fun_name`` (``module.qualname``) only when
+    an analytic Jacobian was applied — lmfit forwards ``Dfun`` solely for
+    ``leastsq``, so it is keyed iff some stage in force uses ``leastsq``.
+    """
+
+    if stages not in (1, 2):
+        raise ValueError(f"stages must be 1 or 2, got {stages!r}")
+    settings: dict[str, Any] = {
+        "stages": int(stages),
+        "fit_alg_1": str(fit_alg_1),
+        "backend": str(backend),
+    }
+    if stages == 2:
+        settings["fit_alg_2"] = str(fit_alg_2)
+    if seed is not None:
+        settings["seed"] = int(seed)
+    leastsq_in_force = fit_alg_1 == "leastsq" or (
+        stages == 2 and fit_alg_2 == "leastsq"
+    )
+    if jac_fun_name is not None and leastsq_in_force:
+        settings["jac_fun"] = str(jac_fun_name)
+    return json.dumps(settings, separators=(",", ":"), sort_keys=True)
+
+
+#
+def compute_optimization_hash(
+    *,
+    input_files_json: str,
+    fit_type: FitType,
+    model_structure_json: str,
+    parameter_metadata: Sequence[tuple[str, float, float, bool, str | None]],
+    initial_state: np.ndarray | Sequence[Sequence[float]],
+    optimizer_settings_json: str,
+) -> str:
+    """
+    Identity hash of one optimization: complete input, nothing else.
+
+    ``parameter_metadata`` rows are ``(name, min, max, vary, expr)`` in
+    **model order** — order is identity, never sorted. Bounds encode
+    exact; ``expr`` is ``None`` for non-expression parameters. For a
+    joint fit the rows are the **combined** table, where project sharing
+    is visible in the names. ``initial_state`` is the ``(n_slices,
+    n_par)`` optimizer-entry value matrix (one row except SbS), the only
+    quantized input. Shared by all projections of a joint fit.
+    """
+
+    matrix = np.atleast_2d(np.asarray(initial_state, dtype=float))
+    if matrix.shape[1] != len(parameter_metadata):
+        raise ValueError(
+            f"initial_state has {matrix.shape[1]} columns but "
+            f"parameter_metadata has {len(parameter_metadata)} rows"
+        )
+    metadata_rows = [
+        [str(name), _exact_float_text(lo), _exact_float_text(hi), bool(vary), expr]
+        for name, lo, hi, vary, expr in parameter_metadata
+    ]
+    matrix_rows = [[_quantized_float_text(v) for v in row] for row in matrix]
+    return _sha256_of_json(
+        [
+            "optimization",
+            input_files_json,
+            fit_type,
+            model_structure_json,
+            metadata_rows,
+            matrix_rows,
+            optimizer_settings_json,
+        ]
+    )
+
+
+#
+def compute_slot_handle(*, optimization_hash: str, file_name: str) -> str:
+    """
+    Stored slot handle: ``sha256(optimization_hash + file_name)``, tagged.
+
+    Full 64-hex is authoritative on disk; display abbreviates to 8 and
+    lookup prefix-matches (query layer). Joint siblings share the
+    ``optimization_hash`` and differ here by file name.
+    """
+
+    return _sha256_of_json(["handle", optimization_hash, file_name])
+
+
+#
+def compute_fit_view_sha256(
+    *,
+    observed: np.ndarray,
+    energy: np.ndarray,
+    time: np.ndarray | None,
+    aux_axis: np.ndarray | None,
+) -> str:
+    """
+    Comparability hash of what the optimizer saw (schema 7).
+
+    Tagged record of the ``observed`` array plus the **selected** energy
+    and time coordinates and the aux axis. ``time`` is ``None`` iff the
+    file has no time axis; ``aux_axis`` is ``None`` iff the file has none
+    — presence is a file property, never conditioned on whether a model
+    consumes the axis. Deliberately **not** an input to
+    ``compute_optimization_hash``: the view is implied there by
+    ``(version_stamp, selection)``, and this hash exists to cross-check
+    that derivation against the arrays actually used.
+    """
+
+    return _sha256_of_json(
+        [
+            "fit_view",
+            _array_record(observed),
+            _array_record(energy),
+            _array_record(time),
+            _array_record(aux_axis),
+        ]
+    )
+
+
+#
 def _now_iso() -> str:
     """Current UTC timestamp in ISO 8601 (seconds precision)."""
 

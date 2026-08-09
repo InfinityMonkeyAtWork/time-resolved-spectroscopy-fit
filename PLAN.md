@@ -138,9 +138,20 @@ here:
       keys / NaN-Infinity constants / non-JSON values raise naming the
       field, missing keys keep defaults. B6 stores the payload on
       `project/`; B7 decodes it.
-- [ ] **B4. Hash construction** — the two independent families (identity →
-      `optimization_hash` → `handle`; comparability → `fit_view_sha256`),
-      unit-tested with no I/O. Tagged encodings only (A2 sets the precedent).
+- [x] **B4. Hash construction** — done 2026-08-07 (review fixes 2026-08-09):
+      eight pure functions in `fit_io.py` — identity family
+      `compute_file_content_hash` → `compute_file_version_stamp` →
+      `encode_input_files` (+ `encode_model_structure`,
+      `encode_optimizer_settings`) → `compute_optimization_hash` →
+      `compute_slot_handle`, and independent `compute_fit_view_sha256`.
+      Tagged JSON records with record-type tags; only the initial-state
+      matrix quantized (9 significant digits, named constant, `-0.0`
+      normalized). `model_structure` carries **top-level YAML model names**
+      (never component names — those enter identity via the parameter
+      table); dynamics submodels are a flat ordered name tuple, order
+      assigning subcycles. No-I/O unit tests in
+      `tests/test_fit_identity_hashes.py`, including rename/ordering
+      regressions and isolated per-input assertions.
 - [ ] **B5. Object model** — `SavedProject`/`SavedFile`/`SavedFitSlot` field
       changes, `JointFitResult` extended in place with identity fields (no
       parallel `SavedJointFit`), copy-and-freeze at capture.
