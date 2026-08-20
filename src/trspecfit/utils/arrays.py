@@ -205,6 +205,31 @@ def get_item(
 
 
 #
+def apply_corrections(
+    data_raw: ArrayLike,
+    *,
+    dark: ArrayLike | None,
+    calibration: ArrayLike | None,
+) -> NDArray[np.floating]:
+    """
+    Corrected data: ``(data_raw - dark) / calibration``.
+
+    ``None`` means the identity correction. Owned here so the live-session
+    path (``File._apply_corrections``) and the archive-side reconstruction
+    (``FitResults`` full-range plotting from ``SavedFile.data_raw`` plus a
+    slot's correction snapshots) share one formula. Always returns a new
+    array — never a view of ``data_raw``.
+    """
+
+    out = np.asarray(data_raw, dtype=np.float64).copy()
+    if dark is not None:
+        out = out - np.asarray(dark)
+    if calibration is not None:
+        out = out / np.asarray(calibration)
+    return out
+
+
+#
 def resolve_time_selection(
     time: ArrayLike,
     t_start: float,

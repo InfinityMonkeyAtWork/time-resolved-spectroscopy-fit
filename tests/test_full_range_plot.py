@@ -85,7 +85,7 @@ def test_baseline_full_range_reconstructs_real_data(tmp_path) -> None:
 
     e_lim = slot.selection["e_lim"]
     b0, b1 = slot.selection["base_t_ind"]
-    expected_obs = np.mean(provider.data[b0:b1, :], axis=0)
+    expected_obs = np.mean(provider.data_raw[b0:b1, :], axis=0)
 
     full_obs = loaded._full_observed_for(slot, provider)
     np.testing.assert_allclose(full_obs, expected_obs)
@@ -111,6 +111,41 @@ def test_baseline_full_range_reconstructs_real_data(tmp_path) -> None:
         full_range=True,
         show_plot=False,
     )
+
+
+#
+def test_live_full_range_uses_slot_correction_state() -> None:
+    """A live-session slot renders against its own captured correction
+    state, not the file's current one.
+
+    Fit raw data, then subtract_dark(): the pre-correction slot's
+    full-range observed must reconstruct from ``data_raw`` with the
+    slot's ``dark=None`` — serving the file's current corrected ``data``
+    would silently shift the observations outside the fit window.
+    """
+
+    _, fit_file, family = _build_fit_file("F1")
+    fit_file.set_fit_limits(_narrow_energy_limits(fit_file), show_plot=False)
+    fit_file.fit_baseline(model_name=family.model_name("default"), stages=1, try_ci=0)
+    assert fit_file.data_raw is not None  # type guard
+    assert fit_file.energy is not None  # type guard
+    raw = fit_file.data_raw.copy()
+    fit_file.subtract_dark(np.full(fit_file.energy.size, 0.1))
+
+    results = fit_file.p.results  # live provider, post-correction file state
+    slot = next(iter(results))
+    assert slot.dark is None  # fitted before the correction
+    provider = results._provider_for(slot)
+    assert provider is fit_file
+
+    b0, b1 = slot.selection["base_t_ind"]
+    expected_obs = np.mean(raw[b0:b1, :], axis=0)
+    full_obs = results._full_observed_for(slot, provider)
+    assert full_obs is not None  # type guard
+    np.testing.assert_allclose(full_obs, expected_obs)
+    # The file's current corrected data would not match — the dark moved it.
+    corrected_obs = np.mean(np.asarray(fit_file.data)[b0:b1, :], axis=0)
+    assert not np.allclose(full_obs, corrected_obs)
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +184,7 @@ def test_spectrum_full_range_reconstructs_real_data(
     provider = loaded._provider_for(slot)
 
     if expected_ref == "point":
-        expected_obs = provider.data[10, :]
+        expected_obs = provider.data_raw[10, :]
     else:
         ind = resolve_time_selection(
             provider.time,
@@ -157,7 +192,7 @@ def test_spectrum_full_range_reconstructs_real_data(
             kwargs["time_range"][1],
             time_type="abs",
         )
-        expected_obs = np.mean(provider.data[ind[0] : ind[1], :], axis=0)
+        expected_obs = np.mean(provider.data_raw[ind[0] : ind[1], :], axis=0)
 
     full_obs = loaded._full_observed_for(slot, provider)
     np.testing.assert_allclose(full_obs, expected_obs)
@@ -196,11 +231,11 @@ def test_sbs_full_range_reconstructs_real_data(tmp_path) -> None:
     provider = loaded._provider_for(slot)
 
     full_obs = loaded._full_observed_for(slot, provider)
-    np.testing.assert_array_equal(full_obs, provider.data)
+    np.testing.assert_array_equal(full_obs, provider.data_raw)
 
     e_lim = slot.selection["e_lim"]
     fit_padded = loaded._pad_axis(
-        np.asarray(slot.fit), provider.data.shape[1], e_lim, axis=1
+        np.asarray(slot.fit), provider.data_raw.shape[1], e_lim, axis=1
     )
     assert np.all(np.isnan(fit_padded[:, : e_lim[0]]))
     np.testing.assert_array_equal(fit_padded[:, e_lim[0] : e_lim[1]], slot.fit)
@@ -238,14 +273,14 @@ def test_2d_full_range_reconstructs_real_data(tmp_path) -> None:
     provider = loaded._provider_for(slot)
 
     full_obs = loaded._full_observed_for(slot, provider)
-    np.testing.assert_array_equal(full_obs, provider.data)
+    np.testing.assert_array_equal(full_obs, provider.data_raw)
 
     e_lim = slot.selection["e_lim"]
     t_lim = slot.selection["t_lim"]
     fit_padded = loaded._pad_axis(
-        np.asarray(slot.fit), provider.data.shape[0], t_lim, axis=0
+        np.asarray(slot.fit), provider.data_raw.shape[0], t_lim, axis=0
     )
-    fit_padded = loaded._pad_axis(fit_padded, provider.data.shape[1], e_lim, axis=1)
+    fit_padded = loaded._pad_axis(fit_padded, provider.data_raw.shape[1], e_lim, axis=1)
     assert np.all(np.isnan(fit_padded[: t_lim[0], :]))
     np.testing.assert_array_equal(
         fit_padded[t_lim[0] : t_lim[1], e_lim[0] : e_lim[1]], slot.fit

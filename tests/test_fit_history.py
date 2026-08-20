@@ -3,11 +3,19 @@ Tests for the in-memory fit-history layer:
 
 - Project._fit_history accumulation as fits complete.
 - SavedFitSlot field correctness (observed/fit shape, residual reconstruction,
-  metrics match lmfit, identity hashes, selection capture).
+  metrics match lmfit, selection capture).
+- Schema-7 identity at capture: the handle chain is a pure function of the
+  captured state; correction variants coexist; exact re-runs dedup on save.
+- Copy-and-freeze ownership at the capture boundary.
 - Project.results snapshot semantics (immutability after access).
 - FitResults find / get / files / models / iteration.
 - SbS extraction survives the seed-template restoration at the end of
   fit_slice_by_slice.
+
+Writer/reader record contracts (collision table, bundle integrity, layout)
+live in ``test_fit_archive_writer.py``; full-fit archive round-trips in
+``test_fit_archive_roundtrip.py``; no-I/O hash-function properties in
+``test_fit_identity_hashes.py``.
 """
 
 import matplotlib
@@ -27,9 +35,14 @@ from trspecfit.utils.fit_io import (
     SavedFitSlot,
     _compute_sigma_eff,
     build_selection_json,
-    compute_file_fingerprint,
-    compute_history_key,
-    fingerprint_stamp,
+    capture_saved_file,
+    compute_file_content_hash,
+    compute_optimization_hash,
+    compute_slot_handle,
+    encode_input_files,
+    encode_model_structure,
+    encode_optimizer_settings,
+    optimizer_settings_from_provenance,
     read_archive,
 )
 
@@ -88,89 +101,67 @@ def _setup_baseline_fit():
 
 
 #
-def test_save_after_correction_skips_stale_slots(tmp_path):
-    """A slot fitted before a data correction is skipped with a warning.
+def test_correction_refit_archives_both_variants(tmp_path):
+    """A fit before a data correction and its refit after are distinct
+    variants that archive side by side.
 
-    The Principle 1 defect made this save abort entirely; resolving by
-    name fixed that, but schema 6 stores one data payload per file, so a
-    pre-correction fit cannot be archived faithfully beside corrected
-    data. The writer must say what it skipped, write nothing silently
-    inconsistent, and leave the in-session history intact.
+    Schema 7 stores immutable ``data_raw`` once and per-slot
+    ``dark``/``calibration``: the version stamp folds the correction into
+    each slot's identity, so nothing is stale and nothing is skipped
+    (the schema-6 warn-and-skip is gone). The archive hashes what it
+    stores — the raw payload verifies against ``file_content_hash``.
     """
 
     project, file = _setup_baseline_fit()
     assert file.energy is not None  # type guard
-    file.subtract_dark(np.full(file.energy.size, 0.1))
-    # The live fingerprint now diverges from the slot's recorded stamp.
-    slot = project._fit_history[0]
-    assert file.fingerprint()["data_sha256"] != slot.file_fingerprint["data_sha256"]
-    archive_path = tmp_path / "corrected.fit.h5"
-    # The warning must name what it skipped, not just count it.
-    with pytest.warns(UserWarning, match=r"stale fit slot.*single_glp/baseline"):
-        project.save_fits(archive_path, show_output=0)
-    assert not archive_path.exists()
-    assert len(project._fit_history) == 1
-
-
-#
-def test_save_after_correction_and_refit_archives_consistently(tmp_path):
-    """After a correction + refit, the archive hashes what it stores.
-
-    The refit slot carries the corrected data's stamp, so it is saved;
-    the payload fingerprint must verify against the archived arrays
-    rather than echoing any slot's fit-time stamp.
-    """
-
-    project, file = _setup_baseline_fit()
-    assert file.energy is not None  # type guard
-    file.subtract_dark(np.full(file.energy.size, 0.1))
+    assert file.data_raw is not None  # type guard
+    raw = file.data_raw.copy()
+    dark = np.full(file.energy.size, 0.1)
+    file.subtract_dark(dark)
     file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
-    # Correction variants are distinct fits (version stamp in the key)...
-    k1, k2 = (s.history_key for s in project._fit_history)
-    assert k1 != k2
-    archive_path = tmp_path / "corrected.fit.h5"
-    # ...so the pre-correction slot survives collapse and reaches the
-    # writer, which skips it loudly (schema 6 cannot store it beside the
-    # corrected payload).
-    with pytest.warns(UserWarning, match="stale fit slot"):
-        project.save_fits(archive_path, show_output=0)
+    s_raw, s_cor = project._fit_history
+    assert s_raw.handle != s_cor.handle
+    # The version stamp (inside input_files) carries the correction state.
+    assert s_raw.input_files != s_cor.input_files
+    assert s_raw.dark is None
+    assert s_cor.dark is not None  # type guard
+    np.testing.assert_array_equal(s_cor.dark, dark)
+
+    archive_path = tmp_path / "variants.fit.h5"
+    project.save_fits(archive_path, show_output=0)
     saved = read_archive(archive_path)
     sf = saved.files[0]
-    recomputed = compute_file_fingerprint(data=sf.data, energy=sf.energy, time=sf.time)
-    assert fingerprint_stamp(recomputed) == fingerprint_stamp(sf.fingerprint)
+    np.testing.assert_array_equal(sf.data_raw, raw)
+    recomputed = compute_file_content_hash(
+        data_raw=sf.data_raw, energy=sf.energy, time=sf.time, aux_axis=sf.aux_axis
+    )
+    assert recomputed == sf.file_content_hash
+    assert {s.handle for s in sf.slots} == {s_raw.handle, s_cor.handle}
     loaded = FitResults.load(archive_path)
-    assert len(loaded) == 1
-    assert next(iter(loaded)).file_name == file.name
+    assert len(loaded) == 2
 
 
 #
-def test_save_after_correction_reversal_archives_matching_slot(tmp_path):
-    """reset_dark() restores raw data; the raw fit is what gets saved.
+def test_correction_reversal_restores_identical_input_files():
+    """reset_dark() restores the raw version stamp exactly.
 
-    Collapse must not discard the raw slot in favor of the corrected
-    refit: the version stamp keeps the two fits distinct, and the writer
-    keeps whichever matches the file's current data — here the *older*
-    slot, while the corrected refit is skipped with a warning.
+    The reversal refit shares ``input_files`` with the original raw fit
+    (same content hash, same absent corrections, same selection); the
+    three fits stay distinct slots regardless, because each refit seeds
+    from the previous output (initial state is identity).
     """
 
     project, file = _setup_baseline_fit()
     assert file.energy is not None  # type guard
-    raw_stamp = fingerprint_stamp(file.fingerprint())
     file.subtract_dark(np.full(file.energy.size, 0.1))
     file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
     file.reset_dark()
-    assert fingerprint_stamp(file.fingerprint()) == raw_stamp
-    archive_path = tmp_path / "reversed.fit.h5"
-    with pytest.warns(UserWarning, match="stale fit slot"):
-        project.save_fits(archive_path, show_output=0)
-    saved = read_archive(archive_path)
-    sf = saved.files[0]
-    assert len(sf.slots) == 1
-    # The archived slot is the raw fit, consistent with the archived data.
-    assert fingerprint_stamp(sf.fingerprint) == raw_stamp
-    assert fingerprint_stamp(sf.slots[0].file_fingerprint) == raw_stamp
-    recomputed = compute_file_fingerprint(data=sf.data, energy=sf.energy, time=sf.time)
-    assert fingerprint_stamp(recomputed) == raw_stamp
+    file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+    s_raw, s_cor, s_back = project._fit_history
+    assert s_back.input_files == s_raw.input_files
+    assert s_back.input_files != s_cor.input_files
+    assert s_back.dark is None
+    assert len({s.handle for s in project._fit_history}) == 3
 
 
 #
@@ -178,27 +169,29 @@ def test_append_same_name_different_content_raises(tmp_path):
     """Appending a same-name file with different content is an integrity error.
 
     Without the guard, write_archive files the new slots under the first
-    name-matched group — the old data, axes, and fingerprint. The raise
+    name-matched group — the old data, axes, and content hash. The raise
     is unconditional (overwrite= is slot-scoped and does not authorize
     re-associating a measurement) and pre-mutation: the failed append
     leaves the archive byte-identical.
     """
 
-    project, file = _setup_baseline_fit()
+    project_a, _ = _setup_baseline_fit()
     archive_path = tmp_path / "append.fit.h5"
-    project.save_fits(archive_path, show_output=0)
+    project_a.save_fits(archive_path, show_output=0)
     before = read_archive(archive_path)
     before_bytes = archive_path.read_bytes()
-    # Correct + refit: the incoming payload now carries different content.
-    assert file.energy is not None  # type guard
-    file.subtract_dark(np.full(file.energy.size, 0.1))
-    file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+
+    # A second session: same project name, same file name, different data.
+    truth_project = make_project(name="truth")
+    truth = _make_truth_file(truth_project)
+    data = simulate_noisy(truth.model_active, noise_level=0.01)
+    project_b = make_project(name="fit")
+    file_b = _make_fit_file(project_b, data * 1.1, truth.energy, truth.time)
+    file_b.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
+    file_b.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
     for overwrite in (False, True):
-        with (
-            pytest.warns(UserWarning, match="stale fit slot"),
-            pytest.raises(ValueError, match="different content"),
-        ):
-            project.save_fits(archive_path, overwrite=overwrite, show_output=0)
+        with pytest.raises(ValueError, match="file_content_hash mismatch"):
+            project_b.save_fits(archive_path, overwrite=overwrite, show_output=0)
     # Diagnostic (decoded) checks first, so a real mutation is named...
     after = read_archive(archive_path)
     assert after.timestamp_updated == before.timestamp_updated
@@ -214,11 +207,11 @@ def test_append_same_name_different_content_raises(tmp_path):
 def test_same_name_providers_resolve_by_parent_association():
     """Each archived slot resolves to its own SavedFile's axes.
 
-    Schemas 2-6 could store several same-name file groups distinguished
-    only by content. A purely name-keyed provider map collapses them
-    (last one wins), silently serving one group's axes/data to another
-    group's slots; the parent association from the archive — a SavedFile
-    owns the slots read from its group — must be preserved instead.
+    The schema-7 writer refuses same-name file groups, but the provider
+    association is structural, never name-guessed: a SavedFile owns the
+    slots read from its group. A purely name-keyed provider map would
+    collapse duplicates (last one wins), silently serving one record's
+    axes/data to another record's slots.
     """
 
     slot_a = _slot_stub(file_name="dup", model_name="m1")
@@ -233,12 +226,12 @@ def test_same_name_providers_resolve_by_parent_association():
             original_path="dup.h5",
             dim=1,
             shape=(5,),
-            fingerprint=compute_file_fingerprint(data=data, energy=energy, time=None),
-            data=data,
+            file_content_hash=compute_file_content_hash(
+                data_raw=data, energy=energy, time=np.array([]), aux_axis=None
+            ),
+            data_raw=data,
             energy=energy,
             time=np.array([], dtype=np.float64),
-            e_lim=None,
-            t_lim=None,
             slots=(slot,),
         )
 
@@ -258,93 +251,19 @@ def test_same_name_providers_resolve_by_parent_association():
 
 
 #
-def test_legacy_same_name_groups_load_with_own_axes(tmp_path):
-    """A loaded legacy archive's same-name groups keep their own axes.
-
-    Schemas 2-6 could store several same-name file groups; the writer
-    now refuses to create them, so one is forged by renaming a group in
-    place. Loading must resolve each slot to its own group's axes/data
-    through the parent association preserved by read_archive() and
-    FitResults.load() — a name-keyed lookup would serve the last
-    group's arrays to both slots.
-    """
-
-    import h5py
-
-    truth_project = make_project(name="truth")
-    truth = _make_truth_file(truth_project)
-    data = simulate_noisy(truth.model_active, noise_level=0.01)
-
-    project = make_project(name="fit")
-    assert truth.energy is not None  # type guard
-    energy_a = truth.energy
-    energy_b = truth.energy + 0.5
-    file_a = _make_fit_file(project, data, energy_a, truth.time, name="A")
-    file_b = _make_fit_file(project, data.copy(), energy_b, truth.time, name="B")
-    for f in (file_a, file_b):
-        f.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
-        f.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
-
-    archive_path = tmp_path / "legacy.fit.h5"
-    project.save_fits(archive_path, show_output=0)
-    # Forge the legacy shape: rename group B ("files/000001") to "A".
-    with h5py.File(archive_path, "a") as archive:
-        archive["files/000001/metadata"].attrs["name"] = "A"
-
-    loaded = FitResults.load(archive_path)
-    assert [s.file_name for s in loaded] == ["A", "A"]
-    slot_0, slot_1 = iter(loaded)
-    prov_0 = loaded._provider_for(slot_0)
-    prov_1 = loaded._provider_for(slot_1)
-    assert prov_0 is not None and prov_1 is not None  # type guard
-    np.testing.assert_array_equal(prov_0.energy, energy_a)
-    np.testing.assert_array_equal(prov_1.energy, energy_b)
-
-
-#
 # --- identity helpers --------------------------------------------------------
 #
 
 
 #
-class TestIdentityHelpers:
-    """compute_file_fingerprint, build_selection_json, compute_history_key."""
+class TestIdentityCapture:
+    """The handle chain is a pure function of captured state.
 
-    #
-    def test_fingerprint_changes_when_data_differs(self):
-        rng = np.random.default_rng(0)
-        e = np.linspace(0, 1, 20)
-        t = np.linspace(0, 5, 10)
-        d1 = rng.standard_normal((10, 20))
-        d2 = rng.standard_normal((10, 20))
-        fp1 = compute_file_fingerprint(data=d1, energy=e, time=t)
-        fp2 = compute_file_fingerprint(data=d2, energy=e, time=t)
-        assert fp1["data_sha256"] != fp2["data_sha256"]
-        assert fp1["energy_sha256"] == fp2["energy_sha256"]
-        assert fp1["shape"] == fp2["shape"] == (10, 20)
-
-    #
-    def test_fingerprint_handles_1d_no_time(self):
-        d = np.arange(10, dtype=float)
-        e = np.linspace(0, 1, 10)
-        fp = compute_file_fingerprint(data=d, energy=e, time=None)
-        assert fp["time_sha256"] == ""
-        assert fp["shape"] == (10,)
-
-    #
-    def test_fingerprint_stamp_normalizes_shape(self):
-        d = np.arange(10, dtype=float)
-        e = np.linspace(0, 1, 10)
-        fp = compute_file_fingerprint(data=d, energy=e, time=None)
-        as_list = {**fp, "shape": list(fp["shape"])}
-        assert fingerprint_stamp(as_list) == fingerprint_stamp(fp)
-
-    #
-    def test_fingerprint_stamp_differs_on_content(self):
-        e = np.linspace(0, 1, 10)
-        fp1 = compute_file_fingerprint(data=np.zeros(10), energy=e, time=None)
-        fp2 = compute_file_fingerprint(data=np.ones(10), energy=e, time=None)
-        assert fingerprint_stamp(fp1) != fingerprint_stamp(fp2)
+    Fit-level identity: what a user-visible change to the optimization
+    setup does to the slot minted by a real fit. No-I/O hash-function
+    properties (framing, ordering, per-input isolation) live in
+    ``test_fit_identity_hashes.py``.
+    """
 
     #
     def test_selection_json_is_deterministic(self):
@@ -353,119 +272,149 @@ class TestIdentityHelpers:
         assert a == b  # sorted keys
 
     #
-    def test_file_fingerprint_tracks_corrections(self):
-        """File.fingerprint() must reflect the current ``self.data``.
+    def test_identity_chain_recomputes_from_slot_fields(self):
+        """handle and optimization_hash recompute exactly from the
+        persisted slot payload — capture stored the true hash inputs
+        (parameter table, initial state, settings), nothing hidden."""
 
-        The fingerprint is a version stamp, never identity
-        (fit_archive_principles.md, Principle 1): it must move under data
-        corrections so a slot's stored stamp can report staleness against
-        the live file, while ``history_key`` — composed from the guarded
-        name — stays put.
-        """
-
-        rng = np.random.default_rng(0)
-        energy = np.linspace(83, 87, 30)
-        time = np.linspace(-2, 10, 24)
-        raw = rng.standard_normal((24, 30))
-        project = make_project(name="fp")
-        file = File(
-            parent_project=project,
-            name="fp",
-            data=raw,
-            energy=energy,
-            time=time,
+        project, _ = _setup_baseline_fit()
+        slot = project._fit_history[0]
+        assert slot.fit_settings is not None  # type guard
+        rows = [
+            (
+                str(rec["name"]),
+                float(rec["min"]),
+                float(rec["max"]),
+                bool(rec["vary"]),
+                rec["expr"] if rec["expr"] else None,
+            )
+            for rec in slot.params.to_dict("records")
+        ]
+        recomputed = compute_optimization_hash(
+            input_files_json=slot.input_files,
+            fit_type=slot.fit_type,
+            model_structure_json=slot.model_structure,
+            parameter_metadata=rows,
+            initial_state=np.asarray([slot.params["init_value"].to_numpy(dtype=float)]),
+            optimizer_settings_json=optimizer_settings_from_provenance(
+                slot.fit_settings
+            ),
         )
-
-        fp_raw = file.fingerprint()
-        file.subtract_dark(np.full(30, 0.1))
-        fp_after_dark = file.fingerprint()
-        file.calibrate_data(np.full(30, 1.5))
-        fp_after_cal = file.fingerprint()
-        file.reset_dark()
-        file.reset_calibration()
-        fp_reset = file.fingerprint()
-
-        assert fp_raw["data_sha256"] != fp_after_dark["data_sha256"]
-        assert fp_after_dark["data_sha256"] != fp_after_cal["data_sha256"]
-        # Resetting both corrections restores the raw data hash.
-        assert fp_reset["data_sha256"] == fp_raw["data_sha256"]
+        assert recomputed == slot.optimization_hash
+        assert (
+            compute_slot_handle(optimization_hash=recomputed, file_name=slot.file_name)
+            == slot.handle
+        )
 
     #
-    def test_history_key_changes_with_selection(self):
-        fp = compute_file_fingerprint(
-            data=np.zeros(3), energy=np.arange(3.0), time=None
+    @staticmethod
+    def _fit_file_with_seed():
+        """(project, file, model, seed values) ready for a baseline fit."""
+
+        truth_project = make_project(name="truth")
+        truth = _make_truth_file(truth_project)
+        data = simulate_noisy(truth.model_active, noise_level=0.01)
+        project = make_project(name="fit")
+        file = _make_fit_file(project, data, truth.energy, truth.time)
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
         )
-        s1 = build_selection_json("spectrum", time_point=0.5, e_lim=None)
-        s2 = build_selection_json("spectrum", time_point=1.5, e_lim=None)
-        k1 = compute_history_key(
-            file_name="f1",
-            file_fingerprint=fp,
-            model_name="m",
-            fit_type="spectrum",
-            selection_json=s1,
-        )
-        k2 = compute_history_key(
-            file_name="f1",
-            file_fingerprint=fp,
-            model_name="m",
-            fit_type="spectrum",
-            selection_json=s2,
-        )
-        assert k1 != k2
+        model = next(m for m in file.models if m.name == "single_glp")
+        seed = [p.value for p in model.lmfit_pars.values()]
+        return project, file, model, seed
 
     #
-    def test_history_key_frames_name_fields(self):
-        """("a|b", "c") vs ("a", "b|c") must not collide (framed encoding).
+    def test_identical_rerun_shares_handle(self):
+        """An exact re-run (same seed, settings, view, data) is not a new
+        variant — it shares the handle and dedups at collapse."""
 
-        The old unframed ``|`` join made these two configurations hash
-        identically; principles §"Composite keys must preserve structure"
-        requires tagged records. Both names are user-controlled (file
-        stem, YAML key), so the collision was constructible.
-        """
-
-        fp = compute_file_fingerprint(
-            data=np.zeros(3), energy=np.arange(3.0), time=None
-        )
-        s = build_selection_json("spectrum", time_point=0.5, e_lim=None)
-        k1 = compute_history_key(
-            file_name="a|b",
-            file_fingerprint=fp,
-            model_name="c",
-            fit_type="spectrum",
-            selection_json=s,
-        )
-        k2 = compute_history_key(
-            file_name="a",
-            file_fingerprint=fp,
-            model_name="b|c",
-            fit_type="spectrum",
-            selection_json=s,
-        )
-        assert k1 != k2
+        project, file, model, seed = self._fit_file_with_seed()
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        model.update_value(seed)  # fits write back; restore the exact seed
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        first, second = project._fit_history
+        assert first.optimization_hash == second.optimization_hash
+        assert first.handle == second.handle
 
     #
-    def test_history_key_changes_with_version_stamp(self):
-        """A fit against corrected data is a distinct fit (Principle 3)."""
+    def test_vary_flip_mints_distinct_slot(self):
+        project, file, model, seed = self._fit_file_with_seed()
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        model.update_value(seed)
+        model.lmfit_pars["GLP_01_x0"].vary = False
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        first, second = project._fit_history
+        assert first.optimization_hash != second.optimization_hash
+        assert first.handle != second.handle
 
-        e = np.arange(3.0)
-        fp_raw = compute_file_fingerprint(data=np.zeros(3), energy=e, time=None)
-        fp_cor = compute_file_fingerprint(data=np.ones(3), energy=e, time=None)
-        s = build_selection_json("spectrum", time_point=0.5, e_lim=None)
-        k1 = compute_history_key(
-            file_name="f",
-            file_fingerprint=fp_raw,
-            model_name="m",
-            fit_type="spectrum",
-            selection_json=s,
+    #
+    def test_bound_change_mints_distinct_slot(self):
+        project, file, model, seed = self._fit_file_with_seed()
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        model.update_value(seed)
+        par_A = model.lmfit_pars["GLP_01_A"]
+        new_max = float(par_A.value) * 10.0 + 7.0
+        assert new_max != par_A.max  # the change must actually change it
+        par_A.max = new_max
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        first, second = project._fit_history
+        assert first.optimization_hash != second.optimization_hash
+        assert first.handle != second.handle
+
+
+#
+class TestCaptureOwnership:
+    """Copy-and-freeze at the capture boundary (Principle 4)."""
+
+    #
+    def test_slot_arrays_frozen_and_independent_of_live_file(self):
+        project, file = _setup_baseline_fit()
+        slot = project._fit_history[0]
+        assert not slot.observed.flags.writeable
+        assert not slot.fit.flags.writeable
+        observed_before = slot.observed.copy()
+        assert file.data_base is not None  # type guard
+        file.data_base *= 3.0
+        np.testing.assert_array_equal(slot.observed, observed_before)
+
+    #
+    def test_captured_payload_frozen_and_independent(self):
+        project, file = _setup_baseline_fit()
+        captured = project._captured_files[file.name]
+        assert not captured.data_raw.flags.writeable
+        raw_before = captured.data_raw.copy()
+        assert file.data_raw is not None  # type guard
+        file.data_raw[0, 0] += 1.0  # the live array stays the user's
+        np.testing.assert_array_equal(captured.data_raw, raw_before)
+
+    #
+    def test_captured_empty_time_axis_is_frozen(self):
+        """A 1D file has no time axis; the synthesized empty array is
+        still part of the frozen record."""
+
+        sf = capture_saved_file(
+            name="one_d",
+            original_path="x",
+            dim=1,
+            data_raw=np.zeros(3),
+            energy=np.arange(3.0),
+            time=None,
+            aux_axis=None,
+            file_content_hash="0" * 64,
         )
-        k2 = compute_history_key(
-            file_name="f",
-            file_fingerprint=fp_cor,
-            model_name="m",
-            fit_type="spectrum",
-            selection_json=s,
-        )
-        assert k1 != k2
+        assert sf.time.shape == (0,)
+        assert not sf.time.flags.writeable
+
+    #
+    def test_data_raw_mutation_after_capture_raises_on_next_fit(self):
+        """In-place raw-data mutation would put slots from different
+        measurements under one name; the next fit refuses."""
+
+        project, file = _setup_baseline_fit()
+        assert file.data_raw is not None  # type guard
+        file.data_raw[0, 0] += 1.0
+        with pytest.raises(RuntimeError, match="in-place mutation is not supported"):
+            file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
 
 
 #
@@ -529,20 +478,6 @@ class TestBaselineSlot:
         # define_baseline(time_start=0, time_stop=3, time_type="ind") yields
         # the inclusive index range [0, 3] -> exclusive slice [0, 4).
         assert slot.selection["base_t_ind"] == [0, 4]
-
-    #
-    def test_history_key_is_stable(self):
-        project, _ = _setup_baseline_fit()
-        slot = project._fit_history[0]
-        # Recompute and verify it matches.
-        k = compute_history_key(
-            file_name=slot.file_name,
-            file_fingerprint=slot.file_fingerprint,
-            model_name=slot.model_name,
-            fit_type=slot.fit_type,
-            selection_json=slot.selection_json,
-        )
-        assert k == slot.history_key
 
     #
     def test_stages2_init_value_is_true_seed_not_stage1_output(self):
@@ -697,8 +632,8 @@ class TestSpectrumSlot:
             try_ci=0,
             show_plot=False,
         )
-        keys = {s.history_key for s in project._fit_history}
-        assert len(keys) == 2  # different selections -> different keys
+        handles = {s.handle for s in project._fit_history}
+        assert len(handles) == 2  # different selections -> different identities
 
 
 #
@@ -733,10 +668,11 @@ class TestSbSSlot:
         assert slot.observed.ndim == 2
         assert slot.observed.shape == slot.fit.shape
         assert slot.observed.shape[0] == len(file.time)
-        # Metrics are per-slice arrays.
+        # Metrics are per-slice arrays, frozen like every captured array.
         for k in ("chi2", "chi2_red", "r2", "aic", "bic"):
             assert isinstance(slot.metrics[k], np.ndarray)
             assert slot.metrics[k].shape == (len(file.time),)
+            assert not slot.metrics[k].flags.writeable
         # The slot-backed accessor serves the wide per-slice params frame.
         sbs_df = file.get_fit_results(fit_type="sbs")
         pd.testing.assert_frame_equal(sbs_df, slot.params)
@@ -916,7 +852,7 @@ class TestMcmcPayload:
         assert slot.fit_settings["mc"]["nwalkers"] == 32
         assert slot.fit_settings["mc"]["burn"] == 5
 
-        # acceptance_fraction survives the archive round-trip (schema 3).
+        # acceptance_fraction survives the archive round-trip.
         archive_path = tmp_path / "mcmc.fit.h5"
         project.save_fits(archive_path, show_output=0)
         loaded_results = FitResults.load(archive_path)
@@ -1000,10 +936,13 @@ class TestFitSettingsProvenance:
     def test_baseline_slot_records_fit_settings(self):
         project, _ = _setup_baseline_fit()  # stages=2, try_ci=0
         slot = project._fit_history[0]
+        # backend is the *effective* evaluator: the 1D baseline fit under
+        # the default spec_fun_str="fit_model_gir" runs the compiled plan.
         assert slot.fit_settings == {
             "stages": 2,
             "fit_alg_1": "Nelder",
             "fit_alg_2": "leastsq",
+            "backend": "fit_model_gir",
             "try_ci": 0,
         }
         # Non-sbs slots carry no sbs-only payloads.
@@ -1133,19 +1072,19 @@ class TestSlotBackedAccessors:
 
     #
     def test_get_mcmc_tolerates_missing_acceptance(self):
-        """Slots loaded from schema-2 archives carry acceptance_fraction=None;
-        get_mcmc must still serve table/flatchain."""
+        """A payload may carry acceptance_fraction=None (the sampler
+        reported none); get_mcmc must still serve table/flatchain."""
 
         import dataclasses
 
         project, _ = _setup_baseline_fit()
-        v2_payload = {
+        payload = {
             "flatchain": pd.DataFrame({"GLP_01_A": [1.0, 2.0]}),
             "ci": None,
             "lnsigma": None,
             "acceptance_fraction": None,
         }
-        slot = dataclasses.replace(project._fit_history[0], mcmc=v2_payload)
+        slot = dataclasses.replace(project._fit_history[0], mcmc=payload)
         res = FitResults(slots=[slot]).get_mcmc(fit_type="baseline")
         assert res.acceptance_fraction is None
         assert res.table.empty
@@ -1207,45 +1146,66 @@ class TestResultsSnapshot:
 
 
 #
+def _stub_optimization_hash(*, input_files, fit_type, model_structure):
+    """Real hash over a one-parameter stub table (shared by the stubs)."""
+
+    return compute_optimization_hash(
+        input_files_json=input_files,
+        fit_type=fit_type,
+        model_structure_json=model_structure,
+        parameter_metadata=[("p", 0.0, 1.0, True, None)],
+        initial_state=np.array([[0.5]]),
+        optimizer_settings_json=encode_optimizer_settings(
+            stages=1, fit_alg_1="leastsq", fit_alg_2="leastsq", backend="fit_model_mcp"
+        ),
+    )
+
+
+#
 def _slot_stub(
     *,
     file_name="f1",
     model_name="m",
     fit_type="baseline",
     metrics=None,
-    observed_sha256="z",
-    fingerprint=None,
+    fit_view_sha256="z",
     selection=None,
     sigma_data=float("nan"),
     noise_type=None,
     sigma_source="user_supplied",
     sigma_type="constant",
+    input_files=None,
+    joint_ref=None,
+    optimization_hash=None,
 ):
     """Build a minimal SavedFitSlot for query-API tests (no real fit).
 
+    The identity chain uses the real hash functions over a stub parameter
+    table, so distinct (file, model, fit_type, selection) stubs get
+    distinct handles. Joint-projection stubs pass a shared
+    ``optimization_hash`` (siblings differ only through ``file_name``).
     ``sigma_data`` defaults to ``NaN`` (file had no sigma set); pass a
-    positive number to exercise the σ-calibrated code paths. ``noise_type``
-    follows from ``sigma_data`` when omitted (``"gaussian"`` if finite,
-    ``"unknown"`` otherwise).
+    positive number to exercise the σ-calibrated code paths.
+    ``noise_type`` follows from ``sigma_data`` when omitted
+    (``"gaussian"`` if finite, ``"unknown"`` otherwise).
     """
 
-    fp = fingerprint or {
-        "data_sha256": "a",
-        "energy_sha256": "b",
-        "time_sha256": "c",
-        "shape": (3,),
-    }
     if selection is None:
         selection = (
             {"base_t_ind": [0, 1], "e_lim": None} if fit_type == "baseline" else {}
         )
     selection_json = build_selection_json(fit_type, **selection)
-    history_key = compute_history_key(
-        file_name=file_name,
-        file_fingerprint=fp,
-        model_name=model_name,
-        fit_type=fit_type,
-        selection_json=selection_json,
+    if input_files is None:
+        input_files = encode_input_files(
+            scope="file", entries=[(file_name, "0" * 64, selection_json)]
+        )
+    model_structure = encode_model_structure([(file_name, [model_name], [])])
+    if optimization_hash is None:
+        optimization_hash = _stub_optimization_hash(
+            input_files=input_files, fit_type=fit_type, model_structure=model_structure
+        )
+    handle = compute_slot_handle(
+        optimization_hash=optimization_hash, file_name=file_name
     )
     sigma_data_f = float(sigma_data)
     is_unset = not np.isfinite(sigma_data_f)
@@ -1266,29 +1226,29 @@ def _slot_stub(
             "aic": 0.0,
             "bic": 0.0,
         }
-    import pandas as pd
-
     return SavedFitSlot(
-        file_fingerprint=fp,
+        handle=handle,
+        optimization_hash=optimization_hash,
+        input_files=input_files,
+        model_structure=model_structure,
+        fit_view_sha256=fit_view_sha256,
         file_name=file_name,
         model_name=model_name,
         fit_type=fit_type,
         selection=selection,
         selection_json=selection_json,
-        observed_sha256=observed_sha256,
-        history_key=history_key,
         params=pd.DataFrame(),
         metrics=metrics,
         observed=np.zeros(3),
         fit=np.zeros(3),
         fit_alg="leastsq",
-        yaml_filename=None,
         timestamp="2026-04-30T00:00:00+00:00",
         noise_type=noise_type,
         sigma_source=sigma_source,
         sigma_type=sigma_type,
         sigma_data=sigma_data_f,
         sigma_eff=sigma_eff,
+        joint_ref=joint_ref,
     )
 
 
@@ -1302,15 +1262,36 @@ def _joint_record_stub(
 ):
     """Build a minimal JointFitResult for query-API tests (no real fit)."""
 
+    names = sorted(file_names)
+    selection = {"e_lim": None, "t_lim": None}
+    selection_json = build_selection_json("2d", **selection)
+    input_files = encode_input_files(
+        scope="project", entries=[(n, "0" * 64, selection_json) for n in names]
+    )
+    model_structure = encode_model_structure([(n, [model_name], []) for n in names])
+    optimization_hash = _stub_optimization_hash(
+        input_files=input_files, fit_type="2d", model_structure=model_structure
+    )
     projections = tuple(
         JointFitProjection(
             parameter_map={},
-            slot=_slot_stub(file_name=name, model_name=model_name, fit_type="2d"),
+            slot=_slot_stub(
+                file_name=name,
+                model_name=model_name,
+                fit_type="2d",
+                selection=selection,
+                input_files=input_files,
+                joint_ref=optimization_hash,
+                optimization_hash=optimization_hash,
+            ),
         )
-        for name in sorted(file_names)
+        for name in names
     )
     return JointFitResult(
         model_name=model_name,
+        optimization_hash=optimization_hash,
+        input_files=input_files,
+        model_structure=model_structure,
         projections=projections,
         params=pd.DataFrame(),
         metrics={},
@@ -1542,12 +1523,6 @@ class TestFitResultsCompareModels:
                 model_name="m1",
                 fit_type="baseline",
                 metrics=self._scalar_metrics(chi2_red_raw=1.0, r2=0.9, aic=1, bic=1),
-                fingerprint={
-                    "data_sha256": "B",
-                    "energy_sha256": "b",
-                    "time_sha256": "c",
-                    "shape": (3,),
-                },
             ),
             _slot_stub(
                 file_name="A",
@@ -1659,12 +1634,6 @@ class TestFitResultsCompareModels:
             model_name="m_base",
             fit_type="baseline",
             metrics=self._scalar_metrics(chi2_red_raw=0.5, r2=0.99, aic=5, bic=7),
-            fingerprint={
-                "data_sha256": "B",
-                "energy_sha256": "b",
-                "time_sha256": "c",
-                "shape": (3,),
-            },
         )
         df = FitResults(slots=[sbs_slot, baseline_slot]).compare_models(
             sbs_aggregation="long"
@@ -1714,8 +1683,10 @@ class TestFitResultsCompareModels:
         assert list(df["model"]) == ["sbsA", "sbsB"] * 3
 
     #
-    def test_observed_mismatch_raises(self):
-        """Two slots on same (file, fit_type) with different observed_sha256 → raise."""
+    def test_fit_view_mismatch_raises(self):
+        """Two slots on same (file, fit_type) with different fit_view_sha256
+        fit against different data views — their metrics must not be
+        compared."""
 
         slots = [
             _slot_stub(
@@ -1723,7 +1694,7 @@ class TestFitResultsCompareModels:
                 model_name="m1",
                 fit_type="baseline",
                 metrics=self._scalar_metrics(chi2_red_raw=1, r2=1, aic=1, bic=1),
-                observed_sha256="hash_A",
+                fit_view_sha256="hash_A",
             ),
             _slot_stub(
                 file_name="A",
@@ -1731,16 +1702,16 @@ class TestFitResultsCompareModels:
                 fit_type="baseline",
                 selection={"base_t_ind": [0, 5], "e_lim": None},
                 metrics=self._scalar_metrics(chi2_red_raw=1, r2=1, aic=1, bic=1),
-                observed_sha256="hash_B",
+                fit_view_sha256="hash_B",
             ),
         ]
         r = FitResults(slots=slots)
-        with pytest.raises(ValueError, match="observed_sha256"):
+        with pytest.raises(ValueError, match="fit_view_sha256"):
             r.compare_models(file="A", fit_type="baseline")
 
     #
-    def test_observed_mismatch_allowed_across_different_fit_types(self):
-        """Same file, different fit_type — observed differs legitimately, no raise."""
+    def test_fit_view_mismatch_allowed_across_different_fit_types(self):
+        """Same file, different fit_type — views differ legitimately, no raise."""
 
         slots = [
             _slot_stub(
@@ -1748,7 +1719,7 @@ class TestFitResultsCompareModels:
                 model_name="m1",
                 fit_type="baseline",
                 metrics=self._scalar_metrics(chi2_red_raw=1, r2=1, aic=1, bic=1),
-                observed_sha256="hash_A",
+                fit_view_sha256="hash_A",
             ),
             _slot_stub(
                 file_name="A",
@@ -1756,15 +1727,15 @@ class TestFitResultsCompareModels:
                 fit_type="2d",
                 selection={"e_lim": None, "t_lim": None},
                 metrics=self._scalar_metrics(chi2_red_raw=2, r2=0.5, aic=5, bic=7),
-                observed_sha256="hash_B",
+                fit_view_sha256="hash_B",
             ),
         ]
         df = FitResults(slots=slots).compare_models(file="A")
         assert len(df) == 2
 
     #
-    def test_observed_mismatch_allowed_across_different_files(self):
-        """Same fit_type on different files — observed differs legitimately."""
+    def test_fit_view_mismatch_allowed_across_different_files(self):
+        """Same fit_type on different files — views differ legitimately."""
 
         slots = [
             _slot_stub(
@@ -1772,56 +1743,40 @@ class TestFitResultsCompareModels:
                 model_name="m1",
                 fit_type="baseline",
                 metrics=self._scalar_metrics(chi2_red_raw=1, r2=1, aic=1, bic=1),
-                observed_sha256="hash_A",
+                fit_view_sha256="hash_A",
             ),
             _slot_stub(
                 file_name="B",
                 model_name="m1",
                 fit_type="baseline",
                 metrics=self._scalar_metrics(chi2_red_raw=2, r2=0.5, aic=5, bic=7),
-                observed_sha256="hash_B",
-                fingerprint={
-                    "data_sha256": "B",
-                    "energy_sha256": "b",
-                    "time_sha256": "c",
-                    "shape": (3,),
-                },
+                fit_view_sha256="hash_B",
             ),
         ]
         df = FitResults(slots=slots).compare_models(fit_type="baseline")
         assert len(df) == 2
 
     #
-    def test_observed_mismatch_allowed_across_replicate_files(self):
-        """Two distinct files with byte-identical raw arrays but different names.
+    def test_replicate_files_group_by_name_not_view(self):
+        """Two distinct files with byte-identical observations share a
+        fit_view_sha256; grouping is by (file_name, fit_type), so a
+        fit_type-wide compare keeps them as two rows rather than
+        collapsing them into one comparability group."""
 
-        Project identity treats them as separate files (history_key folds in
-        file_name), so a fit_type-wide compare must not collapse them and
-        falsely raise on observed_sha256.
-        """
-
-        shared_fp = {
-            "data_sha256": "same",
-            "energy_sha256": "same",
-            "time_sha256": "same",
-            "shape": (3,),
-        }
         slots = [
             _slot_stub(
                 file_name="rep_A",
                 model_name="m1",
                 fit_type="baseline",
                 metrics=self._scalar_metrics(chi2_red_raw=1, r2=1, aic=1, bic=1),
-                observed_sha256="hash_A",
-                fingerprint=shared_fp,
+                fit_view_sha256="same_view",
             ),
             _slot_stub(
                 file_name="rep_B",
                 model_name="m1",
                 fit_type="baseline",
                 metrics=self._scalar_metrics(chi2_red_raw=2, r2=0.5, aic=5, bic=7),
-                observed_sha256="hash_B",
-                fingerprint=shared_fp,
+                fit_view_sha256="same_view",
             ),
         ]
         df = FitResults(slots=slots).compare_models(fit_type="baseline")
@@ -2556,33 +2511,16 @@ class TestFitResultsPlotResiduals:
     ):
         """Build a slot with custom observed/fit arrays for plotting."""
 
+        import dataclasses
+
         slot = _slot_stub(
             file_name=file_name,
             model_name=model_name,
             fit_type=fit_type,
             selection=selection,
         )
-        return SavedFitSlot(
-            file_fingerprint=slot.file_fingerprint,
-            file_name=slot.file_name,
-            model_name=slot.model_name,
-            fit_type=slot.fit_type,
-            selection=slot.selection,
-            selection_json=slot.selection_json,
-            observed_sha256=slot.observed_sha256,
-            history_key=slot.history_key,
-            params=slot.params,
-            metrics=slot.metrics,
-            observed=np.asarray(observed),
-            fit=np.asarray(fit),
-            fit_alg=slot.fit_alg,
-            yaml_filename=slot.yaml_filename,
-            timestamp=slot.timestamp,
-            noise_type=slot.noise_type,
-            sigma_source=slot.sigma_source,
-            sigma_type=slot.sigma_type,
-            sigma_data=slot.sigma_data,
-            sigma_eff=slot.sigma_eff,
+        return dataclasses.replace(
+            slot, observed=np.asarray(observed), fit=np.asarray(fit)
         )
 
     #
@@ -2669,10 +2607,10 @@ class TestHistoryAccumulationAndSnapshot:
     """Multi-fit history accumulation, in-session multi-version visibility,
     and snapshot-collapse-on-save.
 
-    Scenario: fit modelA-baseline, fit modelB-baseline, refit modelA-baseline.
-    History has *all three* slots; ``Project.results`` exposes them.
-    ``save_fits`` (snapshot mode) collapses to two — one per ``history_key``,
-    latest wins.
+    Scenario: fit modelA-baseline, fit modelB-baseline, re-run
+    modelA-baseline. History has *all three* slots; ``Project.results``
+    exposes them. ``save_fits`` (snapshot mode) collapses exact re-runs —
+    one slot per ``handle``, latest wins; distinct variants all survive.
     """
 
     #
@@ -2683,7 +2621,7 @@ class TestHistoryAccumulationAndSnapshot:
         Both ``single_glp`` and ``two_glp_expr_amplitude`` fit cleanly on
         the [82, 92] axis; quality-of-fit is irrelevant here — what matters
         is that both ``model_name`` strings produce valid baseline slots
-        with distinct ``history_key`` values.
+        with distinct identities.
         """
 
         truth_project = make_project(name="truth_two_model")
@@ -2751,29 +2689,40 @@ class TestHistoryAccumulationAndSnapshot:
             file=file.name, model="single_glp", fit_type="baseline"
         )
         assert len(single_glp_slots) == 2
-        # The two refits share a history_key (same fit_view, same model).
-        assert single_glp_slots[0].history_key == single_glp_slots[1].history_key
-        # The cross-model slot has a distinct history_key.
+        # The refit is a distinct variant (it seeds from the first fit's
+        # output), so it keeps its own handle — nothing is hidden.
+        assert single_glp_slots[0].handle != single_glp_slots[1].handle
+        # The cross-model slot has a distinct optimization identity.
         cross = results.find(
             file=file.name,
             model="two_glp_expr_amplitude",
             fit_type="baseline",
         )
         assert len(cross) == 1
-        assert cross[0].history_key != single_glp_slots[0].history_key
+        assert cross[0].optimization_hash != single_glp_slots[0].optimization_hash
 
     #
-    def test_save_fits_collapses_refits_to_latest_per_key(self, tmp_path):
-        """Snapshot save keeps one slot per ``history_key`` (latest wins)."""
+    def test_save_fits_collapses_exact_reruns_to_latest(self, tmp_path):
+        """Snapshot save keeps one slot per ``handle`` (latest wins).
+
+        Only an exact re-run (same seed, settings, view, data) shares a
+        handle — the seed is restored before the third fit to construct
+        one. Distinct variants never collapse (see TestSelectionIdentity
+        and the correction-variant tests).
+        """
 
         project = make_project(name="acc_save")
         file = self._two_model_fit_file(project)
+        model = next(m for m in file.models if m.name == "single_glp")
+        seed = [p.value for p in model.lmfit_pars.values()]
 
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
         file.fit_baseline(model_name="two_glp_expr_amplitude", stages=1, try_ci=0)
+        model.update_value(seed)  # fits write back; restore the exact seed
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
-        # _fit_history has 3; the two single_glp slots share a history_key.
+        # _fit_history has 3; the two single_glp slots share a handle.
         assert len(project._fit_history) == 3
+        assert project._fit_history[0].handle == project._fit_history[2].handle
 
         # Stamp the duplicate-key slots with deterministic sentinels so the
         # latest-wins assertion does not depend on second-resolution wall
@@ -2793,12 +2742,12 @@ class TestHistoryAccumulationAndSnapshot:
         archive_path = tmp_path / "snapshot.fit.h5"
         project.save_fits(archive_path, show_output=0)
         loaded = FitResults.load(archive_path)
-        # Snapshot collapses the duplicate-key pair → 2 distinct slots.
+        # Snapshot collapses the duplicate-handle pair → 2 distinct slots.
         assert len(loaded) == 2
-        keys_in_archive = {s.history_key for s in loaded}
-        assert keys_in_archive == {
-            project._fit_history[0].history_key,
-            project._fit_history[1].history_key,
+        handles_in_archive = {s.handle for s in loaded}
+        assert handles_in_archive == {
+            project._fit_history[0].handle,
+            project._fit_history[1].handle,
         }
 
         # Latest-wins: collapse must keep the third fit (slot[2]), not the
@@ -2816,7 +2765,7 @@ class TestHistoryAccumulationAndSnapshot:
 #
 class TestSelectionIdentity:
     """Refits with different fit-view selections must produce distinct
-    ``history_key`` values and survive snapshot save as separate slots.
+    ``handle`` values and survive snapshot save as separate slots.
 
     Covers each fit_type's selection-identity field:
 
@@ -2840,7 +2789,7 @@ class TestSelectionIdentity:
 
     #
     def test_baseline_refit_with_different_base_t_ind_distinct(self, tmp_path):
-        """Different ``base_t_ind`` → distinct ``history_key``; snapshot keeps both."""
+        """Different ``base_t_ind`` → distinct ``handle``; snapshot keeps both."""
 
         project = make_project(name="sel_base")
         file = self._basic_2d_fit_file(project)
@@ -2849,26 +2798,26 @@ class TestSelectionIdentity:
             time_start=0, time_stop=3, time_type="ind", show_plot=False
         )
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
-        first_key = project._fit_history[0].history_key
+        first_handle = project._fit_history[0].handle
 
         file.define_baseline(
             time_start=0, time_stop=2, time_type="ind", show_plot=False
         )
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
 
-        keys = [s.history_key for s in project._fit_history]
-        assert keys[0] != keys[1]
-        assert keys[0] == first_key
+        handles = [s.handle for s in project._fit_history]
+        assert handles[0] != handles[1]
+        assert handles[0] == first_handle
         # selection captures the inclusive→exclusive index slice.
         assert project._fit_history[0].selection["base_t_ind"] == [0, 4]
         assert project._fit_history[1].selection["base_t_ind"] == [0, 3]
 
-        # Snapshot save preserves both — no collapse since keys differ.
+        # Snapshot save preserves both — no collapse since handles differ.
         archive_path = tmp_path / "base_t_ind.fit.h5"
         project.save_fits(archive_path, show_output=0)
         loaded = FitResults.load(archive_path)
         assert len(loaded) == 2
-        assert {s.history_key for s in loaded} == set(keys)
+        assert {s.handle for s in loaded} == set(handles)
 
     #
     @pytest.mark.slow
@@ -2897,9 +2846,9 @@ class TestSelectionIdentity:
             try_ci=0,
         )
 
-        keys = [s.history_key for s in project._fit_history]
-        assert len(keys) == 2
-        assert keys[0] != keys[1]
+        handles = [s.handle for s in project._fit_history]
+        assert len(handles) == 2
+        assert handles[0] != handles[1]
         # File constructor pre-fills e_lim with the full range via
         # set_fit_limits, so the first fit's selection is not None.
         assert project._fit_history[0].selection["e_lim"] == [0, len(file.energy)]
@@ -2936,10 +2885,10 @@ class TestSelectionIdentity:
 
         twod_slots = [s for s in project._fit_history if s.fit_type == "2d"]
         assert len(twod_slots) == 2
-        assert twod_slots[0].history_key != twod_slots[1].history_key
+        assert twod_slots[0].handle != twod_slots[1].handle
         # File constructor pre-fills t_lim with the full range; the second
         # fit narrows it. The two distinct t_lim values must produce two
-        # distinct history_keys.
+        # distinct handles.
         assert twod_slots[0].selection["t_lim"] == [0, len(file.time)]
         assert twod_slots[1].selection["t_lim"] == [4, 24]
 

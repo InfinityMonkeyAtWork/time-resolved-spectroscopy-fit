@@ -193,6 +193,16 @@ class Model:
         self._name: str = model_name
         # file name of yaml file containing model details
         self.yaml_f_name: str | None = None
+        # ordered top-level YAML keys this model was composed from — order
+        # is identity and assigns dynamics subcycles; () for models built
+        # programmatically without a YAML source
+        self.submodel_names: tuple[str, ...] = ()
+        # YAML snippet provenance, one record per top-level key:
+        # (role, name, source_file, target_par, sequence_index, text) —
+        # the shape of fit_io.ModelYamlRecord; () when no YAML source
+        self.yaml_records: tuple[
+            tuple[str, str, str, str | None, int | None, str], ...
+        ] = ()
         # functions of spectral components of fit
         self.peak_fcts: list[Callable] = []
         # list of objects of type defined in Component class
@@ -275,6 +285,66 @@ class Model:
                 if par.p_model is not None:
                     par.p_model.parent_model = self
 
+    #
+    def dynamics_entries(self) -> list[tuple[str, tuple[str, ...], float]]:
+        """
+        ``(target_par, submodel_names, frequency)`` per dynamics attachment.
+
+        Feeds ``fit_io.encode_model_structure``: the names are the ordered
+        top-level YAML keys retained at load time (order assigns
+        subcycles). Walks profile-nested parameters too — a dynamics
+        attached inside a profile is part of this model's structure.
+        """
+
+        entries: list[tuple[str, tuple[str, ...], float]] = []
+        for comp in self.components:
+            for par in comp.pars:
+                if par.t_model is not None:
+                    entries.append(
+                        (
+                            par.t_model.name,
+                            par.t_model.submodel_names,
+                            float(par.t_model.frequency),
+                        )
+                    )
+                if par.p_model is not None:
+                    for pcomp in par.p_model.components:
+                        for ppar in pcomp.pars:
+                            if ppar.t_model is not None:
+                                entries.append(
+                                    (
+                                        ppar.t_model.name,
+                                        ppar.t_model.submodel_names,
+                                        float(ppar.t_model.frequency),
+                                    )
+                                )
+        return entries
+
+    #
+    def yaml_provenance(
+        self,
+    ) -> tuple[tuple[str, str, str, str | None, int | None, str], ...]:
+        """
+        All YAML snippet records: this model's, then its attachments'.
+
+        Empty when the model (and every attachment) was built
+        programmatically with no YAML source.
+        """
+
+        records = list(self.yaml_records)
+        for comp in self.components:
+            for par in comp.pars:
+                if par.t_model is not None:
+                    records.extend(par.t_model.yaml_records)
+                if par.p_model is not None:
+                    records.extend(par.p_model.yaml_records)
+                    for pcomp in par.p_model.components:
+                        for ppar in pcomp.pars:
+                            if ppar.t_model is not None:
+                                records.extend(ppar.t_model.yaml_records)
+        return tuple(records)
+
+    #
     @property
     def plot_config(self) -> PlotConfig:
         """

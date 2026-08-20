@@ -130,7 +130,13 @@ extends in place (no `SavedJointFit`), the joint sidecar stores six
 whole-objective metrics plus `model_name`, and `compare_models`' NaN-cell
 rendering is landed while the drop-only-when-all-lack column rule stays a B9
 item. Checklist mirrors the plan's numbering — scope details live there, not
-here:
+here.
+
+Landing strategy (decided 2026-08-09): **B5–B8 land as one commit.** Dropping
+fields in B5 breaks the schema-6 writer/reader/capture, keep-green shims would
+be deleted again by B7, and intermediate commits would fail the pre-commit
+type checks (forcing `--no-verify`) and break bisect. The tree stays red
+between B5 and B8; B9–B12 land as separate green commits afterward.
 
 - [x] **B3. `PlotConfig` (de)serialization** — done 2026-08-05:
       `PlotConfig.to_json`/`from_json`, deterministic (sorted keys), tuple
@@ -152,21 +158,188 @@ here:
       assigning subcycles. No-I/O unit tests in
       `tests/test_fit_identity_hashes.py`, including rename/ordering
       regressions and isolated per-input assertions.
-- [ ] **B5. Object model** — `SavedProject`/`SavedFile`/`SavedFitSlot` field
-      changes, `JointFitResult` extended in place with identity fields (no
-      parallel `SavedJointFit`), copy-and-freeze at capture.
-- [ ] **B6. Writer** — `project/` group, `joint/` sidecar, project-name check,
-      same-name/different-content raise (A3 is the schema-6 prototype),
-      compression, the four-case collision table.
-- [ ] **B7. Reader** — `SUPPORTED_READ_VERSIONS = ("7",)`; delete every
-      pre-7 fallback branch (this retires the A5 legacy-reader note).
-- [ ] **B8. Capture** — first-slot `SavedFile` capture, per-slot correction
-      snapshots, serialization of `JointFitResult` (consumes the step-3
-      record; the schema plan is reconciled to its layout).
+- [x] **B5. Object model** — done 2026-08-09 (in tree, part of the B5–B8
+      commit): `SavedProject` + `plot_config`/`joint`; `SavedFile` +
+      `data_raw`/`file_content_hash`, − `data`/`e_lim`/`t_lim`/fingerprint;
+      `SavedFitSlot` + `handle`/`optimization_hash`/`input_files`/
+      `model_structure`/`fit_view_sha256`/`dark`/`calibration`/`model_yaml`/
+      `label`/`joint_ref`, − `observed_sha256`/`history_key`/
+      `file_fingerprint`/`yaml_filename`; `JointFitResult` +
+      `optimization_hash`/`input_files`/`model_structure`/`label` in place;
+      new `ModelYamlRecord` NamedTuple for the per-snippet provenance
+      records. Copy-and-freeze enforcement is B8's (capture). Pyright
+      enumerates 47 broken references — the B6–B8 worklist: slot builders
+      + joint capture + in-session dedup (`fit_io.py`), snapshot path
+      (`trspecfit.py:568-615`), reader (`fit_io.py:2103-2732`),
+      `_slot_title` yaml_filename + `observed_sha256` comparability check
+      (`fit_results.py:119,1471`).
+- [x] **B6. Writer** — done 2026-08-09 (in tree, part of the B5–B8 commit):
+      hierarchy moved under `project/` (attrs `name` written once + checked
+      on append, `plot_config` rewritten every save); `metadata/` reduced to
+      wire identity + new `format` attr; file groups store
+      `data_raw`/`file_content_hash` (content-mismatch raise);
+      slot metadata carries the identity block, conditional
+      `label`/`joint_ref`, DoF metrics omitted when scope == "project";
+      new `dark`/`calibration` datasets and `model_yaml/` snippet group
+      (scalar vlen, uncompressed); `joint/` sidecar (projections JSON with
+      parameter maps, six metrics, r2 omitted); gzip+shuffle on all
+      non-empty array datasets; four-case collision rules on `handle`/
+      `optimization_hash` (params-differ = hard conflict, per-attachment
+      conf_ci/correl/mcmc merge, label mutable) with pre-mutation
+      prechecks; bundle-integrity validation (scope⟺joint_ref, resolution
+      both directions, map totality). Retired: `compute_archive_slot_key`,
+      `_file_ref`, `_find_slot_by_archive_key` (→ `_find_slot_by_handle`,
+      `_find_joint_by_hash`); export dir suffix now `handle[:8]`.
+      Verified by a 19-assertion smoke script (scratchpad, B10 skeleton) —
+      the pytest suite stays red until B8.
+- [x] **B7. Reader** — done 2026-08-14 (in tree, part of the B5–B8 commit):
+      `SCHEMA_VERSION = "7"`, `SUPPORTED_READ_VERSIONS = ("7",)`, schema
+      2–6 evolution comment and fallbacks gone (retires the A5
+      legacy-reader note). Decodes `project/` (name, `PlotConfig.from_json`),
+      file groups (`data_raw` + `file_content_hash`), slots (identity
+      block, selection recovered from this file's `input_files` entry,
+      omitted DoF metrics → NaN, `dark`/`calibration`/`model_yaml`/
+      `label`/`joint_ref`), and the `joint/` sidecar → `JointFitResult`
+      with projection slots resolved by handle to the same objects under
+      `files` (r2 → NaN). Reader validates like the writer: dangling
+      handles, `joint_ref` mismatches, and non-total parameter maps raise
+      (shared `_assert_parameter_maps_total`). All arrays come back
+      read-only (`_read_array`, Principle 4). Smoke script extended to 21
+      passing checks incl. full-field slot round-trip and joint
+      rehydration.
+- [x] **B8. Capture** — done 2026-08-14 (in tree, part of the B5–B8
+      commit). Prerequisites landed: `mcp.Model` retains `submodel_names`
+      (ordered YAML keys) + `yaml_records` (verbatim top-level-key slices
+      via new `uparsing.dump_yaml_subtrees` — ruamel round-trip cannot
+      load the duplicate component keys the numbering feature allows;
+      schema plan §model_yaml corrected), populated by `File.load_model`;
+      new `Model.dynamics_entries()` / `yaml_provenance()` walks (incl.
+      profile-nested dynamics); `build_fit_settings` gains required
+      `backend` (effective, from dispatch-site `args` shape via
+      `_effective_backend`) and records `jac_fun` qualname; new
+      `fit_io.optimizer_settings_from_provenance` derives the identity
+      subset from the provenance dict (one source). Capture: the four
+      slot builders compute the local identity chain (`_slot_identity`)
+      from `version_stamp` + `params_identity(par_ini)` (per-slice seed
+      matrix for SbS) + fit-view coordinates; joint projections inherit
+      `(optimization_hash, input_files)` computed once in
+      `Project.fit_2d` and pass the N-file `model_structure`;
+      `JointFitResult` gets its identity fields. `File._capture_file_identity`
+      registers the frozen `SavedFile` payload on first fit
+      (`Project._captured_files`), normalizes identity corrections to
+      None, and raises on in-place `data_raw` mutation. Assembler
+      (`_build_saved_project_from_history`) reads nothing live: captured
+      payload + `dataclasses.replace`, joint bundles expand to whole,
+      collapse rekeyed on `handle` (variants kept). Retired:
+      `compute_file_fingerprint`, `fingerprint_stamp`,
+      `compute_observed_sha256`, `compute_history_key`,
+      `File.fingerprint`, `_find_file_for_slot`, and the stale-slot
+      warn-skip (per-slot corrections make it moot). Consumers:
+      `_slot_title` reads the energy snippet's `source_file`,
+      `_check_observed_consistency` discriminates on `fit_view_sha256`,
+      `FitResults.load` passes the decoded `plot_config` + `joint`.
+      Also landed: `utils.arrays.apply_corrections` (the schema plan's
+      corrected-data reconstruction helper), used by `File` and by
+      full-range plotting to rebuild corrected data from
+      `SavedFile.data_raw` + the slot's `dark`/`calibration`. Test
+      reconciliation pulled forward: `test_fit_archive_roundtrip.py`
+      asserts the schema-7 identity fields + correction/model_yaml/label
+      round-trip and drops the v2–v5 downgrade tests (rejection test
+      kept); `test_export_fits_parity.py`, `test_full_range_plot.py`,
+      and `test_mcp_library.py` fixtures updated. Ruff/mypy/pyright
+      clean; smoke script green; **suite 1033 passed with only
+      `tests/test_fit_history.py` excluded** (collection-broken: imports
+      retired helpers; B10 rewrites it — the last blocker for the B5–B8
+      commit).
 - [ ] **B9. `FitResults` query layer** — handles, variant table, diffs,
       `select=`, pruning, regrouped comparability, σ tiers, bundle-level
-      joint diffs. (A4 pre-completes the association item.)
-- [ ] **B10. Tests** — the full matrix in schema plan §Test coverage.
+      joint diffs. (A4 pre-completes the association item.) Also owns the
+      matrix rows B10 deferred with these features: handle-prefix
+      resolution, σ-tier `select=`/`metrics=` semantics, variant table,
+      `select=` bundle expansion, `drop()`, bundle-level diffs.
+- [x] **B10. Tests** — done 2026-08-14 (in tree, part of the B5–B8
+      commit; unblocks it). `tests/test_fit_history.py` rewritten for
+      schema 7: fit-level identity (the handle chain recomputes exactly
+      from the persisted slot payload; an exact re-run — seed restored —
+      shares a handle and collapses; vary flip / bound change / selection
+      change / correction each mint a distinct slot; correction reversal
+      restores identical `input_files`), capture ownership (slot arrays
+      and captured payload frozen and independent; in-place `data_raw`
+      mutation raises on the next fit), correction variants archiving
+      side by side with per-slot `dark`, and the query/compare/plot
+      classes on schema-7 stubs (comparability discriminates on
+      `fit_view_sha256`; stubs use the real hash functions). New
+      `tests/test_fit_archive_writer.py` (the smoke script graduated):
+      layout/compression/retired attrs, one test per collision-table row
+      (incl. archived-chain intact after a refused shorter re-run, and
+      the incoming MCMC surviving a params-conflict overwrite), append
+      integrity byte-identical after a failed append, joint sidecar +
+      DoF omission, joint attachment enrich/collide + mcmc/correl
+      round-trip, bundle-integrity raises with the archive untouched,
+      reader raise on a dangling projection handle, read arrays frozen.
+      `test_fit_archive_roundtrip.py` gains `test_joint_bundle_roundtrip`
+      (real two-file `Project.fit_2d` → save under a one-file filter →
+      bundle expansion → load: identity fields, combined params, correl,
+      parameter maps recovering local names, projections resolving to the
+      same slot objects, DoF NaN). Regression surfaced by the slow tier
+      and fixed: B8's joint-bundle expansion leaked into `export_fits`,
+      so a per-file `File.export_fit` wrote the sibling file's tree and
+      the sibling's own export then collided. Expansion is an archive
+      representability rule — `_build_saved_project_from_history` now
+      takes `expand_joint_bundles` (`save_fits`: True; `export_fits`:
+      False, which also stops attaching joint records the CSV writer
+      never rendered). Verified: 1144 default + 180 slow, 0 failed;
+      ruff/mypy/pyright clean.
+- [x] **B10.1 Review fix pack** — done 2026-08-14 (in tree, part of the
+      B5–B8 commit). An external review of the unit surfaced six
+      findings, all verified. Four fixed here:
+      (3) live full-range plotting served the file's *current* corrected
+      `data` to slots fitted under a different correction state —
+      `_full_observed_for` now reconstructs from `data_raw` + the slot's
+      own `dark`/`calibration` whenever `data_raw` exists (completes the
+      Part A "known interim limitation"; `.data` remains only a fallback
+      for providers without `data_raw`).
+      (4) the handle-collision comparator now matches the settled rule
+      (principles §"Equivalence is defined, not loose"): fitted **values
+      only**, per parameter by name, `_PARAMS_EQUIV_RTOL=1e-6` /
+      `_PARAMS_EQUIV_ATOL=1e-12` named constants, NaN==NaN —
+      `_fitted_values_equivalent` replaces the exact all-column
+      `_frames_equal`, so stderr drift or FP noise no longer forces an
+      attachment-destroying `overwrite=True`.
+      (5) `_assert_parameter_maps_total` → `_assert_parameter_maps_consistent`:
+      besides two-way totality it now checks every mapped projection
+      value against the combined table (the schema plan's required
+      regression), and the reader gained the slot→joint mirror pass
+      (scope⟺joint_ref invariant + dangling `joint_ref` raise — deleting
+      `joint/` from an archive no longer loads silently).
+      (6) copy-and-freeze holes closed: per-slice SbS metric arrays
+      frozen on capture (`_per_slice_metrics`) and on read
+      (`_read_metrics_per_slice`); the synthesized empty `time` axis in
+      `capture_saved_file` frozen.
+      Tests: two comparator rows, projection-value disagreement,
+      missing-`joint/` reader raise, live-correction-state full-range
+      regression, frozen-array assertions extended (incl. mcmc
+      acceptance). Verified: 1149 default + 180 slow, 0 failed;
+      ruff/mypy/pyright clean.
+- [ ] **B10.2 Collapse applies the archive collision rule** (review
+      finding 1; own commit right after the B5–B8 commit). Principles
+      §"One rule, both boundaries": divergent fitted parameters under one
+      handle **raise** at collapse — the error names the non-determinism
+      and points at pinning a seed — and `overwrite=True` selects the
+      latest and reports the replacement; same rule for the joint
+      history's `latest_joint`. Uses the B10.1 comparator. Implements the
+      matrix row "in-session collapse applies the same rule as the
+      archive boundary" that B10 deferred. Open sub-decision: the shared
+      builder also serves `export_fits`, whose `overwrite=` means
+      directory overwrite — decide which flag resolves the collapse
+      conflict on the export path.
+- [ ] **B10.3 Optimizer seed producer** (review finding 2; paired with
+      B10.2 — it is the remedy its error message points at). Fit-API
+      `seed=` → `fit_wrapper` → per-method forwarding in
+      `fitlib._method_kws` → `fit_settings["seed"]`; the identity slot
+      already exists (`encode_optimizer_settings` keys `seed` only when
+      supplied), so no schema change. Until it lands, unseeded stochastic
+      re-runs are surfaced by B10.2's raise.
 - [ ] **B11. Docs** — rewrite `fit_archive_schema.md` as the schema-7 spec;
       archive `fit_archive_schema_plan.md` and `joint_fit_result.md`; update
       `repo_architecture.md`, `llms.txt`, `AGENTS.md`, `CLAUDE.md`, CHANGELOG.

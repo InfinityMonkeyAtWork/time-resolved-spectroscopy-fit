@@ -53,6 +53,7 @@ See examples/ directory for complete workflows.
 
 import concurrent.futures
 import copy
+import dataclasses
 import multiprocessing
 import os
 import pathlib
@@ -122,6 +123,68 @@ def _trspecfit_version() -> str:
         return md.version("trspecfit")
     except md.PackageNotFoundError:
         return "unknown"
+
+
+#
+def _yaml_records_for_model(
+    *,
+    model_yaml_path: pathlib.Path,
+    source_file: str,
+    model_info: list[str],
+    model_type: str,
+    par_name: str,
+) -> tuple[fit_io.ModelYamlRecord, ...]:
+    """
+    Snippet provenance records for one ``load_model`` call.
+
+    One record per top-level YAML key, in ``model_info`` order.
+    ``sequence_index`` is set for dynamics only (0 is the global element);
+    ``target_par`` for dynamics and profile attachments — ``par_name`` at
+    load time equals the attachment target (``Dynamics._name`` /
+    ``Profile._name``).
+    """
+
+    snippets = uparsing.dump_yaml_subtrees(model_yaml_path, model_info)
+    return tuple(
+        fit_io.ModelYamlRecord(
+            role=model_type,
+            name=key,
+            source_file=source_file,
+            target_par=par_name if model_type != "energy" else None,
+            sequence_index=index if model_type == "dynamics" else None,
+            text=snippets[key],
+        )
+        for index, key in enumerate(model_info)
+    )
+
+
+#
+def _model_yaml_records(model: "mcp.Model") -> tuple[fit_io.ModelYamlRecord, ...]:
+    """Slot-capture form of a model's YAML provenance (incl. attachments)."""
+
+    return tuple(fit_io.ModelYamlRecord(*rec) for rec in model.yaml_provenance())
+
+
+#
+def _effective_backend(fit_fun_str: str, args: tuple[Any, ...]) -> str:
+    """
+    Effective evaluator backend for provenance and identity.
+
+    The requested ``fit_fun_str`` is not necessarily what runs: without a
+    lowered plan, ``fit_model_gir`` / ``fit_model_jax`` fall through to
+    the interpreter, and a plan without JAX closures runs on the compiled
+    NumPy plan (1D always does — the JAX backend is 2D-only). The
+    dispatch site's ``args`` shape is the ground truth: 5 = JAX closures,
+    4 = compiled plan, 2 = interpreter.
+    """
+
+    if fit_fun_str == "fit_model_compare":
+        return "fit_model_compare"
+    if len(args) == 5:
+        return "fit_model_jax"
+    if len(args) == 4:
+        return "fit_model_gir"
+    return "fit_model_mcp"
 
 
 # multi-subcycle models allow for convolution only in the "0th subcycle"
@@ -209,6 +272,10 @@ class Project:
         # successful Project.fit_2d, published together with its per-file
         # projection slots in _fit_history (one bundle).
         self._joint_fit_history: list[fit_io.JointFitResult] = []
+        # Immutable per-file archive payloads (no slots), captured once at
+        # each file's first fit — save-time assembly attaches slots via
+        # dataclasses.replace and reads nothing from live state.
+        self._captured_files: dict[str, fit_io.SavedFile] = {}
 
         # Set defaults first
         self._set_defaults()
@@ -348,8 +415,9 @@ class Project:
         """
         Save filtered fit slots from ``_fit_history`` to an HDF5 archive.
 
-        Filters ``_fit_history`` by ``(file, model, fit_type)``, collapses
-        to latest-per-``history_key`` (snapshot semantics), assembles a
+        Filters ``_fit_history`` by ``(file, model, fit_type)``, dedups
+        exact re-runs (latest per ``handle`` — distinct variants are all
+        kept), expands joint bundles to whole, assembles a
         ``SavedProject``, and writes via ``utils.fit_io.write_archive``.
 
         Parameters
@@ -368,19 +436,16 @@ class Project:
         fit_type : str | sequence, optional
             String filter on ``slot.fit_type``.
         overwrite : bool, default False
-            Slot-scoped: a slot collision (same canonical identity already
-            in the archive) raises ``FileExistsError`` unless True.
+            Slot-scoped: required when a stored slot's fitted parameters
+            differ from the incoming ones, or when an attachment
+            (``conf_ci`` / ``correl`` / ``mcmc``) is present on both sides
+            — see ``fit_io.write_archive`` for the collision rules.
         show_output : int, default 1
             ``0`` to silence the per-call summary line.
-
-        Notes
-        -----
-        v1 behavior is snapshot-only (one slot per ``history_key``).
-        ``keep_history=True`` for full-log save is deferred.
         """
 
         project = self._build_saved_project_from_history(
-            file=file, model=model, fit_type=fit_type
+            file=file, model=model, fit_type=fit_type, expand_joint_bundles=True
         )
         if project is None:
             if show_output:
@@ -418,7 +483,11 @@ class Project:
         the output is a directory of human-readable artifacts rather than
         an HDF5 archive. One-way export — there is no ``load`` counterpart;
         round-tripping fits to disk is HDF5's job (use ``save_fits`` /
-        ``load_fits`` for that).
+        ``load_fits`` for that). Unlike ``save_fits``, a filter touching
+        one slot of a joint bundle does **not** pull in the sibling
+        files' projections: per-file trees have no whole-bundle
+        invariant, and ``File.export_fit`` must never write another
+        file's directories.
 
         Parameters
         ----------
@@ -460,8 +529,8 @@ class Project:
 
         The optional hash directory suffix appears only when more than one
         slot in the snapshot shares the same file, model, and fit type (i.e.
-        different selections); the hash is the first 8 chars of the history
-        key.
+        different selections); the hash is the first 8 chars of the slot
+        handle.
         """
 
         if format != "csv":
@@ -471,7 +540,7 @@ class Project:
             )
 
         project = self._build_saved_project_from_history(
-            file=file, model=model, fit_type=fit_type
+            file=file, model=model, fit_type=fit_type, expand_joint_bundles=False
         )
         if project is None:
             if show_output:
@@ -504,17 +573,31 @@ class Project:
         file: "int | str | File | Sequence[int | str | File] | None",
         model: str | Sequence[str] | None,
         fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None,
+        expand_joint_bundles: bool,
     ) -> fit_io.SavedProject | None:
         """
         Apply the standard filter + collapse pipeline to ``_fit_history``
         and return a fully-populated ``SavedProject``.
 
-        Returns ``None`` when no slots survive the filter — or when every
-        survivor is stale (fitted against data the live file no longer
-        holds) — so callers can emit a "nothing to do" message and
-        short-circuit. Used by
+        Returns ``None`` when no slots survive the filter, so callers can
+        emit a "nothing to do" message and short-circuit. Used by
         :meth:`save_fits` and :meth:`export_fits` so both go through the
         identical filter / collapse / file-grouping logic.
+
+        With ``expand_joint_bundles=True`` (the archive path), a filter
+        that touches any slot of a joint bundle silently expands to the
+        whole bundle — its joint record plus every sibling projection
+        slot — because partial bundles are not representable in the
+        archive (the writer would raise). The CSV export passes ``False``:
+        per-file trees have no bundle invariant, and a per-file
+        ``export_fit`` must not write a sibling file's directories; the
+        returned project then carries no joint records at all (the CSV
+        writer does not render them).
+
+        File payloads come from the first-slot capture
+        (``_captured_files``); nothing is read from live state at save
+        time, so slots fitted under different correction states coexist —
+        each carries its own ``dark`` / ``calibration``.
         """
 
         file_ids = self._resolve_save_file_filter(file)
@@ -531,85 +614,43 @@ class Project:
                 continue
             filtered.append(slot)
 
+        # Expand to whole joint bundles: latest record per optimization
+        # hash, then every sibling projection of each touched bundle.
+        joint_records: list[fit_io.JointFitResult] = []
+        if expand_joint_bundles:
+            latest_joint: dict[str, fit_io.JointFitResult] = {}
+            for jr in self._joint_fit_history:
+                latest_joint[jr.optimization_hash] = jr
+            touched = {s.joint_ref for s in filtered if s.joint_ref is not None}
+            joint_records = [jr for h, jr in latest_joint.items() if h in touched]
+            selected_handles = {s.handle for s in filtered}
+            for jr in joint_records:
+                for proj in jr.projections:
+                    if proj.slot.handle not in selected_handles:
+                        filtered.append(proj.slot)
+                        selected_handles.add(proj.slot.handle)
+
         snapshot = fit_io.collapse_history_to_snapshot(filtered)
         if not snapshot:
             return None
 
         # Group slots by file identity — the guarded, unique File.name
-        # (fit_archive_principles.md, Principle 1). The fingerprint is a
-        # version stamp and deliberately not part of the key: slots fit
-        # before and after a data correction belong to the same file.
+        # (fit_archive_principles.md, Principle 1).
         by_id: dict[str, list[fit_io.SavedFitSlot]] = {}
         for s in snapshot:
             by_id.setdefault(s.file_name, []).append(s)
 
         saved_files: list[fit_io.SavedFile] = []
-        for slots in by_id.values():
-            live = self._find_file_for_slot(slots[0])
-            if live is None:
+        for name, slots in by_id.items():
+            captured = self._captured_files.get(name)
+            if captured is None:
                 raise ValueError(
-                    f"Slot for file {slots[0].file_name!r} has no matching "
-                    f"Project.files entry; cannot read raw arrays. "
-                    f"Re-attach the file or filter it out."
+                    f"Slot for file {name!r} has no captured file payload. "
+                    f"Capture registers the payload at the file's first "
+                    f"fit, so this history was not produced by a fit on "
+                    f"this Project."
                 )
-            assert live.data is not None  # type guard
-            assert live.energy is not None  # type guard
-            # The payload must hash what it stores: recompute the
-            # fingerprint from the live arrays being archived. Slots whose
-            # fit-time stamp differs were fitted against data this archive
-            # does not contain — schema 6 stores one data payload per
-            # file, so they cannot be represented faithfully and are
-            # skipped (loudly) rather than stored under the wrong data.
-            fingerprint = live.fingerprint()
-            stamp = fit_io.fingerprint_stamp(fingerprint)
-            current: list[fit_io.SavedFitSlot] = []
-            stale: list[fit_io.SavedFitSlot] = []
-            for s in slots:
-                if fit_io.fingerprint_stamp(s.file_fingerprint) == stamp:
-                    current.append(s)
-                else:
-                    stale.append(s)
-            if stale:
-                skipped = ", ".join(
-                    f"{s.model_name}/{s.fit_type} ({s.timestamp})" for s in stale
-                )
-                warnings.warn(
-                    f"Skipping {len(stale)} stale fit slot(s) for file "
-                    f"{live.name!r}: {skipped}. The file's current data "
-                    f"differs from the data these fits ran against, and "
-                    f"the archive stores one data payload per file, so "
-                    f"they cannot be saved faithfully beside it. Restore "
-                    f"the fit-time correction state (subtract_dark / "
-                    f"calibrate_data / reset_dark / reset_calibration) or "
-                    f"re-fit the current data; the slots remain in the "
-                    f"in-session history.",
-                    stacklevel=3,
-                )
-            if not current:
-                continue
-            saved_files.append(
-                fit_io.SavedFile(
-                    name=live.name,
-                    original_path=str(live.path),
-                    dim=int(live.dim),
-                    shape=tuple(int(x) for x in live.data.shape),
-                    fingerprint=fingerprint,
-                    data=live.data,
-                    energy=live.energy,
-                    time=(
-                        live.time
-                        if live.time is not None
-                        else np.array([], dtype=np.float64)
-                    ),
-                    e_lim=list(live.e_lim) if live.e_lim else None,
-                    t_lim=list(live.t_lim) if live.t_lim else None,
-                    slots=tuple(current),
-                    aux_axis=live.aux_axis,
-                )
-            )
-
-        if not saved_files:
-            return None
+            saved_files.append(dataclasses.replace(captured, slots=tuple(slots)))
 
         now = fit_io._now_iso()
         return fit_io.SavedProject(
@@ -618,7 +659,9 @@ class Project:
             schema_version=fit_io.SCHEMA_VERSION,
             timestamp_created=now,
             timestamp_updated=now,
+            plot_config=self.plot_config,
             files=tuple(saved_files),
+            joint=tuple(joint_records),
         )
 
     #
@@ -677,27 +720,6 @@ class Project:
                 )
             keys.add(f.name)
         return keys
-
-    #
-    def _find_file_for_slot(self, slot: fit_io.SavedFitSlot) -> "File | None":
-        """
-        Look up the live ``File`` whose name matches a slot.
-
-        Name alone is identity: it is unique within the Project and
-        guarded against reassignment (fit_archive_principles.md,
-        Principle 1). The slot's fingerprint is deliberately not
-        consulted — it is a version stamp that moves under data
-        corrections, and requiring it to match made results recorded
-        before ``subtract_dark()`` / ``calibrate_data()`` unsaveable.
-        """
-
-        for f in self.files:
-            if f.name != slot.file_name:
-                continue
-            if f.data is None or f.energy is None:
-                continue
-            return f
-        return None
 
     #
     def __getitem__(self, key: int | str) -> "File":
@@ -1593,8 +1615,44 @@ class Project:
         # Build the per-file projection slots and the joint record first;
         # publish to either history only after every piece exists, so a
         # capture failure publishes neither (one optimization, one bundle).
+        # fit_fun_str is the effective joint backend by construction — the
+        # JAX branch only switches after building the fused closures.
         joint_fit_settings = fit_io.build_fit_settings(
-            stages=stages, fit_wrapper_kwargs=fit_wrapper_kwargs
+            stages=stages,
+            backend=fit_fun_str,
+            fit_wrapper_kwargs=fit_wrapper_kwargs,
+        )
+        # Joint identity: one optimization over N files. Each file's entry
+        # carries its version stamp (correction state) and its 2d-window
+        # selection; the parameter table and initial state are the
+        # combined optimizer's.
+        input_entries: list[tuple[str, str, str]] = []
+        structure_entries = []
+        for f, model in zip(self.files, models, strict=True):
+            version_stamp, _, _ = f._capture_file_identity()
+            selection_json = fit_io.build_selection_json(
+                "2d",
+                e_lim=list(f.e_lim) if f.e_lim else None,
+                t_lim=list(f.t_lim) if f.t_lim else None,
+            )
+            input_entries.append((f.name, version_stamp, selection_json))
+            assert model is not None  # type guard
+            structure_entries.append(f._model_structure_entry(model))
+        input_files_joint = fit_io.encode_input_files(
+            scope="project", entries=input_entries
+        )
+        model_structure_joint = fit_io.encode_model_structure(structure_entries)
+        assert result.par_ini is not None  # type guard — the joint fit seeds
+        parameter_metadata, init_values = fit_io.params_identity(result.par_ini)
+        joint_hash = fit_io.compute_optimization_hash(
+            input_files_json=input_files_joint,
+            fit_type="2d",
+            model_structure_json=model_structure_joint,
+            parameter_metadata=parameter_metadata,
+            initial_state=[init_values],
+            optimizer_settings_json=fit_io.optimizer_settings_from_provenance(
+                joint_fit_settings
+            ),
         )
         slots_2d: list[fit_io.SavedFitSlot] = []
         for f in self.files:
@@ -1602,11 +1660,16 @@ class Project:
                 model_name=model_name,
                 fit_fun_str="fit_model_mcp",
                 fit_settings=joint_fit_settings,
+                joint_identity=(joint_hash, input_files_joint),
+                joint_model_structure=model_structure_joint,
             )
             assert slot is not None  # type guard — par_fin.params is always set
             slots_2d.append(slot)
         joint_record = fit_io._joint_result_from_project_fit(
             model_name=model_name,
+            optimization_hash=joint_hash,
+            input_files=input_files_joint,
+            model_structure=model_structure_joint,
             mapping=mapping,
             slots=slots_2d,
             fit_output=result,
@@ -2185,6 +2248,7 @@ class File:
 
         # Inherit necessary model attributes from function input, file, and project
         loaded_model.yaml_f_name = pathlib.Path(model_yaml).stem  # yaml file name
+        loaded_model.submodel_names = tuple(model_info)
         loaded_model.dim = 1  # start with 1, +1 when adding dynamics
         if isinstance(loaded_model, mcp.Dynamics):
             loaded_model.subcycles = len(model_info) - 1
@@ -2214,6 +2278,17 @@ class File:
                 c_temp = mcp.Component(c_name, fcts_package, subcycle)
                 c_temp.add_pars(c_info)
                 all_comps.append(c_temp)
+
+        # Snippet provenance — after the loop, so an unknown submodel name
+        # raises the friendly "not found in <file>" error above, never a
+        # bare KeyError from the snippet slicer.
+        loaded_model.yaml_records = _yaml_records_for_model(
+            model_yaml_path=model_yaml_path,
+            source_file=pathlib.Path(model_yaml).name,
+            model_info=model_info,
+            model_type=model_type,
+            par_name=par_name,
+        )
 
         # Add all components (and their parameters) to model
         loaded_model.add_components(all_comps)
@@ -2357,32 +2432,15 @@ class File:
         self.models = []
 
     #
-    def fingerprint(self) -> dict[str, Any]:
-        """
-        Multi-sha content fingerprint of this file.
-
-        Recomputed on every call so corrections that mutate ``self.data``
-        (subtract_dark, calibrate_data, reset_dark, reset_calibration)
-        propagate into slot identity. Sha256 over typical data is
-        sub-ms; the cost is
-        negligible compared to a fit, and a stale cache silently collapses
-        pre- and post-correction slots into the same ``history_key``.
-        """
-
-        if self.data is None or self.energy is None:
-            raise ValueError("Cannot fingerprint a File without data and energy axis.")
-        return fit_io.compute_file_fingerprint(
-            data=self.data, energy=self.energy, time=self.time
-        )
-
-    #
     def _apply_corrections(self) -> None:
         """Rebuild ``data`` from ``data_raw`` by applying dark and calibration."""
 
         assert self.data_raw is not None  # type guard
         assert self.dark is not None  # type guard
         assert self.calibration is not None  # type guard
-        self.data = (self.data_raw - self.dark) / self.calibration
+        self.data = uarrays.apply_corrections(
+            self.data_raw, dark=self.dark, calibration=self.calibration
+        )
         # recompute baseline if it was previously defined
         if self.base_t_abs:
             self.define_baseline(
@@ -2801,7 +2859,9 @@ class File:
                 model_name=model_name,
                 fit_fun_str=_fun_str,
                 fit_settings=fit_io.build_fit_settings(
-                    stages=stages, fit_wrapper_kwargs=lmfit_wrapper_kwargs
+                    stages=stages,
+                    backend=_effective_backend(_fun_str, _args),
+                    fit_wrapper_kwargs=lmfit_wrapper_kwargs,
                 ),
             )
 
@@ -3006,7 +3066,9 @@ class File:
                 time_range=list(time_range) if time_range is not None else None,
                 time_type=time_type,
                 fit_settings=fit_io.build_fit_settings(
-                    stages=stages, fit_wrapper_kwargs=lmfit_wrapper_kwargs
+                    stages=stages,
+                    backend=_effective_backend(_fun_str, _args),
+                    fit_wrapper_kwargs=lmfit_wrapper_kwargs,
                 ),
             )
 
@@ -3364,6 +3426,7 @@ class File:
                 fit_fun_str=_fun_str,
                 fit_settings=fit_io.build_fit_settings(
                     stages=stages,
+                    backend=_effective_backend(_fun_str, _args_sbs),
                     fit_wrapper_kwargs=fit_wrapper_kwargs,
                     seed_source=seed_source,
                     seed_adapt=seed_adapt,
@@ -3395,11 +3458,93 @@ class File:
     # ------------------------------------------------------------------
 
     #
+    def _effective_corrections(self) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """
+        ``(dark, calibration)`` in force; identity corrections map to None.
+
+        An all-zeros dark / all-ones calibration consumes data identically
+        to "no correction", so it must capture identically — equal data
+        states get equal version stamps, and the archived slot omits the
+        no-op arrays.
+        """
+
+        dark = self.dark
+        if dark is not None and not np.any(dark):
+            dark = None
+        calibration = self.calibration
+        if calibration is not None and bool(np.all(calibration == 1)):
+            calibration = None
+        return dark, calibration
+
+    #
+    def _capture_file_identity(
+        self,
+    ) -> tuple[str, np.ndarray | None, np.ndarray | None]:
+        """
+        ``(version_stamp, dark, calibration)`` for slot capture.
+
+        Registers the file's immutable ``SavedFile`` payload on first use
+        (``Project._captured_files``) — the single point where file
+        content crosses the capture boundary. Raises if ``data_raw`` or an
+        axis changed since the first captured fit: in-place mutation would
+        put slots from different measurements under one name.
+        """
+
+        assert self.data_raw is not None  # type guard
+        assert self.energy is not None  # type guard
+        content_hash = fit_io.compute_file_content_hash(
+            data_raw=self.data_raw,
+            energy=self.energy,
+            time=self.time,
+            aux_axis=self.aux_axis,
+        )
+        captured = self.p._captured_files.get(self.name)
+        if captured is None:
+            self.p._captured_files[self.name] = fit_io.capture_saved_file(
+                name=self.name,
+                original_path=str(self.path),
+                dim=int(self.dim),
+                data_raw=self.data_raw,
+                energy=self.energy,
+                time=self.time,
+                aux_axis=self.aux_axis,
+                file_content_hash=content_hash,
+            )
+        elif captured.file_content_hash != content_hash:
+            raise RuntimeError(
+                f"File {self.name!r}: data_raw or an axis changed since the "
+                f"file's first captured fit — in-place mutation is not "
+                f"supported. Load the data as a new File (or under a new "
+                f"name) instead."
+            )
+        dark, calibration = self._effective_corrections()
+        version_stamp = fit_io.compute_file_version_stamp(
+            file_content_hash=content_hash, dark=dark, calibration=calibration
+        )
+        return version_stamp, dark, calibration
+
+    #
+    def _model_structure_entry(
+        self, model: mcp.Model
+    ) -> tuple[str, list[str], list[tuple[str, tuple[str, ...], float]]]:
+        """
+        This file's ``(name, energy_models, dynamics)`` row for
+        ``fit_io.encode_model_structure``.
+
+        Energy names are the top-level YAML keys retained at load time;
+        a programmatically built model falls back to its model name.
+        """
+
+        energy_names = list(model.submodel_names) or [model.name]
+        return (self.name, energy_names, model.dynamics_entries())
+
+    #
     def _slot_capture_meta(self, result_fin: Any) -> dict[str, Any]:
         """
-        File/model metadata shared by every slot-capture site.
+        File-level metadata shared by every slot-capture site.
 
-        The one place the capture boundary copies File-level identity,
+        The one place the capture boundary copies File-level identity
+        (version stamp + correction snapshots), the fit-view aux axis,
         noise state, and the optimizer's method/nvarys — splat into the
         ``_slot_from_<fit_type>`` builders so the four fit types cannot
         drift apart. ``n_free_pars`` is ``None`` when the result carries
@@ -3409,8 +3554,8 @@ class File:
         """
 
         nvarys = getattr(result_fin, "nvarys", None)
+        version_stamp, dark, calibration = self._capture_file_identity()
         return {
-            "file_fingerprint": self.fingerprint(),
             "file_name": self.name,
             "fit_alg": str(getattr(result_fin, "method", "unknown")),
             "n_free_pars": int(nvarys) if nvarys is not None else None,
@@ -3418,6 +3563,10 @@ class File:
             "sigma_source": self.sigma_source,
             "sigma_type": self.sigma_type,
             "sigma_data": self.sigma_data,
+            "version_stamp": version_stamp,
+            "dark": dark,
+            "calibration": calibration,
+            "aux_axis": self.aux_axis,
         }
 
     #
@@ -3426,7 +3575,7 @@ class File:
         *,
         model_name: str,
         fit_fun_str: str,
-        fit_settings: dict[str, Any] | None = None,
+        fit_settings: dict[str, Any],
     ) -> fit_io.SavedFitSlot | None:
         """
         Build a SavedFitSlot from the just-completed baseline fit and append
@@ -3438,7 +3587,7 @@ class File:
         assert self.data_base is not None  # type guard
         assert self.energy is not None  # type guard
         if self.data is None:
-            return None  # data_base-only fixture / no File data to fingerprint
+            return None  # data_base-only fixture / no File data to capture
         fit_out = self.model_base.result
         assert fit_out is not None  # type guard
         result_fin = fit_out.par_fin
@@ -3506,15 +3655,30 @@ class File:
         conf_ci = fit_out.conf_ci
         correl = ulmfit.correl_from_result(result_fin)
         mcmc = fit_io._mcmc_payload(fit_out.emcee_fin, fit_out.emcee_ci)
+        assert fit_out.par_ini is not None  # type guard (file-scope fits seed)
+        parameter_metadata, init_values = fit_io.params_identity(fit_out.par_ini)
+        base_ind = list(self.base_t_ind) if self.base_t_ind else []
+        time_view = (
+            self.time[base_ind[0] : base_ind[1]]
+            if self.time is not None and base_ind
+            else None
+        )
         slot = fit_io._slot_from_baseline(
             **self._slot_capture_meta(result_fin),
             model_name=model_name,
-            yaml_filename=self.model_base.yaml_f_name,
+            model_structure=fit_io.encode_model_structure(
+                [self._model_structure_entry(self.model_base)]
+            ),
+            model_yaml=_model_yaml_records(self.model_base),
             params_df=params_df,
             observed=observed,
             fit=fit_arr,
-            base_t_ind=list(self.base_t_ind),
+            base_t_ind=base_ind,
             e_lim=e_lim,
+            parameter_metadata=parameter_metadata,
+            initial_state=[init_values],
+            energy=(self.energy[e_lim[0] : e_lim[1]] if e_lim else self.energy),
+            time=time_view,
             conf_ci=conf_ci if not conf_ci.empty else None,
             correl=correl,
             mcmc=mcmc,
@@ -3535,7 +3699,7 @@ class File:
         time_point: float | None,
         time_range: list[float] | None,
         time_type: str,
-        fit_settings: dict[str, Any] | None = None,
+        fit_settings: dict[str, Any],
     ) -> fit_io.SavedFitSlot | None:
         """Build and append a SavedFitSlot for a completed spectrum fit."""
 
@@ -3607,10 +3771,20 @@ class File:
         conf_ci = fit_out.conf_ci
         correl = ulmfit.correl_from_result(result_fin)
         mcmc = fit_io._mcmc_payload(fit_out.emcee_fin, fit_out.emcee_ci)
+        assert fit_out.par_ini is not None  # type guard (file-scope fits seed)
+        parameter_metadata, init_values = fit_io.params_identity(fit_out.par_ini)
+        time_view = (
+            self.time[self.spec_t_ind[0] : self.spec_t_ind[1]]
+            if self.time is not None and self.spec_t_ind
+            else None
+        )
         slot = fit_io._slot_from_spectrum(
             **self._slot_capture_meta(result_fin),
             model_name=model_name,
-            yaml_filename=self.model_spec.yaml_f_name,
+            model_structure=fit_io.encode_model_structure(
+                [self._model_structure_entry(self.model_spec)]
+            ),
+            model_yaml=_model_yaml_records(self.model_spec),
             params_df=params_df,
             observed=observed,
             fit=fit_arr,
@@ -3618,6 +3792,10 @@ class File:
             time_range=time_range,
             time_type=time_type,
             e_lim=e_lim,
+            parameter_metadata=parameter_metadata,
+            initial_state=[init_values],
+            energy=(self.energy[e_lim[0] : e_lim[1]] if e_lim else self.energy),
+            time=time_view,
             conf_ci=conf_ci if not conf_ci.empty else None,
             correl=correl,
             mcmc=mcmc,
@@ -3635,7 +3813,7 @@ class File:
         *,
         model_name: str,
         fit_fun_str: str,
-        fit_settings: dict[str, Any] | None = None,
+        fit_settings: dict[str, Any],
     ) -> fit_io.SavedFitSlot | None:
         """
         Build and append a SavedFitSlot for a completed slice-by-slice fit.
@@ -3738,15 +3916,26 @@ class File:
             slice0_result.params, col_type=["name", "vary", "min", "max", "expr"]
         )
         params_stderr = ulmfit.list_of_par_stderr_to_df(self.results_sbs)
+        # Identity: shared metadata from slice 0 (one model, one vary set
+        # for every slice); the initial-state matrix is per-slice seeds.
+        parameter_metadata, _ = fit_io.params_identity(self.results_sbs[0].par_ini)
+        initial_state = [fit_io.params_identity(r.par_ini)[1] for r in self.results_sbs]
         slot = fit_io._slot_from_sbs(
             **self._slot_capture_meta(slice0_result),
             model_name=model_name,
-            yaml_filename=self.model_sbs.yaml_f_name,
+            model_structure=fit_io.encode_model_structure(
+                [self._model_structure_entry(self.model_sbs)]
+            ),
+            model_yaml=_model_yaml_records(self.model_sbs),
             params_df=params_df,
             observed=observed,
             fit=fit_arr,
             e_lim=e_lim,
             t_lim=None,
+            parameter_metadata=parameter_metadata,
+            initial_state=initial_state,
+            energy=(self.energy[e_lim[0] : e_lim[1]] if e_lim else self.energy),
+            time=self.time,
             conf_ci=slice0_conf_ci if not slice0_conf_ci.empty else None,
             correl=slice0_correl,
             mcmc=slice0_mcmc,
@@ -3767,7 +3956,7 @@ class File:
         *,
         model_name: str,
         fit_fun_str: str,
-        fit_settings: dict[str, Any] | None = None,
+        fit_settings: dict[str, Any],
     ) -> fit_io.SavedFitSlot | None:
         """Build and append a SavedFitSlot for a completed 2D global fit."""
 
@@ -3786,13 +3975,19 @@ class File:
         *,
         model_name: str,
         fit_fun_str: str,
-        fit_settings: dict[str, Any] | None = None,
+        fit_settings: dict[str, Any],
+        joint_identity: tuple[str, str] | None = None,
+        joint_model_structure: str | None = None,
     ) -> fit_io.SavedFitSlot | None:
         """
         Build a SavedFitSlot for a completed 2D global fit without
         publishing it. ``Project.fit_2d`` builds all projection slots (and
         the joint record) before appending anything, so a capture failure
-        publishes neither history.
+        publishes neither history. On that joint path it passes
+        ``joint_identity`` (the bundle's ``(optimization_hash,
+        input_files)``) and ``joint_model_structure`` (the N-file
+        structure); a file-scope fit passes neither and the local identity
+        chain is computed from this fit's own captured state.
         """
 
         assert self.model_2d is not None  # type guard
@@ -3857,15 +4052,36 @@ class File:
         # mirroring the per-file absence of stderr / conf_ci.
         correl = ulmfit.correl_from_result(result_fin)
         mcmc = fit_io._mcmc_payload(fit_out.emcee_fin, fit_out.emcee_ci)
+        parameter_metadata = None
+        initial_state = None
+        if joint_identity is None:
+            assert fit_out.par_ini is not None  # type guard (file-scope seeds)
+            parameter_metadata, init_values = fit_io.params_identity(fit_out.par_ini)
+            initial_state = [init_values]
+            model_structure = fit_io.encode_model_structure(
+                [self._model_structure_entry(self.model_2d)]
+            )
+        else:
+            assert joint_model_structure is not None  # type guard
+            model_structure = joint_model_structure
+        time_view = None
+        if self.time is not None:
+            time_view = self.time[t_lim[0] : t_lim[1]] if t_lim else self.time
         slot = fit_io._slot_from_2d(
             **self._slot_capture_meta(result_fin),
             model_name=model_name,
-            yaml_filename=self.model_2d.yaml_f_name,
+            model_structure=model_structure,
+            model_yaml=_model_yaml_records(self.model_2d),
             params_df=params_df,
             observed=observed,
             fit=fit_arr,
             e_lim=e_lim,
             t_lim=t_lim,
+            parameter_metadata=parameter_metadata,
+            initial_state=initial_state,
+            joint_identity=joint_identity,
+            energy=(self.energy[e_lim[0] : e_lim[1]] if e_lim else self.energy),
+            time=time_view,
             conf_ci=conf_ci if not conf_ci.empty else None,
             correl=correl,
             mcmc=mcmc,
@@ -4233,7 +4449,9 @@ class File:
                 model_name=model_name,
                 fit_fun_str=_fun_str,
                 fit_settings=fit_io.build_fit_settings(
-                    stages=stages, fit_wrapper_kwargs=fit_wrapper_kwargs
+                    stages=stages,
+                    backend=_effective_backend(_fun_str, _args),
+                    fit_wrapper_kwargs=fit_wrapper_kwargs,
                 ),
             )
 
@@ -4582,7 +4800,7 @@ class File:
         Sugar for ``self.p.results.compare_models(file=self, models=...)``.
         Pass model names as positional arguments; omit them to include
         every model fit on this file. See :meth:`FitResults.compare_models`
-        for the full kwarg semantics, the defensive ``observed_sha256``
+        for the full kwarg semantics, the defensive ``fit_view_sha256``
         cross-check, and the dynamic column set driven by whether a sigma
         was set via :meth:`File.set_sigma`.
 

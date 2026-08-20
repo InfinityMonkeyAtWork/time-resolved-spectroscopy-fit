@@ -37,7 +37,7 @@ import pytest
 from _utils import make_project, simulate_noisy
 from roundtrip.families import FAMILIES
 
-from trspecfit import FitResults
+from trspecfit import File, FitResults
 from trspecfit.utils.fit_io import SavedFitSlot
 
 
@@ -101,9 +101,12 @@ def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> 
     assert loaded.fit_type == original.fit_type
     assert loaded.selection_json == original.selection_json
     assert loaded.selection == original.selection
-    assert loaded.history_key == original.history_key
-    assert loaded.observed_sha256 == original.observed_sha256
-    assert loaded.file_fingerprint == original.file_fingerprint
+    assert loaded.handle == original.handle
+    assert loaded.optimization_hash == original.optimization_hash
+    assert loaded.input_files == original.input_files
+    assert loaded.model_structure == original.model_structure
+    assert loaded.fit_view_sha256 == original.fit_view_sha256
+    assert loaded.joint_ref == original.joint_ref
 
     # --- arrays --------------------------------------------------------
     np.testing.assert_array_equal(loaded.observed, original.observed)
@@ -122,6 +125,8 @@ def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> 
             np.testing.assert_allclose(
                 loaded.metrics[k], original.metrics[k], rtol=0, atol=0, equal_nan=True
             )
+            # Per-slice metric arrays are frozen like every read array.
+            assert not loaded.metrics[k].flags.writeable
     else:
         for k in metric_keys:
             orig_v = original.metrics[k]
@@ -179,8 +184,18 @@ def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> 
 
     # --- provenance ----------------------------------------------------
     assert loaded.fit_alg == original.fit_alg
-    assert loaded.yaml_filename == original.yaml_filename
+    assert loaded.model_yaml == original.model_yaml
+    assert loaded.label == original.label
     assert loaded.timestamp == original.timestamp
+
+    # --- correction snapshots -------------------------------------------
+    for corr in ("dark", "calibration"):
+        orig_corr = getattr(original, corr)
+        loaded_corr = getattr(loaded, corr)
+        if orig_corr is None:
+            assert loaded_corr is None
+        else:
+            np.testing.assert_array_equal(loaded_corr, orig_corr)
 
     # --- components (schema 4; None for 2d) -----------------------------
     if original.fit_type == "2d":
@@ -527,11 +542,11 @@ def test_multi_slot_roundtrip(tmp_path) -> None:
     loaded = FitResults.load(archive_path)
     assert len(loaded) == 3
 
-    # Match loaded slots to originals by history_key (order-independent).
-    by_key = {s.history_key: s for s in loaded}
+    # Match loaded slots to originals by handle (order-independent).
+    by_key = {s.handle: s for s in loaded}
     for original in project._fit_history:
-        assert original.history_key in by_key
-        _assert_slot_round_tripped(by_key[original.history_key], original)
+        assert original.handle in by_key
+        _assert_slot_round_tripped(by_key[original.handle], original)
 
 
 # ---------------------------------------------------------------------------
@@ -568,213 +583,128 @@ def test_correl_roundtrip(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# schema-version compatibility
+# joint-bundle round-trip
 # ---------------------------------------------------------------------------
 
 
 #
-def _downgrade_archive_to_v2(archive_path) -> None:
-    """Rewrite a schema-4 archive as schema 2 in place: relabel the version
-    and delete the schema-3 additions (slot ``correl`` / ``params_meta`` /
-    ``params_stderr`` datasets, ``fit_settings`` attr, mcmc
-    ``acceptance_fraction``) plus the schema-4 additions (``components`` /
-    ``component_names``) so the payload matches what a v2 writer produced."""
+def _build_joint_project(*, noise_level: float = 0.05):
+    """Two-file project ready for ``Project.fit_2d`` (shared tau, per-file A).
 
-    import h5py
+    Compact version of ``test_project_fit._make_shared_tau_project``:
+    per-file baseline fit (result injection), then the shared 2D model
+    with dynamics. Noisy data so leastsq produces a covariance.
+    """
 
-    from trspecfit.utils.hdf5 import require_group
-
-    with h5py.File(archive_path, "r+") as h5:
-        require_group(h5["metadata"], "metadata").attrs["schema_version"] = "2"
-        files_group = require_group(h5["files"], "files")
-        for f_key in files_group:
-            slots_obj = require_group(files_group[f_key], f_key).get("slots")
-            if slots_obj is None:
-                continue
-            slots = require_group(slots_obj, "slots")
-            for s_key in slots:
-                sg = require_group(slots[s_key], s_key)
-                for ds in (
-                    "correl",
-                    "params_meta",
-                    "params_stderr",
-                    "components",
-                    "component_names",
-                ):
-                    if ds in sg:
-                        del sg[ds]
-                meta = require_group(sg["metadata"], "metadata")
-                if "fit_settings" in meta.attrs:
-                    del meta.attrs["fit_settings"]
-                if "mcmc" in sg:
-                    mcmc_group = require_group(sg["mcmc"], "mcmc")
-                    if "acceptance_fraction" in mcmc_group:
-                        del mcmc_group["acceptance_fraction"]
-
-
-#
-def _downgrade_archive_to_v3(archive_path) -> None:
-    """Rewrite a schema-4 archive as schema 3 in place: relabel the version
-    and delete only the schema-4 additions (slot ``components`` /
-    ``component_names``), keeping every schema-3 field intact."""
-
-    import h5py
-
-    from trspecfit.utils.hdf5 import require_group
-
-    with h5py.File(archive_path, "r+") as h5:
-        require_group(h5["metadata"], "metadata").attrs["schema_version"] = "3"
-        files_group = require_group(h5["files"], "files")
-        for f_key in files_group:
-            slots_obj = require_group(files_group[f_key], f_key).get("slots")
-            if slots_obj is None:
-                continue
-            slots = require_group(slots_obj, "slots")
-            for s_key in slots:
-                sg = require_group(slots[s_key], s_key)
-                for ds in ("components", "component_names"):
-                    if ds in sg:
-                        del sg[ds]
+    project = make_project(name="joint_roundtrip")
+    for i, (amplitude, seed) in enumerate([(20.0, 42), (14.0, 43)]):
+        truth_project = make_project(name="truth")
+        truth = File(parent_project=truth_project)
+        truth.energy = np.linspace(83, 87, 30)
+        truth.time = np.linspace(-2, 10, 24)
+        truth.dim = 2
+        truth.load_model(
+            model_yaml="models/project_energy.yaml", model_info="project_glp"
+        )
+        truth.add_time_dependence(
+            target_model="project_glp",
+            target_parameter="GLP_01_x0",
+            dynamics_yaml="models/project_time.yaml",
+            dynamics_model=["MonoExpProject"],
+        )
+        truth.model_active.lmfit_pars["GLP_01_A"].value = amplitude
+        data = simulate_noisy(truth.model_active, noise_level=noise_level, seed=seed)
+        file = File(
+            parent_project=project,
+            name=f"file_{i}",
+            data=data,
+            energy=truth.energy.copy(),
+            time=truth.time.copy(),
+        )
+        file.load_model(
+            model_yaml="models/project_energy.yaml", model_info="project_glp_base"
+        )
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+        file.fit_baseline(model_name="project_glp_base", stages=1, try_ci=0)
+        file.load_model(
+            model_yaml="models/project_energy.yaml", model_info="project_glp"
+        )
+        file.add_time_dependence(
+            target_model="project_glp",
+            target_parameter="GLP_01_x0",
+            dynamics_yaml="models/project_time.yaml",
+            dynamics_model=["MonoExpProject"],
+        )
+    return project
 
 
 #
-def _downgrade_archive_to_v4(archive_path) -> None:
-    """Rewrite a schema-5 archive as schema 4 in place: relabel the version
-    and delete only the schema-5 addition (per-file ``aux_axis`` dataset),
-    keeping every schema-4 field intact."""
+@pytest.mark.slow
+def test_joint_bundle_roundtrip(tmp_path) -> None:
+    """A project-level joint fit round-trips as one bundle.
 
-    import h5py
+    One ``joint/`` record plus one projection per file: identity fields,
+    combined parameter table, whole-objective metrics, joint correlation,
+    parameter maps, and the projection slots resolving to the same
+    objects stored under ``files``. Also exercises save-filter bundle
+    expansion: saving ``file="file_0"`` must pull in the sibling
+    projection and the joint record (a joint bundle is saved whole),
+    while file_1's baseline fit stays filtered out.
+    """
 
-    from trspecfit.utils.hdf5 import require_group
+    project = _build_joint_project()
+    record = project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
+    assert record.correl is not None  # type guard
 
-    with h5py.File(archive_path, "r+") as h5:
-        require_group(h5["metadata"], "metadata").attrs["schema_version"] = "4"
-        files_group = require_group(h5["files"], "files")
-        for f_key in files_group:
-            fg = require_group(files_group[f_key], f_key)
-            if "aux_axis" in fg:
-                del fg["aux_axis"]
-
-
-#
-def _downgrade_archive_to_v5(archive_path) -> None:
-    """Rewrite a schema-6 archive as schema 5 in place: relabel the version
-    and delete only the schema-6 additions (slot ``fit_ini`` /
-    ``params_init``), keeping every schema-5 field intact."""
-
-    import h5py
-
-    from trspecfit.utils.hdf5 import require_group
-
-    with h5py.File(archive_path, "r+") as h5:
-        require_group(h5["metadata"], "metadata").attrs["schema_version"] = "5"
-        files_group = require_group(h5["files"], "files")
-        for f_key in files_group:
-            slots_obj = require_group(files_group[f_key], f_key).get("slots")
-            if slots_obj is None:
-                continue
-            slots = require_group(slots_obj, "slots")
-            for s_key in slots:
-                sg = require_group(slots[s_key], s_key)
-                for ds in ("fit_ini", "params_init"):
-                    if ds in sg:
-                        del sg[ds]
-
-
-#
-def test_reader_accepts_schema_v2_archive(tmp_path) -> None:
-    """Schema 3 is additive, so v2 archives must still load — with the
-    schema-3 fields (``correl``, mcmc ``acceptance_fraction``) as None."""
-
-    _, fit_file, family = _build_fit_file("F1")
-    fit_file.fit_baseline(
-        model_name=family.model_name("default"),
-        stages=1,
-        fit_alg_1="leastsq",
-        try_ci=0,
-    )
-    archive_path = tmp_path / "v2.fit.h5"
-    fit_file.p.save_fits(archive_path, show_output=0)
-    _downgrade_archive_to_v2(archive_path)
+    archive_path = tmp_path / "joint.fit.h5"
+    project.save_fits(archive_path, file="file_0", show_output=0)
 
     loaded = FitResults.load(archive_path)
-    assert len(loaded) == 1
-    slot = next(iter(loaded))
-    assert slot.correl is None
-    assert slot.params_meta is None
-    assert slot.params_stderr is None
-    assert slot.fit_settings is None
-    original = fit_file.p._fit_history[0]
-    _assert_params_equal(slot.params, original.params, fit_type="baseline")
+    assert {(s.file_name, s.fit_type) for s in loaded} == {
+        ("file_0", "baseline"),
+        ("file_0", "2d"),
+        ("file_1", "2d"),
+    }
+    (jrec,) = loaded.find_joint()
+    assert loaded.get_joint(model="project_glp") is jrec
+    assert jrec.optimization_hash == record.optimization_hash
+    assert jrec.input_files == record.input_files
+    assert jrec.model_structure == record.model_structure
+    assert jrec.fit_alg == record.fit_alg
+    _assert_params_equal(jrec.params, record.params, fit_type="2d")
+    _assert_optional_df_equal(jrec.correl, record.correl, label="joint.correl")
+    # The six whole-objective metrics round-trip; r2 is omitted on disk
+    # and rehydrates as NaN (it is NaN on the live record too).
+    for key in ("chi2_raw", "chi2_red_raw", "chi2", "chi2_red", "aic", "bic"):
+        live_v, loaded_v = record.metrics[key], jrec.metrics[key]
+        assert (np.isnan(live_v) and np.isnan(loaded_v)) or loaded_v == live_v, key
+    assert np.isnan(jrec.metrics["r2"])
+
+    # Projections resolve by handle to the same slot objects under files;
+    # each carries the bundle reference and its per-file payload.
+    loaded_2d = {s.file_name: s for s in loaded if s.fit_type == "2d"}
+    for live_proj, loaded_proj in zip(
+        record.projections, jrec.projections, strict=True
+    ):
+        slot = loaded_proj.slot
+        assert slot is loaded_2d[slot.file_name]
+        assert slot.handle == live_proj.slot.handle
+        assert slot.joint_ref == jrec.optimization_hash
+        assert loaded_proj.parameter_map == dict(live_proj.parameter_map)
+        # The map recovers local names from combined ones by lookup.
+        assert set(loaded_proj.parameter_map.values()) == set(slot.params["name"])
+        # Count-dependent metrics do not decompose by file: NaN on disk
+        # and after rehydration alike.
+        for key in ("chi2_red_raw", "chi2_red", "aic", "bic"):
+            assert np.isnan(slot.metrics[key]), key
+        assert np.isfinite(slot.metrics["chi2_raw"])
 
 
-#
-def test_reader_accepts_schema_v3_archive(tmp_path) -> None:
-    """Schema 4 is additive, so v3 archives must still load — with
-    components/component_names as None, and FitResults.plot_fit falling
-    back to the lean sum-only rendering (no live Model needed)."""
-
-    _, fit_file, family = _build_fit_file("F1")
-    fit_file.fit_baseline(model_name=family.model_name("default"), stages=1, try_ci=0)
-    archive_path = tmp_path / "v3.fit.h5"
-    fit_file.p.save_fits(archive_path, show_output=0)
-    _downgrade_archive_to_v3(archive_path)
-
-    loaded = FitResults.load(archive_path)
-    assert len(loaded) == 1
-    slot = next(iter(loaded))
-    assert slot.components is None
-    assert slot.component_names is None
-
-    import matplotlib.pyplot as plt
-
-    try:
-        loaded.plot_fit(file=slot.file_name, fit_type="baseline", show_plot=False)
-    finally:
-        plt.close("all")
-
-
-#
-def test_reader_accepts_schema_v4_archive(tmp_path) -> None:
-    """Schema 5 is additive, so v4 archives must still load — with the
-    per-file ``aux_axis`` as None (checked via the loaded axes provider)."""
-
-    _, fit_file, family = _build_fit_file("F6")
-    fit_file.fit_baseline(model_name=family.model_name("default"), stages=1, try_ci=0)
-    archive_path = tmp_path / "v4.fit.h5"
-    fit_file.p.save_fits(archive_path, show_output=0)
-    _downgrade_archive_to_v4(archive_path)
-
-    loaded = FitResults.load(archive_path)
-    assert len(loaded) == 1
-    provider = loaded._provider_for(next(iter(loaded)))
-    assert provider.aux_axis is None
-
-
-#
-def test_reader_accepts_schema_v5_archive(tmp_path) -> None:
-    """Schema 6 is additive, so v5 archives must still load — with
-    fit_ini/params_init as None, and FitResults.plot_fit simply omitting
-    the initial-guess overlay in that case."""
-
-    _, fit_file, family = _build_fit_file("F1")
-    fit_file.fit_baseline(model_name=family.model_name("default"), stages=1, try_ci=0)
-    archive_path = tmp_path / "v5.fit.h5"
-    fit_file.p.save_fits(archive_path, show_output=0)
-    _downgrade_archive_to_v5(archive_path)
-
-    loaded = FitResults.load(archive_path)
-    assert len(loaded) == 1
-    slot = next(iter(loaded))
-    assert slot.fit_ini is None
-    assert slot.params_init is None
-
-    import matplotlib.pyplot as plt
-
-    try:
-        loaded.plot_fit(file=slot.file_name, fit_type="baseline", show_plot=False)
-    finally:
-        plt.close("all")
+# ---------------------------------------------------------------------------
+# schema-version compatibility
+# ---------------------------------------------------------------------------
 
 
 #

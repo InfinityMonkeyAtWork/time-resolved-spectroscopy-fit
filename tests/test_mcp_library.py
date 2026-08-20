@@ -964,10 +964,11 @@ class TestMCPPickling:
         file.model_active.create_value_1d()
         assert file.model_active.value_1d is not None  # type guard
         file.data_base = file.model_active.value_1d.copy()
-        # file.data backs the fingerprint used for slot capture — without it
-        # the fit completes but records no slot, and the slot-backed get_*
-        # accessors have nothing to read.
+        # file.data / file.data_raw back the content hash used for slot
+        # capture — without them the fit completes but records no slot,
+        # and the slot-backed get_* accessors have nothing to read.
         file.data = file.model_active.value_1d.copy()
+        file.data_raw = file.data.copy()
         file.e_lim = [0, len(file.energy)]
         return file
 
@@ -1267,7 +1268,9 @@ class TestMCPPickling:
         file.model_active.create_value_1d()
         assert file.model_active.value_1d is not None  # type guard
         file.data_base = file.model_active.value_1d.copy()
-        file.data = file.model_active.value_1d.copy()  # fingerprint for slot capture
+        # content hash for slot capture
+        file.data = file.model_active.value_1d.copy()
+        file.data_raw = file.data.copy()
         file.e_lim = [0, len(file.energy)]
 
         mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1)

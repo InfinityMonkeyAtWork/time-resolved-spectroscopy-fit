@@ -327,10 +327,15 @@ enforcement of alignment, so writing one and forgetting another produces a
 silently mismatched record. Attaching each snippet's metadata to the snippet
 makes misalignment unrepresentable.
 
-**Text is ruamel round-trip output for that key's subtree**, not a verbatim byte
-slice of the source file. Slicing a top-level key out of a YAML file by byte
-range is fiddly; ruamel's round-trip mode preserves comments and ordering, which
-is what makes the snippet readable provenance.
+**Text is a verbatim slice of the source file at top-level key boundaries**
+(column-0 keys; trailing blank lines dropped). An earlier draft specified
+ruamel round-trip output, but round-trip mode cannot load these files:
+component numbering deliberately allows duplicate mapping keys inside one
+model (two `GLP:` entries), which strict YAML loaders reject and lenient ones
+silently collapse to a single entry — a provenance snippet missing a component
+is worse than a byte slice. The verbatim slice keeps comments and ordering
+byte-faithful, which was the round-trip mode's rationale anyway
+(`uparsing.dump_yaml_subtrees`, corrected 2026-08-14).
 
 **These datasets are not compressed**, unlike the array datasets. HDF5 filters
 require chunked storage and scalar datasets cannot be chunked; even for a 1D
@@ -481,16 +486,24 @@ project; the project-level 2D plot's `files_2d[0].plot_config` hack and
 
 Still open:
 
-- **A corrected-data reconstruction helper in `utils/`**, imported by both
-  `fit_results` and `trspecfit` rather than owned by either. Needed for
-  `full_range=True`, which shows corrected data outside the fit window where
-  nothing is stored.
+- **A corrected-data reconstruction helper in `utils/`** — **landed
+  2026-08-14** as `utils.arrays.apply_corrections`, imported by both
+  `fit_results` (full-range reconstruction from `SavedFile.data_raw` + the
+  slot's correction snapshots) and `trspecfit` (`File._apply_corrections`).
 - **`select=` replaces `collapse=` / `which_one=`** on `save_fits` (default
   `"all"`) and `export_fits` (default `"latest"`), accepting `"all"`,
   `"latest"`, `"best"` + `by=`, a handle or prefix, or a label. `"latest"` and
   `"best"` resolve within each `(file, model, fit_type)` group.
 - **`frequency` becomes persisted state.** It reaches the archive through
   `model_structure`; today it is stored nowhere.
+- **The optimizer seed producer.** The identity slot exists
+  (`encode_optimizer_settings` keys `seed` only when supplied) but no fit
+  API accepts one and `fitlib._method_kws` forwards none — a user cannot
+  yet make a stochastic run reproducible or give two runs distinct
+  identities. Wiring: fit-API `seed=` → `fit_wrapper` → per-method
+  forwarding → `fit_settings["seed"]`. Until then the unseeded case is
+  handled by the collision rules (principles §"One rule, both
+  boundaries").
 
 ## Prerequisites
 

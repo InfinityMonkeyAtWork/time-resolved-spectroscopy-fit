@@ -13,11 +13,10 @@ at the moment of construction. ``Project.results`` returns a fresh wrapper per
 access (``FitResults(slots=list(self._fit_history))``); subsequent fits append
 to ``_fit_history`` and do **not** affect previously-returned ``FitResults``.
 
-Slot identity is the framed ``history_key`` — ``(file_name, version
-stamp, model_name, fit_type, selection_json)``; see
-``fit_io.compute_history_key``. Query inputs (``file=...``,
-``model=...``) match the slots' display fields (``file_name``,
-``model_name``) directly.
+Slot identity is the stored ``handle`` — ``sha256(optimization_hash +
+file_name)``; see ``fit_io.compute_slot_handle``. Query inputs
+(``file=...``, ``model=...``) match the slots' display fields
+(``file_name``, ``model_name``) directly.
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 from trspecfit.config.plot import PlotConfig
-from trspecfit.utils.arrays import resolve_time_selection
+from trspecfit.utils.arrays import apply_corrections, resolve_time_selection
 from trspecfit.utils.fit_io import (
     JointFitResult,
     SavedFile,
@@ -113,11 +112,15 @@ def _resolve_file_arg(file: Any) -> str | None:
 
 #
 def _slot_title(slot: SavedFitSlot) -> str:
-    """Plot title from persisted slot metadata: file, model, yaml stem, time."""
+    """Plot title from persisted slot metadata: file, model, yaml, time."""
 
     title = f'{slot.file_name} - "{slot.model_name}" ({slot.fit_type})'
-    if slot.yaml_filename:
-        title += f" [{slot.yaml_filename}]"
+    energy_source = next(
+        (rec.source_file for rec in slot.model_yaml or () if rec.role == "energy"),
+        None,
+    )
+    if energy_source:
+        title += f" [{energy_source}]"
     if slot.fit_type == "spectrum":
         time_point = slot.selection.get("time_point")
         time_range = slot.selection.get("time_range")
@@ -206,7 +209,7 @@ class FitResults:
         # The resolving presentation config: a PlotConfig, never a Project
         # (this module is deliberately a leaf in the import graph).
         # Project.results passes the live project-owned config;
-        # loaded archives carry none until schema 7 persists it.
+        # FitResults.load passes the config decoded from project/.
         self._config: PlotConfig | None = config
         # SavedFile providers own their slots — retain that parent
         # association per slot object, so legacy archives (schemas 2-6
@@ -285,12 +288,26 @@ class FitResults:
         sub-slice of it). ``baseline``/``spectrum`` re-derive the
         time-reduced spectrum (average or single row) from the persisted
         selection, mirroring ``File.fit_baseline``/``File.fit_spectrum``.
+
+        Whenever the provider carries ``data_raw`` (live ``File`` and
+        archive ``SavedFile`` alike), the data this slot consumed is
+        reconstructed from it with the slot's own ``dark`` /
+        ``calibration`` snapshots — corrections are fit-time state, not
+        file state, so a slot fitted before ``subtract_dark()`` must not
+        render against the file's *current* corrected ``data``. The
+        ``.data`` fallback covers only providers without ``data_raw``.
         """
 
-        data = getattr(provider, "data", None)
-        if data is None:
-            return None
-        data = np.asarray(data)
+        data_raw = getattr(provider, "data_raw", None)
+        if data_raw is not None:
+            data = apply_corrections(
+                data_raw, dark=slot.dark, calibration=slot.calibration
+            )
+        else:
+            data_attr = getattr(provider, "data", None)
+            if data_attr is None:
+                return None
+            data = np.asarray(data_attr)
 
         if slot.fit_type in ("sbs", "2d"):
             return data
@@ -407,9 +424,15 @@ class FitResults:
                 if types_filter is not None and slot.fit_type not in types_filter:
                     continue
                 slots.append(slot)
-        # SavedFiles are kept (unfiltered) as axes providers for the plot
-        # methods; each slot resolves to its parent record at plot time.
-        return cls(slots=slots, files=list(project.files))
+        # SavedFiles and joint records are kept (unfiltered) as providers:
+        # each slot resolves to its parent record at plot time, and a
+        # joint record's projections carry their slot objects directly.
+        return cls(
+            slots=slots,
+            files=list(project.files),
+            joint=list(project.joint),
+            config=project.plot_config,
+        )
 
     #
     def __iter__(self) -> Iterator[SavedFitSlot]:
@@ -1413,11 +1436,11 @@ class FitResults:
         ValueError
             If two or more slots in the filtered result share
             ``(file_name, fit_type)`` but disagree on
-            ``observed_sha256``. Same fit type on the same file must run
-            against the same observed grid for AIC/BIC comparisons to be
+            ``fit_view_sha256``. Same fit type on the same file must run
+            against the same fit view for AIC/BIC comparisons to be
             meaningful — typically this happens when the user mixes refits
             with different ``e_lim`` / ``t_lim`` / ``base_t_ind`` /
-            ``time_point``.
+            ``time_point`` or a changed correction state.
         KeyError
             If ``metrics`` requests ``chi2`` / ``chi2_red`` when no matched
             slot has a sigma, or any other unknown metric key for at least
@@ -1450,12 +1473,13 @@ class FitResults:
     def _check_observed_consistency(slots: list[SavedFitSlot]) -> None:
         """
         Raise if two slots in the same ``(file_name, fit_type)`` group
-        disagree on ``observed_sha256``.
+        disagree on ``fit_view_sha256``.
 
-        Different ``observed`` arrays mean different ndata or different data
-        views — AIC/BIC/chi2 across them are not comparable. Catches
-        e_lim/t_lim/base_t_ind/time_point mismatches via the data hash even
-        when ``selection_json`` would also differ.
+        Different fit views mean different ndata, different data, or
+        different axes — AIC/BIC/chi2 across them are not comparable.
+        Catches e_lim/t_lim/base_t_ind/time_point mismatches and
+        correction-state drift via the view hash even when
+        ``selection_json`` would also differ.
 
         ``file_name`` is the identity key (unique and guarded in-session);
         replicate files with byte-identical raw arrays group separately by
@@ -1468,17 +1492,17 @@ class FitResults:
             key = (slot.file_name, slot.fit_type)
             groups.setdefault(key, []).append(slot)
         for (file_name, ft), group in groups.items():
-            shas = {s.observed_sha256 for s in group}
-            if len(shas) > 1:
+            views = {s.fit_view_sha256 for s in group}
+            if len(views) > 1:
                 names = sorted({s.model_name for s in group})
                 raise ValueError(
                     f"Cannot compare fit_type={ft!r} on file="
-                    f"{file_name!r}: {len(shas)} distinct "
-                    f"observed_sha256 across {len(group)} slot(s) "
+                    f"{file_name!r}: {len(views)} distinct "
+                    f"fit_view_sha256 across {len(group)} slot(s) "
                     f"(models={names}). Slots fit against different data "
                     f"views — narrow the filter (or restrict on selection "
                     f"via find()) so all compared slots share the same "
-                    f"observed grid."
+                    f"fit view."
                 )
 
     #

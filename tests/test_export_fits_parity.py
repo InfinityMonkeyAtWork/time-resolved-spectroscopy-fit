@@ -246,15 +246,18 @@ def test_write_csv_export_rejects_removed_dict_config(tmp_path):
     mutation — a partial export after an overwrite clear is the worst
     outcome (mirrors the archive writer's precheck-before-mutation rule)."""
 
+    from trspecfit.config.plot import PlotConfig
     from trspecfit.utils.fit_io import SavedProject, write_csv_export
 
     project = SavedProject(
         name="x",
         trspecfit_version="0",
-        schema_version="6",
+        schema_version="7",
         timestamp_created="",
         timestamp_updated="",
+        plot_config=PlotConfig(),
         files=(),
+        joint=(),
     )
     target = tmp_path / "out"
     with pytest.raises(TypeError, match="removed in v0.14.0"):
