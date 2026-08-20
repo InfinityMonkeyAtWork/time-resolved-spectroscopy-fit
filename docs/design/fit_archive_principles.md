@@ -842,17 +842,18 @@ evidence.
 **One rule, both boundaries.** Two fits with the same hash can meet in two
 places: at in-session collapse, and at the archive. `Project._fit_history` is
 append-only, so both sit in the list, and `collapse_history_to_snapshot`
-reduces to one per key *before* the writer ever runs — a bare dict overwrite
-([fit_io.py:1036](../../src/trspecfit/utils/fit_io.py#L1036)) with no
-comparison and no warning. Today that means an unseeded stochastic fit run
-twice and saved once loses the first result silently, while the same two runs
-with a save in between hit a conflict. Identical user behavior, surfaced only
-if they happened to save in the middle.
+reduces to one per key *before* the writer ever runs. Until v0.14 that
+reduction was a bare dict overwrite with no comparison and no warning: an
+unseeded stochastic fit run twice and saved once lost the first result
+silently, while the same two runs with a save in between hit a conflict —
+identical user behavior, surfaced only if they happened to save in the
+middle.
 
-Collapse applies the same rule as the archive: **divergent parameters under
-one hash raise; `overwrite=True` selects the latest and reports the
-replacement.** Since collapse runs inside `save_fits`, both raises come from
-the same call — one rule, not two that happen to agree.
+Collapse applies the same rule as the archive (**landed 2026-08-14**):
+**divergent parameters under one hash raise; `overwrite=True` selects the
+latest and reports the replacement.** Since collapse runs inside
+`save_fits`, both raises come from the same call — one rule, not two that
+happen to agree.
 
 Two things make the raise the right default rather than a burden:
 

@@ -321,18 +321,28 @@ between B5 and B8; B9–B12 land as separate green commits afterward.
       regression, frozen-array assertions extended (incl. mcmc
       acceptance). Verified: 1149 default + 180 slow, 0 failed;
       ruff/mypy/pyright clean.
-- [ ] **B10.2 Collapse applies the archive collision rule** (review
-      finding 1; own commit right after the B5–B8 commit). Principles
-      §"One rule, both boundaries": divergent fitted parameters under one
-      handle **raise** at collapse — the error names the non-determinism
-      and points at pinning a seed — and `overwrite=True` selects the
-      latest and reports the replacement; same rule for the joint
-      history's `latest_joint`. Uses the B10.1 comparator. Implements the
-      matrix row "in-session collapse applies the same rule as the
-      archive boundary" that B10 deferred. Open sub-decision: the shared
-      builder also serves `export_fits`, whose `overwrite=` means
-      directory overwrite — decide which flag resolves the collapse
-      conflict on the export path.
+- [x] **B10.2 Collapse applies the archive collision rule** — done
+      2026-08-14 (review finding 1; own commit after `735762c`).
+      Principles §"One rule, both boundaries":
+      `collapse_history_to_snapshot` and new
+      `collapse_joint_history_to_snapshot` compare fitted values with the
+      B10.1 comparator on a handle/hash collision — divergence raises
+      `FileExistsError` (the archive's collision type, one `except`
+      covers both boundaries) naming the non-determinism and pointing at
+      pinning a seed; `overwrite=True` keeps the latest and warns.
+      `_build_saved_project_from_history` threads `overwrite` from both
+      callers; the joint collapse runs only over the bundles the save
+      touches. Sub-decision resolved: `export_fits`' `overwrite=` also
+      resolves the collapse conflict — one flag, one meaning ("replace
+      what conflicts"), matching its existing authority to clobber
+      output directories. Implements the deferred matrix row
+      ("in-session collapse applies the same rule as the archive
+      boundary"); principles §"One rule, both boundaries" truth-up
+      (bare-dict-overwrite description → landed). Tests: unit rule
+      (raise / overwrite-keeps-latest-and-warns / within-tolerance
+      silent, slots and joint records) + end-to-end `save_fits` raise
+      and resolution on a forced divergence. Suite 1154 default + 180
+      slow, 0 failed.
 - [ ] **B10.3 Optimizer seed producer** (review finding 2; paired with
       B10.2 — it is the remedy its error message points at). Fit-API
       `seed=` → `fit_wrapper` → per-method forwarding in

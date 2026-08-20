@@ -27,6 +27,7 @@ import copy
 import datetime
 import hashlib
 import json
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -1865,7 +1866,9 @@ def _per_slice_metrics(
 
 
 #
-def collapse_history_to_snapshot(slots: list[SavedFitSlot]) -> list[SavedFitSlot]:
+def collapse_history_to_snapshot(
+    slots: list[SavedFitSlot], *, overwrite: bool = False
+) -> list[SavedFitSlot]:
     """
     Keep the latest slot per ``handle`` (exact-duplicate dedup).
 
@@ -1874,11 +1877,91 @@ def collapse_history_to_snapshot(slots: list[SavedFitSlot]) -> list[SavedFitSlot
     variants (different initial state, settings, or corrections) have
     distinct handles and are all kept; choosing among them is the query
     layer's ``select=``, never a silent collapse.
+
+    Collapse applies the same divergence rule as the archive boundary
+    (fit_archive_principles.md §"One rule, both boundaries"): if two
+    same-handle slots differ in fitted values beyond the named
+    equivalence tolerances, the configuration is not deterministic —
+    raises ``FileExistsError`` (the archive's collision type, so one
+    ``except`` clause covers both boundaries) unless ``overwrite=True``,
+    which keeps the latest run and warns about the replacement. Nothing
+    is ever recomputed: every run stays in the in-session history.
     """
 
     latest: dict[str, SavedFitSlot] = {}
     for slot in slots:
+        stored = latest.get(slot.handle)
+        if stored is not None and not _fitted_values_equivalent(
+            stored.params, slot.params, is_long_params=slot.fit_type != "sbs"
+        ):
+            if not overwrite:
+                raise FileExistsError(
+                    f"Two fits of file {slot.file_name!r} (model "
+                    f"{slot.model_name!r}, fit_type {slot.fit_type!r}) share "
+                    f"handle {slot.handle[:8]} but differ in fitted values — "
+                    f"the optimizer configuration is not deterministic "
+                    f"(identical inputs produced different optima). Pin an "
+                    f"optimizer seed to make re-runs reproducible (a seeded "
+                    f"run is a distinct configuration that never collides), "
+                    f"or pass overwrite=True to keep only the latest run. "
+                    f"Nothing is recomputed: every run remains in the "
+                    f"in-session history."
+                )
+            warnings.warn(
+                f"Divergent re-runs under handle {slot.handle[:8]} (file "
+                f"{slot.file_name!r}): keeping the latest (timestamp "
+                f"{slot.timestamp}) and dropping the earlier result from "
+                f"this save. Every run remains in the in-session history.",
+                UserWarning,
+                stacklevel=2,
+            )
         latest[slot.handle] = slot
+    return list(latest.values())
+
+
+#
+def collapse_joint_history_to_snapshot(
+    records: Sequence[JointFitResult], *, overwrite: bool = False
+) -> list[JointFitResult]:
+    """
+    Keep the latest joint record per ``optimization_hash``.
+
+    Same divergence rule as ``collapse_history_to_snapshot``, applied to
+    the combined parameter table: two same-hash joint records whose
+    fitted values disagree raise unless ``overwrite=True`` (their
+    projection slots share handles pairwise, so the slot-level collapse
+    enforces the same rule per file).
+    """
+
+    latest: dict[str, JointFitResult] = {}
+    for jr in records:
+        stored = latest.get(jr.optimization_hash)
+        if stored is not None and not _fitted_values_equivalent(
+            stored.params, jr.params, is_long_params=True
+        ):
+            if not overwrite:
+                raise FileExistsError(
+                    f"Two joint fits of model {jr.model_name!r} share "
+                    f"optimization hash {jr.optimization_hash[:8]} but "
+                    f"differ in fitted values — the optimizer configuration "
+                    f"is not deterministic (identical inputs produced "
+                    f"different optima). Pin an optimizer seed to make "
+                    f"re-runs reproducible (a seeded run is a distinct "
+                    f"configuration that never collides), or pass "
+                    f"overwrite=True to keep only the latest run. Nothing "
+                    f"is recomputed: every run remains in the in-session "
+                    f"history."
+                )
+            warnings.warn(
+                f"Divergent joint re-runs under optimization hash "
+                f"{jr.optimization_hash[:8]} (model {jr.model_name!r}): "
+                f"keeping the latest (timestamp {jr.timestamp}) and "
+                f"dropping the earlier result from this save. Every run "
+                f"remains in the in-session history.",
+                UserWarning,
+                stacklevel=2,
+            )
+        latest[jr.optimization_hash] = jr
     return list(latest.values())
 
 

@@ -439,13 +439,21 @@ class Project:
             Slot-scoped: required when a stored slot's fitted parameters
             differ from the incoming ones, or when an attachment
             (``conf_ci`` / ``correl`` / ``mcmc``) is present on both sides
-            — see ``fit_io.write_archive`` for the collision rules.
+            — see ``fit_io.write_archive`` for the collision rules. The
+            same flag resolves an in-session divergence at collapse: two
+            re-runs of one configuration with differing results (a
+            non-deterministic, unseeded optimizer) raise by default and
+            keep the latest with a warning under ``overwrite=True``.
         show_output : int, default 1
             ``0`` to silence the per-call summary line.
         """
 
         project = self._build_saved_project_from_history(
-            file=file, model=model, fit_type=fit_type, expand_joint_bundles=True
+            file=file,
+            model=model,
+            fit_type=fit_type,
+            expand_joint_bundles=True,
+            overwrite=overwrite,
         )
         if project is None:
             if show_output:
@@ -507,6 +515,11 @@ class Project:
             Per-slot directory: a non-empty target dir raises
             ``FileExistsError`` unless True. Pre-checked across all slots
             before any writes (single conflict aborts the entire export).
+            Like ``save_fits``, the same flag resolves an in-session
+            divergence at collapse (two re-runs of one configuration
+            with differing results keep the latest under
+            ``overwrite=True``) — one flag, one meaning: replace what
+            conflicts.
         show_output : int, default 1
             ``0`` to silence the per-call summary line.
 
@@ -540,7 +553,11 @@ class Project:
             )
 
         project = self._build_saved_project_from_history(
-            file=file, model=model, fit_type=fit_type, expand_joint_bundles=False
+            file=file,
+            model=model,
+            fit_type=fit_type,
+            expand_joint_bundles=False,
+            overwrite=overwrite,
         )
         if project is None:
             if show_output:
@@ -574,6 +591,7 @@ class Project:
         model: str | Sequence[str] | None,
         fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None,
         expand_joint_bundles: bool,
+        overwrite: bool,
     ) -> fit_io.SavedProject | None:
         """
         Apply the standard filter + collapse pipeline to ``_fit_history``
@@ -583,6 +601,13 @@ class Project:
         emit a "nothing to do" message and short-circuit. Used by
         :meth:`save_fits` and :meth:`export_fits` so both go through the
         identical filter / collapse / file-grouping logic.
+
+        ``overwrite`` resolves in-session divergence at collapse: two
+        re-runs of one configuration with differing fitted values (a
+        non-deterministic optimizer) raise by default and keep the
+        latest with a warning under ``overwrite=True`` — the same rule
+        and the same flag as the archive-boundary collision
+        (fit_archive_principles.md §"One rule, both boundaries").
 
         With ``expand_joint_bundles=True`` (the archive path), a filter
         that touches any slot of a joint bundle silently expands to the
@@ -615,14 +640,19 @@ class Project:
             filtered.append(slot)
 
         # Expand to whole joint bundles: latest record per optimization
-        # hash, then every sibling projection of each touched bundle.
+        # hash (divergence rule applied to the bundles this save touches),
+        # then every sibling projection of each touched bundle.
         joint_records: list[fit_io.JointFitResult] = []
         if expand_joint_bundles:
-            latest_joint: dict[str, fit_io.JointFitResult] = {}
-            for jr in self._joint_fit_history:
-                latest_joint[jr.optimization_hash] = jr
             touched = {s.joint_ref for s in filtered if s.joint_ref is not None}
-            joint_records = [jr for h, jr in latest_joint.items() if h in touched]
+            joint_records = fit_io.collapse_joint_history_to_snapshot(
+                [
+                    jr
+                    for jr in self._joint_fit_history
+                    if jr.optimization_hash in touched
+                ],
+                overwrite=overwrite,
+            )
             selected_handles = {s.handle for s in filtered}
             for jr in joint_records:
                 for proj in jr.projections:
@@ -630,7 +660,7 @@ class Project:
                         filtered.append(proj.slot)
                         selected_handles.add(proj.slot.handle)
 
-        snapshot = fit_io.collapse_history_to_snapshot(filtered)
+        snapshot = fit_io.collapse_history_to_snapshot(filtered, overwrite=overwrite)
         if not snapshot:
             return None
 

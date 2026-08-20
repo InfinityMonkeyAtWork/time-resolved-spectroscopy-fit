@@ -36,6 +36,8 @@ from trspecfit.utils.fit_io import (
     _compute_sigma_eff,
     build_selection_json,
     capture_saved_file,
+    collapse_history_to_snapshot,
+    collapse_joint_history_to_snapshot,
     compute_file_content_hash,
     compute_optimization_hash,
     compute_slot_handle,
@@ -98,6 +100,25 @@ def _setup_baseline_fit():
     file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
     file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
     return project, file
+
+
+#
+def _fit_file_with_seed():
+    """(project, file, model, seed values) ready for a baseline fit.
+
+    Fits write their output back into the live model, so an exact re-run
+    needs the captured seed restored via ``model.update_value(seed)``.
+    """
+
+    truth_project = make_project(name="truth")
+    truth = _make_truth_file(truth_project)
+    data = simulate_noisy(truth.model_active, noise_level=0.01)
+    project = make_project(name="fit")
+    file = _make_fit_file(project, data, truth.energy, truth.time)
+    file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
+    model = next(m for m in file.models if m.name == "single_glp")
+    seed = [p.value for p in model.lmfit_pars.values()]
+    return project, file, model, seed
 
 
 #
@@ -307,28 +328,11 @@ class TestIdentityCapture:
         )
 
     #
-    @staticmethod
-    def _fit_file_with_seed():
-        """(project, file, model, seed values) ready for a baseline fit."""
-
-        truth_project = make_project(name="truth")
-        truth = _make_truth_file(truth_project)
-        data = simulate_noisy(truth.model_active, noise_level=0.01)
-        project = make_project(name="fit")
-        file = _make_fit_file(project, data, truth.energy, truth.time)
-        file.define_baseline(
-            time_start=0, time_stop=3, time_type="ind", show_plot=False
-        )
-        model = next(m for m in file.models if m.name == "single_glp")
-        seed = [p.value for p in model.lmfit_pars.values()]
-        return project, file, model, seed
-
-    #
     def test_identical_rerun_shares_handle(self):
         """An exact re-run (same seed, settings, view, data) is not a new
         variant — it shares the handle and dedups at collapse."""
 
-        project, file, model, seed = self._fit_file_with_seed()
+        project, file, model, seed = _fit_file_with_seed()
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
         model.update_value(seed)  # fits write back; restore the exact seed
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
@@ -338,7 +342,7 @@ class TestIdentityCapture:
 
     #
     def test_vary_flip_mints_distinct_slot(self):
-        project, file, model, seed = self._fit_file_with_seed()
+        project, file, model, seed = _fit_file_with_seed()
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
         model.update_value(seed)
         model.lmfit_pars["GLP_01_x0"].vary = False
@@ -349,7 +353,7 @@ class TestIdentityCapture:
 
     #
     def test_bound_change_mints_distinct_slot(self):
-        project, file, model, seed = self._fit_file_with_seed()
+        project, file, model, seed = _fit_file_with_seed()
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
         model.update_value(seed)
         par_A = model.lmfit_pars["GLP_01_A"]
@@ -2755,6 +2759,116 @@ class TestHistoryAccumulationAndSnapshot:
         # clock resolution.
         loaded_single = next(s for s in loaded if s.model_name == "single_glp")
         assert loaded_single.timestamp == "2026-01-01T00:00:01+00:00"
+
+
+#
+# --- in-session collapse applies the archive collision rule ------------------
+#
+
+
+#
+class TestCollapseCollisionRule:
+    """Divergent fitted values under one handle raise at collapse;
+    ``overwrite=True`` keeps the latest and warns — the same rule and the
+    same flag as the archive boundary (fit_archive_principles.md §"One
+    rule, both boundaries")."""
+
+    #
+    @staticmethod
+    def _divergent_pair(value_second=2.0):
+        """Two same-handle slots whose fitted values differ."""
+
+        import dataclasses
+
+        base = _slot_stub()
+        first = dataclasses.replace(
+            base,
+            params=pd.DataFrame({"name": ["p"], "value": [1.0]}),
+            timestamp="2026-01-01T00:00:00+00:00",
+        )
+        second = dataclasses.replace(
+            base,
+            params=pd.DataFrame({"name": ["p"], "value": [value_second]}),
+            timestamp="2026-01-01T00:00:01+00:00",
+        )
+        return first, second
+
+    #
+    def test_divergent_same_handle_raises(self):
+        first, second = self._divergent_pair()
+        with pytest.raises(FileExistsError, match="not deterministic"):
+            collapse_history_to_snapshot([first, second])
+
+    #
+    def test_divergent_same_handle_overwrite_keeps_latest_and_warns(self):
+        first, second = self._divergent_pair()
+        with pytest.warns(UserWarning, match="keeping the latest"):
+            out = collapse_history_to_snapshot([first, second], overwrite=True)
+        assert out == [second]
+
+    #
+    def test_agreeing_rerun_dedups_silently(self):
+        """Within-tolerance values are the same optimum — no raise, no
+        warning, latest kept."""
+
+        import warnings
+
+        first, second = self._divergent_pair(value_second=1.0 + 1e-9)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = collapse_history_to_snapshot([first, second])
+        assert out == [second]
+
+    #
+    def test_divergent_joint_records_follow_the_same_rule(self):
+        import dataclasses
+
+        base = _joint_record_stub(model_name="m")
+        first = dataclasses.replace(
+            base, params=pd.DataFrame({"name": ["p"], "value": [1.0]})
+        )
+        second = dataclasses.replace(
+            base, params=pd.DataFrame({"name": ["p"], "value": [2.0]})
+        )
+        with pytest.raises(FileExistsError, match="not deterministic"):
+            collapse_joint_history_to_snapshot([first, second])
+        with pytest.warns(UserWarning, match="keeping the latest"):
+            out = collapse_joint_history_to_snapshot([first, second], overwrite=True)
+        assert out == [second]
+
+    #
+    def test_save_fits_divergent_rerun_raises_and_overwrite_resolves(self, tmp_path):
+        """End-to-end: the raise and its resolution both come from the
+        same ``save_fits`` call; nothing is recomputed and both runs stay
+        in the in-session history."""
+
+        import dataclasses
+
+        project, file, model, seed = _fit_file_with_seed()
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        model.update_value(seed)  # exact re-run: same handle
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        # Force divergence under the shared handle — the in-session stand-in
+        # for an unseeded stochastic optimizer (deterministic algorithms
+        # cannot produce it).
+        rerun = project._fit_history[1]
+        diverged_params = rerun.params.copy()
+        diverged_params["value"] = diverged_params["value"] * 1.5
+        project._fit_history[1] = dataclasses.replace(rerun, params=diverged_params)
+
+        archive_path = tmp_path / "divergent.fit.h5"
+        with pytest.raises(FileExistsError, match="pass\\s+overwrite=True"):
+            project.save_fits(archive_path, show_output=0)
+        assert len(project._fit_history) == 2  # nothing dropped by the raise
+
+        with pytest.warns(UserWarning, match="keeping the latest"):
+            project.save_fits(archive_path, overwrite=True, show_output=0)
+        loaded = FitResults.load(archive_path)
+        (slot,) = iter(loaded)
+        np.testing.assert_allclose(
+            slot.params["value"].to_numpy(dtype=float),
+            diverged_params["value"].to_numpy(dtype=float),
+        )
 
 
 #
