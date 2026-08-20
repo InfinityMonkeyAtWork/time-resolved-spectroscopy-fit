@@ -367,6 +367,97 @@ class TestIdentityCapture:
 
 
 #
+class TestOptimizerSeed:
+    """The optimizer seed is a keyed input when supplied (principles
+    §"A slot is a configuration, not an execution"): forwarded to the
+    ``fit_alg_1`` stage, part of the hash when given, absent otherwise.
+    No capability table of seed-accepting methods exists — SciPy's own
+    TypeError surfaces a seed on a method that cannot consume it."""
+
+    #
+    @staticmethod
+    def _de_baseline(seed):
+        """One seeded differential_evolution baseline fit on a fresh,
+        identically-built project; returns its slot."""
+
+        project, file, _, _ = _fit_file_with_seed()
+        file.fit_baseline(
+            model_name="single_glp",
+            stages=1,
+            fit_alg_1="differential_evolution",
+            seed=seed,
+            try_ci=0,
+        )
+        return project._fit_history[0]
+
+    #
+    def test_seeded_stochastic_rerun_is_the_same_configuration(self):
+        """differential_evolution seed=42, re-run → same handle, same
+        values (the enrich / no-op scenario row); collapse dedups
+        silently."""
+
+        first = self._de_baseline(42)
+        second = self._de_baseline(42)
+        assert first.handle == second.handle
+        np.testing.assert_array_equal(
+            first.params["value"].to_numpy(dtype=float),
+            second.params["value"].to_numpy(dtype=float),
+        )
+        assert first.fit_settings is not None  # type guard
+        assert first.fit_settings["seed"] == 42
+        assert collapse_history_to_snapshot([first, second]) == [second]
+
+    #
+    def test_seeded_and_unseeded_are_distinct_configurations(self):
+        """unseeded, then seed=42 → the hashes differ → two slots; the
+        seed enters fit_settings only when supplied."""
+
+        seeded = self._de_baseline(42)
+        unseeded = self._de_baseline(None)
+        assert seeded.handle != unseeded.handle
+        assert unseeded.fit_settings is not None  # type guard
+        assert "seed" not in unseeded.fit_settings
+        assert len(collapse_history_to_snapshot([seeded, unseeded])) == 2
+
+    #
+    def test_seed_on_a_method_that_cannot_consume_it_raises(self):
+        """leastsq takes no seed; the library's TypeError is the surface
+        (no capability table), and no slot is captured from a failed
+        fit."""
+
+        project, file, _, _ = _fit_file_with_seed()
+        with pytest.raises(TypeError, match="seed"):
+            file.fit_baseline(
+                model_name="single_glp",
+                stages=1,
+                fit_alg_1="leastsq",
+                seed=42,
+                try_ci=0,
+            )
+        assert project._fit_history == []
+
+    #
+    def test_two_stage_seed_goes_to_the_global_stage_only(self):
+        """stages=2 differential_evolution + leastsq with a seed: the
+        deterministic local stage receives none (it would reject it) and
+        the seed is keyed once for the configuration."""
+
+        project, file, _, _ = _fit_file_with_seed()
+        file.fit_baseline(
+            model_name="single_glp",
+            stages=2,
+            fit_alg_1="differential_evolution",
+            fit_alg_2="leastsq",
+            seed=7,
+            try_ci=0,
+        )
+        slot = project._fit_history[0]
+        assert slot.fit_settings is not None  # type guard
+        assert slot.fit_settings["seed"] == 7
+        assert slot.fit_alg == "leastsq"  # the final stage's method
+
+
+#
 class TestCaptureOwnership:
     """Copy-and-freeze at the capture boundary (Principle 4)."""
 

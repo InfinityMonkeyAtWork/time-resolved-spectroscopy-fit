@@ -585,6 +585,7 @@ def fit_wrapper(
     fit_alg_1: str = "Nelder",
     fit_alg_2: str = "leastsq",
     jac_fun: Callable[..., np.ndarray] | None = None,
+    seed: int | None = None,
     show_output: int = 0,
 ) -> ulmfit.FitOutput:
     """
@@ -658,6 +659,18 @@ def fit_wrapper(
         (e.g. :func:`jacobian_fun` on the JAX backend).  Passed to
         lmfit as ``Dfun`` for stages whose method is ``'leastsq'``;
         ignored for gradient-free methods.
+    seed : int, optional
+        Optimizer RNG seed, forwarded to the ``fit_alg_1`` stage —
+        stages=2 is "stochastic global search, deterministic local
+        refinement", so the local stage receives none. Makes a
+        stochastic method (``differential_evolution`` etc.) reproducible
+        and, when supplied, enters fit identity: a seeded run is a
+        distinct configuration from an unseeded one. No capability table
+        is maintained — a seed on a method that cannot consume it
+        surfaces as the library's own ``TypeError``, which is correct
+        behavior (fit_archive_principles.md). Distinct from SbS's
+        ``seed_source``/``seed_values`` knobs, which choose initial
+        *parameter values*, not the RNG state.
     show_output : {0, 1}, default=0
         Output mode:
 
@@ -793,11 +806,16 @@ def fit_wrapper(
     # construct lmfit minimizer
     mini = lmfit.Minimizer(residual_fun, par_ini, fcn_args=(*const, "lmfit", args))
 
-    # analytic Jacobian: only lmfit's leastsq accepts a Dfun
-    def _method_kws(method: str) -> dict[str, Any]:
+    # analytic Jacobian: only lmfit's leastsq accepts a Dfun. The optimizer
+    # seed goes to the stage-1 method only (the stochastic global-search
+    # stage; a stages=2 local refinement is deterministic by construction).
+    def _method_kws(method: str, *, stage_1: bool = True) -> dict[str, Any]:
+        kws: dict[str, Any] = {}
         if jac_fun is not None and method == "leastsq":
-            return {"Dfun": jac_fun, "col_deriv": 0}
-        return {}
+            kws.update({"Dfun": jac_fun, "col_deriv": 0})
+        if seed is not None and stage_1:
+            kws["seed"] = int(seed)
+        return kws
 
     # perform fit(s)
     if show_output >= 1:
@@ -823,7 +841,9 @@ def fit_wrapper(
             print(f"Time fit (global minimum): {t_fit0 - t_ini} s")
         #
         par_fin = mini.minimize(
-            method=fit_alg_2, params=par_fin_gm_params, **_method_kws(fit_alg_2)
+            method=fit_alg_2,
+            params=par_fin_gm_params,
+            **_method_kws(fit_alg_2, stage_1=False),
         )
         par_fin_params = _result_params(par_fin)
         # Stage 2 starts from stage 1's output, and lmfit's prepare_fit()

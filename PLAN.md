@@ -343,13 +343,25 @@ between B5 and B8; B9–B12 land as separate green commits afterward.
       silent, slots and joint records) + end-to-end `save_fits` raise
       and resolution on a forced divergence. Suite 1154 default + 180
       slow, 0 failed.
-- [ ] **B10.3 Optimizer seed producer** (review finding 2; paired with
-      B10.2 — it is the remedy its error message points at). Fit-API
-      `seed=` → `fit_wrapper` → per-method forwarding in
-      `fitlib._method_kws` → `fit_settings["seed"]`; the identity slot
-      already exists (`encode_optimizer_settings` keys `seed` only when
-      supplied), so no schema change. Until it lands, unseeded stochastic
-      re-runs are surfaced by B10.2's raise.
+- [x] **B10.3 Optimizer seed producer** — done 2026-08-14 (review
+      finding 2; the remedy B10.2's error message points at).
+      `fit_wrapper` gains `seed: int | None = None`; `_method_kws`
+      forwards it to the **`fit_alg_1` stage only** (the stochastic
+      global search — a stages=2 local refinement is deterministic by
+      construction and would reject it); `build_fit_settings` records
+      `seed` only when supplied, and `optimizer_settings_from_provenance`
+      already keys it into the hash. Every fit API inherits the kwarg
+      through its `**fit_wrapper_kwargs` passthrough — no per-API
+      signature changes (SbS included; its `seed_source`/`seed_values`
+      choose initial parameter values, a different thing, documented in
+      the `fit_wrapper` docstring). Per principles, no capability table:
+      a seed on a non-accepting method surfaces as SciPy's own TypeError.
+      Tests pin the principles scenario table on real
+      differential_evolution fits: seeded re-run → same handle,
+      bit-identical values, silent dedup; unseeded vs seeded → two
+      slots; leastsq+seed → TypeError, no slot captured; two-stage seed
+      reaches only the global stage. Docs: principles seed paragraph and
+      the schema plan "Still open" bullet marked landed.
 - [ ] **B11. Docs** — rewrite `fit_archive_schema.md` as the schema-7 spec;
       archive `fit_archive_schema_plan.md` and `joint_fit_result.md`; update
       `repo_architecture.md`, `llms.txt`, `AGENTS.md`, `CLAUDE.md`, CHANGELOG.

@@ -1162,6 +1162,8 @@ def build_fit_settings(
     stage count, per-stage methods, the **effective** evaluator backend
     (what the dispatch site actually ran, never the requested string), the
     analytic Jacobian's qualified name when one was supplied, the
+    optimizer RNG seed when one was supplied (forwarded to the stage-1
+    method by ``fitlib.fit_wrapper``), the
     profiled-CI request, MCMC sampling settings (when enabled), plus any
     fit-type-specific extras the caller passes verbatim (e.g. SbS
     ``seed_source`` / ``seed_adapt`` / ``seed_values`` — ``None`` values
@@ -1186,6 +1188,9 @@ def build_fit_settings(
     jac_fun = kwargs.get("jac_fun")
     if jac_fun is not None:
         settings["jac_fun"] = f"{jac_fun.__module__}.{jac_fun.__qualname__}"
+    seed = kwargs.get("seed")
+    if seed is not None:
+        settings["seed"] = int(seed)
     mc = kwargs.get("mc_settings")
     # MC stores its use_mc constructor arg as the use_emcee attribute.
     if mc is not None and getattr(mc, "use_emcee", False):

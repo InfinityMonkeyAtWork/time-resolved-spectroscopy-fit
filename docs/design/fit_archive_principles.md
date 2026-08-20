@@ -772,10 +772,13 @@ against lmfit 1.3.4 / SciPy 1.17.0: `leastsq` and `nelder` raise
 `TypeError: unexpected keyword argument 'seed'`, `differential_evolution`
 accepts it. Letting the library produce that error is correct behavior.
 
-No seed reaches any optimizer today — `_method_kws`
-([fitlib.py:788-791](../../src/trspecfit/fitlib.py#L788)) returns `{}` except
-for `Dfun` on `leastsq`, and `build_fit_settings` carries none for emcee. It
-gains a `seed` field, populated only when supplied.
+**Landed 2026-08-14**: `fit_wrapper` accepts `seed`, `_method_kws` forwards
+it to the `fit_alg_1` stage — the stochastic global search; a `stages=2`
+local refinement is deterministic by construction and would reject it — and
+`build_fit_settings` records a `seed` field only when supplied. Every fit
+API inherits the kwarg through its `**fit_wrapper_kwargs` passthrough
+(including SbS, whose `seed_source` / `seed_values` knobs choose initial
+*parameter values*, a different thing from the RNG state).
 
 The unseeded stochastic case is then handled by the collision rules rather
 than by infrastructure:

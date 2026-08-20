@@ -496,14 +496,14 @@ Still open:
   `"best"` resolve within each `(file, model, fit_type)` group.
 - **`frequency` becomes persisted state.** It reaches the archive through
   `model_structure`; today it is stored nowhere.
-- **The optimizer seed producer.** The identity slot exists
-  (`encode_optimizer_settings` keys `seed` only when supplied) but no fit
-  API accepts one and `fitlib._method_kws` forwards none — a user cannot
-  yet make a stochastic run reproducible or give two runs distinct
-  identities. Wiring: fit-API `seed=` → `fit_wrapper` → per-method
-  forwarding → `fit_settings["seed"]`. Until then the unseeded case is
-  handled by the collision rules (principles §"One rule, both
-  boundaries").
+- **The optimizer seed producer** — **landed 2026-08-14**:
+  `fit_wrapper(seed=...)` forwards to the `fit_alg_1` stage (the
+  stochastic global search; a stages=2 local refinement would reject it)
+  and `build_fit_settings` records it only when supplied; every fit API
+  inherits the kwarg through `**fit_wrapper_kwargs`. No capability table
+  — SciPy's own TypeError surfaces a seed on a method that cannot
+  consume it (principles §"A slot is a configuration, not an
+  execution").
 
 ## Prerequisites
 
