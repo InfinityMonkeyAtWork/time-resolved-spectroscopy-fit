@@ -1871,6 +1871,37 @@ def _per_slice_metrics(
 
 
 #
+def _divergence_remedy(fit_settings: Mapping[str, Any] | None) -> str:
+    """
+    Actionable tail for a same-handle divergence error.
+
+    A recorded seed means the user already asked for reproducibility —
+    re-recommending one would be noise. The seed reaches only the
+    ``fit_alg_1`` stage (the two-stage contract designates stage 2 as
+    deterministic refinement, but ``fit_alg_2`` stays free-form), so the
+    remaining divergence sources are a stochastic second stage or an
+    environment difference between the runs.
+    """
+
+    if fit_settings and fit_settings.get("seed") is not None:
+        hint = (
+            "A seed was supplied and reaches only the fit_alg_1 stage — "
+            "check for a stochastic fit_alg_2 (or an environment "
+            "difference between the runs)"
+        )
+    else:
+        hint = (
+            "Pin an optimizer seed to make re-runs reproducible (a "
+            "seeded run is a distinct configuration that never collides)"
+        )
+    return (
+        f"{hint}, or pass overwrite=True to keep only the latest run. "
+        f"Nothing is recomputed: every run remains in the in-session "
+        f"history."
+    )
+
+
+#
 def collapse_history_to_snapshot(
     slots: list[SavedFitSlot], *, overwrite: bool = False
 ) -> list[SavedFitSlot]:
@@ -1905,12 +1936,8 @@ def collapse_history_to_snapshot(
                     f"{slot.model_name!r}, fit_type {slot.fit_type!r}) share "
                     f"handle {slot.handle[:8]} but differ in fitted values — "
                     f"the optimizer configuration is not deterministic "
-                    f"(identical inputs produced different optima). Pin an "
-                    f"optimizer seed to make re-runs reproducible (a seeded "
-                    f"run is a distinct configuration that never collides), "
-                    f"or pass overwrite=True to keep only the latest run. "
-                    f"Nothing is recomputed: every run remains in the "
-                    f"in-session history."
+                    f"(identical inputs produced different optima). "
+                    + _divergence_remedy(slot.fit_settings)
                 )
             warnings.warn(
                 f"Divergent re-runs under handle {slot.handle[:8]} (file "
@@ -1950,12 +1977,7 @@ def collapse_joint_history_to_snapshot(
                     f"optimization hash {jr.optimization_hash[:8]} but "
                     f"differ in fitted values — the optimizer configuration "
                     f"is not deterministic (identical inputs produced "
-                    f"different optima). Pin an optimizer seed to make "
-                    f"re-runs reproducible (a seeded run is a distinct "
-                    f"configuration that never collides), or pass "
-                    f"overwrite=True to keep only the latest run. Nothing "
-                    f"is recomputed: every run remains in the in-session "
-                    f"history."
+                    f"different optima). " + _divergence_remedy(jr.fit_settings)
                 )
             warnings.warn(
                 f"Divergent joint re-runs under optimization hash "
@@ -1968,6 +1990,265 @@ def collapse_joint_history_to_snapshot(
             )
         latest[jr.optimization_hash] = jr
     return list(latest.values())
+
+
+# ``select=`` keywords on save_fits / export_fits — a label may not shadow
+# them, and resolve_fit_reference never receives them (callers intercept).
+SELECT_RESERVED: frozenset[str] = frozenset({"all", "latest", "best"})
+
+
+#
+def resolve_fit_reference(
+    ref: str,
+    *,
+    slots: Sequence[SavedFitSlot],
+    joint_records: Sequence[JointFitResult] = (),
+    labels: bool = True,
+) -> SavedFitSlot | JointFitResult:
+    """
+    Resolve a user-supplied fit reference to one slot or joint record.
+
+    ``ref`` matches a slot by ``handle`` prefix or exact ``label``, and a
+    joint record by ``optimization_hash`` prefix or exact ``label``
+    (git-style: any unambiguous prefix works; tables display the first 8
+    hex chars). Matching is case-insensitive for hex prefixes, exact for
+    labels; ``labels=False`` restricts to prefixes (the ``handle=``
+    accessor kwarg). Several history entries sharing one handle (exact
+    re-runs) count as a single target and resolve to the latest entry.
+
+    Raises
+    ------
+    LookupError
+        If nothing matches, or the reference is ambiguous — the message
+        lists every distinct candidate with its short id and context.
+    """
+
+    prefix = ref.lower()
+    by_handle: dict[str, SavedFitSlot] = {}
+    for slot in slots:
+        if slot.handle.startswith(prefix) or (
+            labels and slot.label is not None and slot.label == ref
+        ):
+            by_handle[slot.handle] = slot  # latest entry per handle wins
+    by_hash: dict[str, JointFitResult] = {}
+    for jr in joint_records:
+        if jr.optimization_hash.startswith(prefix) or (
+            labels and jr.label is not None and jr.label == ref
+        ):
+            by_hash[jr.optimization_hash] = jr
+
+    n_targets = len(by_handle) + len(by_hash)
+    if n_targets == 0:
+        raise LookupError(
+            f"No fit matches reference {ref!r} — expected a slot-handle "
+            f"prefix, a joint-optimization-hash prefix, or an exact label."
+        )
+    if n_targets > 1:
+        candidates = [
+            f"slot {s.handle[:8]} (file={s.file_name!r}, "
+            f"model={s.model_name!r}, fit_type={s.fit_type!r})"
+            for s in by_handle.values()
+        ] + [
+            f"joint {jr.optimization_hash[:8]} (model={jr.model_name!r}, "
+            f"files={list(jr.files)})"
+            for jr in by_hash.values()
+        ]
+        raise LookupError(
+            f"Reference {ref!r} is ambiguous — {n_targets} fits match: "
+            + "; ".join(candidates)
+            + ". Use a longer prefix."
+        )
+    if by_handle:
+        return next(iter(by_handle.values()))
+    return next(iter(by_hash.values()))
+
+
+#
+def set_fit_label(target: SavedFitSlot | JointFitResult, label: str) -> None:
+    """
+    Set the user-facing ``label`` on a slot or joint record.
+
+    ``label`` is the one deliberately mutable display field on the
+    otherwise frozen records (on disk it is a rewritable attr; see the
+    archive collision rules) — this is its sanctioned in-session mutator,
+    used by ``FitResults.label``. Every live view sees the change, since
+    ``Project._fit_history`` and ``FitResults`` share the record objects.
+    """
+
+    if not isinstance(label, str) or not label:
+        raise ValueError("label must be a non-empty string")
+    if label in SELECT_RESERVED:
+        raise ValueError(
+            f"label {label!r} is reserved by select= on save_fits / "
+            f"export_fits; pick another label."
+        )
+    object.__setattr__(target, "label", label)
+
+
+# Offered ``by=`` criteria for ``select="best"`` (principles §"Pruning and
+# selection" — the settled table). Raw χ² and r² are deliberately not
+# offered: a fit with more free parameters almost always wins on them while
+# being the worse model. ``chi2_red`` requires σ and ranks by |x − 1| — a
+# σ-calibrated fit at the noise floor sits at ≈ 1 and overfitting drives it
+# *below* 1, so smallest-wins would select the most overfit variant.
+_BEST_BY_KEYS: frozenset[str] = frozenset({"aic", "bic", "chi2_red", "chi2_red_raw"})
+
+
+#
+def _slot_metric_scalar(slot: SavedFitSlot, key: str) -> float:
+    """
+    One comparable number for ranking: the metric, SbS collapsed to its
+    per-slice ``nanmedian``. NaN when absent or undefined.
+    """
+
+    if key not in slot.metrics:
+        return float("nan")
+    arr = np.asarray(slot.metrics[key], dtype=float)
+    if arr.ndim == 0:
+        return float(arr)
+    if arr.size == 0 or bool(np.isnan(arr).all()):
+        return float("nan")
+    return float(np.nanmedian(arr))
+
+
+#
+def _best_score(slot: SavedFitSlot, by: str) -> float:
+    """
+    Ranking score for ``select="best"`` — smaller is always better.
+
+    ``chi2_red`` scores as ``|x − 1|`` (distance from the noise floor);
+    every other offered criterion is minimized directly. NaN when the
+    metric is undefined on the slot.
+    """
+
+    value = _slot_metric_scalar(slot, by)
+    if by == "chi2_red":
+        return abs(value - 1.0)
+    return value
+
+
+#
+def select_snapshot_slots(
+    snapshot: list[SavedFitSlot],
+    *,
+    select: str,
+    by: str | None = None,
+    history_order: Sequence[SavedFitSlot] = (),
+) -> list[SavedFitSlot]:
+    """
+    Apply the ``select=`` keyword rule to a collapsed snapshot.
+
+    ``"all"`` keeps every variant. ``"latest"`` and ``"best"`` resolve
+    within each ``(file_name, model_name, fit_type)`` group — one winner
+    per group. ``"latest"`` picks the most recent *run* (by position in
+    ``history_order``, the pre-collapse filtered history — more robust
+    than timestamp strings). ``"best"`` requires ``by=``, one of the
+    offered criteria (principles §"Pruning and selection"): ``aic``,
+    ``bic``, ``chi2_red_raw`` minimize; ``chi2_red`` ranks by |x − 1| and
+    requires a σ consistent across the group. Raw χ² and r² are not
+    offered — they reward extra free parameters.
+
+    Three rankings are refused because each would silently pick a wrong
+    winner: a group spanning more than one ``fit_view_sha256`` (metrics
+    of different fit views must never be ranked against one another —
+    the same rule ``compare_models`` enforces), ``chi2_red`` over a
+    group mixing finite ``sigma_eff`` values, and any ``by=`` undefined
+    on every slot of a group. Reference-style ``select`` values never
+    reach this function — callers resolve them via
+    ``resolve_fit_reference`` first.
+    """
+
+    if select == "all":
+        return snapshot
+    if select not in ("latest", "best"):
+        raise ValueError(f"unknown select keyword: {select!r}")
+
+    groups: dict[tuple[str, str, str], list[SavedFitSlot]] = {}
+    for slot in snapshot:
+        key = (slot.file_name, slot.model_name, slot.fit_type)
+        groups.setdefault(key, []).append(slot)
+
+    winners: set[str] = set()
+    if select == "latest":
+        rank = {s.handle: i for i, s in enumerate(history_order)}
+        for group in groups.values():
+            winners.add(max(group, key=lambda s: rank.get(s.handle, -1)).handle)
+    else:
+        if by is None:
+            raise ValueError(
+                f'select="best" requires by= (one of {sorted(_BEST_BY_KEYS)}).'
+            )
+        if by not in _BEST_BY_KEYS:
+            raise ValueError(
+                f"by={by!r} is not an offered selection criterion; use one "
+                f"of {sorted(_BEST_BY_KEYS)}. Raw χ² and r² are deliberately "
+                f"not offered — a fit with more free parameters almost "
+                f"always wins on them while being the worse model."
+            )
+        for gkey, group in groups.items():
+            views = {s.fit_view_sha256 for s in group}
+            if len(views) > 1:
+                raise ValueError(
+                    f"select='best' over group (file={gkey[0]!r}, "
+                    f"model={gkey[1]!r}, fit_type={gkey[2]!r}) spans "
+                    f"{len(views)} distinct fit views — slots fit against "
+                    f"different data views (changed fit limits or "
+                    f"correction state) must never be ranked against one "
+                    f"another. Narrow the filter, pick an explicit "
+                    f"handle/label, or use select='latest'."
+                )
+            if by == "chi2_red":
+                sigmas = sorted(
+                    {float(s.sigma_eff) for s in group if np.isfinite(s.sigma_eff)}
+                )
+                if len(sigmas) > 1:
+                    raise ValueError(
+                        f"select='best' by='chi2_red' over group "
+                        f"(file={gkey[0]!r}, model={gkey[1]!r}, "
+                        f"fit_type={gkey[2]!r}) mixes sigma_eff values "
+                        f"{sigmas} — values scaled by different σ are not "
+                        f"comparable, and a ranking would silently pick a "
+                        f"wrong winner. Rank by 'chi2_red_raw' instead, or "
+                        f"narrow the filter to one σ."
+                    )
+            scored = [
+                (s, _best_score(s, by))
+                for s in group
+                if not np.isnan(_best_score(s, by))
+            ]
+            if not scored:
+                raise ValueError(
+                    f"select='best' by={by!r}: the metric is undefined on "
+                    f"every slot of group (file={gkey[0]!r}, "
+                    f"model={gkey[1]!r}, fit_type={gkey[2]!r})"
+                    + (
+                        " — σ-scaled metrics need a sigma set at fit time "
+                        "(File.set_sigma)."
+                        if by == "chi2_red"
+                        else "."
+                    )
+                )
+            winners.add(min(scored, key=lambda sv: sv[1])[0].handle)
+
+    return [s for s in snapshot if s.handle in winners]
+
+
+#
+def joint_comparability(record: JointFitResult) -> tuple[tuple[str, str], ...]:
+    """
+    Comparability key of a joint fit: sorted ``(file_name,
+    fit_view_sha256)`` pairs over the projections.
+
+    A canonical *tuple of pairs*, never a set of view hashes — a set
+    would discard association and multiplicity, collapsing two
+    byte-identical files under different names into one entry and making
+    a two-file joint fit look like a one-file one. Computed on read from
+    the projections; there is no stored field.
+    """
+
+    return tuple(
+        sorted((p.slot.file_name, p.slot.fit_view_sha256) for p in record.projections)
+    )
 
 
 #

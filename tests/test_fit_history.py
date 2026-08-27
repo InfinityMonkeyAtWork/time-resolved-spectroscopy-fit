@@ -22,6 +22,8 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import dataclasses
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -44,8 +46,12 @@ from trspecfit.utils.fit_io import (
     encode_input_files,
     encode_model_structure,
     encode_optimizer_settings,
+    joint_comparability,
     optimizer_settings_from_provenance,
     read_archive,
+    resolve_fit_reference,
+    select_snapshot_slots,
+    set_fit_label,
 )
 
 
@@ -1593,6 +1599,7 @@ class TestFitResultsCompareModels:
             "file",
             "model",
             "fit_type",
+            "handle",
             "selection_json",
             "chi2_red_raw",
             "r2",
@@ -1652,6 +1659,7 @@ class TestFitResultsCompareModels:
             "file",
             "model",
             "fit_type",
+            "handle",
             "selection_json",
             "chi2_raw",
             "r2",
@@ -1988,6 +1996,7 @@ class TestFitResultsCompareModelsSigmaColumns:
             "file",
             "model",
             "fit_type",
+            "handle",
             "selection_json",
             "chi2_red_raw",
             "r2",
@@ -2015,6 +2024,7 @@ class TestFitResultsCompareModelsSigmaColumns:
             "file",
             "model",
             "fit_type",
+            "handle",
             "selection_json",
             "chi2_red_raw",
             "sigma_eff",
@@ -2164,6 +2174,474 @@ class TestFitResultsCompareModelsSigmaColumns:
         assert df["chi2_red_raw"].iloc[0] == pytest.approx(per_slice_raw)
         # aggregate calibrated = per_slice_raw / σ²
         assert df["chi2_red"].iloc[0] == pytest.approx(per_slice_raw / sigma**2)
+
+
+#
+#
+class TestResolveFitReference:
+    """Prefix / label resolution semantics (B9 matrix rows).
+
+    Real-fit end-to-end use (``get(handle=)``, ``select=``,
+    ``drop_fits``) lives in ``test_fit_query.py``; these pin the
+    resolver's contract on stubs with real handle chains.
+    """
+
+    #
+    def test_unambiguous_prefix_resolves(self):
+        a = _slot_stub(model_name="mA")
+        b = _slot_stub(model_name="mB")
+        assert a.handle != b.handle
+        got = resolve_fit_reference(a.handle[:8], slots=[a, b])
+        assert got is a
+
+    #
+    def test_full_handle_resolves(self):
+        a = _slot_stub()
+        assert resolve_fit_reference(a.handle, slots=[a]) is a
+
+    #
+    def test_ambiguous_prefix_raises(self):
+        """The empty prefix matches every handle — the degenerate ambiguity."""
+
+        a = _slot_stub(model_name="mA")
+        b = _slot_stub(model_name="mB")
+        with pytest.raises(LookupError, match="ambiguous"):
+            resolve_fit_reference("", slots=[a, b])
+
+    #
+    def test_prefix_matching_nothing_raises(self):
+        a = _slot_stub()
+        with pytest.raises(LookupError, match="No fit matches"):
+            resolve_fit_reference("no-such-fit", slots=[a])
+
+    #
+    def test_exact_label_resolves(self):
+        a = _slot_stub(model_name="mA")
+        b = _slot_stub(model_name="mB")
+        set_fit_label(a, "final")
+        assert resolve_fit_reference("final", slots=[a, b]) is a
+
+    #
+    def test_duplicate_label_is_ambiguous(self):
+        a = _slot_stub(model_name="mA")
+        b = _slot_stub(model_name="mB")
+        set_fit_label(a, "dup")
+        set_fit_label(b, "dup")
+        with pytest.raises(LookupError, match="ambiguous"):
+            resolve_fit_reference("dup", slots=[a, b])
+
+    #
+    def test_labels_flag_restricts_to_prefixes(self):
+        """``handle=`` accessors resolve prefixes only, never labels."""
+
+        a = _slot_stub()
+        set_fit_label(a, "final")
+        with pytest.raises(LookupError, match="No fit matches"):
+            resolve_fit_reference("final", slots=[a], labels=False)
+
+    #
+    def test_same_handle_reruns_resolve_to_latest_entry(self):
+        a1 = _slot_stub()
+        a2 = _slot_stub()
+        assert a1.handle == a2.handle
+        assert resolve_fit_reference(a1.handle[:8], slots=[a1, a2]) is a2
+
+    #
+    def test_joint_hash_prefix_resolves_the_record(self):
+        record = _joint_record_stub()
+        slots = [p.slot for p in record.projections]
+        got = resolve_fit_reference(
+            record.optimization_hash[:8], slots=slots, joint_records=[record]
+        )
+        assert got is record
+
+    #
+    def test_reserved_and_empty_labels_rejected(self):
+        a = _slot_stub()
+        with pytest.raises(ValueError, match="reserved"):
+            set_fit_label(a, "latest")
+        with pytest.raises(ValueError, match="non-empty"):
+            set_fit_label(a, "")
+
+
+#
+#
+class TestSelectSnapshotSlots:
+    """``select=`` keyword semantics on collapsed snapshots (B9 rows)."""
+
+    #
+    @staticmethod
+    def _variant(
+        *, e_lo, metrics, sigma_data=float("nan"), model_name="m", fit_view="z"
+    ):
+        """One stub variant; ``e_lo`` varies the selection to mint a
+        distinct handle within the same (file, model, fit_type) group."""
+
+        return _slot_stub(
+            model_name=model_name,
+            selection={"base_t_ind": [0, 1], "e_lim": [e_lo, 20]},
+            metrics=metrics,
+            sigma_data=sigma_data,
+            fit_view_sha256=fit_view,
+        )
+
+    #
+    @staticmethod
+    def _metrics(**overrides):
+        base = {
+            "chi2_raw": 1.0,
+            "chi2_red_raw": 1.0,
+            "chi2": float("nan"),
+            "chi2_red": float("nan"),
+            "r2": 0.9,
+            "aic": 0.0,
+            "bic": 0.0,
+        }
+        base.update(overrides)
+        return base
+
+    #
+    def test_all_keeps_every_variant(self):
+        a = self._variant(e_lo=0, metrics=self._metrics())
+        b = self._variant(e_lo=1, metrics=self._metrics())
+        assert select_snapshot_slots([a, b], select="all") == [a, b]
+
+    #
+    def test_latest_picks_newest_run_per_group(self):
+        a = self._variant(e_lo=0, metrics=self._metrics())
+        b = self._variant(e_lo=1, metrics=self._metrics())
+        c = self._variant(e_lo=0, metrics=self._metrics(), model_name="m2")
+        got = select_snapshot_slots([a, b, c], select="latest", history_order=[a, b, c])
+        # One winner per (file, model, fit_type) group: b is m's newest
+        # run, c is m2's only one.
+        assert got == [b, c]
+
+    #
+    def test_best_lower_wins_on_chi2_red_raw(self):
+        a = self._variant(e_lo=0, metrics=self._metrics(chi2_red_raw=1.0))
+        b = self._variant(e_lo=1, metrics=self._metrics(chi2_red_raw=2.0))
+        got = select_snapshot_slots([a, b], select="best", by="chi2_red_raw")
+        assert got == [a]
+
+    #
+    def test_best_chi2_red_ranks_by_distance_to_one(self):
+        """chi2_red is never minimized: overfitting drives it *below* 1,
+        so smallest-wins would select the most overfit variant. The
+        winner is the fit closest to the noise floor (|x − 1|)."""
+
+        a = self._variant(e_lo=0, metrics=self._metrics(chi2_red=0.5), sigma_data=1.0)
+        b = self._variant(e_lo=1, metrics=self._metrics(chi2_red=1.2), sigma_data=1.0)
+        got = select_snapshot_slots([a, b], select="best", by="chi2_red")
+        assert got == [b]  # |1.2 − 1| beats |0.5 − 1|; min-wins would pick a
+
+    #
+    def test_raw_chi2_and_r2_are_not_offered(self):
+        """Principles §Pruning and selection: a fit with more free
+        parameters almost always wins on raw χ² or r² while being the
+        worse model — they are not selection criteria."""
+
+        a = self._variant(e_lo=0, metrics=self._metrics())
+        for by in ("chi2_raw", "chi2", "r2"):
+            with pytest.raises(ValueError, match="not an offered"):
+                select_snapshot_slots([a], select="best", by=by)
+
+    #
+    def test_best_sbs_ranks_by_per_slice_median(self):
+        a = _slot_stub(
+            fit_type="sbs",
+            selection={"e_lim": [0, 20]},
+            metrics={"chi2_red_raw": np.array([1.0, 3.0, 1.2])},
+        )
+        b = _slot_stub(
+            fit_type="sbs",
+            selection={"e_lim": [1, 20]},
+            metrics={"chi2_red_raw": np.array([2.0, 2.1, 2.2])},
+        )
+        got = select_snapshot_slots([a, b], select="best", by="chi2_red_raw")
+        assert got == [a]  # median 1.2 beats 2.1
+
+    #
+    def test_best_sigma_scaled_over_mixed_sigma_raises(self):
+        """The reversed-ranking fixture: σ-scaled ranking would pick the
+        raw loser, so the mix must raise instead of ranking."""
+
+        a = self._variant(
+            e_lo=0,
+            metrics=self._metrics(
+                chi2_raw=100.0, chi2_red_raw=1.0, chi2=100.0, chi2_red=100.0
+            ),
+            sigma_data=1.0,
+        )
+        b = self._variant(
+            e_lo=1,
+            metrics=self._metrics(
+                chi2_raw=120.0, chi2_red_raw=1.2, chi2=1.2, chi2_red=1.2
+            ),
+            sigma_data=10.0,
+        )
+        with pytest.raises(ValueError, match="sigma_eff values"):
+            select_snapshot_slots([a, b], select="best", by="chi2_red")
+        # The raw ranking stays available and picks the true winner.
+        got = select_snapshot_slots([a, b], select="best", by="chi2_red_raw")
+        assert got == [a]
+
+    #
+    def test_best_mixed_fit_views_refuse_to_rank(self):
+        """Metrics of different fit views (changed limits or correction
+        state) must never be ranked against one another — the same rule
+        compare_models enforces. 'latest' stays available: it picks by
+        recency, not by metric."""
+
+        a = self._variant(e_lo=0, metrics=self._metrics(aic=1.0), fit_view="v1")
+        b = self._variant(e_lo=1, metrics=self._metrics(aic=2.0), fit_view="v2")
+        with pytest.raises(ValueError, match="fit views"):
+            select_snapshot_slots([a, b], select="best", by="aic")
+        got = select_snapshot_slots([a, b], select="latest", history_order=[a, b])
+        assert got == [b]
+
+    #
+    def test_best_metric_undefined_everywhere_raises(self):
+        a = self._variant(e_lo=0, metrics=self._metrics(aic=float("nan")))
+        b = self._variant(e_lo=1, metrics=self._metrics(aic=float("nan")))
+        with pytest.raises(ValueError, match="undefined"):
+            select_snapshot_slots([a, b], select="best", by="aic")
+
+    #
+    def test_best_requires_and_validates_by(self):
+        a = self._variant(e_lo=0, metrics=self._metrics())
+        with pytest.raises(ValueError, match="requires by="):
+            select_snapshot_slots([a], select="best")
+        with pytest.raises(ValueError, match="not an offered"):
+            select_snapshot_slots([a], select="best", by="sigma_eff")
+        with pytest.raises(ValueError, match="unknown select keyword"):
+            select_snapshot_slots([a], select="bets")
+
+
+#
+#
+class TestCompareModelsSigmaTiers:
+    """σ gates comparison within a shared view (schema plan §σ tiers)."""
+
+    #
+    @staticmethod
+    def _mixed_sigma_pair():
+        """Two models on one file/view: σ=1 vs σ=10."""
+
+        a = _slot_stub(
+            model_name="m1",
+            sigma_data=1.0,
+            metrics={
+                "chi2_raw": 100.0,
+                "chi2_red_raw": 1.0,
+                "chi2": 100.0,
+                "chi2_red": 100.0,
+                "r2": 0.9,
+                "aic": 1.0,
+                "bic": 1.0,
+            },
+        )
+        b = _slot_stub(
+            model_name="m2",
+            sigma_data=10.0,
+            metrics={
+                "chi2_raw": 120.0,
+                "chi2_red_raw": 1.2,
+                "chi2": 1.2,
+                "chi2_red": 1.2,
+                "r2": 0.88,
+                "aic": 2.0,
+                "bic": 2.0,
+            },
+        )
+        return a, b
+
+    #
+    def test_mixed_sigma_drops_calibrated_from_defaults(self):
+        a, b = self._mixed_sigma_pair()
+        df = FitResults(slots=[a, b]).compare_models()
+        assert "chi2_red" not in df.columns
+        assert "sigma_eff" in df.columns  # the mix stays visible
+        assert "chi2_red_raw" in df.columns
+
+    #
+    def test_mixed_sigma_explicit_request_raises_naming_both(self):
+        a, b = self._mixed_sigma_pair()
+        with pytest.raises(ValueError, match=r"1\.0.*10\.0"):
+            FitResults(slots=[a, b]).compare_models(metrics=["chi2_red"])
+
+    #
+    def test_raw_metrics_still_compare_across_the_mix(self):
+        a, b = self._mixed_sigma_pair()
+        df = FitResults(slots=[a, b]).compare_models(metrics=["chi2_raw", "r2"])
+        assert len(df) == 2
+        assert list(df["chi2_raw"]) == [100.0, 120.0]
+
+    #
+    def test_finite_sigma_next_to_unset_is_not_a_conflict(self):
+        a, _ = self._mixed_sigma_pair()
+        c = _slot_stub(model_name="m3")  # no sigma set
+        df = FitResults(slots=[a, c]).compare_models()
+        assert "chi2_red" in df.columns
+        assert np.isnan(df["chi2_red"].iloc[1])
+
+
+#
+#
+class TestCompareModelsColumnDrop:
+    """All-undefined default columns are dropped; explicit ones render."""
+
+    #
+    @staticmethod
+    def _projection_like(model_name="m"):
+        """Metrics as on a joint projection: count-dependent ones NaN."""
+
+        return _slot_stub(
+            model_name=model_name,
+            fit_type="2d",
+            selection={"e_lim": None, "t_lim": None},
+            metrics={
+                "chi2_raw": 5.0,
+                "chi2_red_raw": float("nan"),
+                "chi2": float("nan"),
+                "chi2_red": float("nan"),
+                "r2": 0.9,
+                "aic": float("nan"),
+                "bic": float("nan"),
+            },
+        )
+
+    #
+    def test_all_nan_default_columns_dropped(self):
+        df = FitResults(slots=[self._projection_like()]).compare_models()
+        assert "aic" not in df.columns
+        assert "bic" not in df.columns
+        assert "chi2_red_raw" not in df.columns
+        assert "r2" in df.columns
+
+    #
+    def test_explicit_request_keeps_all_nan_column(self):
+        df = FitResults(slots=[self._projection_like()]).compare_models(metrics=["aic"])
+        assert "aic" in df.columns
+        assert np.isnan(df["aic"].iloc[0])
+
+    #
+    def test_one_defined_row_keeps_the_column(self):
+        full = _slot_stub(
+            model_name="m2", fit_type="2d", selection={"e_lim": None, "t_lim": None}
+        )
+        df = FitResults(slots=[self._projection_like(), full]).compare_models()
+        assert "aic" in df.columns
+        assert np.isnan(df["aic"].iloc[0]) and df["aic"].iloc[1] == 0.0
+
+    #
+    def test_handle_column_is_the_short_prefix(self):
+        slot = _slot_stub()
+        df = FitResults(slots=[slot]).compare_models()
+        assert df["handle"].iloc[0] == slot.handle[:8]
+
+
+#
+#
+class TestJointComparabilityKey:
+    """The joint comparability key is a tuple of pairs, never a set."""
+
+    #
+    def test_identical_views_keep_multiplicity(self):
+        record = _joint_record_stub()
+        key = joint_comparability(record)
+        # Both stub projections share fit_view_sha256 "z"; a set of view
+        # hashes would collapse them into one entry and make the two-file
+        # joint fit look one-file.
+        assert key == (("f1", "z"), ("f2", "z"))
+
+
+#
+#
+class TestDiffAndVariantsInputs:
+    """Cross-model diffs and identity-input visibility (review rows)."""
+
+    #
+    @staticmethod
+    def _params(names, values):
+        return pd.DataFrame(
+            {
+                "name": names,
+                "value": values,
+                "stderr": [0.1] * len(names),
+                "init_value": values,
+                "min": [0.0] * len(names),
+                "max": [10.0] * len(names),
+                "vary": [True] * len(names),
+                "expr": [None] * len(names),
+            }
+        )
+
+    #
+    def test_cross_model_diff_reports_added_and_removed_params(self):
+        """Disjoint parameter sets (Gauss vs GLP) diff cleanly: the
+        missing side renders NA in both input and result sections —
+        never a crash."""
+
+        a = dataclasses.replace(
+            _slot_stub(model_name="gauss"),
+            params=self._params(["Gauss_01_A", "Gauss_01_x0"], [1.0, 2.0]),
+        )
+        b = dataclasses.replace(
+            _slot_stub(model_name="glp"),
+            params=self._params(["GLP_01_A", "GLP_01_m"], [1.5, 0.3]),
+        )
+        d = FitResults(slots=[a, b]).diff(a.handle[:8], b.handle[:8])
+        rows = {(r["section"], r["field"]) for _, r in d.iterrows()}
+        assert ("identity", "model") in rows
+        assert ("result", "Gauss_01_A") in rows
+        assert ("result", "GLP_01_m") in rows
+        added_row = d[d["field"] == "GLP_01_m"].iloc[0]
+        assert pd.isna(added_row[a.handle[:8]])
+        assert added_row[b.handle[:8]] == 0.3
+
+    #
+    def test_correction_values_show_as_digests(self):
+        """Two variants differing only in dark *values* show a differing
+        input column — a boolean applied/not-applied cell would hide the
+        difference and leave the variant table empty."""
+
+        base = _slot_stub()
+        a = dataclasses.replace(base, dark=np.array([0.1, 0.2, 0.3]))
+        b = dataclasses.replace(base, dark=np.array([0.4, 0.5, 0.6]))
+        df = FitResults(slots=[a, b]).variants(file="f1", model="m")
+        assert "dark" in df.columns
+        digest_a, digest_b = df["dark"].iloc[0], df["dark"].iloc[1]
+        assert digest_a != digest_b
+        assert len(digest_a) == len(digest_b) == 8
+        # A no-correction slot renders as missing, not as a digest.
+        df2 = FitResults(slots=[base, a]).variants(file="f1", model="m")
+        assert pd.isna(df2["dark"].iloc[0])
+
+    #
+    def test_joint_diff_decodes_input_files(self):
+        """Per-file version stamps (correction/content state) and
+        selections are visible in a bundle-level diff — the combined
+        table alone would hide them."""
+
+        ja = dataclasses.replace(
+            _joint_record_stub(), params=self._params(["tau"], [2.0])
+        )
+        selection_json = build_selection_json("2d", e_lim=None, t_lim=None)
+        changed = encode_input_files(
+            scope="project",
+            entries=[
+                ("f1", "0" * 64, selection_json),
+                ("f2", "1" * 64, selection_json),
+            ],
+        )
+        jb = dataclasses.replace(ja, optimization_hash="f" * 64, input_files=changed)
+        r = FitResults(slots=[], joint=[ja, jb])
+        d = r.diff(ja.optimization_hash[:8], "ffffffff")
+        rows = {(row["section"], row["field"]) for _, row in d.iterrows()}
+        assert ("input", "f2.version_stamp") in rows
+        stamp_row = d[d["field"] == "f2.version_stamp"].iloc[0]
+        assert stamp_row[ja.optimization_hash[:8]] == "0" * 8
+        assert stamp_row["ffffffff"] == "1" * 8
 
 
 #
@@ -2909,6 +3387,23 @@ class TestCollapseCollisionRule:
             warnings.simplefilter("error")
             out = collapse_history_to_snapshot([first, second])
         assert out == [second]
+
+    #
+    def test_divergence_hint_matches_seed_state(self):
+        """Unseeded divergence points at pinning a seed; seeded
+        divergence points at a stochastic fit_alg_2 instead of
+        re-recommending the seed the user already supplied."""
+
+        import dataclasses
+
+        first, second = self._divergent_pair()
+        with pytest.raises(FileExistsError, match="Pin an optimizer seed"):
+            collapse_history_to_snapshot([first, second])
+        seeded = [
+            dataclasses.replace(s, fit_settings={"seed": 42}) for s in (first, second)
+        ]
+        with pytest.raises(FileExistsError, match="stochastic fit_alg_2"):
+            collapse_history_to_snapshot(seeded)
 
     #
     def test_divergent_joint_records_follow_the_same_rule(self):

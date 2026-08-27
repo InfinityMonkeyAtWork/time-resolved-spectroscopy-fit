@@ -251,12 +251,79 @@ between B5 and B8; B9–B12 land as separate green commits afterward.
       `tests/test_fit_history.py` excluded** (collection-broken: imports
       retired helpers; B10 rewrites it — the last blocker for the B5–B8
       commit).
-- [ ] **B9. `FitResults` query layer** — handles, variant table, diffs,
-      `select=`, pruning, regrouped comparability, σ tiers, bundle-level
-      joint diffs. (A4 pre-completes the association item.) Also owns the
-      matrix rows B10 deferred with these features: handle-prefix
-      resolution, σ-tier `select=`/`metrics=` semantics, variant table,
-      `select=` bundle expansion, `drop()`, bundle-level diffs.
+- [x] **B9. `FitResults` query layer** — done 2026-08-26 (in tree).
+      UX decisions settled with the user: the variant table is a
+      **separate method** (`variants()`) — `compare_models` spans
+      different models (Gauss vs GLP) and compares *outputs*, the
+      variant table compares *configurations* of one model (m fixed vs
+      varying); to keep the two joinable by eye, `compare_models` gains
+      a short `handle` column. Handle pinning enters the accessors as a
+      `handle=` kwarg (prefix-only, never labels), mutually exclusive
+      with the `file`/`model`/`fit_type` trio (`fit_type` defaults are
+      now `None` → `"baseline"` so the exclusion is checkable);
+      `diff`/`drop_fits`/`select=` take references directly.
+      Landed: one shared resolver (`fit_io.resolve_fit_reference` —
+      git-style prefixes over handles and joint hashes plus exact
+      labels; ambiguous/none raise; same-handle re-runs resolve to the
+      latest). `variants()`: one `(file, model, fit_type)` group,
+      constant input columns suppressed, multi-group raises.
+      `diff(a, b)`: identity/input/result sections at the archive's
+      equivalence tolerances (SbS results as per-slice medians);
+      projection refs escalate — joint fits diff at the **bundle
+      level** via the combined table, `metric` rows gated by the joint
+      comparability key (`fit_io.joint_comparability`: sorted
+      `(file_name, fit_view_sha256)` *pairs*, multiplicity preserved).
+      `FitResults.label(ref, label)` per principles §Labels
+      (`fit_io.set_fit_label`, the sanctioned mutator; reserved
+      `select=` words rejected; projection refs escalate to the joint
+      record; persists via `save_fits`). σ tiers in `compare_models`:
+      a group mixing finite `sigma_eff` drops σ-scaled columns from
+      dynamic defaults (`sigma_eff` stays visible), explicit
+      `metrics=["chi2_red"]` raises naming both σ; all-NaN default
+      metric columns dropped (explicit requests always render).
+      `select=`/`by=` on `save_fits` (default `"all"`) and
+      `export_fits` (default `"latest"` — behavior change for the CSV
+      tree) via `fit_io.select_snapshot_slots` (per-group post-collapse;
+      `by=` is the principles §"Pruning and selection" table exactly —
+      `aic`/`bic`/`chi2_red_raw` minimize, `chi2_red` ranks by |x − 1|,
+      raw χ²/r² not offered; SbS by per-slice median; a group spanning
+      multiple fit views refuses to rank, σ-mixed `chi2_red` raises,
+      all-NaN group raises); reference-style `select` is mutually
+      exclusive with the filter trio; bundle expansion runs **after**
+      selection so the bundle invariant wins.
+      `Project.drop_fits(ref)` prunes all runs of a handle or a whole
+      bundle by joint hash; a projection ref raises naming the bundle.
+      Tests: stub rows in `test_fit_history.py` (+24: resolver
+      semantics, `select_snapshot_slots` incl. the reversed-σ-ranking
+      fixture, σ-tier compare rows, all-NaN column drop, comparability
+      multiplicity); end-to-end `tests/test_fit_query.py` (+17:
+      variants/diff/label/handle=/select=/drop on real fits; slow joint
+      test covers label escalation, projection-select bundle expansion,
+      projection-drop raise, whole-bundle drop, and a bundle diff
+      showing a shared-τ bound clamp as input + result + metric rows).
+      Deferred, not implemented: label-based export directory naming
+      (export suffixes stay handle-based; principles §Labels mentions
+      it) and the notebook example updates — `10_model_comparison`
+      demos handles → variants → diff → drop, `11_save_load_export`
+      demos `select=`; fold into the examples work, discuss first if a
+      larger restructure is needed.
+      Review addendum (2026-08-26, five findings — four fixed, one
+      refuted with a direct repro): (1) `select="best"` now refuses a
+      group spanning multiple fit views (principles §Comparability —
+      metrics of different views must never be ranked); (2) the `by=`
+      policy restored to the settled principles table — first
+      implementation offered raw χ²/`chi2`/`r2` and minimized
+      `chi2_red` directly, which would systematically select the most
+      overfit variant; (3) refuted: a cross-model diff with disjoint
+      parameter sets does not crash — missing sides render NA (the
+      claimed `float(pd.NA)` path does not exist; pinned as a
+      regression test); (4) variant/diff correction cells are 8-hex
+      content digests, never booleans (value-only dark changes now
+      show), and bundle diffs decode `input_files` into per-file
+      version-stamp/selection fields; (5) `File.save_fit` gained
+      `select=`/`by=` and every `File.get_*`/`plot_*` wrapper gained
+      `handle=` with an ownership guard (a handle naming another file's
+      slot raises).
 - [x] **B10. Tests** — done 2026-08-14 (in tree, part of the B5–B8
       commit; unblocks it). `tests/test_fit_history.py` rewritten for
       schema 7: fit-level identity (the handle chain recomputes exactly
@@ -346,9 +413,11 @@ between B5 and B8; B9–B12 land as separate green commits afterward.
 - [x] **B10.3 Optimizer seed producer** — done 2026-08-14 (review
       finding 2; the remedy B10.2's error message points at).
       `fit_wrapper` gains `seed: int | None = None`; `_method_kws`
-      forwards it to the **`fit_alg_1` stage only** (the stochastic
-      global search — a stages=2 local refinement is deterministic by
-      construction and would reject it); `build_fit_settings` records
+      forwards it to the **`fit_alg_1` stage only** (the two-stage
+      contract designates stage 2 as deterministic refinement;
+      `fit_alg_2` stays free-form, so a stochastic second stage stays
+      unseeded and is surfaced by the collision rules);
+      `build_fit_settings` records
       `seed` only when supplied, and `optimizer_settings_from_provenance`
       already keys it into the hash. Every fit API inherits the kwarg
       through its `**fit_wrapper_kwargs` passthrough — no per-API
@@ -362,6 +431,15 @@ between B5 and B8; B9–B12 land as separate green commits afterward.
       slots; leastsq+seed → TypeError, no slot captured; two-stage seed
       reaches only the global stage. Docs: principles seed paragraph and
       the schema plan "Still open" bullet marked landed.
+      Addendum 2026-08-21 (reviewer accepted the stage-1 contract and
+      withdrew the finding; in tree, rides with the B9 commit): wording
+      tightened — "forwarded to the stage-1 optimizer"; stage 2 is
+      *designated* deterministic refinement by the two-stage contract,
+      not enforced (`fit_alg_2` stays free-form) — and the collapse
+      divergence message is seed-aware via `_divergence_remedy`: with a
+      recorded seed it points at a stochastic `fit_alg_2` / environment
+      difference instead of re-recommending the seed the user already
+      supplied.
 - [ ] **B11. Docs** — rewrite `fit_archive_schema.md` as the schema-7 spec;
       archive `fit_archive_schema_plan.md` and `joint_fit_result.md`; update
       `repo_architecture.md`, `llms.txt`, `AGENTS.md`, `CLAUDE.md`, CHANGELOG.

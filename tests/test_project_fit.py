@@ -885,11 +885,17 @@ class TestJointFitResult:
             assert p.slot.correl is None
             assert p.slot.mcmc is None
 
-        # compare_models: structurally undefined cells are NaN; the valid
-        # per-file cells in the same rows are unaffected.
+        # compare_models: default columns that are structurally undefined
+        # on every matched row (here: every row is a joint projection) are
+        # dropped; the defined per-file metrics render normally. An
+        # explicit metrics= request still renders the NaN column.
         df = project.results.compare_models(fit_type="2d")
-        assert bool(df["chi2_red_raw"].isna().all())
+        assert "chi2_red_raw" not in df.columns
         assert bool(df["r2"].notna().all())
+        df_explicit = project.results.compare_models(
+            fit_type="2d", metrics=["chi2_red_raw", "r2"]
+        )
+        assert bool(df_explicit["chi2_red_raw"].isna().all())
 
     #
     @pytest.mark.slow

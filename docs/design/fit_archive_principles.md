@@ -761,9 +761,9 @@ stochastic global optimizers (`differential_evolution`, `basinhopping`,
 `dual_annealing`, `ampgo`) are all reachable.
 
 **A random seed is a keyed input when the user supplies one.** `seed` is an
-optional passthrough: forwarded to the optimizer if given, part of the key if
-given, absent otherwise. If it is absent the user has not asked for
-reproducibility, and the collision rules below handle the consequences.
+optional passthrough: forwarded to the stage-1 optimizer if given, part of
+the key if given, absent otherwise. If it is absent the user has not asked
+for reproducibility, and the collision rules below handle the consequences.
 
 No capability table of which methods accept a seed is maintained. SciPy
 already enforces that, its knowledge is always current with the installed
@@ -773,12 +773,16 @@ against lmfit 1.3.4 / SciPy 1.17.0: `leastsq` and `nelder` raise
 accepts it. Letting the library produce that error is correct behavior.
 
 **Landed 2026-08-14**: `fit_wrapper` accepts `seed`, `_method_kws` forwards
-it to the `fit_alg_1` stage — the stochastic global search; a `stages=2`
-local refinement is deterministic by construction and would reject it — and
-`build_fit_settings` records a `seed` field only when supplied. Every fit
-API inherits the kwarg through its `**fit_wrapper_kwargs` passthrough
-(including SbS, whose `seed_source` / `seed_values` knobs choose initial
-*parameter values*, a different thing from the RNG state).
+it to the `fit_alg_1` stage only — the two-stage contract designates stage 2
+as deterministic refinement, though `fit_alg_2` stays free-form: a
+stochastic second stage stays unseeded and is surfaced by the collision
+rules, never silently — and `build_fit_settings` records a `seed` field only
+when supplied. Every fit API inherits the kwarg through its
+`**fit_wrapper_kwargs` passthrough (including SbS, whose `seed_source` /
+`seed_values` knobs choose initial *parameter values*, a different thing
+from the RNG state). When divergence is detected on runs that already carry
+a seed, the collision message points at a stochastic `fit_alg_2` instead of
+re-recommending the seed the user already supplied.
 
 The unseeded stochastic case is then handled by the collision rules rather
 than by infrastructure:

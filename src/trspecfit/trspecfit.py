@@ -409,6 +409,8 @@ class Project:
         file: "int | str | File | Sequence[int | str | File] | None" = None,
         model: str | Sequence[str] | None = None,
         fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        select: str = "all",
+        by: str | None = None,
         overwrite: bool = False,
         show_output: int = 1,
     ) -> None:
@@ -417,8 +419,9 @@ class Project:
 
         Filters ``_fit_history`` by ``(file, model, fit_type)``, dedups
         exact re-runs (latest per ``handle`` — distinct variants are all
-        kept), expands joint bundles to whole, assembles a
-        ``SavedProject``, and writes via ``utils.fit_io.write_archive``.
+        kept), applies ``select=``, expands joint bundles to whole,
+        assembles a ``SavedProject``, and writes via
+        ``utils.fit_io.write_archive``.
 
         Parameters
         ----------
@@ -435,6 +438,27 @@ class Project:
             String filter on ``slot.model_name``.
         fit_type : str | sequence, optional
             String filter on ``slot.fit_type``.
+        select : str, default "all"
+            Which variants to keep. ``"all"`` archives every distinct
+            configuration — the archive is the complete record.
+            ``"latest"`` keeps the newest run per ``(file, model,
+            fit_type)`` group; ``"best"`` keeps the group winner ranked by
+            ``by=``. Any other string is a slot-handle prefix, a
+            joint-optimization-hash prefix, or a label naming exact fits
+            (mutually exclusive with the ``file``/``model``/``fit_type``
+            filters). Whatever the selection, touching any slot of a
+            joint bundle pulls in the whole bundle — partial bundles are
+            not representable in the archive.
+        by : str, optional
+            Ranking criterion for ``select="best"`` — one of ``aic``,
+            ``bic``, ``chi2_red_raw`` (minimized) or ``chi2_red`` (ranked
+            by |x − 1|, the distance from the noise floor; requires a σ
+            consistent across the group). Raw χ² and r² are deliberately
+            not offered — a fit with more free parameters almost always
+            wins on them while being the worse model. SbS slots rank by
+            the per-slice median. A group spanning multiple fit views
+            refuses to rank (metrics of different views are not
+            comparable).
         overwrite : bool, default False
             Slot-scoped: required when a stored slot's fitted parameters
             differ from the incoming ones, or when an attachment
@@ -454,6 +478,8 @@ class Project:
             fit_type=fit_type,
             expand_joint_bundles=True,
             overwrite=overwrite,
+            select=select,
+            by=by,
         )
         if project is None:
             if show_output:
@@ -481,21 +507,23 @@ class Project:
         file: "int | str | File | Sequence[int | str | File] | None" = None,
         model: str | Sequence[str] | None = None,
         fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        select: str = "latest",
+        by: str | None = None,
         overwrite: bool = False,
         show_output: int = 1,
     ) -> None:
         """
         Export filtered fit slots from ``_fit_history`` as a CSV/PNG tree.
 
-        Same filter + snapshot-collapse pipeline as :meth:`save_fits`, but
-        the output is a directory of human-readable artifacts rather than
-        an HDF5 archive. One-way export — there is no ``load`` counterpart;
-        round-tripping fits to disk is HDF5's job (use ``save_fits`` /
-        ``load_fits`` for that). Unlike ``save_fits``, a filter touching
-        one slot of a joint bundle does **not** pull in the sibling
-        files' projections: per-file trees have no whole-bundle
-        invariant, and ``File.export_fit`` must never write another
-        file's directories.
+        Same filter + snapshot-collapse + ``select=`` pipeline as
+        :meth:`save_fits`, but the output is a directory of human-readable
+        artifacts rather than an HDF5 archive. One-way export — there is
+        no ``load`` counterpart; round-tripping fits to disk is HDF5's job
+        (use ``save_fits`` / ``load_fits`` for that). Unlike
+        ``save_fits``, a filter touching one slot of a joint bundle does
+        **not** pull in the sibling files' projections: per-file trees
+        have no whole-bundle invariant, and ``File.export_fit`` must
+        never write another file's directories.
 
         Parameters
         ----------
@@ -511,6 +539,17 @@ class Project:
             String filter on ``slot.model_name``.
         fit_type : str | sequence, optional
             String filter on ``slot.fit_type``.
+        select : str, default "latest"
+            Which variants to export. Defaults to the newest run per
+            ``(file, model, fit_type)`` group — the export tree is a
+            human-readable summary, not the record (that is
+            ``save_fits``, whose default is ``"all"``). Pass ``"all"``
+            for every variant, ``"best"`` + ``by=`` for group winners, or
+            a handle prefix / joint-hash prefix / label for exact fits
+            (mutually exclusive with the ``file``/``model``/``fit_type``
+            filters).
+        by : str, optional
+            Ranking metric for ``select="best"``; see :meth:`save_fits`.
         overwrite : bool, default False
             Per-slot directory: a non-empty target dir raises
             ``FileExistsError`` unless True. Pre-checked across all slots
@@ -558,6 +597,8 @@ class Project:
             fit_type=fit_type,
             expand_joint_bundles=False,
             overwrite=overwrite,
+            select=select,
+            by=by,
         )
         if project is None:
             if show_output:
@@ -584,6 +625,81 @@ class Project:
             )
 
     #
+    def drop_fits(self, ref: str, *, show_output: int = 1) -> None:
+        """
+        Remove one fit — or one whole joint bundle — from the in-session
+        history.
+
+        Explicit pruning for junk runs, so they never reach
+        :meth:`save_fits` / :meth:`export_fits`. ``ref`` is a slot-handle
+        prefix, a joint-optimization-hash prefix, or a label (read them
+        off ``results.compare_models()`` / ``results.variants()``).
+        Dropping a slot removes every history entry sharing its handle
+        (exact re-runs). A projection of a joint bundle cannot be dropped
+        alone — the bundle is one optimization; pass its joint hash to
+        drop the record plus every projection. Never touches archives on
+        disk; previously returned ``FitResults`` views keep their
+        snapshot.
+
+        Raises
+        ------
+        LookupError
+            If ``ref`` matches nothing or is ambiguous.
+        ValueError
+            If ``ref`` names a projection of a joint bundle — the message
+            names the bundle hash and its file count.
+        """
+
+        target = fit_io.resolve_fit_reference(
+            ref, slots=self._fit_history, joint_records=self._joint_fit_history
+        )
+        if isinstance(target, fit_io.SavedFitSlot):
+            if target.joint_ref is not None:
+                record = next(
+                    (
+                        jr
+                        for jr in self._joint_fit_history
+                        if jr.optimization_hash == target.joint_ref
+                    ),
+                    None,
+                )
+                n_files = len(record.projections) if record is not None else "?"
+                raise ValueError(
+                    f"Slot {target.handle[:8]} is a projection of joint "
+                    f"bundle {target.joint_ref[:8]} ({n_files} files) — a "
+                    f"bundle is one optimization and drops whole: "
+                    f"drop_fits('{target.joint_ref[:8]}')."
+                )
+            n_runs = sum(1 for s in self._fit_history if s.handle == target.handle)
+            self._fit_history[:] = [
+                s for s in self._fit_history if s.handle != target.handle
+            ]
+            if show_output:
+                print(
+                    f"Dropped slot {target.handle[:8]} (file "
+                    f"{target.file_name!r}, model {target.model_name!r}, "
+                    f"{target.fit_type}): {n_runs} run(s) removed from the "
+                    f"in-session history."
+                )
+            return
+        ref_hash = target.optimization_hash
+        n_records = sum(
+            1 for jr in self._joint_fit_history if jr.optimization_hash == ref_hash
+        )
+        n_proj = sum(1 for s in self._fit_history if s.joint_ref == ref_hash)
+        self._joint_fit_history[:] = [
+            jr for jr in self._joint_fit_history if jr.optimization_hash != ref_hash
+        ]
+        self._fit_history[:] = [s for s in self._fit_history if s.joint_ref != ref_hash]
+        if show_output:
+            print(
+                f"Dropped joint bundle {ref_hash[:8]} (model "
+                f"{target.model_name!r}): {n_records} record(s) and "
+                f"{n_proj} projection slot(s) removed from the in-session "
+                f"history."
+            )
+
+    #
     def _build_saved_project_from_history(
         self,
         *,
@@ -592,15 +708,24 @@ class Project:
         fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None,
         expand_joint_bundles: bool,
         overwrite: bool,
+        select: str = "all",
+        by: str | None = None,
     ) -> fit_io.SavedProject | None:
         """
-        Apply the standard filter + collapse pipeline to ``_fit_history``
-        and return a fully-populated ``SavedProject``.
+        Apply the standard filter + collapse + ``select=`` pipeline to
+        ``_fit_history`` and return a fully-populated ``SavedProject``.
 
-        Returns ``None`` when no slots survive the filter, so callers can
-        emit a "nothing to do" message and short-circuit. Used by
+        Returns ``None`` when no slots survive, so callers can emit a
+        "nothing to do" message and short-circuit. Used by
         :meth:`save_fits` and :meth:`export_fits` so both go through the
-        identical filter / collapse / file-grouping logic.
+        identical filter / collapse / selection / file-grouping logic.
+
+        ``select`` keywords (``"all"`` / ``"latest"`` / ``"best"`` +
+        ``by=``) apply after the collapse, per ``(file, model, fit_type)``
+        group (``fit_io.select_snapshot_slots``). Any other value is a
+        reference — handle prefix, joint-hash prefix, or label — resolved
+        against the whole history and mutually exclusive with the filter
+        trio (one names exact fits, the other describes a group).
 
         ``overwrite`` resolves in-session divergence at collapse: two
         re-runs of one configuration with differing fitted values (a
@@ -609,15 +734,17 @@ class Project:
         and the same flag as the archive-boundary collision
         (fit_archive_principles.md §"One rule, both boundaries").
 
-        With ``expand_joint_bundles=True`` (the archive path), a filter
+        With ``expand_joint_bundles=True`` (the archive path), a selection
         that touches any slot of a joint bundle silently expands to the
         whole bundle — its joint record plus every sibling projection
         slot — because partial bundles are not representable in the
-        archive (the writer would raise). The CSV export passes ``False``:
-        per-file trees have no bundle invariant, and a per-file
-        ``export_fit`` must not write a sibling file's directories; the
-        returned project then carries no joint records at all (the CSV
-        writer does not render them).
+        archive (the writer would raise). The expansion runs *after*
+        ``select=``, so the bundle invariant wins over a per-group
+        selection that would have split a bundle. The CSV export passes
+        ``False``: per-file trees have no bundle invariant, and a
+        per-file ``export_fit`` must not write a sibling file's
+        directories; the returned project then carries no joint records
+        at all (the CSV writer does not render them).
 
         File payloads come from the first-slot capture
         (``_captured_files``); nothing is read from live state at save
@@ -625,26 +752,54 @@ class Project:
         each carries its own ``dark`` / ``calibration``.
         """
 
-        file_ids = self._resolve_save_file_filter(file)
-        models_filter = _to_str_set(model)
-        types_filter = _to_str_set(fit_type)
+        if by is not None and select != "best":
+            raise ValueError('by= is only meaningful with select="best".')
+        is_ref = select not in fit_io.SELECT_RESERVED
+        if is_ref and (file is not None or model is not None or fit_type is not None):
+            raise ValueError(
+                "select=<handle/label> names exact fits and cannot be "
+                "combined with the file=/model=/fit_type= filters."
+            )
 
         filtered: list[fit_io.SavedFitSlot] = []
-        for slot in self._fit_history:
-            if file_ids is not None and slot.file_name not in file_ids:
-                continue
-            if models_filter is not None and slot.model_name not in models_filter:
-                continue
-            if types_filter is not None and slot.fit_type not in types_filter:
-                continue
-            filtered.append(slot)
+        if is_ref:
+            target = fit_io.resolve_fit_reference(
+                select,
+                slots=self._fit_history,
+                joint_records=self._joint_fit_history,
+            )
+            if isinstance(target, fit_io.SavedFitSlot):
+                filtered = [s for s in self._fit_history if s.handle == target.handle]
+            else:
+                ref_hash = target.optimization_hash
+                filtered = [s for s in self._fit_history if s.joint_ref == ref_hash]
+        else:
+            file_ids = self._resolve_save_file_filter(file)
+            models_filter = _to_str_set(model)
+            types_filter = _to_str_set(fit_type)
+            for slot in self._fit_history:
+                if file_ids is not None and slot.file_name not in file_ids:
+                    continue
+                if models_filter is not None and slot.model_name not in models_filter:
+                    continue
+                if types_filter is not None and slot.fit_type not in types_filter:
+                    continue
+                filtered.append(slot)
+
+        snapshot = fit_io.collapse_history_to_snapshot(filtered, overwrite=overwrite)
+        if not is_ref:
+            snapshot = fit_io.select_snapshot_slots(
+                snapshot, select=select, by=by, history_order=filtered
+            )
+        if not snapshot:
+            return None
 
         # Expand to whole joint bundles: latest record per optimization
         # hash (divergence rule applied to the bundles this save touches),
         # then every sibling projection of each touched bundle.
         joint_records: list[fit_io.JointFitResult] = []
         if expand_joint_bundles:
-            touched = {s.joint_ref for s in filtered if s.joint_ref is not None}
+            touched = {s.joint_ref for s in snapshot if s.joint_ref is not None}
             joint_records = fit_io.collapse_joint_history_to_snapshot(
                 [
                     jr
@@ -653,16 +808,12 @@ class Project:
                 ],
                 overwrite=overwrite,
             )
-            selected_handles = {s.handle for s in filtered}
+            selected_handles = {s.handle for s in snapshot}
             for jr in joint_records:
                 for proj in jr.projections:
                     if proj.slot.handle not in selected_handles:
-                        filtered.append(proj.slot)
+                        snapshot.append(proj.slot)
                         selected_handles.add(proj.slot.handle)
-
-        snapshot = fit_io.collapse_history_to_snapshot(filtered, overwrite=overwrite)
-        if not snapshot:
-            return None
 
         # Group slots by file identity — the guarded, unique File.name
         # (fit_archive_principles.md, Principle 1).
@@ -3136,6 +3287,8 @@ class File:
         *,
         model: str | Sequence[str] | None = None,
         fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        select: str = "all",
+        by: str | None = None,
         overwrite: bool = False,
         show_output: int = 1,
     ) -> None:
@@ -3145,7 +3298,9 @@ class File:
         One-line delegate to ``self.p.save_fits(file=self, ...)``. Useful
         when the user holds a ``File`` reference and wants to persist its
         fits without first reaching into the parent ``Project``. See
-        :meth:`Project.save_fits` for full semantics.
+        :meth:`Project.save_fits` for full semantics (including
+        ``select=`` — reference-style values are project-wide and cannot
+        be combined with this per-file filter).
         """
 
         self.p.save_fits(
@@ -3153,6 +3308,8 @@ class File:
             file=self,
             model=model,
             fit_type=fit_type,
+            select=select,
+            by=by,
             overwrite=overwrite,
             show_output=show_output,
         )
@@ -3165,6 +3322,8 @@ class File:
         format: Literal["csv"] = "csv",
         model: str | Sequence[str] | None = None,
         fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        select: str = "latest",
+        by: str | None = None,
         overwrite: bool = False,
         show_output: int = 1,
     ) -> None:
@@ -3172,7 +3331,9 @@ class File:
         Export this file's fit slots as a CSV/PNG tree.
 
         One-line delegate to ``self.p.export_fits(file=self, ...)``. See
-        :meth:`Project.export_fits` for full semantics and output layout.
+        :meth:`Project.export_fits` for full semantics (including
+        ``select=`` — reference-style values are project-wide and cannot
+        be combined with this per-file filter) and output layout.
         """
 
         self.p.export_fits(
@@ -3181,6 +3342,8 @@ class File:
             file=self,
             model=model,
             fit_type=fit_type,
+            select=select,
+            by=by,
             overwrite=overwrite,
             show_output=show_output,
         )
@@ -4498,11 +4661,31 @@ class File:
                 display(fit_out.par_fin.params)
 
     #
+    def _assert_fit_handle_owned(self, handle: str) -> None:
+        """
+        Guard File-level ``handle=`` access: the slot must belong to this
+        file.
+
+        Handles are project-wide; a ``File`` accessor silently answering
+        for another file's fit would be worse than requiring
+        ``project.results`` for cross-file access.
+        """
+
+        slot = self.p.results.get(handle=handle)
+        if slot.file_name != self.name:
+            raise ValueError(
+                f"Slot {slot.handle[:8]} belongs to file "
+                f"{slot.file_name!r}, not {self.name!r} — read it via "
+                f"project.results or the owning File."
+            )
+
+    #
     def get_fit_results(
         self,
         *,
         model: str | None = None,
-        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] = "baseline",
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] | None = None,
+        handle: str | None = None,
     ) -> pd.DataFrame:
         """
         Return fit results as a DataFrame for programmatic access.
@@ -4516,13 +4699,18 @@ class File:
         model : str, optional
             Restrict to a single model name. Default: latest fit of
             ``fit_type`` regardless of model.
-        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit results to return:
 
             - 'baseline': Baseline/ground-state fit (from ``fit_baseline``)
             - 'spectrum': Single-spectrum fit (from ``fit_spectrum``)
             - 'sbs': Slice-by-Slice fit (from ``fit_slice_by_slice``)
             - '2d': 2D global fit (from ``fit_2d``)
+
+        handle : str, optional
+            Slot-handle prefix pinning one exact run of **this file**;
+            mutually exclusive with the ``model``/``fit_type`` filters. A
+            handle naming another file's slot raises.
 
         Returns
         -------
@@ -4538,6 +4726,11 @@ class File:
             If the requested fit has not been performed yet.
         """
 
+        if handle is not None:
+            self._assert_fit_handle_owned(handle)
+            return self.p.results.get_fit_results(
+                model=model, fit_type=fit_type, handle=handle
+            )
         return self.p.results.get_fit_results(file=self, model=model, fit_type=fit_type)
 
     #
@@ -4545,7 +4738,8 @@ class File:
         self,
         *,
         model: str | None = None,
-        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] = "baseline",
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] | None = None,
+        handle: str | None = None,
     ) -> pd.DataFrame:
         """
         Return the parameter correlation matrix from a completed fit.
@@ -4559,8 +4753,11 @@ class File:
         model : str, optional
             Restrict to a single model name. Default: latest fit of
             ``fit_type`` regardless of model.
-        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to read (see :meth:`get_fit_results`).
+        handle : str, optional
+            Slot-handle prefix pinning one exact run of this file;
+            mutually exclusive with the ``model``/``fit_type`` filters.
 
         Returns
         -------
@@ -4576,6 +4773,11 @@ class File:
             joint fit).
         """
 
+        if handle is not None:
+            self._assert_fit_handle_owned(handle)
+            return self.p.results.get_correlations(
+                model=model, fit_type=fit_type, handle=handle
+            )
         return self.p.results.get_correlations(
             file=self, model=model, fit_type=fit_type
         )
@@ -4585,7 +4787,8 @@ class File:
         self,
         *,
         model: str | None = None,
-        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] = "baseline",
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] | None = None,
+        handle: str | None = None,
     ) -> pd.DataFrame:
         """
         Return the profiled confidence-interval table from a completed fit.
@@ -4599,8 +4802,11 @@ class File:
         ----------
         model : str, optional
             Restrict to a single model name.
-        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to read.
+        handle : str, optional
+            Slot-handle prefix pinning one exact run of this file;
+            mutually exclusive with the ``model``/``fit_type`` filters.
 
         Returns
         -------
@@ -4613,6 +4819,11 @@ class File:
             If the requested fit has not been performed yet.
         """
 
+        if handle is not None:
+            self._assert_fit_handle_owned(handle)
+            return self.p.results.get_conf_intervals(
+                model=model, fit_type=fit_type, handle=handle
+            )
         return self.p.results.get_conf_intervals(
             file=self, model=model, fit_type=fit_type
         )
@@ -4622,7 +4833,8 @@ class File:
         self,
         *,
         model: str | None = None,
-        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] = "baseline",
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] | None = None,
+        handle: str | None = None,
     ) -> ulmfit.MCMCResult:
         """
         Return the MCMC outputs (quantile table, chain, acceptance) of a fit.
@@ -4636,8 +4848,11 @@ class File:
         ----------
         model : str, optional
             Restrict to a single model name.
-        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to read.
+        handle : str, optional
+            Slot-handle prefix pinning one exact run of this file;
+            mutually exclusive with the ``model``/``fit_type`` filters.
 
         Returns
         -------
@@ -4651,6 +4866,11 @@ class File:
             If the requested fit has not been performed, or had no MCMC step.
         """
 
+        if handle is not None:
+            self._assert_fit_handle_owned(handle)
+            return self.p.results.get_mcmc(
+                model=model, fit_type=fit_type, handle=handle
+            )
         return self.p.results.get_mcmc(file=self, model=model, fit_type=fit_type)
 
     #
@@ -4658,7 +4878,8 @@ class File:
         self,
         *,
         model: str | None = None,
-        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] = "baseline",
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] | None = None,
+        handle: str | None = None,
         config: PlotConfig | None = None,
         show_plot: bool = True,
         full_range: bool | None = None,
@@ -4677,8 +4898,11 @@ class File:
         model : str, optional
             Restrict to a single model name. Default: latest fit of
             ``fit_type`` regardless of model.
-        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to plot.
+        handle : str, optional
+            Slot-handle prefix pinning one exact run of this file;
+            mutually exclusive with the ``model``/``fit_type`` filters.
         config : PlotConfig, optional
             Styling override; defaults to the project's ``plot_config``.
         show_plot : bool, default True
@@ -4692,6 +4916,18 @@ class File:
             ``config.show_init``. See :meth:`FitResults.plot_fit`.
         """
 
+        if handle is not None:
+            self._assert_fit_handle_owned(handle)
+            self.p.results.plot_fit(
+                model=model,
+                fit_type=fit_type,
+                handle=handle,
+                config=config,
+                show_plot=show_plot,
+                full_range=full_range,
+                show_init=show_init,
+            )
+            return
         self.p.results.plot_fit(
             file=self,
             model=model,
@@ -4707,6 +4943,7 @@ class File:
         self,
         *,
         model: str | None = None,
+        handle: str | None = None,
         params: Sequence[str] | None = None,
         config: PlotConfig | None = None,
         show_plot: bool = True,
@@ -4722,6 +4959,9 @@ class File:
         ----------
         model : str, optional
             Restrict to a single model name.
+        handle : str, optional
+            Slot-handle prefix pinning one exact SbS run of this file;
+            mutually exclusive with the ``model`` filter.
         params : sequence of str, optional
             Which parameters to plot (default: varied parameters).
         config : PlotConfig, optional
@@ -4730,6 +4970,16 @@ class File:
             Set ``False`` to build without displaying.
         """
 
+        if handle is not None:
+            self._assert_fit_handle_owned(handle)
+            self.p.results.plot_param_evolution(
+                model=model,
+                handle=handle,
+                params=params,
+                config=config,
+                show_plot=show_plot,
+            )
+            return
         self.p.results.plot_param_evolution(
             file=self,
             model=model,
@@ -4743,7 +4993,8 @@ class File:
         self,
         *,
         model: str | None = None,
-        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] = "baseline",
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] | None = None,
+        handle: str | None = None,
         show_plot: bool = True,
     ) -> None:
         """
@@ -4758,12 +5009,24 @@ class File:
         ----------
         model : str, optional
             Restrict to a single model name.
-        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to plot. For SbS fits the payload is slice 0's.
+        handle : str, optional
+            Slot-handle prefix pinning one exact run of this file;
+            mutually exclusive with the ``model``/``fit_type`` filters.
         show_plot : bool, default True
             Set ``False`` to build without displaying.
         """
 
+        if handle is not None:
+            self._assert_fit_handle_owned(handle)
+            self.p.results.plot_mcmc(
+                model=model,
+                fit_type=fit_type,
+                handle=handle,
+                show_plot=show_plot,
+            )
+            return
         self.p.results.plot_mcmc(
             file=self,
             model=model,
@@ -4776,6 +5039,7 @@ class File:
         self,
         *,
         model: str | None = None,
+        handle: str | None = None,
         slices: Sequence[int] | None = None,
         config: PlotConfig | None = None,
         show_init: bool | None = None,
@@ -4793,6 +5057,9 @@ class File:
         ----------
         model : str, optional
             Restrict to a single model name.
+        handle : str, optional
+            Slot-handle prefix pinning one exact SbS run of this file;
+            mutually exclusive with the ``model`` filter.
         slices : sequence of int, optional
             Slice indices to render. Default: all slices.
         config : PlotConfig, optional
@@ -4806,6 +5073,18 @@ class File:
             Set ``False`` to build without displaying.
         """
 
+        if handle is not None:
+            self._assert_fit_handle_owned(handle)
+            self.p.results.plot_sbs_slices(
+                model=model,
+                handle=handle,
+                slices=slices,
+                config=config,
+                show_init=show_init,
+                save_path=save_path,
+                show_plot=show_plot,
+            )
+            return
         self.p.results.plot_sbs_slices(
             file=self,
             model=model,

@@ -660,17 +660,18 @@ def fit_wrapper(
         lmfit as ``Dfun`` for stages whose method is ``'leastsq'``;
         ignored for gradient-free methods.
     seed : int, optional
-        Optimizer RNG seed, forwarded to the ``fit_alg_1`` stage —
-        stages=2 is "stochastic global search, deterministic local
-        refinement", so the local stage receives none. Makes a
-        stochastic method (``differential_evolution`` etc.) reproducible
-        and, when supplied, enters fit identity: a seeded run is a
-        distinct configuration from an unseeded one. No capability table
-        is maintained — a seed on a method that cannot consume it
-        surfaces as the library's own ``TypeError``, which is correct
-        behavior (fit_archive_principles.md). Distinct from SbS's
-        ``seed_source``/``seed_values`` knobs, which choose initial
-        *parameter values*, not the RNG state.
+        Optimizer RNG seed, forwarded to the ``fit_alg_1`` stage only —
+        the two-stage contract designates stage 2 as deterministic
+        refinement (``fit_alg_2`` stays free-form; a stochastic second
+        stage stays unseeded and is surfaced by the save-time collision
+        rules). Makes a stochastic method (``differential_evolution``
+        etc.) reproducible and, when supplied, enters fit identity: a
+        seeded run is a distinct configuration from an unseeded one. No
+        capability table is maintained — a seed on a method that cannot
+        consume it surfaces as the library's own ``TypeError``, which is
+        correct behavior (fit_archive_principles.md). Distinct from
+        SbS's ``seed_source``/``seed_values`` knobs, which choose
+        initial *parameter values*, not the RNG state.
     show_output : {0, 1}, default=0
         Output mode:
 
@@ -807,8 +808,9 @@ def fit_wrapper(
     mini = lmfit.Minimizer(residual_fun, par_ini, fcn_args=(*const, "lmfit", args))
 
     # analytic Jacobian: only lmfit's leastsq accepts a Dfun. The optimizer
-    # seed goes to the stage-1 method only (the stochastic global-search
-    # stage; a stages=2 local refinement is deterministic by construction).
+    # seed goes to the stage-1 method only — the two-stage contract
+    # designates stage 2 as deterministic refinement (fit_alg_2 stays
+    # free-form; a stochastic second stage stays unseeded).
     def _method_kws(method: str, *, stage_1: bool = True) -> dict[str, Any]:
         kws: dict[str, Any] = {}
         if jac_fun is not None and method == "leastsq":

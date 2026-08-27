@@ -493,13 +493,18 @@ Still open:
 - **`select=` replaces `collapse=` / `which_one=`** on `save_fits` (default
   `"all"`) and `export_fits` (default `"latest"`), accepting `"all"`,
   `"latest"`, `"best"` + `by=`, a handle or prefix, or a label. `"latest"` and
-  `"best"` resolve within each `(file, model, fit_type)` group.
+  `"best"` resolve within each `(file, model, fit_type)` group. — **landed
+  2026-08-26** (`fit_io.select_snapshot_slots`; reference-style values are
+  mutually exclusive with the filter trio, and joint-bundle expansion runs
+  after selection so the bundle invariant wins).
 - **`frequency` becomes persisted state.** It reaches the archive through
   `model_structure`; today it is stored nowhere.
 - **The optimizer seed producer** — **landed 2026-08-14**:
-  `fit_wrapper(seed=...)` forwards to the `fit_alg_1` stage (the
-  stochastic global search; a stages=2 local refinement would reject it)
-  and `build_fit_settings` records it only when supplied; every fit API
+  `fit_wrapper(seed=...)` forwards to the `fit_alg_1` stage only (the
+  two-stage contract designates stage 2 as deterministic refinement;
+  `fit_alg_2` stays free-form, so a stochastic second stage stays
+  unseeded and is surfaced by the collision rules) and
+  `build_fit_settings` records it only when supplied; every fit API
   inherits the kwarg through `**fit_wrapper_kwargs`. No capability table
   — SciPy's own TypeError surfaces a seed on a method that cannot
   consume it (principles §"A slot is a configuration, not an

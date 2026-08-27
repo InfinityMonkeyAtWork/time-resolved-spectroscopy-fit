@@ -21,6 +21,8 @@ file_name)``; see ``fit_io.compute_slot_handle``. Query inputs
 
 from __future__ import annotations
 
+import hashlib
+import json
 import pathlib
 from collections.abc import Iterator, Sequence
 from typing import Any, Literal, cast
@@ -31,11 +33,16 @@ import pandas as pd
 from trspecfit.config.plot import PlotConfig
 from trspecfit.utils.arrays import apply_corrections, resolve_time_selection
 from trspecfit.utils.fit_io import (
+    _PARAMS_EQUIV_ATOL,
+    _PARAMS_EQUIV_RTOL,
     JointFitResult,
     SavedFile,
     SavedFitSlot,
+    joint_comparability,
     mcmc_result_from_payload,
     read_archive,
+    resolve_fit_reference,
+    set_fit_label,
 )
 from trspecfit.utils.lmfit import MCMCResult
 
@@ -140,34 +147,97 @@ def _has_any_sigma(slots: Sequence[SavedFitSlot]) -> bool:
 
 
 #
+def _array_digest(arr: np.ndarray | None) -> str | None:
+    """
+    8-hex content digest of an array, ``None`` for no array.
+
+    A display-level change signal (variant table, diff) for inputs whose
+    exact values are keyed into identity but unreadable in a table cell —
+    correction snapshots foremost.
+    """
+
+    if arr is None:
+        return None
+    a = np.ascontiguousarray(arr)
+    return hashlib.sha256(a.tobytes()).hexdigest()[:8]
+
+
+#
+def _sigma_conflicts(
+    slots: Sequence[SavedFitSlot],
+) -> dict[tuple[str, str], list[float]]:
+    """
+    Per comparability group, the distinct finite ``sigma_eff`` values —
+    only groups with more than one (the σ-tier conflict cases).
+
+    Groups are ``(file_name, fit_type)``, same as the fit-view
+    consistency check. σ is an attachment, not part of fit identity, so
+    two slots can share a fit view yet carry different σ; their σ-scaled
+    metrics (``chi2``, ``chi2_red``) are scaled by different constants
+    and must not be ranked against each other. A finite σ next to an
+    unset one (NaN) is not a conflict — the σ-less slot's calibrated
+    cells are NaN, absent rather than misleading.
+    """
+
+    groups: dict[tuple[str, str], set[float]] = {}
+    for s in slots:
+        if np.isfinite(s.sigma_eff):
+            groups.setdefault((s.file_name, s.fit_type), set()).add(float(s.sigma_eff))
+    return {k: sorted(v) for k, v in groups.items() if len(v) > 1}
+
+
+#
 def _resolve_metric_keys(
-    metrics: Sequence[str] | None, slots: list[SavedFitSlot]
+    metrics: Sequence[str] | None,
+    slots: list[SavedFitSlot],
+    sigma_conflicts: dict[tuple[str, str], list[float]] | None = None,
 ) -> tuple[str, ...]:
     """
     Pick the metric columns for a ``compare_models()`` call.
 
     ``metrics=None`` → dynamic defaults: ``DEFAULT_METRICS_WITH_SIGMA`` when at
     least one matched slot has a sigma, ``DEFAULT_METRICS_NO_SIGMA`` otherwise.
+    When ``sigma_conflicts`` is non-empty (a compared group mixes finite
+    ``sigma_eff`` values), the σ-scaled columns are dropped from the
+    defaults — ``sigma_eff`` itself stays, so the mix is visible.
 
     ``metrics=[...]`` → explicit. If the request includes a calibrated metric
     (``chi2`` / ``chi2_red``) and no matched slot has a sigma, raise a clear
     ``KeyError`` pointing the user at ``file.set_sigma()`` or the raw
-    alternative — neither silently-NaN columns nor renamed-raw columns.
+    alternative — neither silently-NaN columns nor renamed-raw columns. If a
+    compared group mixes σ values, the same explicit request raises a
+    ``ValueError`` naming the group and the conflicting σ values.
     """
 
     has_sigma = _has_any_sigma(slots)
+    conflicts = sigma_conflicts or {}
     if metrics is None:
-        return DEFAULT_METRICS_WITH_SIGMA if has_sigma else DEFAULT_METRICS_NO_SIGMA
+        if not has_sigma:
+            return DEFAULT_METRICS_NO_SIGMA
+        if conflicts:
+            return tuple(
+                k for k in DEFAULT_METRICS_WITH_SIGMA if k not in _CALIBRATED_KEYS
+            )
+        return DEFAULT_METRICS_WITH_SIGMA
     metric_keys = tuple(metrics)
-    if not has_sigma:
-        bad = next((k for k in metric_keys if k in _CALIBRATED_KEYS), None)
-        if bad is not None:
+    bad = next((k for k in metric_keys if k in _CALIBRATED_KEYS), None)
+    if bad is not None:
+        if not has_sigma:
             raise KeyError(
                 f"Metric {bad!r} requires sigma_data, but none of the matched "
                 f"slots carry a sigma. Call file.set_sigma(...) on the live "
                 f"file and re-run the fit, or request "
                 f"{_CALIBRATED_TO_RAW[bad]!r} for the raw (uncalibrated) "
                 f"value."
+            )
+        if conflicts:
+            (file_name, ft), sigmas = next(iter(conflicts.items()))
+            raise ValueError(
+                f"Metric {bad!r} is σ-scaled, but the compared group "
+                f"file={file_name!r}, fit_type={ft!r} mixes sigma_eff "
+                f"values {sigmas} — values scaled by different σ are not "
+                f"comparable. Request {_CALIBRATED_TO_RAW[bad]!r} instead, "
+                f"or narrow the filter to slots sharing one σ."
             )
     return metric_keys
 
@@ -513,18 +583,35 @@ class FitResults:
     def get(
         self,
         *,
-        file: str,
-        model: str,
-        fit_type: FitType,
+        file: str | None = None,
+        model: str | None = None,
+        fit_type: FitType | None = None,
+        handle: str | None = None,
     ) -> SavedFitSlot:
         """
-        Return the unique slot matching ``(file, model, fit_type)``.
+        Return one exact slot — by unique filter match or by handle.
 
-        Raises ``LookupError`` if 0 or >1 slots match. For multi-match
-        scenarios (e.g. refits with different selections), use ``find`` and
-        narrow further on ``slot.selection``.
+        Two forms, mutually exclusive:
+
+        - ``get(file=..., model=..., fit_type=...)`` — all three required;
+          raises ``LookupError`` if 0 or >1 slots match.
+        - ``get(handle=...)`` — an unambiguous slot-handle prefix (read it
+          off :meth:`compare_models` / :meth:`variants`); raises
+          ``LookupError`` if it matches nothing or more than one handle.
+
+        For multi-match filters, :meth:`variants` shows how the matched
+        runs differ, with the handle to pass back here.
         """
 
+        if handle is not None:
+            return self._resolve_slot(
+                file=file, model=model, fit_type=fit_type, handle=handle
+            )
+        if file is None or model is None or fit_type is None:
+            raise TypeError(
+                "get() requires either handle=... or all of file=, model=, "
+                "and fit_type=."
+            )
         matches = self.find(file=file, model=model, fit_type=fit_type)
         if not matches:
             raise LookupError(
@@ -534,7 +621,8 @@ class FitResults:
         if len(matches) > 1:
             raise LookupError(
                 f"{len(matches)} slots match file={file!r}, model={model!r}, "
-                f"fit_type={fit_type!r}; use find() and narrow on .selection."
+                f"fit_type={fit_type!r}; variants() shows how they differ — "
+                f"pass the chosen row's handle to get(handle=...)."
             )
         return matches[0]
 
@@ -631,6 +719,453 @@ class FitResults:
         return matches[0]
 
     #
+    def _resolve_ref(self, ref: str) -> SavedFitSlot | JointFitResult:
+        """Resolve a handle/hash prefix or exact label against this view."""
+
+        return resolve_fit_reference(ref, slots=self._slots, joint_records=self._joint)
+
+    #
+    def _joint_for(self, slot: SavedFitSlot) -> JointFitResult | None:
+        """The owning joint record of a projection slot, if in this view."""
+
+        if slot.joint_ref is None:
+            return None
+        return next(
+            (j for j in self._joint if j.optimization_hash == slot.joint_ref),
+            None,
+        )
+
+    #
+    def _display_label(self, slot: SavedFitSlot) -> str | None:
+        """
+        The label shown for ``slot`` — its own, else its bundle's.
+
+        Labels live on the joint record for bundle members (labelling half
+        an optimization differently from the other half is meaningless),
+        so projection display resolves through ``joint_ref``.
+        """
+
+        if slot.label is not None:
+            return slot.label
+        record = self._joint_for(slot)
+        return record.label if record is not None else None
+
+    #
+    def label(self, ref: str, label: str) -> None:
+        """
+        Set the user-facing label of one fit, post-hoc.
+
+        ``ref`` is a slot-handle prefix, a joint-optimization-hash prefix,
+        or the fit's current label. Labels are optional, settable at any
+        time, and never required — they make a durable, human-readable
+        pointer to a chosen fit, usable anywhere a handle prefix is
+        (``select=``, :meth:`diff`, ``Project.drop_fits``) and persisted
+        by ``save_fits`` as the archive's one mutable slot attr.
+
+        A reference to a projection of a joint bundle labels the **joint
+        record** — the bundle is one optimization, and its label is
+        resolved through ``joint_ref`` for projection display.
+
+        The change is visible in every live view (``Project.results``
+        wrappers share the record objects), but only reaches disk on the
+        next ``save_fits``.
+
+        Raises
+        ------
+        LookupError
+            If ``ref`` matches nothing or is ambiguous.
+        ValueError
+            If ``label`` is empty or a reserved ``select=`` keyword
+            (``"all"`` / ``"latest"`` / ``"best"``).
+        """
+
+        target = self._resolve_ref(ref)
+        if isinstance(target, SavedFitSlot) and target.joint_ref is not None:
+            record = self._joint_for(target)
+            if record is None:
+                raise LookupError(
+                    f"Slot {target.handle[:8]} is a projection of joint "
+                    f"bundle {target.joint_ref[:8]}, which is not part of "
+                    f"this FitResults view — labels live on the joint "
+                    f"record."
+                )
+            target = record
+        set_fit_label(target, label)
+
+    #
+    @staticmethod
+    def _variant_inputs(slot: SavedFitSlot) -> dict[str, Any]:
+        """
+        The slot's authored inputs as one flat record.
+
+        Everything a user can vary between two runs of one model:
+        optimizer settings (``fit_settings``), the data selection, σ, the
+        correction state (``dark`` / ``calibration`` as 8-hex content
+        digests, so value-level correction differences show), the model
+        structure (also an 8-hex digest — a change signal, not a
+        description), and the per-parameter authored fields
+        (``{par}.init`` / ``.min`` / ``.max`` / ``.vary`` / ``.expr``;
+        SbS slots read the slice-invariant ``params_meta``, which carries
+        no per-slice ``init``). Fitted *outputs* are deliberately absent —
+        this record feeds :meth:`variants` and the input section of
+        :meth:`diff`.
+        """
+
+        def norm(value: Any) -> Any:
+            return tuple(value) if isinstance(value, list) else value
+
+        rec: dict[str, Any] = {}
+        for k, v in (slot.fit_settings or {}).items():
+            rec[str(k)] = norm(v)
+        for k, v in slot.selection.items():
+            rec[str(k)] = norm(v)
+        rec["sigma_eff"] = float(slot.sigma_eff)
+        # Correction state as short digests, never booleans: two variants
+        # differing only in dark *values* mint distinct handles, and this
+        # table's contract is that every identity-changing input shows.
+        rec["dark"] = _array_digest(slot.dark)
+        rec["calibration"] = _array_digest(slot.calibration)
+        rec["model_structure"] = hashlib.sha256(
+            slot.model_structure.encode()
+        ).hexdigest()[:8]
+        meta = slot.params if slot.fit_type != "sbs" else slot.params_meta
+        if meta is not None and "name" in meta.columns:
+            fields = [
+                c
+                for c in ("init_value", "min", "max", "vary", "expr")
+                if c in meta.columns
+            ]
+            for row in meta.to_dict("records"):
+                for field in fields:
+                    key = "init" if field == "init_value" else field
+                    rec[f"{row['name']}.{key}"] = norm(row[field])
+        return rec
+
+    #
+    def variants(
+        self,
+        *,
+        file: Any = None,
+        model: str | None = None,
+        fit_type: FitType | None = None,
+    ) -> pd.DataFrame:
+        """
+        Tabulate how the runs of **one** model differ in their inputs.
+
+        The complement of :meth:`compare_models`: that method compares
+        *outputs* (fit-quality metrics) and spans different models; this
+        one compares *configurations* of a single ``(file, model,
+        fit_type)`` group — the variants schema 7 keeps side by side (a
+        ``vary`` flip, a bound change, a seed, a correction, a fit-limit
+        change each mint a distinct slot).
+
+        One row per slot in history order. Identity columns first:
+        ``handle`` (first 8 hex chars — feed it to :meth:`diff`,
+        ``handle=`` accessors, ``select=``, or ``Project.drop_fits``),
+        ``label`` (only when at least one row has one; projections show
+        their bundle's label), and ``timestamp``. Then **only the input
+        columns that differ** across the rows — constant columns are
+        suppressed, so the table *is* the difference. A table with no
+        input columns means the matched slots are exact re-runs.
+
+        Parameters
+        ----------
+        file : str | SavedFile | trspecfit.File | None
+            Filter to a single file (name string or object with ``.name``).
+        model : str, optional
+            Filter to a single model name.
+        fit_type : str, optional
+            Filter to a single fit type.
+
+        Raises
+        ------
+        LookupError
+            If no slots match the filter.
+        ValueError
+            If the matched slots span more than one ``(file, model,
+            fit_type)`` group — input columns are only meaningfully
+            aligned within one model. Narrow the filter; for a
+            cross-model overview use :meth:`compare_models`.
+        """
+
+        matched = self.find(
+            file=_resolve_file_arg(file), model=model, fit_type=fit_type
+        )
+        if not matched:
+            raise LookupError(
+                f"No slots match file={file!r}, model={model!r}, fit_type={fit_type!r}."
+            )
+        groups = sorted({(s.file_name, s.model_name, s.fit_type) for s in matched})
+        if len(groups) > 1:
+            raise ValueError(
+                f"variants() compares configurations of one model, but the "
+                f"filter matches {len(groups)} (file, model, fit_type) "
+                f"groups: {groups}. Narrow the filter; use compare_models() "
+                f"for a cross-model overview."
+            )
+
+        records = [self._variant_inputs(s) for s in matched]
+        keys: list[str] = []
+        for rec in records:
+            for k in rec:
+                if k not in keys:
+                    keys.append(k)
+        # Constant-column suppression: repr-compare so unhashable or
+        # NaN-bearing cells (NaN != NaN) still count as equal.
+        differing = [
+            k for k in keys if len({repr(rec.get(k, pd.NA)) for rec in records}) > 1
+        ]
+
+        rows: list[dict[str, Any]] = []
+        labels = [self._display_label(s) for s in matched]
+        with_label = any(lbl is not None for lbl in labels)
+        for slot, rec, lbl in zip(matched, records, labels, strict=True):
+            row: dict[str, Any] = {"handle": slot.handle[:8]}
+            if with_label:
+                row["label"] = lbl
+            row["timestamp"] = slot.timestamp
+            for k in differing:
+                row[k] = rec.get(k, pd.NA)
+            rows.append(row)
+        identity = ["handle", *(["label"] if with_label else []), "timestamp"]
+        return pd.DataFrame(rows, columns=[*identity, *differing])
+
+    #
+    @staticmethod
+    def _fitted_value_map(slot: SavedFitSlot) -> dict[str, float]:
+        """
+        Fitted values per parameter name — the output side of :meth:`diff`.
+
+        Long-form slots read the ``value`` column; SbS slots collapse each
+        per-slice column to its median (documented on :meth:`diff`).
+        """
+
+        if slot.fit_type != "sbs":
+            return {
+                str(n): float(v)
+                for n, v in zip(slot.params["name"], slot.params["value"], strict=True)
+            }
+        return {
+            str(c): float(np.nanmedian(np.asarray(slot.params[c], dtype=float)))
+            for c in slot.params.columns
+        }
+
+    #
+    @staticmethod
+    def _values_close(a: Any, b: Any) -> bool:
+        """Equivalence at the archive's fitted-value tolerances (NaN==NaN)."""
+
+        if a is None or b is None:
+            return False
+        return bool(
+            np.isclose(
+                float(a),
+                float(b),
+                rtol=_PARAMS_EQUIV_RTOL,
+                atol=_PARAMS_EQUIV_ATOL,
+                equal_nan=True,
+            )
+        )
+
+    #
+    def diff(self, a: str, b: str) -> pd.DataFrame:
+        """
+        Pairwise difference of two fits: inputs and outputs, side by side.
+
+        ``a`` / ``b`` are handle prefixes, joint-optimization-hash
+        prefixes, or labels (read them off :meth:`compare_models` /
+        :meth:`variants`). Returns a DataFrame with columns ``section``,
+        ``field``, and one value column per side (named by the short id);
+        only differing rows appear. Sections:
+
+        - ``identity`` — file / model / fit_type (or the participant file
+          set, for joint bundles).
+        - ``input`` — authored configuration: optimizer settings,
+          selection, σ, correction state, model structure (8-hex digest),
+          per-parameter ``.init`` / ``.min`` / ``.max`` / ``.vary`` /
+          ``.expr``.
+        - ``result`` — fitted values, per parameter, differing beyond the
+          archive's equivalence tolerances. SbS values are per-slice
+          **medians** — a summary, not the full per-slice story.
+        - ``metric`` / ``comparability`` — joint bundles only, see below.
+
+        **Joint fits diff at the bundle level.** A reference that resolves
+        to a projection slot is escalated to its joint record — a
+        projection's parameter table is a materialized view of the
+        combined result, so diffing projections alone would show a shadow
+        of the real difference. Bundle diffs compare the combined
+        parameter table (shared-parameter state included) and the
+        whole-objective ``metric`` rows — the latter only when both
+        bundles share a comparability key (the sorted ``(file_name,
+        fit_view_sha256)`` pairs); otherwise a single ``comparability``
+        row shows the diverging views instead.
+
+        Raises
+        ------
+        LookupError
+            If a reference matches nothing or is ambiguous.
+        ValueError
+            If both references resolve to the same fit, or one side is a
+            standalone per-file fit and the other a joint bundle.
+        """
+
+        ta, tb = self._resolve_ref(a), self._resolve_ref(b)
+        ta = self._escalate_to_bundle(ta)
+        tb = self._escalate_to_bundle(tb)
+        if ta is tb:
+            raise ValueError(
+                f"References {a!r} and {b!r} resolve to the same fit — nothing to diff."
+            )
+        if isinstance(ta, SavedFitSlot) != isinstance(tb, SavedFitSlot):
+            slot_ref, joint_ref_ = (a, b) if isinstance(ta, SavedFitSlot) else (b, a)
+            raise ValueError(
+                f"Cannot diff a standalone per-file fit ({slot_ref!r}) "
+                f"against a joint bundle ({joint_ref_!r}) — their parameter "
+                f"tables live in different spaces."
+            )
+        if isinstance(ta, SavedFitSlot) and isinstance(tb, SavedFitSlot):
+            id_a, id_b = ta.handle[:8], tb.handle[:8]
+            rows = self._diff_slot_rows(ta, tb)
+        else:
+            ja, jb = cast(JointFitResult, ta), cast(JointFitResult, tb)
+            id_a, id_b = ja.optimization_hash[:8], jb.optimization_hash[:8]
+            rows = self._diff_joint_rows(ja, jb)
+        return pd.DataFrame(rows, columns=["section", "field", id_a, id_b])
+
+    #
+    def _escalate_to_bundle(
+        self, target: SavedFitSlot | JointFitResult
+    ) -> SavedFitSlot | JointFitResult:
+        """Projection slot → its joint record (bundle-level diff rule)."""
+
+        if isinstance(target, SavedFitSlot) and target.joint_ref is not None:
+            record = self._joint_for(target)
+            if record is None:
+                raise LookupError(
+                    f"Slot {target.handle[:8]} is a projection of joint "
+                    f"bundle {target.joint_ref[:8]}, which is not part of "
+                    f"this FitResults view — joint fits diff at the bundle "
+                    f"level."
+                )
+            return record
+        return target
+
+    #
+    def _diff_slot_rows(
+        self, ta: SavedFitSlot, tb: SavedFitSlot
+    ) -> list[tuple[str, str, Any, Any]]:
+        """Diff rows for two standalone slots (identity, input, result)."""
+
+        rows: list[tuple[str, str, Any, Any]] = []
+        for field, name in (
+            ("file_name", "file"),
+            ("model_name", "model"),
+            ("fit_type", "fit_type"),
+        ):
+            va, vb = getattr(ta, field), getattr(tb, field)
+            if va != vb:
+                rows.append(("identity", name, va, vb))
+        rows.extend(
+            self._diff_record_rows(
+                "input", self._variant_inputs(ta), self._variant_inputs(tb)
+            )
+        )
+        rows.extend(
+            self._diff_value_rows(
+                "result", self._fitted_value_map(ta), self._fitted_value_map(tb)
+            )
+        )
+        return rows
+
+    #
+    def _diff_joint_rows(
+        self, ja: JointFitResult, jb: JointFitResult
+    ) -> list[tuple[str, str, Any, Any]]:
+        """Diff rows for two joint bundles (combined-table based)."""
+
+        rows: list[tuple[str, str, Any, Any]] = []
+        if ja.model_name != jb.model_name:
+            rows.append(("identity", "model", ja.model_name, jb.model_name))
+        if tuple(ja.files) != tuple(jb.files):
+            rows.append(("identity", "files", tuple(ja.files), tuple(jb.files)))
+
+        def joint_inputs(jr: JointFitResult) -> dict[str, Any]:
+            rec: dict[str, Any] = {
+                str(k): tuple(v) if isinstance(v, list) else v
+                for k, v in jr.fit_settings.items()
+            }
+            rec["model_structure"] = hashlib.sha256(
+                jr.model_structure.encode()
+            ).hexdigest()[:8]
+            # Decode the canonical input_files JSON so per-file selection
+            # and version-stamp (correction/content state) differences are
+            # visible — every identity-changing input shows in a diff.
+            _, entries = json.loads(jr.input_files)
+            for name, stamp, selection in entries:
+                rec[f"{name}.version_stamp"] = str(stamp)[:8]
+                rec[f"{name}.selection"] = selection
+            fields = [
+                c
+                for c in ("init_value", "min", "max", "vary", "expr")
+                if c in jr.params.columns
+            ]
+            for row in jr.params.to_dict("records"):
+                for field in fields:
+                    key = "init" if field == "init_value" else field
+                    rec[f"{row['name']}.{key}"] = row[field]
+            return rec
+
+        rows.extend(self._diff_record_rows("input", joint_inputs(ja), joint_inputs(jb)))
+
+        def value_map(jr: JointFitResult) -> dict[str, float]:
+            return {
+                str(n): float(v)
+                for n, v in zip(jr.params["name"], jr.params["value"], strict=True)
+            }
+
+        rows.extend(self._diff_value_rows("result", value_map(ja), value_map(jb)))
+
+        ca, cb = joint_comparability(ja), joint_comparability(jb)
+        if ca != cb:
+            short_a = tuple((f, v[:8]) for f, v in ca)
+            short_b = tuple((f, v[:8]) for f, v in cb)
+            rows.append(("comparability", "fit_views", short_a, short_b))
+        else:
+            rows.extend(
+                self._diff_value_rows("metric", dict(ja.metrics), dict(jb.metrics))
+            )
+        return rows
+
+    #
+    @staticmethod
+    def _diff_record_rows(
+        section: str, ra: dict[str, Any], rb: dict[str, Any]
+    ) -> list[tuple[str, str, Any, Any]]:
+        """Rows for keys whose values differ (repr-compared; NaN==NaN)."""
+
+        keys = list(ra)
+        keys.extend(k for k in rb if k not in ra)
+        return [
+            (section, k, ra.get(k, pd.NA), rb.get(k, pd.NA))
+            for k in keys
+            if repr(ra.get(k, pd.NA)) != repr(rb.get(k, pd.NA))
+        ]
+
+    #
+    def _diff_value_rows(
+        self, section: str, ma: dict[str, float], mb: dict[str, float]
+    ) -> list[tuple[str, str, Any, Any]]:
+        """Rows for numeric maps differing beyond the equivalence tolerances."""
+
+        keys = list(ma)
+        keys.extend(k for k in mb if k not in ma)
+        return [
+            (section, k, ma.get(k, pd.NA), mb.get(k, pd.NA))
+            for k in keys
+            if not self._values_close(ma.get(k), mb.get(k))
+        ]
+
+    #
     def _latest_slot(
         self,
         *,
@@ -671,12 +1206,58 @@ class FitResults:
         return matches[-1]
 
     #
+    def _resolve_slot(
+        self,
+        *,
+        file: Any,
+        model: str | None,
+        fit_type: str | None,
+        handle: str | None,
+        required_fit_type: str | None = None,
+    ) -> SavedFitSlot:
+        """
+        One slot for an accessor call: exact pin or latest-matching filter.
+
+        ``handle=`` names one exact slot by handle prefix and is mutually
+        exclusive with the ``file``/``model``/``fit_type`` filter trio —
+        one names a run, the other describes a group, and mixing them has
+        no coherent meaning. Without it, the existing latest-matching-wins
+        contract via :meth:`_latest_slot` (``fit_type=None`` reads as
+        ``"baseline"``). ``required_fit_type`` pins the fit type a method
+        can render (SbS-only plots).
+        """
+
+        if handle is not None:
+            if file is not None or model is not None or fit_type is not None:
+                raise TypeError(
+                    "handle= pins one exact slot and cannot be combined "
+                    "with the file=/model=/fit_type= filters."
+                )
+            slot = cast(
+                SavedFitSlot,
+                resolve_fit_reference(handle, slots=self._slots, labels=False),
+            )
+            if required_fit_type is not None and slot.fit_type != required_fit_type:
+                raise ValueError(
+                    f"Slot {slot.handle[:8]} is a {slot.fit_type!r} fit; "
+                    f"this method reads {required_fit_type!r} fits."
+                )
+            return slot
+        ft = (
+            required_fit_type
+            if required_fit_type is not None
+            else (fit_type or "baseline")
+        )
+        return self._latest_slot(file=file, model=model, fit_type=ft)
+
+    #
     def get_fit_results(
         self,
         *,
         file: Any = None,
         model: str | None = None,
-        fit_type: FitType = "baseline",
+        fit_type: FitType | None = None,
+        handle: str | None = None,
     ) -> pd.DataFrame:
         """
         Return the fitted parameters of the latest matching fit.
@@ -691,9 +1272,12 @@ class FitResults:
             Filter to a single file (name string or object with ``.name``).
         model : str, optional
             Filter to a single model name.
-        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit type to read. When several slots match, the most
             recent fit wins.
+        handle : str, optional
+            Slot-handle prefix pinning one exact run; mutually exclusive
+            with the ``file``/``model``/``fit_type`` filters.
 
         Returns
         -------
@@ -709,7 +1293,9 @@ class FitResults:
             If no matching fit has been performed (or loaded) yet.
         """
 
-        slot = self._latest_slot(file=file, model=model, fit_type=fit_type)
+        slot = self._resolve_slot(
+            file=file, model=model, fit_type=fit_type, handle=handle
+        )
         return slot.params.copy()
 
     #
@@ -718,7 +1304,8 @@ class FitResults:
         *,
         file: Any = None,
         model: str | None = None,
-        fit_type: FitType = "baseline",
+        fit_type: FitType | None = None,
+        handle: str | None = None,
     ) -> pd.DataFrame:
         """
         Return the parameter correlation matrix of the latest matching fit.
@@ -733,8 +1320,11 @@ class FitResults:
             Filter to a single file (name string or object with ``.name``).
         model : str, optional
             Filter to a single model name.
-        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit type to read (latest matching fit wins).
+        handle : str, optional
+            Slot-handle prefix pinning one exact run; mutually exclusive
+            with the ``file``/``model``/``fit_type`` filters.
 
         Returns
         -------
@@ -750,13 +1340,16 @@ class FitResults:
             joint fit).
         """
 
-        slot = self._latest_slot(file=file, model=model, fit_type=fit_type)
+        slot = self._resolve_slot(
+            file=file, model=model, fit_type=fit_type, handle=handle
+        )
         if slot.correl is None:
             raise ValueError(
-                f"No correlation matrix for the {fit_type} fit: the optimizer "
-                "reported no covariance. Use a covariance-producing method "
-                "(e.g. leastsq, or Nelder with numdifftools installed); "
-                "project-level joint fits do not decompose per file."
+                f"No correlation matrix for the {slot.fit_type} fit: the "
+                "optimizer reported no covariance. Use a covariance-producing "
+                "method (e.g. leastsq, or Nelder with numdifftools "
+                "installed); project-level joint fits do not decompose per "
+                "file."
             )
         return slot.correl.copy()
 
@@ -766,7 +1359,8 @@ class FitResults:
         *,
         file: Any = None,
         model: str | None = None,
-        fit_type: FitType = "baseline",
+        fit_type: FitType | None = None,
+        handle: str | None = None,
     ) -> pd.DataFrame:
         """
         Return the profiled confidence-interval table of the latest matching
@@ -782,8 +1376,11 @@ class FitResults:
             Filter to a single file (name string or object with ``.name``).
         model : str, optional
             Filter to a single model name.
-        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit type to read (latest matching fit wins).
+        handle : str, optional
+            Slot-handle prefix pinning one exact run; mutually exclusive
+            with the ``file``/``model``/``fit_type`` filters.
 
         Returns
         -------
@@ -797,7 +1394,9 @@ class FitResults:
             If no matching fit has been performed (or loaded) yet.
         """
 
-        slot = self._latest_slot(file=file, model=model, fit_type=fit_type)
+        slot = self._resolve_slot(
+            file=file, model=model, fit_type=fit_type, handle=handle
+        )
         if slot.conf_ci is None:
             return pd.DataFrame()
         return slot.conf_ci.copy()
@@ -808,7 +1407,8 @@ class FitResults:
         *,
         file: Any = None,
         model: str | None = None,
-        fit_type: FitType = "baseline",
+        fit_type: FitType | None = None,
+        handle: str | None = None,
     ) -> MCMCResult:
         """
         Return the MCMC outputs (quantile table, chain, acceptance) of the
@@ -824,8 +1424,11 @@ class FitResults:
             Filter to a single file (name string or object with ``.name``).
         model : str, optional
             Filter to a single model name.
-        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit type to read (latest matching fit wins).
+        handle : str, optional
+            Slot-handle prefix pinning one exact run; mutually exclusive
+            with the ``file``/``model``/``fit_type`` filters.
 
         Returns
         -------
@@ -841,10 +1444,12 @@ class FitResults:
             If no matching fit exists, or the fit had no MCMC step.
         """
 
-        slot = self._latest_slot(file=file, model=model, fit_type=fit_type)
+        slot = self._resolve_slot(
+            file=file, model=model, fit_type=fit_type, handle=handle
+        )
         if slot.mcmc is None:
             raise ValueError(
-                f"No MCMC results for the {fit_type} fit. Re-run with "
+                f"No MCMC results for the {slot.fit_type} fit. Re-run with "
                 "mc_settings=MC(use_mc=1, ...)."
             )
         return mcmc_result_from_payload(slot.mcmc)
@@ -855,7 +1460,8 @@ class FitResults:
         *,
         file: Any = None,
         model: str | None = None,
-        fit_type: FitType = "baseline",
+        fit_type: FitType | None = None,
+        handle: str | None = None,
         config: Any = None,
         show_plot: bool = True,
         full_range: bool | None = None,
@@ -878,8 +1484,11 @@ class FitResults:
             Filter to a single file (name string or object with ``.name``).
         model : str, optional
             Filter to a single model name.
-        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit type to plot (latest matching fit wins).
+        handle : str, optional
+            Slot-handle prefix pinning one exact run; mutually exclusive
+            with the ``file``/``model``/``fit_type`` filters.
         config : PlotConfig, optional
             Styling override. Default: the project-owned ``plot_config``
             this ``FitResults`` was built with, else ``PlotConfig()``.
@@ -910,7 +1519,9 @@ class FitResults:
             If no matching fit has been performed (or loaded) yet.
         """
 
-        slot = self._latest_slot(file=file, model=model, fit_type=fit_type)
+        slot = self._resolve_slot(
+            file=file, model=model, fit_type=fit_type, handle=handle
+        )
         cfg = self._config_for(slot, config)
         if full_range is None:
             full_range = bool(getattr(cfg, "full_range", False))
@@ -1053,6 +1664,7 @@ class FitResults:
         *,
         file: Any = None,
         model: str | None = None,
+        handle: str | None = None,
         slices: Sequence[int] | None = None,
         config: Any = None,
         show_init: bool | None = None,
@@ -1076,6 +1688,9 @@ class FitResults:
             Filter to a single file (name string or object with ``.name``).
         model : str, optional
             Filter to a single model name.
+        handle : str, optional
+            Slot-handle prefix pinning one exact SbS run; mutually
+            exclusive with the ``file``/``model`` filters.
         slices : sequence of int, optional
             Slice indices to render. Default: all slices.
         config : PlotConfig, optional
@@ -1101,7 +1716,13 @@ class FitResults:
 
         from trspecfit.utils import sbs as usbs
 
-        slot = self._latest_slot(file=file, model=model, fit_type="sbs")
+        slot = self._resolve_slot(
+            file=file,
+            model=model,
+            fit_type=None,
+            handle=handle,
+            required_fit_type="sbs",
+        )
         cfg = self._config_for(slot, config)
         if show_init is None:
             show_init = bool(getattr(cfg, "show_init", False))
@@ -1141,7 +1762,8 @@ class FitResults:
         *,
         file: Any = None,
         model: str | None = None,
-        fit_type: FitType = "baseline",
+        fit_type: FitType | None = None,
+        handle: str | None = None,
         show_plot: bool = True,
     ) -> None:
         """
@@ -1161,9 +1783,12 @@ class FitResults:
             Filter to a single file (name string or object with ``.name``).
         model : str, optional
             Filter to a single model name.
-        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to plot (latest matching fit wins). For SbS fits the
             payload is slice 0's.
+        handle : str, optional
+            Slot-handle prefix pinning one exact run; mutually exclusive
+            with the ``file``/``model``/``fit_type`` filters.
         show_plot : bool, default True
             Set ``False`` to build without displaying (tests / batch use).
 
@@ -1173,7 +1798,7 @@ class FitResults:
             If no matching fit exists, or the fit had no MCMC step.
         """
 
-        mcmc = self.get_mcmc(file=file, model=model, fit_type=fit_type)
+        mcmc = self.get_mcmc(file=file, model=model, fit_type=fit_type, handle=handle)
         self._render_mcmc_result(mcmc, show_plot=show_plot)
 
     #
@@ -1277,6 +1902,7 @@ class FitResults:
         *,
         file: Any = None,
         model: str | None = None,
+        handle: str | None = None,
         params: Sequence[str] | None = None,
         config: Any = None,
         show_plot: bool = True,
@@ -1294,6 +1920,9 @@ class FitResults:
             Filter to a single file (name string or object with ``.name``).
         model : str, optional
             Filter to a single model name.
+        handle : str, optional
+            Slot-handle prefix pinning one exact SbS run; mutually
+            exclusive with the ``file``/``model`` filters.
         params : sequence of str, optional
             Which parameters to plot. Default: the varied parameters (from
             the slot's ``params_meta``); for slots loaded from schema-2
@@ -1312,7 +1941,13 @@ class FitResults:
             If ``params`` names a parameter the fit does not have.
         """
 
-        slot = self._latest_slot(file=file, model=model, fit_type="sbs")
+        slot = self._resolve_slot(
+            file=file,
+            model=model,
+            fit_type=None,
+            handle=handle,
+            required_fit_type="sbs",
+        )
         if params is None:
             if slot.params_meta is not None:
                 params = [
@@ -1382,11 +2017,24 @@ class FitResults:
         projections of a project-level joint fit that is every
         count-dependent metric (``chi2_red_raw``, ``chi2_red``, ``aic``,
         ``bic``), because the joint parameter count does not decompose by
-        file; the joint record owns the whole-objective values. Names are
-        stable — the same column always carries the same kind of value
-        across calls, sessions, and loaded archives. There is no per-call
-        ``sigma=`` kwarg by design; persistent state on the File is the
-        only sigma source.
+        file; the joint record owns the whole-objective values. A default
+        column that is ``NaN`` on **every** matched row is dropped (one
+        projection never suppresses valid values in the other rows);
+        explicit ``metrics=`` requests always render what was asked for.
+        Names are stable — the same column always carries the same kind of
+        value across calls, sessions, and loaded archives. There is no
+        per-call ``sigma=`` kwarg by design; persistent state on the File
+        is the only sigma source.
+
+        **σ tiers**: σ is an attachment, not part of fit identity, so two
+        slots can share a fit view but carry different ``sigma_eff`` (fit,
+        ``set_sigma``, refit). Their raw metrics stay comparable; their
+        σ-scaled ones do not — values scaled by different constants rank
+        wrong. When a compared ``(file, fit_type)`` group mixes finite σ
+        values, the σ-scaled columns are dropped from the dynamic defaults
+        (``sigma_eff`` stays, so the mix is visible), and an explicit
+        ``metrics=["chi2_red"]`` request raises naming the conflicting σ
+        values.
 
         Parameters
         ----------
@@ -1427,9 +2075,12 @@ class FitResults:
         Returns
         -------
         pd.DataFrame
-            Columns: ``file``, ``model``, ``fit_type``, ``selection_json``,
-            optionally ``slice_index``, then one column per requested
-            metric. Empty DataFrame if no slots match the filter.
+            Columns: ``file``, ``model``, ``fit_type``, ``handle`` (the
+            slot handle's first 8 hex chars — feed it to
+            :meth:`variants`, :meth:`diff`, ``handle=`` accessors, or
+            ``select=``), ``selection_json``, optionally ``slice_index``,
+            then one column per requested metric. Empty DataFrame if no
+            slots match the filter.
 
         Raises
         ------
@@ -1440,7 +2091,9 @@ class FitResults:
             against the same fit view for AIC/BIC comparisons to be
             meaningful — typically this happens when the user mixes refits
             with different ``e_lim`` / ``t_lim`` / ``base_t_ind`` /
-            ``time_point`` or a changed correction state.
+            ``time_point`` or a changed correction state. Also if
+            ``metrics`` explicitly requests a σ-scaled metric while a
+            compared group mixes ``sigma_eff`` values (see σ tiers above).
         KeyError
             If ``metrics`` requests ``chi2`` / ``chi2_red`` when no matched
             slot has a sigma, or any other unknown metric key for at least
@@ -1462,11 +2115,24 @@ class FitResults:
             matched.append(slot)
 
         self._check_observed_consistency(matched)
-        metric_keys = _resolve_metric_keys(metrics, matched)
+        metric_keys = _resolve_metric_keys(metrics, matched, _sigma_conflicts(matched))
 
         if sbs_aggregation == "long":
-            return self._compare_rows_long(matched, metric_keys)
-        return self._compare_rows_scalar(matched, metric_keys, sbs_aggregation)
+            df = self._compare_rows_long(matched, metric_keys)
+        else:
+            df = self._compare_rows_scalar(matched, metric_keys, sbs_aggregation)
+        if metrics is None:
+            # Structurally undefined cells render NaN; a *column* is dropped
+            # only when every matched row lacks the metric (e.g. per-file
+            # count-dependent metrics on a set of joint projections), so one
+            # projection never suppresses valid values in the other rows.
+            # Explicit metrics= requests always render what was asked for.
+            all_nan = [
+                k for k in metric_keys if k in df.columns and bool(df[k].isna().all())
+            ]
+            if all_nan:
+                df = df.drop(columns=all_nan)
+        return df
 
     #
     @staticmethod
@@ -1600,6 +2266,7 @@ class FitResults:
                 "file": slot.file_name,
                 "model": slot.model_name,
                 "fit_type": slot.fit_type,
+                "handle": slot.handle[:8],
                 "selection_json": slot.selection_json,
             }
             for key in metric_keys:
@@ -1623,8 +2290,8 @@ class FitResults:
                 else:
                     row[key] = float(value)
             rows.append(row)
-        columns = ["file", "model", "fit_type", "selection_json", *metric_keys]
-        return pd.DataFrame(rows, columns=columns)
+        columns = ["file", "model", "fit_type", "handle", "selection_json"]
+        return pd.DataFrame(rows, columns=[*columns, *metric_keys])
 
     #
     def plot_residuals(
@@ -1854,6 +2521,7 @@ class FitResults:
                 "file": slot.file_name,
                 "model": slot.model_name,
                 "fit_type": slot.fit_type,
+                "handle": slot.handle[:8],
                 "selection_json": slot.selection_json,
             }
             if slot.fit_type == "sbs":
@@ -1890,6 +2558,7 @@ class FitResults:
             "file",
             "model",
             "fit_type",
+            "handle",
             "selection_json",
             "slice_index",
             *metric_keys,
