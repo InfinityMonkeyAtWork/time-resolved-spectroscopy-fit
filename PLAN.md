@@ -3,7 +3,7 @@
 ## Fit-archive schema 7 (milestone)
 
 Authoritative design: `docs/design/fit_archive_principles.md` (settled).
-Conversion detail: `docs/design/fit_archive_schema_plan.md` — this plan is the
+Conversion detail: `docs/design/archive/fit_archive_schema_plan.md` — this plan is the
 working checklist; it references that document rather than restating it.
 
 Sequencing status (principles §Sequencing): step 1 (identity guards —
@@ -122,7 +122,7 @@ Decision points (resolved 2026-08-04):
 
 ### Part B — schema 7 conversion
 
-Follow `docs/design/fit_archive_schema_plan.md` §Execution order; steps 1–3
+Follow `docs/design/archive/fit_archive_schema_plan.md` §Execution order; steps 1–3
 are done (identity guards, PlotConfig refactor and serialization). The schema
 plan was reconciled against the landed `JointFitResult` record on 2026-08-05:
 parameter maps supersede the prefix-based projection records, the record
@@ -440,9 +440,46 @@ between B5 and B8; B9–B12 land as separate green commits afterward.
       recorded seed it points at a stochastic `fit_alg_2` / environment
       difference instead of re-recommending the seed the user already
       supplied.
-- [ ] **B11. Docs** — rewrite `fit_archive_schema.md` as the schema-7 spec;
-      archive `fit_archive_schema_plan.md` and `joint_fit_result.md`; update
-      `repo_architecture.md`, `llms.txt`, `AGENTS.md`, `CLAUDE.md`, CHANGELOG.
+- [x] **B11. Docs** — done 2026-08-26 (in tree).
+      `fit_archive_schema.md` rewritten as the self-contained schema-7
+      spec from the landed writer/reader (conventions incl. compression
+      and read-only rehydration, top/file/slot/joint layouts, the
+      identity-chain table, the collision table with the equivalence
+      tolerances, reader mapping incl. selection recovered from
+      `input_files`, cheat sheet, deliberately-not-stored list); the
+      schema 1–6 version history is compressed to a break note (it
+      lives in git history). `fit_archive_schema_plan.md` and
+      `joint_fit_result.md` moved to `docs/design/archive/` with the
+      archived-doc conventions (blockquote header, `../` links,
+      `../../../src` paths); every incoming reference repointed
+      (principles, repo_architecture, TODO, PLAN, CHANGELOG, one test
+      docstring) and the three `fit_io.py` docstring references now
+      point at the living spec's §Joint record group. The plan's last
+      "Still open" bullet (`frequency` persisted state) truthed up as
+      landed via `encode_model_structure`. `repo_architecture.md`
+      updated: provider association (parent-owned for archives),
+      persisted `PlotConfig`, the B9 query layer, and the fit_io
+      section's schema-7 helper inventory. `llms.txt` gains a
+      user-facing query-layer paragraph; `AGENTS.md` / `CLAUDE.md`
+      needed no changes. CHANGELOG: four entries — the query layer, the
+      optimizer seed, the breaking schema-7 bullet, and the
+      save-all/export-latest default change.
+      Review addendum (2026-08-27, four findings — all valid, all
+      fixed): (1) the claimed clean build was checked with incremental
+      `make html` + grep, which missed a docutils error — the clean
+      `sphinx -W` build failed on `|x − 1|` in the `save_fits`
+      docstring (RST parses it as a substitution reference); wrapped in
+      inline code there and in `select_snapshot_slots`, and the verify
+      convention is now a **clean** `python -m sphinx -W` build;
+      (2) `TODO.md` truthed up — the milestone item's defect list is
+      past-tense with step (4) marked done (B12 remains the only open
+      step) and the joint-sidecar item is complete; (3) `llms.txt` no
+      longer claims `handle=` on *any* accessor — scoped to the eight
+      single-fit accessors (`get_joint` / `plot_joint_mcmc` /
+      `plot_residuals` do not take it); (4) `llms.txt` dedup wording
+      fixed — exact re-runs stay in the session history (and appear in
+      `variants()`) and deduplicate at save time, with reference
+      resolution picking the latest same-handle run.
 - [ ] **B12. Verify** — full suite, Ruff, mypy, pyright, whole-repo grep for
       stale `observed_sha256` / `history_key` / schema-version references.
 

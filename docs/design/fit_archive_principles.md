@@ -5,7 +5,7 @@ orphan: true
 # Fit-archive principles
 
 Status: **settled.** Branch `fit-archive-schema-7`. No open forks remain;
-[fit_archive_schema_plan.md](fit_archive_schema_plan.md) has been rewritten
+[fit_archive_schema_plan.md](archive/fit_archive_schema_plan.md) has been rewritten
 against these principles.
 
 This document answers three questions that everything else in the fit archive
@@ -17,11 +17,11 @@ depends on:
 
 It is deliberately about *principles*, not wire format. The on-disk layout is a
 consequence: [fit_archive_schema.md](fit_archive_schema.md) documents the
-current format (schema 6) and stays authoritative until the conversion lands;
-[fit_archive_schema_plan.md](fit_archive_schema_plan.md) is the conversion plan
-and has been rewritten against this document, carrying no rationale of its own.
-Both are downstream — when this document and either of them disagree, this one
-wins and the other is wrong.
+schema-7 format;
+[fit_archive_schema_plan.md](archive/fit_archive_schema_plan.md) is the archived
+conversion plan, rewritten against this document and carrying no rationale of
+its own. Both are downstream — when this document and either of them disagree,
+this one wins and the other is wrong.
 
 The archive is a wire format: it is the hardest thing in the project to change
 later. Getting identity wrong here means encoding a broken model into the
@@ -587,7 +587,7 @@ The joint record is **represented in schema 7**, not reserved for a later
 version. Schema 7 **consumes** a first-class joint result; it does not create
 one. Producing that record was sequenced ahead of the conversion (see
 "Sequencing") and landed on branch `joint-fit-result` (2026-07-31, decisions
-in [joint_fit_result.md](joint_fit_result.md)): every `Project.fit_2d` now
+in [joint_fit_result.md](archive/joint_fit_result.md)): every `Project.fit_2d` now
 captures a `JointFitResult` — combined parameter table, per-file parameter
 maps, joint `conf_ci`/`correl` (correlation over covariance), joint MCMC, and
 whole-objective metrics — into `Project._joint_fit_history`, published
@@ -621,7 +621,7 @@ state:
 `correl` is a **correlation** matrix, not a covariance matrix — that is what
 schema 6 stores and what `correl_to_df` produces. The joint-record branch
 settled the covariance question
-([joint_fit_result.md](joint_fit_result.md)): correlation only — with
+([joint_fit_result.md](archive/joint_fit_result.md)): correlation only — with
 `stderr` in the parameter table it recovers covariance as
 `correl(i,j) · stderr(i) · stderr(j)`, and storing both would invite
 disagreement.
@@ -644,7 +644,7 @@ canonically by name would sever the association — the fifth instance of the
 composite-key rule above, this time discarding association. Each projection
 record therefore carries its own combined → local `parameter_map`; readers
 look names up rather than parse the prefix convention
-([joint_fit_result.md](joint_fit_result.md)), and a project-shared parameter
+([joint_fit_result.md](archive/joint_fit_result.md)), and a project-shared parameter
 appears under the same unprefixed name in every projection's map.
 
 **Mutation.** One transaction over the whole bundle: validate the joint record
@@ -1399,7 +1399,7 @@ a transient discarded after `fit_2d()`, which is the wrong order.
    Schema 7 cannot be finalized before this — it would have nothing to
    serialize. **Done** on branch `joint-fit-result` (2026-07-31): the record
    is `JointFitResult` (correlation chosen over covariance), decisions in
-   [joint_fit_result.md](joint_fit_result.md).
+   [joint_fit_result.md](archive/joint_fit_result.md).
 4. **Schema 7.** With the object model settled, the wire format largely falls
    out. Array ownership (Principle 4) is local to the capture path and ships
    with it — it does **not** wait on the systemic array-mutation TODO, which

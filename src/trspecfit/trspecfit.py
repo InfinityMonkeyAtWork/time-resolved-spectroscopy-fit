@@ -452,8 +452,8 @@ class Project:
         by : str, optional
             Ranking criterion for ``select="best"`` — one of ``aic``,
             ``bic``, ``chi2_red_raw`` (minimized) or ``chi2_red`` (ranked
-            by |x − 1|, the distance from the noise floor; requires a σ
-            consistent across the group). Raw χ² and r² are deliberately
+            by ``|x − 1|``, the distance from the noise floor; requires a
+            σ consistent across the group). Raw χ² and r² are deliberately
             not offered — a fit with more free parameters almost always
             wins on them while being the worse model. SbS slots rank by
             the per-slice median. A group spanning multiple fit views

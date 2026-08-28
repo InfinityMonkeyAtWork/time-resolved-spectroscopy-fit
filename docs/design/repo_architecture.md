@@ -135,28 +135,43 @@ results-ownership contract: everything a user asks about a completed fit
 is answered from slots, never from live `Model.result`. Two construction
 paths: `FitResults.load(path)` for loaded archives and the
 `Project.results` property for in-session work; both also attach
-name-matched presentation providers (`SavedFile`s / live `File`s)
-supplying energy/time axes and full uncropped data. Styling is the
+presentation providers supplying energy/time axes and full uncropped raw
+data — archive `SavedFile` records own their slots (parent association),
+live `File`s are matched by the guarded unique name. Styling is the
 project-owned `PlotConfig`, passed at construction (`Project.results`
-passes the live one; loaded archives carry none until schema 7). Without
-a provider, plotting falls back to the slot's cropped data and index
-axes; result access remains available. A `FitResults` is frozen at construction
-(the underlying slot list is copied), so `r1 = p.results;
-<run another fit>; r2 = p.results` gives two distinct snapshots — `r1`
-does not see the new slot. Query API: `find` / `get` / `files` /
-`models` / iteration. Project-level joint fit records
-(`JointFitResult`, carried alongside the slots by `Project.results`)
-have their own surface — `find_joint` / `get_joint` /
-`plot_joint_mcmc`; iteration and `len()` stay per-file-slot so one
-optimization is never counted N+1 times. Accessors (latest matching
-slot; `File.get_*` is
-thin sugar): `get_fit_results` / `get_correlations` /
-`get_conf_intervals` / `get_mcmc`. Comparison: `compare_models` (returns
-a metrics DataFrame; refuses to compare slots whose `observed_sha256`
-differs on the same `(file, fit_type)`). Plotting (`File.plot_*` sugar;
-also the fit methods' inline-display path): `plot_fit`,
-`plot_param_evolution`, `plot_residuals`. The save/export side lives in
-`utils/fit_io.py`; this module is read-only on top of those slots.
+passes the live one; loaded archives decode the persisted
+`project/plot_config`). Without a provider, plotting falls back to the
+slot's cropped data and index axes; result access remains available. A
+`FitResults` is frozen at construction (the underlying slot list is
+copied), so `r1 = p.results; <run another fit>; r2 = p.results` gives
+two distinct snapshots — `r1` does not see the new slot. Query API:
+`find` / `get` / `files` / `models` / iteration, plus the schema-7 query
+layer — every slot has a stored 64-hex `handle`, and any unambiguous
+prefix (or exact user `label`, set post-hoc via `label()`) names one
+exact run: `handle=` pins the single-slot accessors and plot methods
+(mutually exclusive with the `file`/`model`/`fit_type` filter trio),
+`variants()` tabulates how the runs of one `(file, model, fit_type)`
+group differ in their *inputs* (constant columns suppressed), and
+`diff(a, b)` reports pairwise input/output differences — bundle-level
+for joint fits (projection refs escalate to the joint record). The
+selection/pruning counterparts live on `Project`: `select=`/`by=` on
+`save_fits` / `export_fits` and `drop_fits(ref)`. Project-level joint
+fit records (`JointFitResult`, carried alongside the slots by
+`Project.results` and rehydrated by `FitResults.load`) have their own
+surface — `find_joint` / `get_joint` / `plot_joint_mcmc`; iteration and
+`len()` stay per-file-slot so one optimization is never counted N+1
+times. Accessors (latest matching slot; `File.get_*` is thin sugar):
+`get_fit_results` / `get_correlations` / `get_conf_intervals` /
+`get_mcmc`. Comparison: `compare_models` (a metrics DataFrame with a
+short `handle` column; refuses to compare slots whose
+`fit_view_sha256` differs on the same `(file, fit_type)`, drops
+σ-scaled columns from the dynamic defaults when a compared group mixes
+`sigma_eff`, and drops default columns that are undefined on every
+matched row). Plotting (`File.plot_*` sugar; also the fit methods'
+inline-display path): `plot_fit`, `plot_param_evolution`,
+`plot_residuals`. The save/export side lives in `utils/fit_io.py`; this
+module is read-only on top of those slots (the one sanctioned mutation
+is `label`, the archive's mutable display field).
 
 ## Fit results: save / export / load architecture
 
@@ -191,7 +206,7 @@ optimization (combined parameter table, per-file parameter maps, joint
 `conf_ci`/`correl`/MCMC, whole-objective metrics) into the parallel
 append-only `Project._joint_fit_history`, published together with its
 per-file projection slots as one bundle — a capture failure publishes
-neither. Decisions in [joint_fit_result.md](joint_fit_result.md).
+neither. Decisions in [joint_fit_result.md](archive/joint_fit_result.md).
 
 ### The fit-to-slot capture boundary
 
@@ -239,7 +254,7 @@ On-demand diagnostics replace the old fit-time file dumps:
 `FitResults.plot_mcmc` re-renders the emcee walker-acceptance and corner
 figures from the persisted payload (live or loaded archive);
 `FitResults.plot_sbs_slices` likewise renders per-slice fit panels from
-the persisted slot (`observed`/`fit`/`fit_ini`/`components`, schema 6+,
+the persisted slot (`observed`/`fit`/`fit_ini`/`components`,
 optionally saved to one PNG per slice), with `File.plot_sbs_slices` as
 sugar — no live `Model`/`File` evaluation, matching `plot_fit`. The
 pre-0.14 auto-export
@@ -339,23 +354,29 @@ directly.
 ### `utils/fit_io.py`
 
 Fit-results persistence. Owns the `SavedProject` / `SavedFile` /
-`SavedFitSlot` dataclasses (the on-disk data model), the in-memory
-project-level joint record (`JointFitResult` / `JointFitProjection`,
-built by `_joint_result_from_project_fit` — schema 7 later serializes
-and reconstructs this same type), the four
+`SavedFitSlot` dataclasses (the on-disk data model), the project-level
+joint record (`JointFitResult` / `JointFitProjection`, built by
+`_joint_result_from_project_fit`, serialized as the `project/joint/`
+sidecar, and reconstructed as the same type on read), the four
 per-fit-type slot extractors (`_slot_from_baseline`,
 `_slot_from_spectrum`, `_slot_from_sbs`, `_slot_from_2d` — all called
 once at fit completion with copied snapshot args, never live `Model`
-references), the identity helpers (`compute_file_fingerprint`,
-`fingerprint_stamp`, `compute_history_key`, `compute_archive_slot_key`,
-`build_selection_json`, `compute_observed_sha256`), the
-snapshot-collapse helper (`collapse_history_to_snapshot`), and the
-HDF5 reader/writer (`read_archive`, `write_archive`) plus the CSV/PNG
-exporter (`write_csv_export`). The `SavedFitSlot` is the **single
-source of truth for completed-fit state** — neither `Model` nor `File`
-carries observed/fit/metrics. New persistence work lands here, not in
-`fitlib` or `trspecfit.py`. See `docs/design/fit_archive_schema.md`
-for the on-disk schema.
+references) plus the first-slot file capture (`capture_saved_file`),
+the schema-7 identity chain (`compute_file_content_hash`,
+`compute_file_version_stamp`, `encode_input_files`,
+`encode_model_structure`, `encode_optimizer_settings`,
+`compute_optimization_hash`, `compute_slot_handle`, and the
+comparability hash `compute_fit_view_sha256`), the snapshot-collapse
+helpers (`collapse_history_to_snapshot` /
+`collapse_joint_history_to_snapshot` — dedup plus the divergence rule),
+the query-layer primitives (`resolve_fit_reference`,
+`select_snapshot_slots`, `set_fit_label`, `joint_comparability`), and
+the HDF5 reader/writer (`read_archive`, `write_archive`) plus the
+CSV/PNG exporter (`write_csv_export`). The `SavedFitSlot` is the
+**single source of truth for completed-fit state** — neither `Model`
+nor `File` carries observed/fit/metrics. New persistence work lands
+here, not in `fitlib` or `trspecfit.py`. See
+`docs/design/fit_archive_schema.md` for the on-disk schema.
 
 ### `utils/lmfit.py`
 

@@ -41,6 +41,21 @@ All `get_*` / `plot_*` result accessors read the persisted fit record
 (latest matching fit), so they work identically on a live session and on
 archives loaded via `FitResults.load(path)`.
 
+Every fit is kept as a distinct variant (a changed bound, `vary` flag,
+seed, or data correction makes a new one; exact re-runs stay in the
+session history and deduplicate to the latest when saving).
+`project.results` is the query layer: `compare_models()` compares
+fit-quality metrics across runs (each row carries a short `handle` id),
+`variants()` shows how one model's runs differ in their *inputs*,
+`diff(a, b)` reports what changed between two runs, and
+`label(ref, "name")` names a chosen one. The single-fit accessors
+(`get_fit_results`, `get_correlations`, `get_conf_intervals`,
+`get_mcmc`, `plot_fit`, `plot_mcmc`, `plot_sbs_slices`,
+`plot_param_evolution`) accept `handle=` to pin an exact run.
+`save_fits(select=...)` / `export_fits(select=...)` choose what to
+persist (`"all"` / `"latest"` / `"best"` + `by=` / a handle prefix or
+label), and `project.drop_fits(ref)` prunes junk runs from the session.
+
 Multi-file joint fits (`project.fit_2d(model_name=...)`, sharing
 parameters marked `vary: project` across files) return a
 `JointFitResult` — combined parameter table, per-file parameter maps,

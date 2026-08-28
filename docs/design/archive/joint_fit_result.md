@@ -52,7 +52,7 @@ creates several independently mutable claims about one distribution. They are
 already absent on the project path today, so nothing is being removed.
 
 Capture follows the repository-wide
-[fit-to-slot capture boundary](repo_architecture.md). No
+[fit-to-slot capture boundary](../repo_architecture.md). No
 `lmfit.MinimizerResult`, `lmfit.Parameters`, `File`, or `Model` reference
 survives into the record; frames and arrays are copied at capture and accessors
 hand out copies.

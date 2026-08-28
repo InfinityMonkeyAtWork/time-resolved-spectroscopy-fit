@@ -2,25 +2,21 @@
 orphan: true
 ---
 
-# Fit-archive schema 7 — conversion plan
+# Archived Plan: Fit-archive schema 7 conversion
 
-Status: **in execution** on branch `fit-archive-schema-7`; the live checklist
-is `PLAN.md` Part B. Execution steps 1–3 have landed, and PLAN.md Part A
-applied several schema-7 identity rules to the schema-6 writer/reader early.
-Reconciled against the landed `JointFitResult` record on 2026-08-05.
+> Archived on 2026-08-26 after the schema-7 conversion landed on branch
+> `fit-archive-schema-7`. The living wire-format spec is
+> [../fit_archive_schema.md](../fit_archive_schema.md); the rationale stays
+> in [../fit_archive_principles.md](../fit_archive_principles.md). This
+> document is the historical record of what changed and in what order.
 
 This document is the **conversion plan**: what changes on disk, what changes in
 the object model, in what order, and what proves it. It deliberately does not
 restate rationale — every "why" lives in
-[fit_archive_principles.md](fit_archive_principles.md), which is settled and
-authoritative. An earlier draft duplicated the principles and their decision
-table here and drifted out of sync within a day; this version keeps one copy of
-every claim.
-
-[fit_archive_schema.md](fit_archive_schema.md) documents the current wire format
-(schema 6) and stays authoritative until this conversion lands, at which point
-it is rewritten as the self-contained schema-7 spec and this plan moves to
-`docs/design/archive/`.
+[../fit_archive_principles.md](../fit_archive_principles.md), which is settled
+and authoritative. An earlier draft duplicated the principles and their
+decision table here and drifted out of sync within a day; this version keeps
+one copy of every claim.
 
 ## What each principle changes on disk
 
@@ -134,7 +130,7 @@ project/files/000000/slots/000000/
 
 ## What carries over unchanged
 
-Accepted as-is from [fit_archive_schema.md](fit_archive_schema.md) and **not**
+Accepted as-is from [fit_archive_schema.md](../fit_archive_schema.md) and **not**
 restated here. The conversion must not alter them:
 
 - **Conventions** — positional zero-padded six-digit group keys; identity in
@@ -350,11 +346,11 @@ YAML source, following the omit-when-`None` convention.
 **This supersedes `yaml_filename`, which is dropped.** That attr is a single
 `str | None`, but `add_time_dependence(..., dynamics_yaml, ...)` takes a
 *separate* path from the energy model's YAML
-([trspecfit.py:3853](../../src/trspecfit/trspecfit.py#L3853)), so a fit spanning
+([trspecfit.py:3853](../../../src/trspecfit/trspecfit.py#L3853)), so a fit spanning
 `models.yaml` and `models_time.yaml` could only ever record one of them —
 a pre-existing gap, not one this conversion introduces. Per-snippet
 `source_file` records all of them. Consumer note: `_slot_title`
-([fit_results.py:117](../../src/trspecfit/fit_results.py#L117)) uses
+([fit_results.py:117](../../../src/trspecfit/fit_results.py#L117)) uses
 `yaml_filename` for plot titles and must read the energy snippet's `source_file`
 instead.
 
@@ -498,7 +494,10 @@ Still open:
   mutually exclusive with the filter trio, and joint-bundle expansion runs
   after selection so the bundle invariant wins).
 - **`frequency` becomes persisted state.** It reaches the archive through
-  `model_structure`; today it is stored nowhere.
+  `model_structure`; today it is stored nowhere. — **landed** with the
+  `encode_model_structure` encoding (each dynamics attachment carries its
+  `frequency`; the hash-completeness tests pin that two attachments
+  differing only in `frequency` hash apart).
 - **The optimizer seed producer** — **landed 2026-08-14**:
   `fit_wrapper(seed=...)` forwards to the `fit_alg_1` stage only (the
   two-stage contract designates stage 2 as deterministic refinement;
@@ -639,8 +638,8 @@ PLAN.md A2 (`e0b1975`): the stamp left **file** identity but stays part of
      two-file joint fit look like a one-file one. Computed on read from the
      projections — no stored field.
 10. **Tests** — see below.
-11. **Docs** — rewrite [fit_archive_schema.md](fit_archive_schema.md) as the
-    schema-7 spec; update [repo_architecture.md](repo_architecture.md),
+11. **Docs** — rewrite [fit_archive_schema.md](../fit_archive_schema.md) as the
+    schema-7 spec; update [repo_architecture.md](../repo_architecture.md),
     `llms.txt`, `AGENTS.md`, `CLAUDE.md`; CHANGELOG covering the break, the
     `File.plot_config` removal, and the `select=` change; move this plan to
     `docs/design/archive/`.

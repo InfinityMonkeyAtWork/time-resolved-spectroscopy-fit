@@ -2144,8 +2144,8 @@ def select_snapshot_slots(
     ``history_order``, the pre-collapse filtered history — more robust
     than timestamp strings). ``"best"`` requires ``by=``, one of the
     offered criteria (principles §"Pruning and selection"): ``aic``,
-    ``bic``, ``chi2_red_raw`` minimize; ``chi2_red`` ranks by |x − 1| and
-    requires a σ consistent across the group. Raw χ² and r² are not
+    ``bic``, ``chi2_red_raw`` minimize; ``chi2_red`` ranks by ``|x − 1|``
+    and requires a σ consistent across the group. Raw χ² and r² are not
     offered — they reward extra free parameters.
 
     Three rankings are refused because each would silently pick a wrong
@@ -2676,7 +2676,7 @@ def _precheck_bundle_integrity(
     """
     Raise ``ValueError`` on any joint-bundle integrity violation.
 
-    Checks, per ``fit_archive_schema_plan.md`` §``project/``:
+    Checks, per ``fit_archive_schema.md`` §Joint record group:
 
     - the scope/reference invariant — a slot carries ``joint_ref`` exactly
       when its ``input_files`` scope is ``"project"``, and a joint
@@ -2773,8 +2773,8 @@ def _assert_parameter_maps_consistent(
     a projection that disagrees with the authoritative combined result is
     a corrupt bundle, not a variant. Shared by the writer's bundle
     precheck and the reader — this is what makes the materialized-view
-    invariant checkable rather than asserted (fit_archive_schema_plan.md
-    §Projection records).
+    invariant checkable rather than asserted (fit_archive_schema.md
+    §Joint record group).
     """
 
     combined_values = {
@@ -3400,7 +3400,7 @@ def _projections_json(jr: JointFitResult) -> str:
 
     The parameter map — not record order and never a ``fileNN_`` prefix —
     carries the association with the combined optimizer parameters
-    (fit_archive_schema_plan.md §Projection records).
+    (fit_archive_schema.md §Joint record group).
     """
 
     records = [

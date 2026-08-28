@@ -824,7 +824,7 @@ def _make_shared_tau_project(
 #
 class TestJointFitResult:
     """Project.fit_2d captures one JointFitResult plus one projection slot
-    per file, published as one bundle (docs/design/joint_fit_result.md)."""
+    per file, published as one bundle (docs/design/archive/joint_fit_result.md)."""
 
     #
     @pytest.mark.slow
