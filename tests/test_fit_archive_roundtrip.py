@@ -88,8 +88,8 @@ def _save_load_one(project, archive_path) -> tuple[SavedFitSlot, FitResults]:
 def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> None:
     """Assert every persisted SavedFitSlot field round-trips exactly.
 
-    Covers identity (fingerprint, hashes, selection), arrays, metrics,
-    params, and provenance. Also verifies the design invariant that
+    Covers the identity chain (hashes, version stamps, selection), arrays,
+    metrics, params, and provenance. Also verifies the design invariant that
     ``observed - fit`` reproduces residuals on the loaded slot alone (no
     ``file.data`` lookup) — both via direct subtraction and against the
     stored chi2.
@@ -197,7 +197,7 @@ def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> 
         else:
             np.testing.assert_array_equal(loaded_corr, orig_corr)
 
-    # --- components (schema 4; None for 2d) -----------------------------
+    # --- components (None for 2d) ----------------------------------------
     if original.fit_type == "2d":
         assert original.components is None
         assert loaded.components is None
@@ -220,7 +220,7 @@ def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> 
         # Components must sum back to the persisted fit curve.
         np.testing.assert_allclose(recon, loaded.fit, rtol=1e-8, atol=1e-8)
 
-    # --- fit_ini / params_init (schema 6) -------------------------------
+    # --- fit_ini / params_init -------------------------------------------
     # None only on the project-level joint-fit path; every family/fit_type
     # exercised here goes through a per-File fit method, so fit_ini is
     # always populated.
@@ -340,7 +340,7 @@ def test_baseline_roundtrip(family_id: str, tmp_path) -> None:
     assert original.fit_type == "baseline"
     _assert_slot_round_tripped(loaded_slot, original)
 
-    # --- per-file aux_axis (schema 5; None unless the family needs it) -----
+    # --- per-file aux_axis (None unless the family needs it) --------------
     provider = loaded_results._provider_for(loaded_slot)
     if family.needs_aux:
         assert fit_file.aux_axis is not None

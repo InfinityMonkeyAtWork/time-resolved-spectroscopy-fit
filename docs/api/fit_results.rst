@@ -6,8 +6,8 @@ an immutable view over persisted fit records (``SavedFitSlot``), obtained
 from ``Project.results`` (in-session) or ``FitResults.load(path)``
 (archives) — the per-slot accessors and plot methods behave identically
 on both. Project-level joint fit records (``JointFitResult``, served by
-``find_joint`` / ``get_joint`` / ``plot_joint_mcmc``) are currently
-in-session only: archives cannot reconstruct them until schema 7.
+``find_joint`` / ``get_joint`` / ``plot_joint_mcmc``) persist in the
+archive as whole bundles and rehydrate as the same type.
 The ``File.get_*`` / ``File.plot_*`` / ``File.compare_models`` methods
 are thin delegates into this class.
 

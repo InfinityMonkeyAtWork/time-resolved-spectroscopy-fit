@@ -847,8 +847,8 @@ class MCMCResult:
     flatchain : pandas.DataFrame
         Flattened MCMC chain, one column per sampled parameter.
     acceptance_fraction : numpy.ndarray | None
-        Per-walker acceptance fraction (healthy range ≈ 0.2–0.5). ``None``
-        for slots loaded from schema-2 archives, which did not store it.
+        Per-walker acceptance fraction (healthy range ≈ 0.2–0.5); ``None``
+        when absent from the stored payload.
     lnsigma : float | None
         Final value of the ``__lnsigma`` nuisance parameter — a single
         noise scale over the sampled residual (for a joint fit: the

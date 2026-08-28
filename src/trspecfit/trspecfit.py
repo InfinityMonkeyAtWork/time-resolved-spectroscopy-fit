@@ -209,8 +209,9 @@ class Project:
         Base directory for project data files and YAML configuration.
         If None, defaults to 'test' directory.
     name : str, default='my_project'
-        Name for this analysis run. Names the default output root used by
-        ``save_fits`` / ``export_fits`` (``./fit_results/<name>/``).
+        Name for this analysis run. Names the default output paths of
+        ``save_fits`` (``./fit_results/<name>.fit.h5``) and
+        ``export_fits`` (``./fit_results/<name>/``).
     config_file : str or Path, optional
         YAML configuration file name (located in path directory).
         If None, uses default settings only.
@@ -389,7 +390,8 @@ class Project:
         and do not affect previously returned ``FitResults``. Object
         identity is unstable (``p.results is p.results`` is False); the
         contents at a given access are fixed. The live ``File`` objects are
-        passed along as axes / plot-config providers for the plot methods.
+        passed along as axes providers for the plot methods; styling comes
+        from the separately-passed project-owned ``plot_config``.
         Joint records are reachable via ``find_joint`` / ``get_joint``;
         iteration and ``len`` stay per-file-slot.
         """
@@ -1070,8 +1072,8 @@ class Project:
                     ),
                     "path_results": (
                         "the fit-time output tree is gone; save_fits()/"
-                        "export_fits() take an explicit path (default "
-                        "./fit_results/<name>/)"
+                        "export_fits() take an explicit path (defaults "
+                        "./fit_results/<name>.fit.h5 and ./fit_results/<name>/)"
                     ),
                     "ext": "unused, never wired to any export path; remove it",
                     "da_fmt": "unused, never wired to any export path; remove it",
@@ -2939,8 +2941,9 @@ class File:
         materialized at their fit completion; ``compare_models()`` reads
         those snapshots and is therefore unaffected by σ changes made after
         the fit. For an alternative calibration of *existing* results, divide
-        the always-present ``chi2_red_raw`` column by ``alt_sigma**2``
-        directly on the returned DataFrame — no API needed.
+        the raw ``chi2_red_raw`` column by ``alt_sigma**2`` directly on the
+        returned DataFrame — no API needed. (Request it via ``metrics=`` if
+        the dynamic default dropped it; it is ``NaN`` on joint projections.)
 
         Raises
         ------

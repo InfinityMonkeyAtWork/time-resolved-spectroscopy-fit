@@ -121,8 +121,9 @@ section is framed as data generation, not a fitting tutorial.
   - `20_multi_file_independent_fit` loads `21_multi_file_shared_fit`'s six-file
     dataset by relative path (copying only its small YAMLs) rather than
     duplicating the CSVs.
-- **Casual user's mental model is `File`.** `file.save_fit()` snapshots this
-  file's completed fits (latest slot per model / fit type / selection).
+- **Casual user's mental model is `File`.** `file.save_fit()` archives this
+  file's completed fits (every distinct variant by default; `select=`
+  narrows to `"latest"` / `"best"` / an exact handle or label).
 - **Fits never write to disk** (v0.14.0), so notebooks leave no surprise
   files by construction; on-disk artifacts come only from explicit
   `save_fits` / `export_fits` calls, taught where persistence is the topic.

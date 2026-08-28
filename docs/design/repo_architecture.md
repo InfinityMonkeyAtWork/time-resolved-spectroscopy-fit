@@ -246,8 +246,9 @@ methods. There is no `File.load_fit`: load is path-scoped, not file-scoped.
 Fits never write to disk (v0.14.0): the fit methods compute, display
 (per `show_output`), and capture `SavedFitSlot`s — persistence is always
 the explicit `save_fits` (HDF5) / `export_fits` (CSV/PNG tree) pair, fed
-from the slot history, with one default output root
-(`./fit_results/{Project.name}/`). Interactive display (`show_output >=
+from the slot history, with default outputs
+`./fit_results/{Project.name}.fit.h5` (save) and
+`./fit_results/{Project.name}/` (export). Interactive display (`show_output >=
 1`) renders inline from the just-captured slot via the `FitResults` plot
 API — the figure a user sees is the one the API reproduces later.
 On-demand diagnostics replace the old fit-time file dumps:

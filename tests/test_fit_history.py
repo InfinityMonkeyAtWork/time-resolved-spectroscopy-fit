@@ -1943,8 +1943,9 @@ class TestFitResultsCompareModelsSigmaColumns:
     Covers:
 
     - Default column set switches dynamically: 4 cols without σ, 6 cols
-      with (``chi2_red_raw`` is always present; ``sigma_eff`` + ``chi2_red``
-      appear only when at least one matched slot carries a finite σ).
+      with (``chi2_red_raw`` is present whenever any matched row defines
+      it; ``sigma_eff`` + ``chi2_red`` appear only when at least one
+      matched slot carries a finite σ).
     - Explicit request for ``chi2`` / ``chi2_red`` with no σ raises a clear
       ``KeyError`` pointing at ``file.set_sigma(...)`` / the raw column.
     - Sum-mode aggregation of ``chi2_red_raw`` and ``chi2_red`` uses
@@ -2072,7 +2073,7 @@ class TestFitResultsCompareModelsSigmaColumns:
 
     #
     def test_explicit_raw_request_works_without_sigma(self):
-        """``metrics=['chi2_red_raw']`` always works — raw is always populated."""
+        """``metrics=['chi2_red_raw']`` works without σ — raw needs no calibration."""
 
         slot = _slot_stub(
             file_name="A",
@@ -2707,7 +2708,7 @@ class TestPlotFitAPI:
 
     #
     def test_plot_fit_1d_renders_components_when_present(self):
-        """schema >= 4: components/component_names present -> one line +
+        """components/component_names present -> one line +
         one fill_between per component, plus the observed/fit lines."""
 
         import dataclasses
@@ -2741,7 +2742,7 @@ class TestPlotFitAPI:
 
     #
     def test_plot_fit_1d_falls_back_to_lean_when_components_none(self):
-        """Older-schema slots (components=None) keep the sum-only rendering."""
+        """Slots without persisted components keep the sum-only rendering."""
 
         import matplotlib.pyplot as plt
 
@@ -2867,7 +2868,7 @@ class TestPlotFitAPI:
     #
     def test_plot_fit_1d_omits_initial_guess_when_absent(self):
         """show_init=True (default) with no persisted fit_ini draws nothing
-        extra — schema < 6 slots keep the pre-schema-6 rendering."""
+        extra (fit_ini is None on joint-projection slots)."""
 
         import matplotlib.pyplot as plt
 
@@ -3042,7 +3043,6 @@ class TestPlotMcmc:
     def test_skips_acceptance_when_absent(self):
         import matplotlib.pyplot as plt
 
-        # schema-2 archives did not store acceptance_fraction.
         results = self._mcmc_results(with_acceptance=False)
         plt.close("all")
         results.plot_mcmc(file="f1", fit_type="baseline")

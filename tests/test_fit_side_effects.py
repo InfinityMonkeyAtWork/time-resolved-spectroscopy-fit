@@ -387,7 +387,7 @@ class TestShowInitConfigResolution:
     """show_init mirrors full_range's PlotConfig-field precedent exactly:
     a field on the project-owned config, True out of the box, resolved
     once by FitResults.plot_fit rather than hardcoded at a live call site. A
-    baseline fit now persists fit_ini (schema 6), so the live post-fit
+    baseline fit persists fit_ini, so the live post-fit
     display can render the dotted-gold "initial guess" overlay."""
 
     #

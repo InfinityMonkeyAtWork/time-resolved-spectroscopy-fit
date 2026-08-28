@@ -259,7 +259,8 @@ class FitResults:
 
     ``joint`` optionally supplies the project-level ``JointFitResult``
     records (``Project.results`` passes the in-session joint history;
-    loaded archives currently carry none). Joint records are reachable
+    ``FitResults.load`` the rehydrated archive records). Joint records
+    are reachable
     via :meth:`find_joint` / :meth:`get_joint` / :meth:`plot_joint_mcmc`
     only — iteration and ``len()`` stay per-file-slot, since mixing joint
     records in would count one optimization N+1 times.
@@ -282,9 +283,8 @@ class FitResults:
         # FitResults.load passes the config decoded from project/.
         self._config: PlotConfig | None = config
         # SavedFile providers own their slots — retain that parent
-        # association per slot object, so legacy archives (schemas 2-6
-        # allowed same-name groups distinguished only by content) cannot
-        # collapse onto one group's axes/data. Archive records get ONLY
+        # association per slot object, so one record's axes/data never
+        # serve another record's slots. Archive records get ONLY
         # that association: a slot not owned by any record (copied or
         # reconstructed — unsupported) gets no provider and falls back
         # to index axes, never to a same-name guess. Live File providers
@@ -448,8 +448,8 @@ class FitResults:
 
         Explicit ``config=`` wins; otherwise the config this
         ``FitResults`` was constructed with (``Project.results`` passes
-        the project-owned config); default ``PlotConfig()`` for loaded
-        archives, which persist no styling until schema 7.
+        the project-owned config, ``FitResults.load`` the archive's
+        persisted one); default ``PlotConfig()`` when neither was given.
         """
 
         if config is not None:
@@ -675,8 +675,7 @@ class FitResults:
         -------
         list of JointFitResult
             In history order (oldest first). Empty when this
-            ``FitResults`` carries no joint records (e.g. loaded
-            archives, which cannot reconstruct them yet).
+            ``FitResults`` carries no joint records.
         """
 
         canonical = self._canonical_files_arg(files)
@@ -1434,9 +1433,8 @@ class FitResults:
         -------
         MCMCResult
             Bundle of ``table`` (posterior quantiles), ``flatchain``,
-            ``acceptance_fraction`` (``None`` for slots loaded from schema-2
-            archives, which did not store it), and ``lnsigma`` (``None``
-            when the sampling was weighted).
+            ``acceptance_fraction``, and ``lnsigma`` (``None`` when the
+            sampling was weighted).
 
         Raises
         ------
@@ -1678,7 +1676,7 @@ class FitResults:
         each panel shows the slice's observed data, seeded initial guess,
         final fit, and component decomposition, sourced entirely from the
         persisted slot (``SavedFitSlot.observed``/``fit``/``fit_ini``/
-        ``components``, schema 6+) — no live ``Model``/``File`` is
+        ``components``) — no live ``Model``/``File`` is
         evaluated, so this works identically on ``Project.results`` and on
         archives loaded via :meth:`FitResults.load`.
 
@@ -1698,8 +1696,7 @@ class FitResults:
             this ``FitResults`` was built with, else ``PlotConfig()``.
         show_init : bool, optional
             Draw the dotted-gold initial-guess overlay when the slot has
-            a persisted ``fit_ini`` (schema 6+; older archives silently
-            skip it). Default: ``config.show_init``.
+            a persisted ``fit_ini``. Default: ``config.show_init``.
         save_path : str or Path, optional
             Directory to write one PNG per slice, named ``{slice_index:06d}.png``
             (fixed convention — no configurable format). Default ``None``
@@ -1773,9 +1770,7 @@ class FitResults:
         persisted slot (``SavedFitSlot.mcmc``): the per-walker acceptance
         fraction and the corner plot of the posterior samples. Works
         identically on ``Project.results`` and on archives loaded via
-        :meth:`FitResults.load`. The acceptance panel is skipped for slots
-        loaded from schema-2 archives (which did not store
-        ``acceptance_fraction``).
+        :meth:`FitResults.load`.
 
         Parameters
         ----------
@@ -1857,7 +1852,7 @@ class FitResults:
         The single rendering primitive behind :meth:`plot_mcmc` (per-file
         slots) and :meth:`plot_joint_mcmc` (joint records). The
         acceptance panel is skipped when ``acceptance_fraction`` is
-        ``None`` (schema-2 archives did not store it).
+        ``None``.
         """
 
         import corner
@@ -1925,9 +1920,8 @@ class FitResults:
             exclusive with the ``file``/``model`` filters.
         params : sequence of str, optional
             Which parameters to plot. Default: the varied parameters (from
-            the slot's ``params_meta``); for slots loaded from schema-2
-            archives (no ``params_meta``), every parameter. Plots nothing
-            if the default resolves to an empty set (all-fixed model).
+            the slot's ``params_meta``). Plots nothing if the default
+            resolves to an empty set (all-fixed model).
         config : PlotConfig, optional
             Styling override (see :meth:`plot_fit`).
         show_plot : bool, default True

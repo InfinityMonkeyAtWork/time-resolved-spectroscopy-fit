@@ -9,9 +9,9 @@ working checklist; it references that document rather than restating it.
 Sequencing status (principles §Sequencing): step 1 (identity guards —
 `ccb4da0`, `ef0339a`, `d6b2cf9`), step 2 (project-owned `PlotConfig` —
 `7befe82`), and step 3 (first-class joint results — `61bcd61`, `67587e3`) are
-**done**. Part A below (review-findings hardening) is also done; what remains
-is Part B (schema 7 itself). Part C (renderer consolidation) is queued behind
-the milestone and orthogonal to it.
+**done**. Part A below (review-findings hardening) and Part B (schema 7
+itself) are both done — the milestone is complete. Part C (renderer
+consolidation) is queued behind the milestone and orthogonal to it.
 
 ### Part A — integrity hardening (verified review findings)
 
@@ -472,7 +472,7 @@ between B5 and B8; B9–B12 land as separate green commits afterward.
       inline code there and in `select_snapshot_slots`, and the verify
       convention is now a **clean** `python -m sphinx -W` build;
       (2) `TODO.md` truthed up — the milestone item's defect list is
-      past-tense with step (4) marked done (B12 remains the only open
+      past-tense with step (4) marked done (B12 was then the only open
       step) and the joint-sidecar item is complete; (3) `llms.txt` no
       longer claims `handle=` on *any* accessor — scoped to the eight
       single-fit accessors (`get_joint` / `plot_joint_mcmc` /
@@ -492,10 +492,44 @@ between B5 and B8; B9–B12 land as separate green commits afterward.
       `save_fits`/`load_fits` pairing, and next to the `project.results`
       property it would read as mutating that property — worse than the
       ambiguity it fixes).
-- [ ] **B12. Verify** — full suite, Ruff, mypy, pyright, whole-repo grep for
-      stale `observed_sha256` / `history_key` / schema-version references,
-      plus rename fallout (`get_fit_results` / `get_conf_intervals` /
-      `results.label(`).
+- [x] **B12. Verify** — done 2026-08-27 (in tree). Full suite green (fast
+      1210 + slow 181), Ruff, mypy, pyright, clean `sphinx -W` build.
+      Whole-repo grep (notebooks, YAML, rst, docs included): retired names
+      (`observed_sha256` / `history_key` / `archive_slot_key` /
+      `yaml_filename`) survive only in the writer guard test, the
+      principles doc's conversion rationale, archived docs, and released
+      CHANGELOG history — all intentional. Fixed stale references found:
+      `10_model_comparison` notebook claimed an `observed_sha256`
+      cross-check (→ `fit_view_sha256`); six src docstrings promised
+      schema-2/6 loading behavior that no longer exists (pre-7 archives
+      unreadable); `_config_for` + `docs/api/fit_results.rst` still said
+      styling / joint records are not persisted "until schema 7"; three
+      Unreleased CHANGELOG entries used future-tense "until schema 7" and
+      the guarded-name bullet still described the retired `history_key`
+      mechanics (trimmed — the schema-7 entry owns identity); TODO item
+      on array mutation described slot capture with pre-schema-7
+      by-reference semantics; rollout-story schema tags pruned from test
+      comments.
+      Review addendum (2026-08-27): a second external pass caught seven
+      more clusters, all verified and fixed in tree — (1) two `FitResults`
+      docstrings claimed loaded archives carry no joint records (the
+      reader rehydrates them); (2) `11_save_load_export` still taught
+      schema-6 save semantics (latest-per-key snapshot, deferred
+      `keep_history`, fingerprint prose, same-selection collision) —
+      retaught as `select="all"`, handle dedup, and the collision rule,
+      with `examples_upgrade.md`'s latest-per-selection line updated;
+      (3) four "chi2_red_raw is always present" claims softened (NaN on
+      joint projections, dropped from defaults when every row lacks it);
+      (4) `Project.results` docstring called Files plot-config providers;
+      (5) save/export default paths were conflated in five spots (save is
+      `fit_results/<name>.fit.h5`, export `fit_results/<name>/` —
+      `Project.name` docstring, `path_results` migration message,
+      repo_architecture, TODO, and the Unreleased "fits never write"
+      CHANGELOG entry); (6) PLAN/TODO status lines still said Part B / B12
+      open; (7) three rollout-era schema comments and one
+      fingerprint-as-identity docstring pruned. Retired names now
+      additionally survive in TODO's milestone-history item (deliberate
+      past tense).
 
 ### Part C — renderer consolidation (queued behind schema 7)
 
