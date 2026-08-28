@@ -2365,6 +2365,9 @@ class File:
         Model
             The loaded model. For ``'energy'`` models the model is also
             registered in ``self.models`` and set as the active model.
+            Re-loading an existing energy-model name replaces the live
+            model object (with a warning); completed fits are unaffected —
+            they are kept in the project fit history.
         """
 
         # normalize bare string to single-element list
@@ -2382,12 +2385,16 @@ class File:
                 " in model_info."
             )
         if model_type == "energy":
-            if self.select_model(model_info) is not None:
-                raise ValueError(
-                    f'Model named "{self.model_list_to_name(model_info)}"'
-                    " already exists. Delete the existing model"
-                    " or change the name of the new model."
+            existing = self.select_model(model_info)
+            if existing is not None:
+                warnings.warn(
+                    f'Model "{self.model_list_to_name(model_info)}" already '
+                    f"exists on file '{self.name}' — overwriting the live "
+                    f"model object. Completed fits are unaffected (they are "
+                    f"kept in the fit history).",
+                    stacklevel=2,
                 )
+                self.models.remove(existing)
 
         # Load and process YAML file with appropriate numbering strategy
         model_yaml_path = self.p.path / pathlib.Path(model_yaml)

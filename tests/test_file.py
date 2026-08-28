@@ -122,19 +122,23 @@ class TestModelManagement:
             )
 
     #
-    def test_load_model_rejects_duplicate_name(self):
-        """load_model should raise ValueError when trying to load a model again."""
+    def test_load_model_overwrites_duplicate_name(self):
+        """Re-loading a name replaces the live model with a warning —
+        completed fits live in the fit history, so nothing durable is lost."""
 
         file = self._make_file_with_axes()
-        file.load_model(
+        first = file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="simple_energy",
         )
-        with pytest.raises(ValueError, match="already exists"):
-            file.load_model(
+        with pytest.warns(UserWarning, match="overwriting"):
+            second = file.load_model(
                 model_yaml="models/file_energy.yaml",
                 model_info="simple_energy",
             )
+        assert second is not first
+        assert file.model_active is second
+        assert len([m for m in file.models if m.name == "simple_energy"]) == 1
 
     #
     def test_load_model_rejects_nonexistent_submodel(self):
@@ -1309,15 +1313,15 @@ class TestFileNameAndProjectAccess:
         assert model.name == "single_glp"
 
     #
-    def test_duplicate_model_name_raises(self):
-        """load_model must not register two models with one name — every
-        name-based lookup (select_model, slot model_name) would silently
-        take the first. Pins the existing load-time guard."""
+    def test_duplicate_model_name_overwrites_previous(self):
+        """One name never maps to two live models — re-loading a name
+        replaces the previous object (with a warning), so every name-based
+        lookup (select_model, slot model_name) stays unambiguous."""
 
         project = make_project(name="guard")
         file = File(parent_project=project, energy=np.linspace(80, 90, 10))
         file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
-        with pytest.raises(ValueError, match="already exists"):
+        with pytest.warns(UserWarning, match="overwriting"):
             file.load_model(
                 model_yaml="models/file_energy.yaml", model_info="single_glp"
             )
