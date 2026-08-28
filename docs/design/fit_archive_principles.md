@@ -1247,7 +1247,7 @@ Requiring a label at fit time is both a barrier and wrong on the merits — you
 rarely know at fit time which run mattered. Interactive prompting at export
 is also rejected: it breaks scripts, headless runs, and CI, and
 `show_output=0` API mode is first-class in this package. A label is set
-post-hoc (`results.label("a3f2", "final")`) and used for display, export
+post-hoc (`results.set_label("a3f2", "final")`) and used for display, export
 directory names, and selection.
 
 Labels are also what make a **durable** pointer to a chosen fit. An explicit

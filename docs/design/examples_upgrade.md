@@ -62,7 +62,7 @@ external tools. Entry: `01_basic_fitting`.
 
 ```python
 file.fit_baseline(...); file.fit_2d(...)
-file.get_fit_results(fit_type="2d")
+file.get_parameters(fit_type="2d")
 file.export_fit()     # one-way CSV + PNG, Origin-friendly
 file.save_fit()       # HDF5 archive snapshot for this file
 ```

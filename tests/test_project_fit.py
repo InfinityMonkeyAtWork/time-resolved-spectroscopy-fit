@@ -517,7 +517,7 @@ class TestBuildFitParams:
 #
 class TestProjectFitLifecycle:
     """Project.fit_2d() populates file.model_2d so the standard post-fit
-    API (get_fit_results, export_fit) works on project-fitted files."""
+    API (get_parameters, export_fit) works on project-fitted files."""
 
     #
     @pytest.mark.slow
@@ -538,8 +538,8 @@ class TestProjectFitLifecycle:
 
     #
     @pytest.mark.slow
-    def test_get_fit_results_2d_works_after_project_fit(self):
-        """get_fit_results("2d") returns a DataFrame on project-fitted files."""
+    def test_get_parameters_2d_works_after_project_fit(self):
+        """get_parameters("2d") returns a DataFrame on project-fitted files."""
 
         project = make_project(name="project_fit")
         truth = _make_truth_file()
@@ -551,7 +551,7 @@ class TestProjectFitLifecycle:
         project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
 
         for f in project.files:
-            df = f.get_fit_results(fit_type="2d")
+            df = f.get_parameters(fit_type="2d")
             assert df is not None
             assert "GLP_01_x0_expFun_01_tau" in df["name"].values
 

@@ -32,7 +32,7 @@ file.add_time_dependence('2D', 'GLP_01_x0', 'models_time.yaml', 'shift')
 file.fit_2d('2D')
 
 # 3) inspect results
-df = file.get_fit_results(fit_type='2d')             # pandas DataFrame
+df = file.get_parameters(fit_type='2d')             # pandas DataFrame
 file.plot_fit(fit_type='2d')                         # observed/fit/residual
 file.save_fit(...)                                   # HDF5 fit archive
 ```
@@ -48,8 +48,8 @@ session history and deduplicate to the latest when saving).
 fit-quality metrics across runs (each row carries a short `handle` id),
 `variants()` shows how one model's runs differ in their *inputs*,
 `diff(a, b)` reports what changed between two runs, and
-`label(ref, "name")` names a chosen one. The single-fit accessors
-(`get_fit_results`, `get_correlations`, `get_conf_intervals`,
+`set_label(ref, "name")` names a chosen one. The single-fit accessors
+(`get_parameters`, `get_correlations`, `get_confidence_intervals`,
 `get_mcmc`, `plot_fit`, `plot_mcmc`, `plot_sbs_slices`,
 `plot_param_evolution`) accept `handle=` to pin an exact run.
 `save_fits(select=...)` / `export_fits(select=...)` choose what to

@@ -751,7 +751,7 @@ class FitResults:
         return record.label if record is not None else None
 
     #
-    def label(self, ref: str, label: str) -> None:
+    def set_label(self, ref: str, label: str) -> None:
         """
         Set the user-facing label of one fit, post-hoc.
 
@@ -1251,7 +1251,7 @@ class FitResults:
         return self._latest_slot(file=file, model=model, fit_type=ft)
 
     #
-    def get_fit_results(
+    def get_parameters(
         self,
         *,
         file: Any = None,
@@ -1354,7 +1354,7 @@ class FitResults:
         return slot.correl.copy()
 
     #
-    def get_conf_intervals(
+    def get_confidence_intervals(
         self,
         *,
         file: Any = None,

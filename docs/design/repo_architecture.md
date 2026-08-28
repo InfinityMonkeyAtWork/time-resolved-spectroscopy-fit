@@ -147,7 +147,7 @@ copied), so `r1 = p.results; <run another fit>; r2 = p.results` gives
 two distinct snapshots — `r1` does not see the new slot. Query API:
 `find` / `get` / `files` / `models` / iteration, plus the schema-7 query
 layer — every slot has a stored 64-hex `handle`, and any unambiguous
-prefix (or exact user `label`, set post-hoc via `label()`) names one
+prefix (or exact user `label`, set post-hoc via `set_label()`) names one
 exact run: `handle=` pins the single-slot accessors and plot methods
 (mutually exclusive with the `file`/`model`/`fit_type` filter trio),
 `variants()` tabulates how the runs of one `(file, model, fit_type)`
@@ -161,7 +161,7 @@ fit records (`JointFitResult`, carried alongside the slots by
 surface — `find_joint` / `get_joint` / `plot_joint_mcmc`; iteration and
 `len()` stay per-file-slot so one optimization is never counted N+1
 times. Accessors (latest matching slot; `File.get_*` is thin sugar):
-`get_fit_results` / `get_correlations` / `get_conf_intervals` /
+`get_parameters` / `get_correlations` / `get_confidence_intervals` /
 `get_mcmc`. Comparison: `compare_models` (a metrics DataFrame with a
 short `handle` column; refuses to compare slots whose
 `fit_view_sha256` differs on the same `(file, fit_type)`, drops

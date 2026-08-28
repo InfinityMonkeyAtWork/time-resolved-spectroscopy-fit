@@ -1746,7 +1746,7 @@ class Project:
 
         # Distribute final parameters back to file models and hook into
         # the standard File 2D-fit lifecycle so that export_fit() and
-        # get_fit_results("2d") work on project-fitted files.
+        # get_parameters("2d") work on project-fitted files.
         mapping = project_fit_info["mapping"]
         models = project_fit_info["models"]
         joint_par_fin = result.par_fin
@@ -4680,7 +4680,7 @@ class File:
             )
 
     #
-    def get_fit_results(
+    def get_parameters(
         self,
         *,
         model: str | None = None,
@@ -4688,9 +4688,9 @@ class File:
         handle: str | None = None,
     ) -> pd.DataFrame:
         """
-        Return fit results as a DataFrame for programmatic access.
+        Return the fitted parameters of the latest matching fit.
 
-        Sugar for ``self.p.results.get_fit_results(file=self, ...)`` — reads
+        Sugar for ``self.p.results.get_parameters(file=self, ...)`` — reads
         the persisted fit slot (latest matching fit), so results survive
         model reloads and are identical to what ``save_fits`` archives.
 
@@ -4728,10 +4728,10 @@ class File:
 
         if handle is not None:
             self._assert_fit_handle_owned(handle)
-            return self.p.results.get_fit_results(
+            return self.p.results.get_parameters(
                 model=model, fit_type=fit_type, handle=handle
             )
-        return self.p.results.get_fit_results(file=self, model=model, fit_type=fit_type)
+        return self.p.results.get_parameters(file=self, model=model, fit_type=fit_type)
 
     #
     def get_correlations(
@@ -4754,7 +4754,7 @@ class File:
             Restrict to a single model name. Default: latest fit of
             ``fit_type`` regardless of model.
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
-            Which fit to read (see :meth:`get_fit_results`).
+            Which fit to read (see :meth:`get_parameters`).
         handle : str, optional
             Slot-handle prefix pinning one exact run of this file;
             mutually exclusive with the ``model``/``fit_type`` filters.
@@ -4783,7 +4783,7 @@ class File:
         )
 
     #
-    def get_conf_intervals(
+    def get_confidence_intervals(
         self,
         *,
         model: str | None = None,
@@ -4793,7 +4793,7 @@ class File:
         """
         Return the profiled confidence-interval table from a completed fit.
 
-        Sugar for ``self.p.results.get_conf_intervals(file=self, ...)`` —
+        Sugar for ``self.p.results.get_confidence_intervals(file=self, ...)`` —
         reads the persisted fit slot (latest matching fit). Populated only
         when the fit ran with ``try_ci=1`` (otherwise an empty DataFrame).
         For SbS fits the table is slice 0's.
@@ -4821,10 +4821,10 @@ class File:
 
         if handle is not None:
             self._assert_fit_handle_owned(handle)
-            return self.p.results.get_conf_intervals(
+            return self.p.results.get_confidence_intervals(
                 model=model, fit_type=fit_type, handle=handle
             )
-        return self.p.results.get_conf_intervals(
+        return self.p.results.get_confidence_intervals(
             file=self, model=model, fit_type=fit_type
         )
 

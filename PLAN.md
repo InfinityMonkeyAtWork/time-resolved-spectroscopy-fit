@@ -273,7 +273,7 @@ between B5 and B8; B9–B12 land as separate green commits afterward.
       level** via the combined table, `metric` rows gated by the joint
       comparability key (`fit_io.joint_comparability`: sorted
       `(file_name, fit_view_sha256)` *pairs*, multiplicity preserved).
-      `FitResults.label(ref, label)` per principles §Labels
+      `FitResults.set_label(ref, label)` per principles §Labels
       (`fit_io.set_fit_label`, the sanctioned mutator; reserved
       `select=` words rejected; projection refs escalate to the joint
       record; persists via `save_fits`). σ tiers in `compare_models`:
@@ -480,8 +480,22 @@ between B5 and B8; B9–B12 land as separate green commits afterward.
       fixed — exact re-runs stay in the session history (and appear in
       `variants()`) and deduplicate at save time, with reference
       resolution picking the latest same-handle run.
+- [x] **B11.5. Pre-release accessor renames** — done 2026-08-27 (in tree).
+      Naming review before 0.14 ships: `get_fit_results` → `get_parameters`
+      (next to `FitResults.get()`, which returns the record, the old name
+      read as the record accessor), `get_conf_intervals` →
+      `get_confidence_intervals`, `FitResults.label` → `set_label` (the
+      query layer's only mutating method). Applied identically to the
+      `File.*` wrappers; whole-repo rename incl. notebooks, docs, llms.txt,
+      benchmark script; archived design docs untouched (point-in-time).
+      Declined: `Project.load_fits` → `load_results` (breaks the
+      `save_fits`/`load_fits` pairing, and next to the `project.results`
+      property it would read as mutating that property — worse than the
+      ambiguity it fixes).
 - [ ] **B12. Verify** — full suite, Ruff, mypy, pyright, whole-repo grep for
-      stale `observed_sha256` / `history_key` / schema-version references.
+      stale `observed_sha256` / `history_key` / schema-version references,
+      plus rename fallout (`get_fit_results` / `get_conf_intervals` /
+      `results.label(`).
 
 ### Part C — renderer consolidation (queued behind schema 7)
 

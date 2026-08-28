@@ -583,7 +583,7 @@ def capture_par_variability(example_num, *, n_starts=4):
         file.fit_2d(model_name="2D", stages=2, try_ci=0)
         wall = time.perf_counter() - t0
 
-        df = file.get_fit_results(fit_type="2d")
+        df = file.get_parameters(fit_type="2d")
         fitted = dict(zip(df["name"], df["value"], strict=True))
         fitted_runs.append({name: fitted[name] for name in free_names})
 

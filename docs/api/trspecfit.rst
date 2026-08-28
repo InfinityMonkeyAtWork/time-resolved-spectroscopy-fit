@@ -65,9 +65,9 @@ These read the persisted fit record (latest matching fit), so they work
 identically on a live session and on loaded archives — see
 :class:`trspecfit.fit_results.FitResults` for the underlying API.
 
-.. automethod:: trspecfit.trspecfit.File.get_fit_results
+.. automethod:: trspecfit.trspecfit.File.get_parameters
 .. automethod:: trspecfit.trspecfit.File.get_correlations
-.. automethod:: trspecfit.trspecfit.File.get_conf_intervals
+.. automethod:: trspecfit.trspecfit.File.get_confidence_intervals
 .. automethod:: trspecfit.trspecfit.File.get_mcmc
 .. automethod:: trspecfit.trspecfit.File.plot_fit
 .. automethod:: trspecfit.trspecfit.File.plot_param_evolution

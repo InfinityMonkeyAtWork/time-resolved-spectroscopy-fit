@@ -775,7 +775,7 @@ class TestSbSSlot:
             assert slot.metrics[k].shape == (len(file.time),)
             assert not slot.metrics[k].flags.writeable
         # The slot-backed accessor serves the wide per-slice params frame.
-        sbs_df = file.get_fit_results(fit_type="sbs")
+        sbs_df = file.get_parameters(fit_type="sbs")
         pd.testing.assert_frame_equal(sbs_df, slot.params)
         assert len(sbs_df) == len(file.time)
         # Shared per-parameter metadata, column-aligned with the wide frame.
@@ -1076,15 +1076,15 @@ class TestFitSettingsProvenance:
 
 #
 class TestSlotBackedAccessors:
-    """FitResults.get_fit_results / get_correlations / get_conf_intervals /
+    """FitResults.get_parameters / get_correlations / get_confidence_intervals /
     get_mcmc read the latest matching SavedFitSlot; the File.get_* methods
     are thin sugar delegating with file=self."""
 
     #
     def test_file_sugar_matches_fitresults_accessor(self):
         project, file = _setup_baseline_fit()
-        via_file = file.get_fit_results(fit_type="baseline")
-        via_results = project.results.get_fit_results(file=file, fit_type="baseline")
+        via_file = file.get_parameters(fit_type="baseline")
+        via_results = project.results.get_parameters(file=file, fit_type="baseline")
         pd.testing.assert_frame_equal(via_file, via_results)
         # ... and both match the slot payload.
         pd.testing.assert_frame_equal(via_file, project._fit_history[0].params)
@@ -1095,7 +1095,7 @@ class TestSlotBackedAccessors:
         desynchronize the persisted slot."""
 
         project, file = _setup_baseline_fit()
-        df = file.get_fit_results(fit_type="baseline")
+        df = file.get_parameters(fit_type="baseline")
         df.loc[0, "value"] = -999.0
         assert project._fit_history[0].params.loc[0, "value"] != -999.0
 
@@ -1136,7 +1136,7 @@ class TestSlotBackedAccessors:
         file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
         assert len(project._fit_history) == 2
 
-        df = file.get_fit_results(fit_type="baseline")
+        df = file.get_parameters(fit_type="baseline")
         pd.testing.assert_frame_equal(df, project._fit_history[-1].params)
         first_values = project._fit_history[0].params["value"].to_numpy()
         assert not np.allclose(df["value"].to_numpy(), first_values)

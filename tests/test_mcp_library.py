@@ -1193,8 +1193,8 @@ class TestMCPPickling:
     # GLP_01_m profiles into its 0 bound here (the lesson in 12_uncertainty_mcmc);
     # the CI table is still populated, so silence the expected lmfit warning.
     @pytest.mark.filterwarnings("ignore:Bound reached")
-    def test_get_conf_intervals_populated_and_empty(self):
-        """get_conf_intervals returns the CI table with try_ci=1, empty without."""
+    def test_get_confidence_intervals_populated_and_empty(self):
+        """get_confidence_intervals gives the CI table with try_ci=1, else empty."""
 
         file = self._make_fittable_file()
         # light noise so the profiled CI is well-defined
@@ -1202,12 +1202,12 @@ class TestMCPPickling:
         file.data_base = file.data_base + rng.normal(0, 0.3, file.data_base.shape)
 
         file.fit_baseline(model_name="single_glp", stages=2, try_ci=1)
-        ci = file.get_conf_intervals(fit_type="baseline")
+        ci = file.get_confidence_intervals(fit_type="baseline")
         assert isinstance(ci, pd.DataFrame)
         assert not ci.empty
 
         file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
-        assert file.get_conf_intervals(fit_type="baseline").empty
+        assert file.get_confidence_intervals(fit_type="baseline").empty
 
     #
     def test_get_mcmc_raises_without_mcmc(self):
@@ -1230,9 +1230,9 @@ class TestMCPPickling:
         with pytest.raises(ValueError, match="No baseline fit results"):
             file.get_correlations(fit_type="baseline")
         with pytest.raises(ValueError, match="No sbs fit results"):
-            file.get_conf_intervals(fit_type="sbs")
+            file.get_confidence_intervals(fit_type="sbs")
         with pytest.raises(ValueError, match="Unknown fit_type"):
-            file.get_fit_results(fit_type="bogus")  # type: ignore[arg-type]
+            file.get_parameters(fit_type="bogus")  # type: ignore[arg-type]
 
     #
     @pytest.mark.slow

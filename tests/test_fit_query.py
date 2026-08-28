@@ -6,7 +6,7 @@ End-to-end tests for the B9 query layer on real fits (public API):
 - ``FitResults.diff()`` — pairwise input/output diff; bundle-level for
   joint fits.
 - ``handle=`` accessor pinning, mutually exclusive with the filter trio.
-- ``FitResults.label()`` — post-hoc labels: selection, escalation to the
+- ``FitResults.set_label()`` — post-hoc labels: selection, escalation to the
   joint record, archive round-trip.
 - ``select=`` / ``by=`` on ``save_fits`` / ``export_fits`` ("all" /
   "latest" / "best" / reference), including joint-bundle expansion.
@@ -198,7 +198,7 @@ class TestHandleAccessors:
         with pytest.raises(LookupError, match="variants"):
             results.get(file="fit", model="single_glp", fit_type="baseline")
 
-        params_a = results.get_fit_results(handle=handle_a[:10])
+        params_a = results.get_parameters(handle=handle_a[:10])
         vary_x0 = params_a.loc[params_a["name"] == "GLP_01_x0", "vary"].iloc[0]
         assert bool(vary_x0) is True
 
@@ -214,7 +214,7 @@ class TestHandleAccessors:
     def test_handle_never_matches_a_label(self):
         project, _, handle_a, _ = _two_variant_baseline()
         results = project.results
-        results.label(handle_a[:8], "keeper")
+        results.set_label(handle_a[:8], "keeper")
         with pytest.raises(LookupError, match="No fit matches"):
             results.get(handle="keeper")
 
@@ -252,16 +252,16 @@ class TestLabelFlow:
     def test_label_selects_and_round_trips(self, tmp_path):
         project, file, handle_a, handle_b = _two_variant_baseline()
         results = project.results
-        results.label(handle_b[:8], "keeper")
+        results.set_label(handle_b[:8], "keeper")
 
         df = results.variants(file=file, model="single_glp", fit_type="baseline")
         assert pd.isna(df["label"].iloc[0])  # unlabeled row
         assert df["label"].iloc[1] == "keeper"
 
         with pytest.raises(ValueError, match="reserved"):
-            results.label(handle_b[:8], "latest")
+            results.set_label(handle_b[:8], "latest")
         # Relabel by the current label — labels are ordinary references.
-        results.label("keeper", "keeper-2")
+        results.set_label("keeper", "keeper-2")
 
         archive = tmp_path / "labeled.fit.h5"
         project.save_fits(archive, select="keeper-2", show_output=0)
@@ -384,16 +384,16 @@ class TestFileApiParity:
         file_2.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
         handle_2 = project.results.find(file="fit2")[-1].handle
 
-        params_a = file.get_fit_results(handle=handle_a[:10])
+        params_a = file.get_parameters(handle=handle_a[:10])
         vary_x0 = params_a.loc[params_a["name"] == "GLP_01_x0", "vary"].iloc[0]
         assert bool(vary_x0) is True
         file.plot_fit(handle=handle_a[:10], show_plot=False)
 
         with pytest.raises(ValueError, match="belongs to file"):
-            file.get_fit_results(handle=handle_2[:10])
+            file.get_parameters(handle=handle_2[:10])
         with pytest.raises(ValueError, match="belongs to file"):
             file.plot_fit(handle=handle_2[:10], show_plot=False)
-        assert not file_2.get_fit_results(handle=handle_2[:10]).empty
+        assert not file_2.get_parameters(handle=handle_2[:10]).empty
 
 
 #
@@ -460,7 +460,7 @@ class TestJointBundleQueries:
         )
 
         # Labels live on the joint record — a projection ref escalates.
-        results.label(projection.handle[:8], "joint-run")
+        results.set_label(projection.handle[:8], "joint-run")
         assert record_1.label == "joint-run"
         assert projection.label is None
 

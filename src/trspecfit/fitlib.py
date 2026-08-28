@@ -900,7 +900,7 @@ def fit_wrapper(
         # parameter. _result_params returns the live par_fin.params (stored as
         # FitOutput.par_fin and consumed downstream as the model-only fit
         # result), so adding __lnsigma in place would leak it into every
-        # consumer of that result (display, get_fit_results, SbS tables).
+        # consumer of that result (display, get_parameters, SbS tables).
         # emcee gets the copy.
         par_fin_params = copy.deepcopy(_result_params(par_fin))
         if not mc_settings.is_weighted:

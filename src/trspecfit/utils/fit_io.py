@@ -2071,7 +2071,7 @@ def set_fit_label(target: SavedFitSlot | JointFitResult, label: str) -> None:
     ``label`` is the one deliberately mutable display field on the
     otherwise frozen records (on disk it is a rewritable attr; see the
     archive collision rules) — this is its sanctioned in-session mutator,
-    used by ``FitResults.label``. Every live view sees the change, since
+    used by ``FitResults.set_label``. Every live view sees the change, since
     ``Project._fit_history`` and ``FitResults`` share the record objects.
     """
 
