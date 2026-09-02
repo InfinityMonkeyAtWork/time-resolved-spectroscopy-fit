@@ -1,7 +1,7 @@
 # Time-domain dynamics models for `file.add_time_dependence(...)`.
 # (available functions: src/trspecfit/functions/time.py)
 
-# MonoExpPosIRF — exponential rise smeared by a Gaussian instrument response.
+# MonoExpPosIRF — step-and-decay smeared by a Gaussian instrument response.
 # Matches the simulated ground truth in this notebook (IRF σ ≈ 3, τ ≈ 30).
 MonoExpPosIRF:
     gaussCONV:
@@ -11,8 +11,8 @@ MonoExpPosIRF:
         tau: [30, True, 1, 100]
         t0: [0, False]
 
-# MonoExpPos — same exponential rise, no IRF convolution. Sharp turn-on
-# at t = t0; will undershoot the smoothed rise around t = 0.
+# MonoExpPos — same step-and-decay, no IRF convolution. Sharp turn-on
+# at t = t0; will undershoot the smoothed onset around t = 0.
 MonoExpPos:
     expFun:
         A: [2, True, 0, 10]
