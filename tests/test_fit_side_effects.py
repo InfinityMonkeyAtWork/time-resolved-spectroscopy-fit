@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 from _utils import simulate_noisy
 
-from trspecfit import File, FitResults, Project, fitlib
+from trspecfit import File, FitResults, Project
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils.lmfit import MC
 
@@ -216,8 +216,8 @@ class TestPlotHelperSkipped:
     suppress its display. Guards against future regressions where figures
     get built and immediately closed (the SbS hot path is the expensive
     case). fit_baseline/fit_spectrum route their post-fit display through
-    self.plot_fit -> FitResults._plot_fit_1d (not fitlib.plt_fit_res_1d,
-    which describe_model still uses)."""
+    self.plot_fit -> FitResults._plot_fit_1d (not the single-panel overlay
+    renderer, which only describe_model uses)."""
 
     #
     def test_baseline_skips_plot_when_silent(self, tmp_path, monkeypatch):
@@ -295,8 +295,10 @@ class TestPlotHelperSkipped:
         """The SbS fit loop builds no per-slice figures; per-slice panels
         are on-demand via File.plot_sbs_slices."""
 
+        from trspecfit.utils import plot as uplt
+
         mock = MagicMock()
-        monkeypatch.setattr(fitlib, "plt_fit_res_1d", mock)
+        monkeypatch.setattr(uplt, "plot_fit_panel_1d", mock)
 
         project, file = _baseline_setup(tmp_path, monkeypatch)
         # spec_fun_str defaults to "fit_model_gir"; SbS does not lower, so
@@ -501,9 +503,8 @@ class TestPlotSbsSlices:
     #
     def test_save_path_honors_configured_dpi(self, tmp_path, monkeypatch):
         """Saved SbS slice PNGs must scale with ``config.dpi_save``, matching
-        the retired live path's behavior (``fitlib.plt_fit_res_1d`` read
-        ``config.dpi_save``) — a regression risk once saving became a
-        feature of the array-based ``plot_fit_panel_1d`` utility.
+        the retired live path's behavior — a regression risk once saving
+        became a feature of the array-based ``plot_fit_panel_1d`` utility.
         """
 
         import matplotlib.image as mpimg
@@ -602,11 +603,13 @@ class TestVerboseDisplay:
 
     #
     def test_sbs_displays_but_writes_nothing(self, tmp_path, monkeypatch):
-        # plt_fit_res_2d runs in the main process (after fitting), so the
+        # plot_fit_res_2d runs in the main process (after fitting), so the
         # monkeypatch is visible regardless of worker path; n_workers=1 keeps
         # the run cheap and deterministic.
+        from trspecfit.utils import plot as uplt
+
         mock_2d = MagicMock()
-        monkeypatch.setattr(fitlib, "plt_fit_res_2d", mock_2d)
+        monkeypatch.setattr(uplt, "plot_fit_res_2d", mock_2d)
 
         project, file = _baseline_setup(tmp_path, monkeypatch, show_output=1)
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
@@ -624,8 +627,10 @@ class TestVerboseDisplay:
 
     #
     def test_2d_displays_but_writes_nothing(self, tmp_path, monkeypatch):
+        from trspecfit.utils import plot as uplt
+
         mock_2d = MagicMock()
-        monkeypatch.setattr(fitlib, "plt_fit_res_2d", mock_2d)
+        monkeypatch.setattr(uplt, "plot_fit_res_2d", mock_2d)
 
         project, file = _baseline_setup(tmp_path, monkeypatch, show_output=1)
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
@@ -633,4 +638,48 @@ class TestVerboseDisplay:
         file.fit_2d("single_glp", stages=1, try_ci=0)
 
         assert mock_2d.call_count == 1
+        assert _list_files(tmp_path) == set()
+
+    #
+    def test_describe_model_detail_1_1d_renders_via_shared_renderer(
+        self, tmp_path, monkeypatch
+    ):
+        """describe_model(detail=1, 1D) evaluates in fitlib and hands plain
+        curve arrays to utils.plot's single-panel overlay renderer."""
+
+        from trspecfit.utils import plot as uplt
+
+        mock_overlay = MagicMock()
+        monkeypatch.setattr(uplt, "plot_fit_overlay_1d", mock_overlay)
+
+        project, file = _baseline_setup(tmp_path, monkeypatch, show_output=1)
+        file.describe_model("single_glp", detail=1)
+
+        assert mock_overlay.call_count == 1
+        kwargs = mock_overlay.call_args.kwargs
+        n_e = file.energy.size
+        assert kwargs["observed"].shape == (n_e,)
+        assert kwargs["fit"].shape == (n_e,)
+        model = file.select_model("single_glp")
+        assert model is not None  # type guard
+        assert len(kwargs["components"]) == len(model.components)
+        assert kwargs["legend"] == [comp.name for comp in model.components]
+        assert _list_files(tmp_path) == set()
+
+    #
+    def test_describe_model_detail_1_2d_renders_maps(self, tmp_path, monkeypatch):
+        """describe_model(detail=1, 2D) renders the data/model maps through
+        utils.plot's array-based 2D renderer."""
+
+        from trspecfit.utils import plot as uplt
+
+        mock_2d = MagicMock()
+        monkeypatch.setattr(uplt, "plot_fit_res_2d", mock_2d)
+
+        project, file = _baseline_setup(tmp_path, monkeypatch, show_output=1)
+        _add_dynamics(file)
+        file.describe_model("single_glp", detail=1)
+
+        assert mock_2d.call_count == 1
+        assert mock_2d.call_args.kwargs["fit"].shape == file.data.shape
         assert _list_files(tmp_path) == set()

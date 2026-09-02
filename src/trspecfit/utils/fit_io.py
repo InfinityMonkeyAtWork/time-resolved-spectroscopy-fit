@@ -38,14 +38,11 @@ import numpy as np
 import pandas as pd
 
 from trspecfit.config.plot import PlotConfig
-from trspecfit.fitlib import (
-    compute_fit_metrics,
-    plt_fit_res_2d,
-    plt_fit_res_pars,
-)
+from trspecfit.fitlib import compute_fit_metrics
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils.hdf5 import require_dataset, require_group
 from trspecfit.utils.lmfit import MCMCResult
+from trspecfit.utils.plot import plot_fit_res_2d, plot_par_series
 
 PathLike = str | Path
 FitType = Literal["baseline", "spectrum", "sbs", "2d"]
@@ -4293,7 +4290,7 @@ def _export_2d_slot(
     )
     _write_csv_array(slot_dir / "energy.csv", energy, num_fmt=num_fmt, delim=delim)
     _write_csv_array(slot_dir / "time.csv", time, num_fmt=num_fmt, delim=delim)
-    plt_fit_res_2d(
+    plot_fit_res_2d(
         data=np.asarray(slot.observed),
         fit=np.asarray(slot.fit),
         x=energy,
@@ -4338,7 +4335,7 @@ def _export_sbs_param_evolution(
     par_cols = list(params_per_slice.columns)
     if not par_cols:
         return
-    plt_fit_res_pars(
+    plot_par_series(
         df=params_per_slice.loc[:, par_cols],
         x=np.asarray(time)[:n_slices],
         config=plot_config,

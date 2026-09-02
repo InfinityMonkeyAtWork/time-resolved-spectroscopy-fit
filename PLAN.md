@@ -9,9 +9,9 @@ working checklist; it references that document rather than restating it.
 Sequencing status (principles §Sequencing): step 1 (identity guards —
 `ccb4da0`, `ef0339a`, `d6b2cf9`), step 2 (project-owned `PlotConfig` —
 `7befe82`), and step 3 (first-class joint results — `61bcd61`, `67587e3`) are
-**done**. Part A below (review-findings hardening) and Part B (schema 7
-itself) are both done — the milestone is complete. Part C (renderer
-consolidation) is queued behind the milestone and orthogonal to it.
+**done**. Part A below (review-findings hardening), Part B (schema 7
+itself), and Part C (renderer consolidation) are all done — the
+milestone is complete.
 
 ### Part A — integrity hardening (verified review findings)
 
@@ -101,11 +101,11 @@ instead of silent.
       (`fit_results.py:180` "matched to slots by fingerprint", `fit_io.py`
       module header, `find`/`get` filter docs).
 
-Known interim limitation (documented, not fixed): `full_range=True` renders
+Known interim limitation (since resolved): `full_range=True` used to render
 provider data outside the fit window, so an in-session stale slot (fit before
-a correction, plotted after) shows corrected data there. The real fix is
-schema 7's corrected-data reconstruction helper (schema plan §Live-session
-changes); not worth an interim mechanism.
+a correction, plotted after) showed corrected data there. Schema 7's per-slot
+correction reconstruction fixed the data, and C.7 (captured `SavedFile`
+providers on `Project.results`) removed the last live dependency.
 
 Decision points (resolved 2026-08-04):
 
@@ -535,16 +535,29 @@ between B5 and B8; B9–B12 land as separate green commits afterward.
 
 Surviving steps from the previous plan; the config steps (old 1, 2, 3, 7)
 dissolved into the milestone per schema plan §Interaction with the current
-PLAN.md. Unchanged in scope:
+PLAN.md. All five steps done 2026-08-28 (in tree). The post-schema-7 gap
+was smaller than this plan's framing: all live/pre-fit entry points
+already rendered through `utils/plot.py`, so the substance was moving
+`fitlib`'s three `plt_fit_res_*` bodies (evaluation split out as
+`fitlib.eval_model_curves_1d`; rendering became the array-based
+`plot_fit_overlay_1d` / `plot_fit_res_2d` / `plot_par_series`), the three
+lazy-matplotlib `FitResults` methods (MCMC diagnostics and the two
+residual comparisons — `fit_results` keeps slot selection/axes/titles and
+passes panel dicts), and `sbs.py`'s backend switch
+(`use_headless_backend`). `plt_fit_res_*` removed without shims
+(pre-1.0, callers were internal; CHANGELOG carries the breaking note);
+tests repointed their monkeypatch targets to the `utils.plot` renderers
+and the source-boundary test (`TestRenderingImportBoundary`,
+ast-parsed imports, docstring examples exempt) enforces the end state:
 
-- [ ] **C1. Move every production rendering primitive into `utils/plot.py`**
+- [x] **C1. Move every production rendering primitive into `utils/plot.py`**
       (old step 4): 1D fit panels, 2D data/fit/residual panels (move the
       Matplotlib body of `fitlib.plt_fit_res_2d`), MCMC walker/corner
       diagnostics, side-by-side 1D residuals and 2D heatmaps,
       parameter-evolution plots. Each renderer owns figure creation, layout,
       saving, show/close, and return value; finalize against the explicit
       Figure, never pyplot's implicit current one.
-- [ ] **C2. Remove Matplotlib ownership from orchestration/fitting modules**
+- [x] **C2. Remove Matplotlib ownership from orchestration/fitting modules**
       (old step 5): `fit_results.py` keeps selection/assembly/titles and
       delegates rendering; `fitlib.py` loses its pyplot import (thin adapters
       or coherent removal for `plt_fit_res_*` after a whole-repo grep);
@@ -552,19 +565,86 @@ PLAN.md. Unchanged in scope:
       drops the worker-side backend switch. End state: no production
       `matplotlib`/`pyplot` import outside `utils/plot.py`, enforced by a
       source-boundary test.
-- [ ] **C3. Adapt live/pre-fit entry points to shared renderers** (old
+- [x] **C3. Adapt live/pre-fit entry points to shared renderers** (old
       step 6): `describe_model`, `Model.plot_*`, `Component.plot`,
       `define_baseline`, `set_fit_limits`, simulator plots stay live-state
       exceptions but pass plain arrays + `PlotConfig` into the shared
       renderers; renderers never receive `File`/`Model`/lmfit objects.
-- [ ] **C4. Figure lifecycle and compatibility** (old step 8): preserve
+- [x] **C4. Figure lifecycle and compatibility** (old step 8): preserve
       `show_plot=False` / `save_img=-2` semantics, returned-Figure contracts,
       and decide `fitlib.plt_fit_res_*` compatibility after a repo grep.
-- [ ] **C5. Tests, docs, close-out** (old steps 9–11, renderer-scoped):
+- [x] **C5. Tests, docs, close-out** (old steps 9–11, renderer-scoped):
       exercise `Project.results` and `FitResults.load` per plot; update
       `CLAUDE.md` module ownership, `repo_architecture.md`, API docs,
       CHANGELOG; then run the archive-or-changelog close-out question for
       this plan.
+- [x] **C.6 Review fix pack** — done 2026-09-02, after an external pass
+      found the written C1/C4/C5 contracts unmet despite the boundary
+      landing: (1) figure lifecycle made explicit — `_finalize_plot(fig,
+      ...)` / `img_save(..., fig=)` operate on the passed Figure, every
+      renderer (incl. MCMC/residual, which hand-rolled show/close) routes
+      through it; (2) `plot_fit_panel_1d` accepts `PlotConfig` (it was
+      silently dropping `dpi_plot` and `z_label` — the most-used figure
+      was the one a customized config didn't style), the residual maps
+      honor `config.z_colormap_res` instead of hardcoding `RdBu_r`, and
+      the `mcp` subcycle diagnostic passes `self.plot_config`; a second
+      pocket pass (same day) threaded the rest: `plot_mcmc_diagnostics`
+      gains `config=` (walker/corner figures render at `dpi_plot` — the
+      hardcoded dpi=75 was arbitrary legacy) and `plot_fit_panel_1d`
+      applies `x_lim`/`y_lim`/`x_type`/`y_type` via `_apply_axis_settings`
+      like its overlay sibling; a third pass (2026-09-02) closed the
+      last pockets — `plot_fit_res_2d` honors `dpi_plot`/`dpi_save` and
+      labels its colorbar with `z_label` (the docstring had promised it),
+      the residual panels/maps render at `dpi_plot` and apply the
+      configured axis direction/scale, and all three fit renderers style
+      their fit-limit lines from `refline_color`/`refline_style` (only
+      the 2D maps did before). Deliberately NOT config-driven: the fit
+      renderers' trace-role styling — observed/init/component/fit colors
+      and line shapes are fixed semantic styling so every fit figure
+      reads the same way; `PlotConfig.colors`/`linestyles`/`linewidths`
+      style generic `plot_1d` traces, not fit roles. Also from that pass:
+      overlay validates fit=/init= before creating its figure (a bad
+      call used to leak a half-drawn one) and the explicit-figure
+      lifecycle got its regression test (decoy-current-figure vs target
+      in `TestFinalizePlotExplicitFigure`);
+      (3) docs state the true boundary — plain *data* (arrays, DataFrames,
+      data dataclasses) + `PlotConfig`, not "plain arrays";
+      (4) `_symmetric_range` owns the duplicated diverging-scale math
+      (the 1D curve-styling merge was declined: the two renderers'
+      styles differ deliberately, a shared helper would just parameterize
+      every difference); (5) both preliminary `create_value_1d` calls in
+      `describe_model` removed — `Model.plot_1d` re-evaluates internally
+      (an earlier rebuttal claiming the Dynamics one was load-bearing was
+      wrong — mcp.py:1182 evaluates unconditionally); (6) coverage
+      truthed up to C5's claim — output-level `plot_fit_overlay_1d`
+      tests, loaded-archive tests for `plot_residuals` /
+      `plot_param_evolution` / `plot_joint_mcmc`, and notebook 10's stale
+      "index axes" `plot_residuals` prose fixed (providers supply real
+      axes).
+- [x] **C.7 Completed-fit providers are captured, not live** — done
+      2026-09-02 (review round 3). `Project.results` attached live `File`
+      objects as axes/full-range providers while `save_fits`/`export_fits`
+      already built exclusively from the captured `SavedFile` payloads
+      (`Project._captured_files`, registered at each file's first fit) —
+      so an in-session completed-fit plot could depend on later live
+      mutation while the same fit loaded from an archive could not.
+      `Project.results` now attaches each file's captured payload with
+      its history slots (mirroring the reader), making the completed-fit
+      contract identical before and after serialization; a follow-up
+      review pass (same day) then **eliminated** the name-matching
+      fallback outright — parent association is the only provider
+      mechanism (no in-repo user relied on name matching; an unowned
+      slot falls back to index axes) — and made `Project.results` raise
+      loudly if any history slot lacks a captured payload (an
+      impossible-normal state that previously degraded silently).
+      Principle
+      0's capture bullet now states the provider rule explicitly;
+      `repo_architecture.md`'s two provider passages updated; regression
+      test pins that in-place `data_raw` mutation after a fit never
+      reaches rendering. `PlotConfig` stays live-resolved (Principle 2);
+      `describe`/`describe_model`/`define_baseline`/`set_fit_limits`
+      stay live by design. Also fixed here: the plan intro still called
+      Part C "queued".
 
 ### Non-goals (carried over)
 

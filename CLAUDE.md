@@ -24,7 +24,8 @@
 - **Two-Layer Design:**
   - **Authoring / User-facing layer** (`mcp.py`, `trspecfit.py`, `simulator.py`, and YAML parsing in `utils/parsing.py`): Optimize for readability, human-usability, validation, and clear errors. Performance is not prioritized here.
   - **Compiled Hot-Path layer** (`graph_ir.py`, `eval_1d.py`, `eval_2d.py`, and numeric bodies in `functions/`): Performance-critical and array-oriented. Avoid Python objects and model-structure branching in inner loops.
-- **Bridge & Logic:** `spectra.py` bridges fitting to the compiled evaluator. `fitlib.py` drives `lmfit`, CI, MCMC, and fit-result plotting.
+- **Bridge & Logic:** `spectra.py` bridges fitting to the compiled evaluator. `fitlib.py` drives `lmfit`, CI, and MCMC.
+- **Rendering Boundary:** All production matplotlib/corner rendering lives in `utils/plot.py` (renderers take plain data — arrays, DataFrames, data-holding dataclasses — plus `PlotConfig`, never `File`/`Model`/live lmfit objects); no other `src/trspecfit/` module may import matplotlib — enforced by a source-boundary test. Figure lifecycle (save/show/close) goes through `_finalize_plot(fig, ...)` on the explicit Figure, never pyplot's implicit current one.
 - **Fit-to-Slot Boundary:** Slot construction never reimplements evaluation, fit-window slicing, parameter projection, or metric calculation—reuse the canonical helpers. Copy optimizer-owned output; never reconstruct it from live model state. See `docs/design/repo_architecture.md`.
 - **Registries:** Check `config/`, `functions/`, and `utils/` for shared registries and helpers before adding new ones.
 - **Source of Truth:** Treat `docs/design/supported_models.md` as the source of truth for supported model combinations, expressions, and compositions.

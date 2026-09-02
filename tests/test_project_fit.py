@@ -962,7 +962,7 @@ class TestJointFitResult:
 
     #
     @pytest.mark.slow
-    def test_joint_mcmc_survives_capture(self):
+    def test_joint_mcmc_survives_capture(self, tmp_path):
         """The joint posterior lands on the record (previously computed and
         thrown away); projections never carry a chain."""
 
@@ -990,6 +990,16 @@ class TestJointFitResult:
         # The joint chain renders through the shared MCMC primitive.
         n_figs = len(plt.get_fignums())
         project.results.plot_joint_mcmc(model="project_glp", show_plot=False)
+        assert len(plt.get_fignums()) == n_figs
+
+        # ...and identically from a loaded archive.
+        from trspecfit import FitResults
+
+        path = tmp_path / "joint_mcmc.fit.h5"
+        project.save_fits(path, show_output=0)
+        loaded = FitResults.load(path)
+        n_figs = len(plt.get_fignums())
+        loaded.plot_joint_mcmc(model="project_glp", show_plot=False)
         assert len(plt.get_fignums()) == n_figs
 
     #

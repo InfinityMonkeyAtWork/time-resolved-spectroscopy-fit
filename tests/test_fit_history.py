@@ -30,6 +30,7 @@ import pytest
 from _utils import make_project, simulate_clean, simulate_noisy
 
 from trspecfit import File, FitResults
+from trspecfit.config.plot import PlotConfig
 from trspecfit.utils.fit_io import (
     JointFitProjection,
     JointFitResult,
@@ -2667,10 +2668,10 @@ class TestPlotFitAPI:
     def test_plot_fit_2d_passes_real_axes(self, monkeypatch):
         from unittest.mock import MagicMock
 
-        from trspecfit import fitlib
+        from trspecfit.utils import plot as uplt
 
         mock_2d = MagicMock()
-        monkeypatch.setattr(fitlib, "plt_fit_res_2d", mock_2d)
+        monkeypatch.setattr(uplt, "plot_fit_res_2d", mock_2d)
 
         project, file = _setup_baseline_fit()
         file.add_time_dependence(
@@ -2788,13 +2789,16 @@ class TestPlotFitAPI:
             np.testing.assert_array_equal(
                 np.isnan(res_line.get_ydata()), np.isnan(fit_full)
             )
-            # dashed boundary lines at the ROI edges, on both panels
-            dashed_x = {
+            # refline-styled boundary lines at the ROI edges (default
+            # PlotConfig: black dotted — distinct from the gold init line)
+            cfg = PlotConfig()
+            boundary_x = {
                 float(line.get_xdata()[0])
                 for line in ax_fit.lines
-                if line.get_linestyle() == "--"
+                if line.get_linestyle() == cfg.refline_style
+                and line.get_color() == cfg.refline_color
             }
-            assert dashed_x == {x[2], x[3]}
+            assert boundary_x == {x[2], x[3]}
         finally:
             plt.close(fig)
 
@@ -2816,7 +2820,12 @@ class TestPlotFitAPI:
             ax_fit, ax_res = fig.axes
             fit_line = next(line for line in ax_fit.lines if line.get_label() == "fit")
             np.testing.assert_array_equal(fit_line.get_ydata(), fit)
-            assert not any(line.get_linestyle() == "--" for line in ax_fit.lines)
+            cfg = PlotConfig()
+            assert not any(
+                line.get_linestyle() == cfg.refline_style
+                and line.get_color() == cfg.refline_color
+                for line in ax_fit.lines
+            )
         finally:
             plt.close(fig)
 
@@ -2945,10 +2954,10 @@ class TestPlotFitAPI:
     def test_plot_param_evolution_defaults_to_varied(self, monkeypatch):
         from unittest.mock import MagicMock
 
-        from trspecfit import fitlib
+        from trspecfit.utils import plot as uplt
 
         mock_pars = MagicMock()
-        monkeypatch.setattr(fitlib, "plt_fit_res_pars", mock_pars)
+        monkeypatch.setattr(uplt, "plot_par_series", mock_pars)
 
         results = self._fake_sbs_results(vary=(True, False, True))
         results.plot_param_evolution(show_plot=False)
@@ -2962,10 +2971,10 @@ class TestPlotFitAPI:
     def test_plot_param_evolution_explicit_and_missing_params(self, monkeypatch):
         from unittest.mock import MagicMock
 
-        from trspecfit import fitlib
+        from trspecfit.utils import plot as uplt
 
         mock_pars = MagicMock()
-        monkeypatch.setattr(fitlib, "plt_fit_res_pars", mock_pars)
+        monkeypatch.setattr(uplt, "plot_par_series", mock_pars)
 
         results = self._fake_sbs_results()
         results.plot_param_evolution(params=["B"], show_plot=False)
@@ -2977,10 +2986,10 @@ class TestPlotFitAPI:
     def test_plot_param_evolution_all_fixed_plots_nothing(self, monkeypatch):
         from unittest.mock import MagicMock
 
-        from trspecfit import fitlib
+        from trspecfit.utils import plot as uplt
 
         mock_pars = MagicMock()
-        monkeypatch.setattr(fitlib, "plt_fit_res_pars", mock_pars)
+        monkeypatch.setattr(uplt, "plot_par_series", mock_pars)
 
         results = self._fake_sbs_results(vary=(False, False, False))
         results.plot_param_evolution(show_plot=False)
@@ -2991,6 +3000,50 @@ class TestPlotFitAPI:
         project, file = _setup_baseline_fit()
         fig = project.results.plot_residuals(file=file.name, show_plot=False)
         assert fig.axes[1].get_xlabel() == "energy"
+
+    #
+    def test_plot_residuals_from_loaded_archive_uses_real_axes(self, tmp_path):
+        """The plot APIs work identically on ``FitResults.load`` — the
+        archive-side provider supplies the real energy axis."""
+
+        project, file = _setup_baseline_fit()
+        path = tmp_path / "residuals.fit.h5"
+        project.save_fits(path, show_output=0)
+        loaded = FitResults.load(path)
+        fig = loaded.plot_residuals(file=file.name, show_plot=False)
+        assert fig.axes[1].get_xlabel() == "energy"
+
+    #
+    @pytest.mark.slow
+    def test_plot_param_evolution_from_loaded_archive(self, tmp_path, monkeypatch):
+        """Loaded archives drive plot_param_evolution from the persisted
+        params table and the archive-side time axis."""
+
+        from unittest.mock import MagicMock
+
+        from trspecfit.utils import plot as uplt
+
+        project, file = _setup_baseline_fit()
+        project.spec_fun_str = "fit_model_mcp"  # SbS does not lower on GIR
+        file.fit_slice_by_slice(
+            "single_glp",
+            n_workers=1,
+            seed_source="model",
+            seed_adapt=None,
+            try_ci=0,
+        )
+        path = tmp_path / "sbs.fit.h5"
+        project.save_fits(path, show_output=0)
+
+        mock_pars = MagicMock()
+        monkeypatch.setattr(uplt, "plot_par_series", mock_pars)
+        loaded = FitResults.load(path)
+        loaded.plot_param_evolution(file=file.name, show_plot=False)
+
+        assert mock_pars.call_count == 1
+        kwargs = mock_pars.call_args.kwargs
+        assert len(kwargs["df"]) == np.asarray(file.time).size
+        np.testing.assert_allclose(kwargs["x"], np.asarray(file.time))
 
 
 #

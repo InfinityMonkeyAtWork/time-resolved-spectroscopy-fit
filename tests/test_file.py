@@ -1075,7 +1075,6 @@ class TestFitPreconditions:
                 "trspecfit.trspecfit.fitlib.fit_wrapper",
                 return_value=mock_result,
             ) as mock_fit,
-            unittest.mock.patch("trspecfit.trspecfit.fitlib.plt_fit_res_1d"),
             unittest.mock.patch("trspecfit.trspecfit.fitlib.time_display"),
         ):
             file.fit_slice_by_slice(

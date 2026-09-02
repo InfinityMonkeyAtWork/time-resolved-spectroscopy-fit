@@ -389,16 +389,34 @@ class Project:
         and of ``_joint_fit_history``; subsequent fits append to the logs
         and do not affect previously returned ``FitResults``. Object
         identity is unstable (``p.results is p.results`` is False); the
-        contents at a given access are fixed. The live ``File`` objects are
-        passed along as axes providers for the plot methods; styling comes
-        from the separately-passed project-owned ``plot_config``.
-        Joint records are reachable via ``find_joint`` / ``get_joint``;
-        iteration and ``len`` stay per-file-slot.
+        contents at a given access are fixed. Axes/full-range providers
+        are the **captured** ``SavedFile`` payloads (each carrying its
+        history slots), never the live ``File`` objects — a completed fit
+        reads the same file-level context here as after
+        ``FitResults.load``, insulated from later live mutation. Styling
+        is the deliberate exception: the project-owned ``plot_config`` is
+        passed live and resolved at render time. Joint records are
+        reachable via ``find_joint`` / ``get_joint``; iteration and
+        ``len`` stay per-file-slot.
         """
 
+        by_file: dict[str, list[fit_io.SavedFitSlot]] = {}
+        for slot in self._fit_history:
+            by_file.setdefault(slot.file_name, []).append(slot)
+        missing = sorted(set(by_file) - set(self._captured_files))
+        if missing:
+            raise RuntimeError(
+                f"Fit history holds slots for {missing!r} with no captured "
+                f"file payload — capture registers every file at its first "
+                f"fit, so this state should be impossible. Re-run the fits."
+            )
+        providers = [
+            dataclasses.replace(captured, slots=tuple(by_file.get(name, ())))
+            for name, captured in self._captured_files.items()
+        ]
         return FitResults(
             slots=list(self._fit_history),
-            files=list(self.files),
+            files=providers,
             joint=list(self._joint_fit_history),
             config=self.plot_config,
         )
@@ -579,7 +597,7 @@ class Project:
         - 2d / sbs: fit_2d.csv, observed_2d.csv, energy.csv, time.csv,
           2D_data_fit_res.png.
         - sbs only: fit_pars.csv (per-slice param values) and one PNG per
-          parameter from plt_fit_res_pars.
+          parameter from utils.plot.plot_par_series.
 
         The optional hash directory suffix appears only when more than one
         slot in the snapshot shares the same file, model, and fit type (i.e.
@@ -2528,8 +2546,7 @@ class File:
         )
 
         if detail == 1 and isinstance(mod, mcp.Dynamics):
-            mod.create_value_1d(store_1d=1)  # update individual component spectra
-            # plot guess only (individual components)
+            # plot guess only (individual components; plot_1d evaluates)
             mod.plot_1d(plot_sum=False, title=title_mod)
 
         if detail == 1 and mod.dim == 1:
@@ -2540,21 +2557,24 @@ class File:
                     stacklevel=2,
                 )
                 return
-            mod.create_value_1d(store_1d=1)  # update individual component spectra
-            # plot initial guess (individual components), data, and residual
-            fitlib.plt_fit_res_1d(
-                x=self.energy,
-                y=self.data_base,
-                fit_fun_str=self.p.spec_fun_str,
-                par_ini=[],
-                par_fin=mod.lmfit_pars,
+            # evaluate here (fitlib owns the spectra dispatch), render the
+            # initial guess (individual components), data, and residual
+            # via the shared array-based renderer
+            total, comps = fitlib.eval_model_curves_1d(
+                self.energy,
+                self.p.spec_fun_str,
+                mod.lmfit_pars,
                 args=(mod, 1),
-                plot_sum=False,
-                show_init=False,
+            )
+            uplt.plot_fit_overlay_1d(
+                x=self.energy,
+                observed=self.data_base,
+                fit=total,
+                components=comps,
+                legend=[comp.name for comp in mod.components],
                 title=title_mod,
                 fit_lim=self.e_lim,
                 config=self.p.plot_config,
-                legend=[comp.name for comp in mod.components],
             )
 
         if detail == 1 and mod.dim == 2:
@@ -2566,7 +2586,7 @@ class File:
                 )
                 return
             # plot data, fit, and residual 2D maps
-            fitlib.plt_fit_res_2d(
+            uplt.plot_fit_res_2d(
                 data=self.data,
                 fit=mod.value_2d,
                 x=self.energy,

@@ -107,12 +107,13 @@ for plotting. Users can swap in a custom spectrum function via
 converts the combined-parameter mapping into gather index arrays at
 fit setup).
 
-### `fitlib.py` — lmfit wrappers, CI, MCMC, plotting
+### `fitlib.py` — lmfit wrappers, CI, MCMC
 
 The fitting machinery: residual function, `fit_wrapper` (global + local
 solvers), confidence intervals via `lmfit.conf_interval`, MCMC via
-`lmfit.emcee`, and the 1D/2D fit-result plotting (`plt_fit_res_1d`,
-`plt_fit_res_2d`). `fit_wrapper` returns a typed
+`lmfit.emcee`, and `eval_model_curves_1d` (model-curve evaluation for
+display — rendering itself lives in `utils/plot.py`; this module
+imports no matplotlib). `fit_wrapper` returns a typed
 `utils.lmfit.FitOutput` (`par_ini` / `par_fin` / `conf_ci` /
 `emcee_fin` / `emcee_ci`), which is what `Model.result` and the
 per-slice entries of `File.results_sbs` hold. Internal module — method
@@ -134,10 +135,11 @@ User-facing `FitResults` class — the immutable view over a list of
 results-ownership contract: everything a user asks about a completed fit
 is answered from slots, never from live `Model.result`. Two construction
 paths: `FitResults.load(path)` for loaded archives and the
-`Project.results` property for in-session work; both also attach
-presentation providers supplying energy/time axes and full uncropped raw
-data — archive `SavedFile` records own their slots (parent association),
-live `File`s are matched by the guarded unique name. Styling is the
+`Project.results` property for in-session work; both attach **captured**
+`SavedFile` providers supplying energy/time axes and full uncropped raw
+data, owning their slots by parent association — never the live `File`,
+so a completed fit reads the same file-level context before and after
+serialization. Parent association is the only provider mechanism. Styling is the
 project-owned `PlotConfig`, passed at construction (`Project.results`
 passes the live one; loaded archives decode the persisted
 `project/plot_config`). Without a provider, plotting falls back to the
@@ -220,7 +222,9 @@ the constructed `SavedFitSlot` owns its required copies. Nothing downstream
 may consult live state to complete a slot's fit payload. `FitResults` may
 consult an attached provider for presentation context—axes and full-range
 data—and renders with its construction-time `PlotConfig`; neither is slot
-state.
+state. Providers for completed results are themselves captured `SavedFile`
+records (Principle 0's capture boundary), so this consultation never
+reaches live `File` state either.
 
 | Category | Slot rule |
 |---|---|
@@ -397,11 +401,21 @@ adding new YAML syntax.
 
 ### `utils/plot.py`
 
-Generic matplotlib helpers used by the library and user notebooks:
-1D/2D data plotting, image loading (`load_plot`, `load_plot_grid`) for
-embedding saved figures in reports, axis formatting utilities. All
-plotting functions take a `PlotConfig`. Specialized plotting (e.g. fit
-residuals) lives in `fitlib.py`, not here.
+The one production rendering module — no other module under
+`src/trspecfit/` may import matplotlib or corner (enforced by a
+source-boundary test). Generic 1D/2D data plotting, image loading
+(`load_plot`, `load_plot_grid`), axis formatting utilities, and every
+fit-result renderer: `plot_fit_panel_1d` (archive-style panel + residual),
+`plot_fit_overlay_1d` (describe_model's single-panel overlay),
+`plot_fit_res_2d` (data/fit/residual maps), `plot_par_series` (SbS
+parameter evolution), `plot_mcmc_diagnostics` (walker acceptance +
+corner), `plot_residual_panels_1d` / `plot_residual_maps_2d`
+(side-by-side comparisons), and `use_headless_backend` (worker
+processes). Renderers take plain data — arrays, DataFrames, and
+data-holding dataclasses like `MCMCResult` — plus a `PlotConfig`; never
+`File`/`Model`/live lmfit objects. Evaluation and slot selection stay
+with the callers, and every renderer finalizes (save/show/close)
+through `_finalize_plot` on its explicit Figure.
 
 ### `utils/sweep.py`
 

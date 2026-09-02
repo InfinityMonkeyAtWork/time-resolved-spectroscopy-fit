@@ -24,6 +24,7 @@ from roundtrip.families import FAMILIES
 
 from trspecfit import FitResults
 from trspecfit.utils.arrays import resolve_time_selection
+from trspecfit.utils.fit_io import SavedFile
 
 
 #
@@ -132,11 +133,14 @@ def test_live_full_range_uses_slot_correction_state() -> None:
     raw = fit_file.data_raw.copy()
     fit_file.subtract_dark(np.full(fit_file.energy.size, 0.1))
 
-    results = fit_file.p.results  # live provider, post-correction file state
+    results = fit_file.p.results  # post-correction session state
     slot = next(iter(results))
     assert slot.dark is None  # fitted before the correction
+    # The provider is the captured SavedFile, never the live File —
+    # completed fits read the same context as after FitResults.load.
     provider = results._provider_for(slot)
-    assert provider is fit_file
+    assert isinstance(provider, SavedFile)
+    np.testing.assert_array_equal(np.asarray(provider.data_raw), raw)
 
     b0, b1 = slot.selection["base_t_ind"]
     expected_obs = np.mean(raw[b0:b1, :], axis=0)
@@ -146,6 +150,33 @@ def test_live_full_range_uses_slot_correction_state() -> None:
     # The file's current corrected data would not match — the dark moved it.
     corrected_obs = np.mean(np.asarray(fit_file.data)[b0:b1, :], axis=0)
     assert not np.allclose(full_obs, corrected_obs)
+
+
+#
+def test_completed_fit_rendering_insulated_from_live_mutation() -> None:
+    """In-place mutation of the live file after a fit never reaches
+    completed-fit rendering: the provider is the captured SavedFile,
+    which holds its own frozen copy of the fit-time arrays. (Parity with
+    a loaded archive is covered by the roundtrip tests.)"""
+
+    _, fit_file, family = _build_fit_file("F1")
+    fit_file.set_fit_limits(_narrow_energy_limits(fit_file), show_plot=False)
+    fit_file.fit_baseline(model_name=family.model_name("default"), stages=1, try_ci=0)
+    assert fit_file.data_raw is not None  # type guard
+    raw = fit_file.data_raw.copy()
+
+    fit_file.data_raw[:] = fit_file.data_raw + 5.0  # unsupported, but must not leak
+
+    results = fit_file.p.results  # fresh snapshot, taken after the mutation
+    slot = next(iter(results))
+    provider = results._provider_for(slot)
+    assert isinstance(provider, SavedFile)
+    np.testing.assert_array_equal(np.asarray(provider.data_raw), raw)
+
+    b0, b1 = slot.selection["base_t_ind"]
+    full_obs = results._full_observed_for(slot, provider)
+    assert full_obs is not None  # type guard
+    np.testing.assert_allclose(full_obs, np.mean(raw[b0:b1, :], axis=0))
 
 
 # ---------------------------------------------------------------------------

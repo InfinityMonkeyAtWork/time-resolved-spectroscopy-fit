@@ -250,12 +250,15 @@ class FitResults:
     Construction is keyword-only (``FitResults(slots=...)``); users normally
     obtain instances via ``Project.results`` or ``FitResults.load(path)``.
 
-    ``files`` optionally supplies per-file axes providers —
-    ``SavedFile`` records (load path), matched to their own slots by
-    parent association (each record owns the slots read from its file
-    group), or live ``trspecfit.File`` objects (``Project.results``),
-    matched by name. The plot methods use them to label real energy/time
-    axes; without a provider they fall back to array-index axes.
+    ``files`` optionally supplies per-file axes providers — captured
+    ``SavedFile`` records on both canonical paths (``Project.results``
+    attaches each file's history slots to its captured payload;
+    ``FitResults.load`` reads them from the archive), matched to their
+    own slots by parent association (each record owns its slots). That
+    association is the **only** provider mechanism: completed fits read
+    the same file-level context before and after serialization — never
+    the live ``File`` — and a slot owned by no record renders with
+    array-index axes and its own cropped data.
 
     ``joint`` optionally supplies the project-level ``JointFitResult``
     records (``Project.results`` passes the in-session joint history;
@@ -282,34 +285,22 @@ class FitResults:
         # Project.results passes the live project-owned config;
         # FitResults.load passes the config decoded from project/.
         self._config: PlotConfig | None = config
-        # SavedFile providers own their slots — retain that parent
-        # association per slot object, so one record's axes/data never
-        # serve another record's slots. Archive records get ONLY
-        # that association: a slot not owned by any record (copied or
-        # reconstructed — unsupported) gets no provider and falls back
-        # to index axes, never to a same-name guess. Live File providers
-        # carry no slots and are matched by name — the guarded, unique
-        # identity (fit_archive_principles.md, Principle 1).
+        # Providers own their slots — parent association per slot object
+        # is the ONLY provider mechanism (fit_archive_principles.md,
+        # Principle 0: completed fits read captured state, never the live
+        # File). A slot not owned by any record gets no provider and
+        # falls back to index axes — never to a name-based guess, so one
+        # record's axes/data can never serve another record's slots.
         self._provider_by_slot: dict[int, Any] = {}
-        self._files_by_name: dict[str, Any] = {}
         for f in files or ():
-            slots_owned = getattr(f, "slots", None)
-            if slots_owned is not None:
-                for s in slots_owned:
-                    self._provider_by_slot[id(s)] = f
-                continue
-            name = getattr(f, "name", None)
-            if isinstance(name, str):
-                self._files_by_name[name] = f
+            for s in getattr(f, "slots", None) or ():
+                self._provider_by_slot[id(s)] = f
 
     #
     def _provider_for(self, slot: SavedFitSlot) -> Any | None:
-        """Axes/data provider (``SavedFile`` or live ``File``) for this slot's file."""
+        """Captured ``SavedFile`` provider owning this slot, or ``None``."""
 
-        provider = self._provider_by_slot.get(id(slot))
-        if provider is not None:
-            return provider
-        return self._files_by_name.get(slot.file_name)
+        return self._provider_by_slot.get(id(slot))
 
     #
     def _axes_for(
@@ -1470,7 +1461,7 @@ class FitResults:
 
         Reads the persisted slot. 1D fits (baseline / spectrum) render an
         observed+fit panel over a residual panel vs energy; 2D fits and SbS
-        render the data/fit/residual maps via ``fitlib.plt_fit_res_2d``.
+        render the data/fit/residual maps via ``utils.plot.plot_fit_res_2d``.
         Real axes are used when this ``FitResults`` carries an axes
         provider for the slot's file (always the case for
         ``Project.results`` and ``FitResults.load``); otherwise array
@@ -1566,9 +1557,9 @@ class FitResults:
             energy, time = self._axes_for(slot)
 
         if slot.fit_type in ("2d", "sbs"):
-            from trspecfit import fitlib
+            from trspecfit.utils import plot as uplt
 
-            fitlib.plt_fit_res_2d(
+            uplt.plot_fit_res_2d(
                 data=observed,
                 fit=fit,
                 x=energy,
@@ -1653,7 +1644,7 @@ class FitResults:
             x_dir=getattr(config, "x_dir", "def"),
             show_plot=show_plot,
             save_path=save_path,
-            dpi_save=getattr(config, "dpi_save", 300),
+            config=config if isinstance(config, PlotConfig) else None,
         )
 
     #
@@ -1793,8 +1784,10 @@ class FitResults:
             If no matching fit exists, or the fit had no MCMC step.
         """
 
+        from trspecfit.utils import plot as uplt
+
         mcmc = self.get_mcmc(file=file, model=model, fit_type=fit_type, handle=handle)
-        self._render_mcmc_result(mcmc, show_plot=show_plot)
+        uplt.plot_mcmc_diagnostics(mcmc, show_plot=show_plot, config=self._config)
 
     #
     def plot_joint_mcmc(
@@ -1841,55 +1834,11 @@ class FitResults:
                 "No MCMC results for the joint fit. Re-run "
                 "Project.fit_2d with mc_settings=MC(use_mc=1, ...)."
             )
-        self._render_mcmc_result(record.mcmc, show_plot=show_plot)
+        from trspecfit.utils import plot as uplt
 
-    #
-    @staticmethod
-    def _render_mcmc_result(mcmc: MCMCResult, *, show_plot: bool) -> None:
-        """
-        Walker-acceptance and corner figures from an ``MCMCResult``.
-
-        The single rendering primitive behind :meth:`plot_mcmc` (per-file
-        slots) and :meth:`plot_joint_mcmc` (joint records). The
-        acceptance panel is skipped when ``acceptance_fraction`` is
-        ``None``.
-        """
-
-        import corner
-        import matplotlib.pyplot as plt
-
-        if mcmc.acceptance_fraction is not None:
-            fig_walker, ax = plt.subplots(1, 1, dpi=75)
-            ax.plot(mcmc.acceptance_fraction, "o")
-            ax.set_xlabel("Walker number")
-            ax.set_ylabel("Acceptance fraction")
-            if show_plot:
-                plt.show()
-            else:
-                plt.close(fig_walker)
-        if not mcmc.flatchain.empty:
-            var_names = list(mcmc.flatchain.columns)
-            truths = None
-            if not mcmc.table.empty:
-                best = dict(
-                    zip(
-                        mcmc.table.iloc[:, 0],
-                        mcmc.table["best fit"],
-                        strict=True,
-                    )
-                )
-                truths = [best.get(name) for name in var_names]
-            fig_corner = plt.figure(figsize=(10, 10))
-            corner.corner(
-                mcmc.flatchain,
-                labels=var_names,
-                truths=truths,
-                fig=fig_corner,
-            )
-            if show_plot:
-                plt.show()
-            else:
-                plt.close(fig_corner)
+        uplt.plot_mcmc_diagnostics(
+            record.mcmc, show_plot=show_plot, config=self._config
+        )
 
     #
     def plot_param_evolution(
@@ -1973,9 +1922,9 @@ class FitResults:
             if time is not None and np.asarray(time).size >= n_slices
             else np.arange(n_slices)
         )
-        from trspecfit import fitlib
+        from trspecfit.utils import plot as uplt
 
-        fitlib.plt_fit_res_pars(
+        uplt.plot_par_series(
             df=slot.params.loc[:, params],
             x=x,
             config=cfg,
@@ -2381,17 +2330,10 @@ class FitResults:
     ) -> Any:
         """1D fits: top row = observed + fit; bottom row = residual."""
 
-        import matplotlib.pyplot as plt
+        from trspecfit.utils import plot as uplt
 
-        n = len(slots)
-        fig, axs = plt.subplots(
-            2,
-            n,
-            figsize=figsize or (4.0 * max(n, 1), 5.0),
-            squeeze=False,
-            sharex="col",
-        )
-        for col, slot in enumerate(slots):
+        panels: list[dict[str, Any]] = []
+        for slot in slots:
             obs = np.asarray(slot.observed).ravel()
             fit = np.asarray(slot.fit).ravel()
             energy, _ = self._axes_for(slot)
@@ -2399,23 +2341,22 @@ class FitResults:
                 x, x_label = energy, "energy"
             else:
                 x, x_label = np.arange(obs.size), "index"
-            axs[0, col].plot(x, obs, "k.", ms=3, label="observed")
-            axs[0, col].plot(x, fit, "-", lw=1.5, label="fit")
-            axs[0, col].set_title(f"{slot.model_name} ({slot.fit_type})")
-            axs[0, col].legend(fontsize="small")
-            axs[1, col].plot(x, obs - fit, "-", lw=1.0)
-            axs[1, col].axhline(0, color="gray", lw=0.5)
-            axs[1, col].set_xlabel(x_label)
-            if col == 0:
-                axs[0, col].set_ylabel("intensity")
-                axs[1, col].set_ylabel("residual")
-        fig.suptitle(f"Residuals — {file_name}")
-        fig.tight_layout()
-        if show_plot:
-            plt.show()
-        else:
-            plt.close(fig)
-        return fig
+            panels.append(
+                {
+                    "x": x,
+                    "x_label": x_label,
+                    "observed": obs,
+                    "fit": fit,
+                    "title": f"{slot.model_name} ({slot.fit_type})",
+                }
+            )
+        return uplt.plot_residual_panels_1d(
+            panels,
+            suptitle=f"Residuals — {file_name}",
+            show_plot=show_plot,
+            figsize=figsize,
+            config=self._config,
+        )
 
     #
     def _plot_residuals_2d(
@@ -2428,27 +2369,11 @@ class FitResults:
     ) -> Any:
         """SbS / 2D fits: residual heatmaps side-by-side, shared diverging scale."""
 
-        import matplotlib.pyplot as plt
+        from trspecfit.utils import plot as uplt
 
-        residuals = [np.asarray(slot.observed) - np.asarray(slot.fit) for slot in slots]
-        global_max = 0.0
-        for res in residuals:
-            if res.size:
-                local = float(np.nanmax(np.abs(res)))
-                if local > global_max:
-                    global_max = local
-        if global_max == 0.0:
-            global_max = 1.0
-
-        n = len(slots)
-        fig, axs = plt.subplots(
-            1,
-            n,
-            figsize=figsize or (5.0 * max(n, 1), 4.0),
-            squeeze=False,
-        )
-        im = None
-        for col, (slot, res) in enumerate(zip(slots, residuals, strict=True)):
+        panels: list[dict[str, Any]] = []
+        for slot in slots:
+            res = np.asarray(slot.observed) - np.asarray(slot.fit)
             energy, time = self._axes_for(slot)
             extent = None
             x_label, y_label = "energy index", "time / slice index"
@@ -2467,27 +2392,22 @@ class FitResults:
                     float(time_view[-1]),
                 )
                 x_label, y_label = "energy", "time"
-            im = axs[0, col].imshow(
-                res,
-                aspect="auto",
-                cmap="RdBu_r",
-                vmin=-global_max,
-                vmax=global_max,
-                origin="lower",
-                extent=extent,
+            panels.append(
+                {
+                    "residual": res,
+                    "extent": extent,
+                    "x_label": x_label,
+                    "y_label": y_label,
+                    "title": f"{slot.model_name} ({slot.fit_type})",
+                }
             )
-            axs[0, col].set_title(f"{slot.model_name} ({slot.fit_type})")
-            axs[0, col].set_xlabel(x_label)
-            if col == 0:
-                axs[0, col].set_ylabel(y_label)
-        if im is not None:
-            fig.colorbar(im, ax=axs[0, :].tolist(), shrink=0.85)
-        fig.suptitle(f"Residuals — {file_name}")
-        if show_plot:
-            plt.show()
-        else:
-            plt.close(fig)
-        return fig
+        return uplt.plot_residual_maps_2d(
+            panels,
+            suptitle=f"Residuals — {file_name}",
+            show_plot=show_plot,
+            figsize=figsize,
+            config=self._config,
+        )
 
     #
     def _compare_rows_long(

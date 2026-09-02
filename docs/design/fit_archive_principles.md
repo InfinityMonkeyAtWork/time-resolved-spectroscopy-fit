@@ -53,7 +53,17 @@ back.
 - **Capture has one path, not two.** The immutable `SavedFile` payload is
   captured when a file produces its first slot. There is no second path
   reading live state at save time for unfitted files, and no question about
-  what to do with a bare `File()` that has no data.
+  what to do with a bare `File()` that has no data. The captured payload is
+  also the **only** file-level context completed-fit operations may read:
+  every consumer of a completed fit — `Project.results` and
+  `FitResults.load` alike — resolves axes and full-range data from the
+  captured `SavedFile`, never from the live `File`, so a completed fit
+  renders identically before and after serialization. Presentation is the
+  one deliberate exception: `PlotConfig` is project-owned and resolved at
+  render time (Principle 2). Explicitly live inspection/setup methods
+  (`describe`, `describe_model`, `define_baseline`, `set_fit_limits`)
+  keep reading live state — they are pre-fit tools, not completed-fit
+  consumers.
 - **`select=` needs no carve-out.** It filters slots; file groups follow from
   the slots that survive. If filtering removes every slot for a file, that
   file group is not written. Under the project-snapshot rule, filters applied

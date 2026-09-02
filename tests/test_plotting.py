@@ -36,6 +36,7 @@ from trspecfit import File, Project
 from trspecfit.config.plot import PlotConfig
 
 # Local imports
+from trspecfit.utils import plot as uplt
 from trspecfit.utils.plot import plot_1d, plot_2d
 
 
@@ -1237,3 +1238,146 @@ class TestHighLevelPlotOverrides:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+#
+#
+class TestPlotFitRes2dNanAware:
+    """plot_fit_res_2d must handle a NaN-padded fit array (full_range mode)
+    without warning/crashing, and report min/max from the real values."""
+
+    #
+    def test_nan_padded_fit_renders_without_warning(self, recwarn):
+        rng = np.random.default_rng(0)
+        data = rng.random((6, 8))
+        fit = np.full((6, 8), np.nan)
+        fit[2:4, 3:6] = data[2:4, 3:6] * 0.9  # the "fit window"
+
+        uplt.plot_fit_res_2d(
+            data=data,
+            fit=fit,
+            x_lim=[3, 6],
+            y_lim=[2, 4],
+            save_img=0,
+        )
+        fig = plt.gcf()
+        try:
+            assert not any("All-NaN" in str(w.message) for w in recwarn.list)
+            fit_ax = next(
+                ax for ax in fig.axes if ax.get_title().startswith("Fit [min:")
+            )
+            expected_min = np.nanmin(fit)
+            assert f"{expected_min:.3E}" in fit_ax.get_title()
+        finally:
+            plt.close("all")
+
+
+#
+#
+class TestRenderingImportBoundary:
+    """utils/plot.py owns all production rendering: no matplotlib or corner
+    import may exist anywhere else under src/trspecfit/ (docstring examples
+    don't count — this parses real import statements)."""
+
+    #
+    def test_no_matplotlib_outside_utils_plot(self):
+        import ast
+
+        src_root = Path(uplt.__file__).parents[1]  # src/trspecfit
+        plot_py = Path(uplt.__file__).resolve()
+        offenders: list[str] = []
+        for py in sorted(src_root.rglob("*.py")):
+            if py.resolve() == plot_py:
+                continue
+            tree = ast.parse(py.read_text())
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module or ""]
+                else:
+                    continue
+                for name in names:
+                    if name.split(".")[0] in {"matplotlib", "corner"}:
+                        offenders.append(
+                            f"{py.relative_to(src_root)}:{node.lineno} imports {name}"
+                        )
+        assert offenders == []
+
+
+#
+#
+class TestPlotFitOverlay1d:
+    """Output-level checks for the describe_model-style overlay renderer."""
+
+    #
+    def test_curves_labels_and_scaled_residual(self):
+        x = np.linspace(0.0, 10.0, 50)
+        observed = np.sin(x) + 1.5
+        comp_a = 0.6 * observed
+        comp_b = 0.4 * observed
+        fit = comp_a + comp_b
+        init = np.full_like(x, observed.mean())
+        config = PlotConfig(res_mult=3)
+
+        uplt.plot_fit_overlay_1d(
+            x,
+            observed,
+            fit=fit,
+            components=[comp_a, comp_b],
+            init=init,
+            legend=["LinBack_01", "GLP_01"],
+            config=config,
+            save_img=0,
+        )
+        ax = plt.gca()
+        try:
+            labels = [line.get_label() for line in ax.get_lines()]
+            assert labels[0] == "data"
+            assert "initial guess" in labels
+            assert "LinBack_01" in labels and "GLP_01" in labels
+            assert "final fit" in labels
+            res_line = next(
+                line
+                for line in ax.get_lines()
+                if str(line.get_label()).endswith("*residual")
+            )
+            np.testing.assert_allclose(res_line.get_ydata(), (observed - fit) * 3)
+        finally:
+            plt.close("all")
+
+    #
+    def test_requires_fit_or_init_and_leaks_no_figure(self):
+        x = np.arange(5.0)
+        n_figs = len(plt.get_fignums())
+        with pytest.raises(ValueError, match="fit= or init="):
+            uplt.plot_fit_overlay_1d(x, x, save_img=0)
+        assert len(plt.get_fignums()) == n_figs  # validated before creation
+
+
+#
+#
+class TestFinalizePlotExplicitFigure:
+    """_finalize_plot acts on the figure it is given — never on pyplot's
+    implicit current one. A decoy figure created after the target (and
+    therefore current) must survive untouched while the target is saved
+    and closed."""
+
+    #
+    def test_saves_and_closes_only_the_target_figure(self, tmp_path):
+        target, ax = plt.subplots(figsize=(2.0, 2.0), dpi=50)
+        ax.plot([0, 1], [0, 1])
+        decoy, dax = plt.subplots(figsize=(4.0, 4.0), dpi=50)  # now current
+        dax.plot([0, 1], [1, 0])
+        path = tmp_path / "target.png"
+        try:
+            uplt._finalize_plot(target, -1, path, 50)  # save-only + close
+
+            img = plt.imread(path)
+            # 2 in x 50 dpi ~ 100 px (tight bbox wiggles); the 4-in decoy
+            # would have produced ~200 px.
+            assert max(img.shape[0], img.shape[1]) < 160
+            assert not plt.fignum_exists(target.number)
+            assert plt.fignum_exists(decoy.number)
+        finally:
+            plt.close("all")

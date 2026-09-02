@@ -152,9 +152,9 @@ def sbs_worker_init(
     """
 
     global _WORKER_MODEL, _WORKER_DISPATCH_ARGS, _WORKER_SEED_TEMPLATE
-    import matplotlib
+    from trspecfit.utils import plot as uplt
 
-    matplotlib.use("Agg", force=True)
+    uplt.use_headless_backend()
     _WORKER_MODEL = model
     _WORKER_DISPATCH_ARGS = dispatch_args
     _WORKER_SEED_TEMPLATE = seed_template

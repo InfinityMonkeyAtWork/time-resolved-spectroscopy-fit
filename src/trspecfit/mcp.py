@@ -2854,6 +2854,7 @@ class Dynamics(Model):
             uplt.plot_1d(
                 data=[self.time_norm, self.n_sub, self.n_counter],
                 x=self.time,
+                config=self.plot_config,
                 x_label=f"Time (1E{time_unit}s)",
                 y_type="log",
                 legend=legends,
