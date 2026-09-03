@@ -211,12 +211,21 @@ class TestHandleAccessors:
             results.plot_fit(handle=handle_a[:10], fit_type="baseline")
 
     #
-    def test_handle_never_matches_a_label(self):
-        project, _, handle_a, _ = _two_variant_baseline()
+    def test_handle_accepts_a_label(self, tmp_path):
+        """A label works anywhere a handle prefix does — including handle=."""
+
+        project, file, handle_a, _ = _two_variant_baseline()
         results = project.results
         results.set_label(handle_a[:8], "keeper")
-        with pytest.raises(LookupError, match="No fit matches"):
-            results.get(handle="keeper")
+        assert results.get(handle="keeper").handle == handle_a
+        # The File wrapper's belongs-to-file check sees the resolved slot.
+        assert not file.get_parameters(handle="keeper").empty
+
+        # The gap first showed on a loaded archive: label → slot post-load.
+        archive = tmp_path / "labeled_handle.fit.h5"
+        project.save_fits(archive, show_output=0)
+        loaded = FitResults.load(archive)
+        assert loaded.get(handle="keeper").handle == handle_a
 
 
 #

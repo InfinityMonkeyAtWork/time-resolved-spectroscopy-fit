@@ -4738,7 +4738,7 @@ class File:
             - '2d': 2D global fit (from ``fit_2d``)
 
         handle : str, optional
-            Slot-handle prefix pinning one exact run of **this file**;
+            Slot-handle prefix or exact label pinning one exact run of **this file**;
             mutually exclusive with the ``model``/``fit_type`` filters. A
             handle naming another file's slot raises.
 
@@ -4786,7 +4786,7 @@ class File:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to read (see :meth:`get_parameters`).
         handle : str, optional
-            Slot-handle prefix pinning one exact run of this file;
+            Slot-handle prefix or exact label pinning one exact run of this file;
             mutually exclusive with the ``model``/``fit_type`` filters.
 
         Returns
@@ -4835,7 +4835,7 @@ class File:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to read.
         handle : str, optional
-            Slot-handle prefix pinning one exact run of this file;
+            Slot-handle prefix or exact label pinning one exact run of this file;
             mutually exclusive with the ``model``/``fit_type`` filters.
 
         Returns
@@ -4881,7 +4881,7 @@ class File:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to read.
         handle : str, optional
-            Slot-handle prefix pinning one exact run of this file;
+            Slot-handle prefix or exact label pinning one exact run of this file;
             mutually exclusive with the ``model``/``fit_type`` filters.
 
         Returns
@@ -4931,7 +4931,7 @@ class File:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to plot.
         handle : str, optional
-            Slot-handle prefix pinning one exact run of this file;
+            Slot-handle prefix or exact label pinning one exact run of this file;
             mutually exclusive with the ``model``/``fit_type`` filters.
         config : PlotConfig, optional
             Styling override; defaults to the project's ``plot_config``.
@@ -4990,7 +4990,7 @@ class File:
         model : str, optional
             Restrict to a single model name.
         handle : str, optional
-            Slot-handle prefix pinning one exact SbS run of this file;
+            Slot-handle prefix or exact label pinning one exact SbS run of this file;
             mutually exclusive with the ``model`` filter.
         params : sequence of str, optional
             Which parameters to plot (default: varied parameters).
@@ -5042,7 +5042,7 @@ class File:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to plot. For SbS fits the payload is slice 0's.
         handle : str, optional
-            Slot-handle prefix pinning one exact run of this file;
+            Slot-handle prefix or exact label pinning one exact run of this file;
             mutually exclusive with the ``model``/``fit_type`` filters.
         show_plot : bool, default True
             Set ``False`` to build without displaying.
@@ -5088,7 +5088,7 @@ class File:
         model : str, optional
             Restrict to a single model name.
         handle : str, optional
-            Slot-handle prefix pinning one exact SbS run of this file;
+            Slot-handle prefix or exact label pinning one exact SbS run of this file;
             mutually exclusive with the ``model`` filter.
         slices : sequence of int, optional
             Slice indices to render. Default: all slices.

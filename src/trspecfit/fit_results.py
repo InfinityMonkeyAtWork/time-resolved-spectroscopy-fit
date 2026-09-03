@@ -586,9 +586,10 @@ class FitResults:
 
         - ``get(file=..., model=..., fit_type=...)`` — all three required;
           raises ``LookupError`` if 0 or >1 slots match.
-        - ``get(handle=...)`` — an unambiguous slot-handle prefix (read it
-          off :meth:`compare_models` / :meth:`variants`); raises
-          ``LookupError`` if it matches nothing or more than one handle.
+        - ``get(handle=...)`` — an unambiguous slot-handle prefix or an
+          exact label (read them off :meth:`compare_models` /
+          :meth:`variants`); raises ``LookupError`` if it matches nothing
+          or more than one fit.
 
         For multi-match filters, :meth:`variants` shows how the matched
         runs differ, with the handle to pass back here.
@@ -1208,8 +1209,8 @@ class FitResults:
         """
         One slot for an accessor call: exact pin or latest-matching filter.
 
-        ``handle=`` names one exact slot by handle prefix and is mutually
-        exclusive with the ``file``/``model``/``fit_type`` filter trio —
+        ``handle=`` names one exact slot by handle prefix or exact label,
+        mutually exclusive with the ``file``/``model``/``fit_type`` trio —
         one names a run, the other describes a group, and mixing them has
         no coherent meaning. Without it, the existing latest-matching-wins
         contract via :meth:`_latest_slot` (``fit_type=None`` reads as
@@ -1225,7 +1226,7 @@ class FitResults:
                 )
             slot = cast(
                 SavedFitSlot,
-                resolve_fit_reference(handle, slots=self._slots, labels=False),
+                resolve_fit_reference(handle, slots=self._slots),
             )
             if required_fit_type is not None and slot.fit_type != required_fit_type:
                 raise ValueError(
@@ -1266,7 +1267,7 @@ class FitResults:
             Which fit type to read. When several slots match, the most
             recent fit wins.
         handle : str, optional
-            Slot-handle prefix pinning one exact run; mutually exclusive
+            Slot-handle prefix or exact label pinning one exact run; mutually exclusive
             with the ``file``/``model``/``fit_type`` filters.
 
         Returns
@@ -1313,7 +1314,7 @@ class FitResults:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit type to read (latest matching fit wins).
         handle : str, optional
-            Slot-handle prefix pinning one exact run; mutually exclusive
+            Slot-handle prefix or exact label pinning one exact run; mutually exclusive
             with the ``file``/``model``/``fit_type`` filters.
 
         Returns
@@ -1369,7 +1370,7 @@ class FitResults:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit type to read (latest matching fit wins).
         handle : str, optional
-            Slot-handle prefix pinning one exact run; mutually exclusive
+            Slot-handle prefix or exact label pinning one exact run; mutually exclusive
             with the ``file``/``model``/``fit_type`` filters.
 
         Returns
@@ -1417,7 +1418,7 @@ class FitResults:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit type to read (latest matching fit wins).
         handle : str, optional
-            Slot-handle prefix pinning one exact run; mutually exclusive
+            Slot-handle prefix or exact label pinning one exact run; mutually exclusive
             with the ``file``/``model``/``fit_type`` filters.
 
         Returns
@@ -1476,7 +1477,7 @@ class FitResults:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit type to plot (latest matching fit wins).
         handle : str, optional
-            Slot-handle prefix pinning one exact run; mutually exclusive
+            Slot-handle prefix or exact label pinning one exact run; mutually exclusive
             with the ``file``/``model``/``fit_type`` filters.
         config : PlotConfig, optional
             Styling override. Default: the project-owned ``plot_config``
@@ -1678,7 +1679,7 @@ class FitResults:
         model : str, optional
             Filter to a single model name.
         handle : str, optional
-            Slot-handle prefix pinning one exact SbS run; mutually
+            Slot-handle prefix or exact label pinning one exact SbS run; mutually
             exclusive with the ``file``/``model`` filters.
         slices : sequence of int, optional
             Slice indices to render. Default: all slices.
@@ -1773,7 +1774,7 @@ class FitResults:
             Which fit to plot (latest matching fit wins). For SbS fits the
             payload is slice 0's.
         handle : str, optional
-            Slot-handle prefix pinning one exact run; mutually exclusive
+            Slot-handle prefix or exact label pinning one exact run; mutually exclusive
             with the ``file``/``model``/``fit_type`` filters.
         show_plot : bool, default True
             Set ``False`` to build without displaying (tests / batch use).
@@ -1865,7 +1866,7 @@ class FitResults:
         model : str, optional
             Filter to a single model name.
         handle : str, optional
-            Slot-handle prefix pinning one exact SbS run; mutually
+            Slot-handle prefix or exact label pinning one exact SbS run; mutually
             exclusive with the ``file``/``model`` filters.
         params : sequence of str, optional
             Which parameters to plot. Default: the varied parameters (from

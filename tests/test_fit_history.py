@@ -2233,13 +2233,25 @@ class TestResolveFitReference:
             resolve_fit_reference("dup", slots=[a, b])
 
     #
-    def test_labels_flag_restricts_to_prefixes(self):
-        """``handle=`` accessors resolve prefixes only, never labels."""
+    def test_handle_accessor_resolves_label(self):
+        """``handle=`` accessors take an exact label, like every reference."""
 
-        a = _slot_stub()
+        a = _slot_stub(model_name="mA")
+        b = _slot_stub(model_name="mB")
         set_fit_label(a, "final")
+        assert FitResults(slots=[a, b]).get(handle="final") is a
+
+    #
+    def test_bundle_label_out_of_reach_of_handle_accessors(self):
+        """A bundle's label lives on the joint record; the slot-only
+        ``handle=`` path keeps raising instead of leaking a joint record."""
+
+        record = _joint_record_stub()
+        set_fit_label(record, "joint-final")
+        slots = [p.slot for p in record.projections]
+        results = FitResults(slots=slots, joint=[record])
         with pytest.raises(LookupError, match="No fit matches"):
-            resolve_fit_reference("final", slots=[a], labels=False)
+            results.get(handle="joint-final")
 
     #
     def test_same_handle_reruns_resolve_to_latest_entry(self):

@@ -2000,7 +2000,6 @@ def resolve_fit_reference(
     *,
     slots: Sequence[SavedFitSlot],
     joint_records: Sequence[JointFitResult] = (),
-    labels: bool = True,
 ) -> SavedFitSlot | JointFitResult:
     """
     Resolve a user-supplied fit reference to one slot or joint record.
@@ -2009,9 +2008,8 @@ def resolve_fit_reference(
     joint record by ``optimization_hash`` prefix or exact ``label``
     (git-style: any unambiguous prefix works; tables display the first 8
     hex chars). Matching is case-insensitive for hex prefixes, exact for
-    labels; ``labels=False`` restricts to prefixes (the ``handle=``
-    accessor kwarg). Several history entries sharing one handle (exact
-    re-runs) count as a single target and resolve to the latest entry.
+    labels. Several history entries sharing one handle (exact re-runs)
+    count as a single target and resolve to the latest entry.
 
     Raises
     ------
@@ -2024,13 +2022,13 @@ def resolve_fit_reference(
     by_handle: dict[str, SavedFitSlot] = {}
     for slot in slots:
         if slot.handle.startswith(prefix) or (
-            labels and slot.label is not None and slot.label == ref
+            slot.label is not None and slot.label == ref
         ):
             by_handle[slot.handle] = slot  # latest entry per handle wins
     by_hash: dict[str, JointFitResult] = {}
     for jr in joint_records:
         if jr.optimization_hash.startswith(prefix) or (
-            labels and jr.label is not None and jr.label == ref
+            jr.label is not None and jr.label == ref
         ):
             by_hash[jr.optimization_hash] = jr
 
