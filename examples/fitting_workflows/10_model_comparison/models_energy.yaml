@@ -1,7 +1,7 @@
 # Two competing baseline models and two competing SbS models on the same data.
-# We deliberately make A and B differ in only one structural choice so the
-# comparison metrics (chi2_red / r2 / AIC / BIC) have something meaningful to say.
-# (available functions: src/trspecfit/functions/energy.py)
+# Each pair deliberately differs in only one structural choice so the
+# comparison metrics (chi2_red / r2 / AIC / BIC) have something meaningful
+# to say. (available functions: src/trspecfit/functions/energy.py)
 
 # ---- Baseline pair ---------------------------------------------------------
 # base_GLP: full GLP profile (Gaussian-Lorentzian product). The simulated data
@@ -18,10 +18,10 @@ base_GLP:
       F: [1.5, True, 0.75, 2.5]
       m: [0.3, True, 0, 1]
 
-# base_Gauss: pure Gaussian peak (Gauss: A, x0, SD). Same background, one structural
-# change: no Lorentzian mixing. One fewer free parameter, but a worse fit on
-# data that has Lorentzian tails; AIC/BIC are designed to flag exactly this
-# kind of structural underfit.
+# base_Gauss: pure Gaussian peak (Gauss: A, x0, SD). Same background, one
+# structural change: no Lorentzian mixing. One fewer free parameter, but a
+# worse fit on data that has Lorentzian tails; AIC/BIC are designed to flag
+# exactly this kind of structural underfit.
 base_Gauss:
     LinBack:
       m: [1E-2, True, -1, 1]
@@ -49,8 +49,7 @@ sbs_x0_only:
       m: [0.3, False]
 
 # sbs_x0_A: x0 AND A both vary per slice. More flexible (marginally lower
-# chi2_red on most
-# slices) but pays for an extra free parameter in AIC/BIC.
+# chi2_red on most slices) but pays for an extra free parameter in AIC/BIC.
 sbs_x0_A:
     LinBack:
       m: [1E-2, False]
@@ -64,13 +63,14 @@ sbs_x0_A:
       m: [0.3, False]
 
 # ---- 2D pair ---------------------------------------------------------------
-# m2d_w_IRF / m2d_wo_IRF share an identical energy model (LinBack + GLP, all pinned from
-# baseline). They differ only in which dynamics model gets attached to x0
-# via `file.add_time_dependence(...)`:
+# m2d_w_IRF / m2d_wo_IRF share an identical energy model (LinBack + GLP, all
+# pinned from baseline). They differ only in which dynamics model gets
+# attached to x0 via `file.add_time_dependence(...)`:
 #   m2d_w_IRF -> MonoExpPosIRF  (step-and-decay convolved with a Gaussian IRF)
 #   m2d_wo_IRF -> MonoExpPos     (sharp step-and-decay, no IRF)
-# The simulated data was generated with an IRF-smeared step-and-decay, so we expect
-# m2d_w_IRF to win even after AIC/BIC penalize its extra free parameter (the IRF σ).
+# The simulated data was generated with an IRF-smeared step-and-decay, so we
+# expect m2d_w_IRF to win even after AIC/BIC penalize its extra free
+# parameter (the IRF σ).
 m2d_w_IRF:
     LinBack:
       m: [1E-2, False]
