@@ -13,6 +13,7 @@ This section contains the auto-generated API documentation.
    functions_time
    functions_profile
    simulator
+   sensitivity
    plot_config
    fitlib
    spectra
