@@ -5,3 +5,7 @@ Fitting Module
    :members:
    :undoc-members:
    :show-inheritance:
+
+.. autoclass:: trspecfit.utils.lmfit.FitOutput
+   :members:
+   :show-inheritance:

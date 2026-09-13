@@ -265,7 +265,7 @@ def test_sbs_explicit_seed_f1():
     )
 
     mid = len(fit_file.results_sbs) // 2
-    assert_recovery_exact(truth_pars, fit_file.results_sbs[mid][1].params)
+    assert_recovery_exact(truth_pars, fit_file.results_sbs[mid].par_fin.params)
 
 
 #
@@ -286,4 +286,4 @@ def test_sbs_baseline_argmax_shift_f1():
     )
 
     mid = len(fit_file.results_sbs) // 2
-    assert_recovery_exact(truth_pars, fit_file.results_sbs[mid][1].params)
+    assert_recovery_exact(truth_pars, fit_file.results_sbs[mid].par_fin.params)

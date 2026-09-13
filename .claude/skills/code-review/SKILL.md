@@ -1,7 +1,6 @@
 ---
 name: code-review
 description: "Run the shared code-review checklist. Default: review diff vs main. Args: `full` (whole codebase), `diff` (default), or a file/directory/glob path."
-disable-model-invocation: false
 ---
 
 Use [../../../docs/ai/code-review.md](../../../docs/ai/code-review.md)

@@ -1,7 +1,6 @@
 ---
 name: check-example
 description: Audit an examples/fitting_workflows notebook against the gold-standard quality bar before a merge or release.
-disable-model-invocation: true
 ---
 
 Use [../../../docs/ai/check-example.md](../../../docs/ai/check-example.md) as

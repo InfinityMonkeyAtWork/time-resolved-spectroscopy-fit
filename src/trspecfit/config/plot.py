@@ -3,17 +3,15 @@ Configuration of trspecfit plotting functions
 """
 
 import copy as cp
+import json
 from dataclasses import dataclass, fields
+from typing import Any
 
-# Plot configuration hierarchy:
+# Plot configuration ownership (fit_archive_principles.md, Principle 2):
 #
-# Project (defaults from YAML)
-#    ↓
-# File (can customize persistently per file)
-#    ↓
-# Model (inherits from File, no customization)
-#    ↓
-# plot call (can override temporarily for one plot)
+# Project.plot_config (one project-owned instance; defaults from project.yaml)
+#    ↓ resolved at render time
+# plot call (config= overrides for one plot)
 
 
 @dataclass
@@ -54,6 +52,14 @@ class PlotConfig:
         DPI for displaying plots
     dpi_save : int
         DPI for saving plots
+    full_range : bool
+        ``FitResults.plot_fit``: show the full, uncropped data range
+        (fit/residual/components ``NaN``-masked outside the fit window)
+        instead of just the fit-limits window. Overridable per call.
+    show_init : bool
+        ``FitResults.plot_fit``: draw the dotted-gold initial-guess
+        overlay (1D fit types only) when the slot has a persisted
+        ``fit_ini``. Overridable per call.
     z_colormap : str
         Colormap name for 2D plots
     z_colormap_res : str
@@ -96,28 +102,28 @@ class PlotConfig:
     >>> config = PlotConfig(x_label='Energy (eV)', x_dir='rev', dpi_plot=150)
     >>> plot_1d(data, x, config=config)
 
-    Create from Project settings:
+    Use the project-owned config:
 
     >>> project = Project(path='...', config_file='project.yaml')
-    >>> config = PlotConfig.from_project(project)
+    >>> config = project.plot_config
     >>> plot_1d(data, x, config=config)
 
-    Override Project settings:
+    Restyle one call without touching the project config:
 
-    >>> config = PlotConfig.from_project(project, x_label='Binding Energy (eV)')
+    >>> config = project.plot_config.copy(x_label='Binding Energy (eV)')
     >>> plot_2d(data, x, y, config=config)
 
     Override config for a specific plot:
 
-    >>> config = PlotConfig.from_project(project)
+    >>> config = project.plot_config
     >>> plot_1d(data, x, config=config, x_dir='rev', linewidth=2)
 
-    Create multiple configs from one project:
+    Derive variants from the project config:
 
     >>> project = Project(path='...')
-    >>> default_config = PlotConfig.from_project(project)
-    >>> pub_config = PlotConfig.from_project(project, dpi_save=600)
-    >>> talk_config = PlotConfig.from_project(project, dpi_plot=150)
+    >>> default_config = project.plot_config
+    >>> pub_config = project.plot_config.copy(dpi_save=600)
+    >>> talk_config = project.plot_config.copy(dpi_plot=150)
     """
 
     # Axis labels
@@ -142,6 +148,16 @@ class PlotConfig:
 
     # Residual multiplier for 1D fit plots
     res_mult: float = 5
+
+    # FitResults.plot_fit: show the full, uncropped data range (fit/residual/
+    # components NaN-masked outside the fit window) instead of just the
+    # fit-limits window. A per-call full_range= argument overrides this.
+    full_range: bool = True
+
+    # FitResults.plot_fit: draw the dotted-gold initial-guess overlay (1D fit
+    # types only) when the slot has a persisted fit_ini. A per-call
+    # show_init= argument overrides this.
+    show_init: bool = True
 
     # 2D plot settings
     z_colormap: str = "viridis"
@@ -177,49 +193,6 @@ class PlotConfig:
     y_norm: int = 0  # 0: no normalization, 1: normalize to [0,1]
     y_scale: list[float] | None = None
 
-    @classmethod
-    def from_project(cls, project, **overrides) -> "PlotConfig":
-        """
-        Create PlotConfig from Project settings.
-
-        Parameters
-        ----------
-        project : Project
-            Project instance with plot settings
-        **overrides : dict
-            Any parameters to override from project defaults
-
-        Returns
-        -------
-        PlotConfig
-            Configuration object with settings from project
-        """
-
-        project_aliases = {
-            "x_label": "e_label",
-            "y_label": "t_label",
-            "dpi_plot": "dpi_plt",
-        }
-        # Tuple-typed fields arrive as lists when set via project.yaml
-        tuple_fields = {"x_lim", "y_lim", "z_lim", "panel_size"}
-
-        config_dict = {}
-        for field in fields(cls):
-            source_attr = project_aliases.get(field.name, field.name)
-            if not hasattr(project, source_attr):
-                continue
-
-            value = cp.deepcopy(getattr(project, source_attr))
-            if field.name in tuple_fields and value is not None:
-                value = tuple(value)
-
-            config_dict[field.name] = value
-
-        # Apply any overrides
-        config_dict.update(overrides)
-
-        return cls(**config_dict)
-
     #
     def update(self, **kwargs) -> "PlotConfig":
         """
@@ -247,7 +220,11 @@ class PlotConfig:
     #
     def copy(self, **overrides) -> "PlotConfig":
         """
-        Create a copy of this config with optional overrides.
+        Create a deep copy of this config with optional overrides.
+
+        The copy never aliases the source's mutable fields (``colors``,
+        ``vlines``, ``data_slice``, ...) — mutating a derived variant
+        must not restyle the source config.
 
         Parameters
         ----------
@@ -260,7 +237,112 @@ class PlotConfig:
             New configuration object
         """
 
-        new_config = cp.copy(self)
+        new_config = cp.deepcopy(self)
         new_config.update(**overrides)
 
         return new_config
+
+    #
+    def adopt(self, other: "PlotConfig") -> None:
+        """
+        Copy every field of ``other`` onto this instance (deep).
+
+        Keeps this object's identity — ``Project.plot_config`` assignment
+        adopts the assigned config in place so every held ``FitResults``
+        keeps resolving the project's current styling.
+        """
+
+        for field in fields(PlotConfig):
+            setattr(self, field.name, cp.deepcopy(getattr(other, field.name)))
+
+    #
+    def to_json(self) -> str:
+        """
+        Canonical JSON encoding of every field (the schema-7 payload).
+
+        Sorted keys, compact separators — deterministic for a given
+        field state. (Configs can compare equal yet encode differently:
+        ``waterfall=0`` and ``waterfall=0.0`` are ``==`` but emit ``0``
+        vs ``0.0``. Nothing compares payload bytes — presentation is
+        outside identity, Principle 2.) Tuple-typed fields encode as
+        JSON arrays;
+        :meth:`from_json` restores them. A field holding a non-JSON
+        value (arrays, callables, ``NaN``/``inf``) raises ``TypeError``
+        or ``ValueError`` naming the field, rather than degrading the
+        payload.
+        """
+
+        payload: dict[str, Any] = {}
+        for field in fields(PlotConfig):
+            value = getattr(self, field.name)
+            try:
+                json.dumps(value, allow_nan=False)
+            except (TypeError, ValueError) as err:
+                raise type(err)(
+                    f"PlotConfig.{field.name} is not JSON-serializable: "
+                    f"{value!r} ({err})"
+                ) from err
+            payload[field.name] = value
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+    #
+    @classmethod
+    def from_json(cls, payload: str) -> "PlotConfig":
+        """
+        Rebuild a config from :meth:`to_json` output.
+
+        Unknown keys raise ``ValueError`` — a payload naming fields this
+        version does not know is a versioning problem, not a styling
+        default. Missing keys keep their dataclass defaults, so a
+        payload written before a field existed still loads. Non-standard
+        JSON constants (``NaN``/``Infinity``) are rejected: ``to_json``
+        cannot produce them. Tuple-typed fields (``PLOT_TUPLE_FIELDS``)
+        must be two-element numeric arrays (or ``null``) and are
+        restored to tuples; every other value is used as decoded.
+        """
+
+        data = json.loads(payload, parse_constant=_reject_json_constant)
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"PlotConfig payload must decode to an object, got "
+                f"{type(data).__name__}"
+            )
+        unknown = set(data) - PLOT_FIELD_NAMES
+        if unknown:
+            raise ValueError(
+                f"Unknown PlotConfig field(s) in payload: {sorted(unknown)}"
+            )
+        for name in PLOT_TUPLE_FIELDS:
+            value = data.get(name)
+            if value is None:
+                continue
+            valid = (
+                isinstance(value, list)
+                and len(value) == 2
+                and all(
+                    isinstance(x, int | float) and not isinstance(x, bool)
+                    for x in value
+                )
+            )
+            if not valid:
+                raise ValueError(
+                    f"PlotConfig.{name} must be a two-element numeric "
+                    f"array or null, got {value!r}"
+                )
+            data[name] = tuple(value)
+        return cls(**data)
+
+
+#
+# Field-name set consumed by Project._load_config to route project.yaml keys
+# onto the project-owned PlotConfig, and the fields whose YAML lists must be
+# coerced to tuples.
+PLOT_FIELD_NAMES = frozenset(f.name for f in fields(PlotConfig))
+PLOT_TUPLE_FIELDS = frozenset({"x_lim", "y_lim", "z_lim", "panel_size"})
+
+
+#
+def _reject_json_constant(name: str) -> Any:
+    """Reject non-standard JSON constants (``PlotConfig.from_json``)."""
+
+    raise ValueError(f"Unsupported JSON constant in PlotConfig payload: {name}")

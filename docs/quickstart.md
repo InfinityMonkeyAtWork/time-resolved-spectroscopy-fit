@@ -55,7 +55,7 @@ Every fitting workflow follows the same pattern:
 6. file.load_model('models.yaml', ...)  # load 2D energy model from YAML
 7. file.add_time_dependence(...)        # make a parameter evolve in time
 8. file.fit_2d(...)                     # global 2D fit
-9. file.get_fit_results(fit_type='2d')  # extract results as DataFrame
+9. file.get_parameters(fit_type='2d')  # extract results as DataFrame
 ```
 
 Optional extension after step 6:

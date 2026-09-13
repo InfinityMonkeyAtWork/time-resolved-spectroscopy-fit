@@ -1,5 +1,5 @@
 """Tests for trspecfit.utils.arrays — running_mean, kernel-matrix
-convolution, sign_change, my_conv."""
+convolution, sign_change, my_conv, resolve_time_selection."""
 
 import numpy as np
 import pytest
@@ -17,6 +17,7 @@ from trspecfit.utils.arrays import (
     conv_matrix_apply,
     conv_matrix_operator,
     my_conv,
+    resolve_time_selection,
     running_mean,
     sign_change,
 )
@@ -497,3 +498,48 @@ class TestRunningMean:
         y = np.sin(x / 10) + rng.normal(scale=0.5, size=100)
         smoothed = running_mean(x, y, n=7)
         assert np.var(smoothed) < np.var(y)
+
+
+#
+class TestResolveTimeSelection:
+    """resolve_time_selection — extracted from File._resolve_time_selection
+    so archive-side reconstruction can resolve a raw time selection with no
+    live File (see FitResults._full_observed_for)."""
+
+    #
+    def test_abs_single_point(self):
+        time = np.linspace(-2, 10, 24)
+        assert resolve_time_selection(time, 1.5, 1.5, time_type="abs") == [
+            int(np.searchsorted(time, 1.5)),
+            int(np.searchsorted(time, 1.5)) + 1,
+        ]
+
+    #
+    def test_abs_range(self):
+        time = np.linspace(-2, 10, 24)
+        ind = resolve_time_selection(time, 0.0, 2.0, time_type="abs")
+        assert ind[0] < ind[1]
+        assert time[ind[0]] >= 0.0
+        assert time[ind[1] - 1] <= 2.0
+
+    #
+    def test_ind_single_point(self):
+        time = np.linspace(-2, 10, 24)
+        assert resolve_time_selection(time, 5, 5, time_type="ind") == [5, 6]
+
+    #
+    def test_ind_range(self):
+        time = np.linspace(-2, 10, 24)
+        assert resolve_time_selection(time, 5, 8, time_type="ind") == [5, 9]
+
+    #
+    def test_unknown_time_type_raises(self):
+        time = np.linspace(-2, 10, 24)
+        with pytest.raises(ValueError, match="Unknown time_type"):
+            resolve_time_selection(time, 0, 1, time_type="bogus")
+
+    #
+    def test_out_of_range_raises(self):
+        time = np.linspace(-2, 10, 24)
+        with pytest.raises(ValueError, match="empty or out-of-range"):
+            resolve_time_selection(time, 100, 100, time_type="ind")

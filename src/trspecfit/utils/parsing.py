@@ -4,7 +4,7 @@ Model validation, Component naming and numbering, etc.
 """
 
 import re
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -508,6 +508,50 @@ def load_and_number_yaml_components(
             f"  - Valid YAML syntax\n"
             f"Original error: {exc}"
         ) from exc
+
+
+#
+def dump_yaml_subtrees(
+    model_yaml_path: Path | str,
+    keys: Sequence[str],
+) -> dict[str, str]:
+    """
+    Verbatim text block of each requested top-level key's subtree.
+
+    Snippet provenance for the fit archive (``model_yaml/`` records): the
+    file is sliced at top-level key boundaries (column-0 keys), keeping
+    comments and formatting byte-faithful; trailing blank lines are
+    dropped. A parser-level round-trip is deliberately not used —
+    component numbering allows duplicate mapping keys inside one model
+    (e.g. two ``GLP:`` components), which strict YAML loaders reject and
+    lenient ones silently collapse to a single entry.
+    """
+
+    path = Path(model_yaml_path)
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    boundaries: list[tuple[str, int]] = []
+    for index, line in enumerate(lines):
+        if not line or line[0] in " \t#%\n":
+            continue
+        if line.startswith(("---", "...")) or ":" not in line:
+            continue
+        boundaries.append((line.split(":", 1)[0].strip().strip("'\""), index))
+
+    snippets: dict[str, str] = {}
+    for position, (key, start) in enumerate(boundaries):
+        if key not in keys or key in snippets:
+            continue
+        stop = (
+            boundaries[position + 1][1]
+            if position + 1 < len(boundaries)
+            else len(lines)
+        )
+        block = "".join(lines[start:stop]).rstrip("\n") + "\n"
+        snippets[key] = block
+    missing = [key for key in keys if key not in snippets]
+    if missing:
+        raise KeyError(f"{path} has no top-level key(s) {missing!r}")
+    return snippets
 
 
 #

@@ -60,7 +60,7 @@ file.add_time_dependence('my_2d_model', 'my_par', 'models_time.yaml', 'my_dynami
 file.fit_2d('my_2d_model')
 
 # Inspect results
-df = file.get_fit_results(fit_type='2d')
+df = file.get_parameters(fit_type='2d')
 ```
 
 For global fits, dynamics, profiles, and advanced workflows see the

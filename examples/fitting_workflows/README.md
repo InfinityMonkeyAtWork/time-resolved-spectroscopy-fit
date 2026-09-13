@@ -46,8 +46,8 @@ Each notebook directory contains:
 - `data/` — input CSVs (where applicable; some notebooks generate data inline).
 - `models_energy.yaml` / `models_time.yaml` / `models_profile.yaml` — model
   definitions.
-- `project.yaml` — project-level configuration (display, axis labels, plotting,
-  `auto_export`, etc.).
+- `project.yaml` — project-level configuration (display, axis labels,
+  plotting, etc.).
 
 **Exception — post-fit notebooks.** `11_save_load_export` and
 `12_uncertainty_mcmc` have no model/`project.yaml` of their own; their preamble

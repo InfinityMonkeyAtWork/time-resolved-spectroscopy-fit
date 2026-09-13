@@ -36,6 +36,7 @@ from trspecfit import File, Project
 from trspecfit.config.plot import PlotConfig
 
 # Local imports
+from trspecfit.utils import plot as uplt
 from trspecfit.utils.plot import plot_1d, plot_2d
 
 
@@ -54,25 +55,21 @@ class TestPlotConfig:
         assert config.z_colormap == "viridis"
 
     #
-    def test_every_field_settable_via_project(self):
-        """Every PlotConfig field must have a Project counterpart.
+    def test_every_field_settable_via_yaml(self):
+        """Every PlotConfig field must be routable from project.yaml.
 
-        Project.yaml keys only apply to existing Project attributes, and
-        PlotConfig.from_project only copies fields the Project has — a
-        PlotConfig field without a Project default is silently unsettable
-        from project.yaml.
+        Project._load_config routes presentation keys through
+        PLOT_FIELD_NAMES onto the project-owned config — a PlotConfig
+        field missing from that set would be silently unsettable from
+        project.yaml.
         """
 
         from dataclasses import fields
 
-        project = make_project(name="cfg-coverage")
-        aliases = {"x_label": "e_label", "y_label": "t_label", "dpi_plot": "dpi_plt"}
-        missing = [
-            f.name
-            for f in fields(PlotConfig)
-            if not hasattr(project, aliases.get(f.name, f.name))
-        ]
-        assert missing == [], f"PlotConfig fields without Project defaults: {missing}"
+        from trspecfit.config.plot import PLOT_FIELD_NAMES
+
+        missing = [f.name for f in fields(PlotConfig) if f.name not in PLOT_FIELD_NAMES]
+        assert missing == [], f"PlotConfig fields not YAML-routable: {missing}"
 
     #
     def test_custom_creation(self):
@@ -84,30 +81,32 @@ class TestPlotConfig:
         assert config.x_dir == "rev"
 
     #
-    def test_from_project(self):
-        """Test creating config from Project"""
+    def test_project_owns_one_config(self):
+        """Project holds one real PlotConfig with project-flavored labels."""
 
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Project(path=tmpdir, name="test")
-            config = PlotConfig.from_project(project)
-            assert config.x_label == project.e_label
-            assert config.y_label == project.t_label
-            assert config.dpi_plot == project.dpi_plt
-            assert config.z_type == project.z_type
+            config = project.plot_config
+            assert isinstance(config, PlotConfig)
+            assert config.x_label == "Energy"
+            assert config.y_label == "Time"
+            assert config.z_label == "Intensity"
+            # every render resolves the same instance
+            assert project.plot_config is config
 
     #
-    def test_from_project_with_overrides(self):
-        """Test creating config from Project with overrides"""
+    def test_project_config_copy_overrides(self):
+        """Per-call restyling: copy() the project config with overrides."""
 
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Project(path=tmpdir, name="test")
-            config = PlotConfig.from_project(
-                project, x_label="Overridden", dpi_plot=250
-            )
+            config = project.plot_config.copy(x_label="Overridden", dpi_plot=250)
             assert config.x_label == "Overridden"
             assert config.dpi_plot == 250
-            # Other values should still come from project
-            assert config.y_label == project.t_label
+            # Other values still come from the project config
+            assert config.y_label == project.plot_config.y_label
+            # ... and the project-owned instance is untouched
+            assert project.plot_config.x_label == "Energy"
 
     #
     def test_update(self):
@@ -522,51 +521,212 @@ class TestPlot2D:
 
 #
 #
+class TestPlotConfigSerialization:
+    """to_json/from_json — the schema-7 project payload (round-trip first)."""
+
+    #
+    def _custom_config(self):
+        """One value from every field category (tuple, nested list,
+        list, scalar, None-able left None)."""
+
+        return PlotConfig(
+            x_label="Energy (eV)",
+            x_dir="rev",
+            x_lim=(83.0, 87.0),
+            z_lim=(0.0, 1.5),
+            panel_size=(5.0, 2.5),
+            data_slice=[[0, 10], [2, 8]],
+            colors=["#112233", "tab:orange"],
+            linewidths=[1.0, 2.5],
+            full_range=False,
+            waterfall=0.25,
+            ticksize=11.0,
+            dpi_save=600,
+        )
+
+    #
+    def test_round_trip_defaults(self):
+        assert PlotConfig.from_json(PlotConfig().to_json()) == PlotConfig()
+
+    #
+    def test_round_trip_custom_restores_types(self):
+        config = self._custom_config()
+        loaded = PlotConfig.from_json(config.to_json())
+        assert loaded == config
+        # Tuple-typed fields come back as tuples, not JSON lists...
+        assert isinstance(loaded.x_lim, tuple)
+        assert isinstance(loaded.z_lim, tuple)
+        assert isinstance(loaded.panel_size, tuple)
+        # ...list-typed fields stay lists.
+        assert loaded.data_slice == [[0, 10], [2, 8]]
+        assert isinstance(loaded.data_slice, list)
+
+    #
+    def test_payload_is_deterministic(self):
+        """Same field state gives identical payloads (sorted keys).
+
+        Deliberately narrower than "equal configs encode identically":
+        waterfall=0 and waterfall=0.0 are == but encode as 0 vs 0.0.
+        Nothing compares payload bytes (presentation is outside
+        identity), so numeric normalization is not worth a per-field
+        type registry.
+        """
+
+        a = self._custom_config()
+        b = self._custom_config()
+        assert a.to_json() == b.to_json()
+
+    #
+    def test_nan_infinity_constants_rejected(self):
+        """to_json cannot produce NaN/Infinity; from_json must not
+        accept them through Python's permissive decoder."""
+
+        with pytest.raises(ValueError, match="NaN"):
+            PlotConfig.from_json('{"waterfall": NaN}')
+        with pytest.raises(ValueError, match="Infinity"):
+            PlotConfig.from_json('{"ticksize": Infinity}')
+
+    #
+    def test_tuple_field_payload_validated(self):
+        """Tuple fields: two-element numeric array or null, loudly."""
+
+        with pytest.raises(ValueError, match="x_lim"):
+            PlotConfig.from_json('{"x_lim": "ab"}')  # no silent ("a","b")
+        with pytest.raises(ValueError, match="x_lim"):
+            PlotConfig.from_json('{"x_lim": [1, 2, 3]}')
+        with pytest.raises(ValueError, match="panel_size"):
+            PlotConfig.from_json('{"panel_size": 4.0}')
+        with pytest.raises(ValueError, match="y_lim"):
+            PlotConfig.from_json('{"y_lim": [0, true]}')
+        assert PlotConfig.from_json('{"x_lim": null}').x_lim is None
+
+    #
+    def test_unknown_key_raises(self):
+        payload = PlotConfig().to_json().replace('"x_label"', '"x_labl"')
+        with pytest.raises(ValueError, match="x_labl"):
+            PlotConfig.from_json(payload)
+
+    #
+    def test_missing_keys_keep_defaults(self):
+        """A payload written before a field existed still loads."""
+
+        loaded = PlotConfig.from_json('{"x_label": "E"}')
+        assert loaded.x_label == "E"
+        assert loaded.dpi_plot == 100
+        assert loaded.panel_size == (4.0, 3.0)
+
+    #
+    def test_non_json_value_raises_naming_field(self):
+        config = PlotConfig().update(colors=[object()])
+        with pytest.raises(TypeError, match="colors"):
+            config.to_json()
+
+    #
+    def test_nan_value_raises_naming_field(self):
+        config = PlotConfig(waterfall=float("nan"))
+        with pytest.raises(ValueError, match="waterfall"):
+            config.to_json()
+
+    #
+    def test_non_object_payload_raises(self):
+        with pytest.raises(ValueError, match="object"):
+            PlotConfig.from_json("[1, 2]")
+
+
+#
+#
 class TestPlotConfigHierarchy:
     """Test config propagation through Project -> File -> Model hierarchy"""
 
     #
-    def test_file_inherits_from_project(self):
-        """Test that File inherits plot config from Project"""
+    def test_model_resolves_project_config(self):
+        """Models resolve the one project-owned config at render time —
+        File-level configs no longer exist (presentation has one owner,
+        fit_archive_principles.md Principle 2)."""
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Create project with custom settings
-            project = Project(path=tmpdir, name="test")
-            project.e_label = "Binding Energy (eV)"
-            project.t_label = "Delay (ps)"
-            project.x_dir = "rev"
+        project = make_project(name="owned-config")
+        project.plot_config.update(
+            x_label="Binding Energy (eV)", y_label="Delay (ps)", x_dir="rev"
+        )
 
-            # Create file
-            x = np.linspace(0, 10, 50)
-            y = np.linspace(0, 5, 30)
-            data = np.random.default_rng().standard_normal((30, 50))
-            file = File(parent_project=project, data=data, energy=x, time=y)
+        x = np.linspace(0, 10, 50)
+        file = File(parent_project=project, energy=x)
+        file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+        model = file.model_active
+        assert model is not None  # type guard
 
-            # Check that file inherits project settings
-            config = file.plot_config
-            assert config.x_label == "Binding Energy (eV)"
-            assert config.y_label == "Delay (ps)"
-            assert config.x_dir == "rev"
+        # Model.plot_config resolves through parent_file.p — the same
+        # instance, so later project-level restyling is seen everywhere.
+        assert model.plot_config is project.plot_config
+        assert model.plot_config.x_label == "Binding Energy (eV)"
+        assert not hasattr(file, "plot_config")
+
+
+#
+#
+class TestRemovedPresentationAPIs:
+    """Removed presentation APIs fail loudly with migration pointers —
+    a silent inert assignment would leave plots rendering defaults with
+    no error (mirrors _load_config's _removed_keys convention)."""
 
     #
-    def test_file_can_customize_config(self):
-        """Test that File can customize its config persistently"""
+    def test_project_flat_attribute_write_raises(self):
+        project = make_project(name="removed-attrs")
+        with pytest.raises(AttributeError, match=r"plot_config\.full_range"):
+            project.full_range = False
+        with pytest.raises(AttributeError, match=r"plot_config\.x_label"):
+            project.e_label = "Custom"  # renamed field: pointer maps the alias
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            project = Project(path=tmpdir, name="test")
-            x = np.linspace(0, 10, 50)
-            data = np.random.default_rng().standard_normal(50)
-            file = File(parent_project=project, data=data, energy=x)
+    #
+    def test_file_plot_config_read_and_write_raise(self):
+        project = make_project(name="removed-file-config")
+        file = File(parent_project=project, energy=np.linspace(80, 90, 10))
+        with pytest.raises(AttributeError, match="project-owned"):
+            _ = file.plot_config
+        with pytest.raises(AttributeError, match="project-owned"):
+            file.plot_config = PlotConfig()
 
-            # Customize file's config
-            file.plot_config.update(x_label="Custom Energy", dpi_plot=200)
+    #
+    def test_project_plot_config_rejects_non_config(self):
+        project = make_project(name="typed-config")
+        with pytest.raises(TypeError, match="must be a PlotConfig"):
+            # deliberate wrong type — the runtime guard is the subject
+            project.plot_config = {"x_dir": "rev"}  # type: ignore[assignment]
 
-            # Verify customization persists
-            assert file.plot_config.x_label == "Custom Energy"
-            assert file.plot_config.dpi_plot == 200
+    #
+    def test_yaml_nested_plot_config_mapping_fails_loudly(self, tmp_path):
+        """A plot_config: mapping in project.yaml must fail construction,
+        not silently replace the config object with a dict."""
 
-            # Verify project unchanged
-            assert project.e_label != "Custom Energy"
+        (Path(tmp_path) / "project.yaml").write_text("plot_config:\n  x_dir: rev\n")
+        with pytest.raises(ValueError, match="must be a PlotConfig"):
+            Project(path=tmp_path, name="test")
+
+    #
+    def test_assignment_adopts_in_place(self):
+        """Whole-object assignment keeps the config's identity, so held
+        FitResults views keep resolving current styling at render time."""
+
+        project = make_project(name="adopt")
+        before = project.plot_config
+        results = project.results
+        project.plot_config = PlotConfig(x_label="New Label")
+        assert project.plot_config is before  # identity stable
+        assert project.plot_config.x_label == "New Label"
+        assert results._config is project.plot_config  # held view sees it
+
+    #
+    def test_copy_is_deep(self):
+        """Derived variants never alias the source's mutable fields."""
+
+        source = PlotConfig(colors=["red"], vlines=[1.0])
+        variant = source.copy(dpi_save=600)
+        assert variant.colors is not None  # type guard
+        assert variant.vlines is not None  # type guard
+        variant.colors.append("blue")
+        variant.vlines.append(2.0)
+        assert source.colors == ["red"]
+        assert source.vlines == [1.0]
 
 
 #
@@ -617,19 +777,18 @@ class TestPlotConfigFromYAML:
 
     #
     def test_project_loads_yaml_values(self):
-        """Project attributes reflect non-default YAML values."""
+        """The project-owned PlotConfig reflects non-default YAML values,
+        with YAML lists coerced to tuples for tuple-typed fields."""
 
         with tempfile.TemporaryDirectory() as tmpdir:
             self._make_project_dir(tmpdir)
             project = Project(path=tmpdir, name="test")
 
-            assert project.e_label == "Binding energy (eV)"
-            assert project.t_label == "Delay (ps)"
-            assert project.z_label == "Counts"
-            assert project.x_dir == "rev"
-            assert project.z_colormap == "RdBu"
-            assert project.x_lim == [63.0, -2.6]
-            assert project.y_lim == [-0.5, 5.0]
+            for attr, expected in self.EXPECTED.items():
+                assert getattr(project.plot_config, attr) == expected, (
+                    f"plot_config.{attr}: expected {expected!r}, "
+                    f"got {getattr(project.plot_config, attr)!r}"
+                )
 
     #
     def test_project_accepts_hyphenated_limit_keys(self, capsys):
@@ -644,14 +803,13 @@ class TestPlotConfigFromYAML:
             captured = capsys.readouterr()
             assert "Unknown config key 'x-lim'" not in captured.out
             assert "Unknown config key 'y-lim'" not in captured.out
-            assert project.x_lim == [63.0, -2.6]
-            assert project.y_lim == [-0.5, 5.0]
-            assert PlotConfig.from_project(project).x_lim == (63.0, -2.6)
-            assert PlotConfig.from_project(project).y_lim == (-0.5, 5.0)
+            assert project.plot_config.x_lim == (63.0, -2.6)
+            assert project.plot_config.y_lim == (-0.5, 5.0)
 
     #
-    def test_file_plot_config_inherits_yaml(self):
-        """File.plot_config must carry every non-default YAML value."""
+    def test_file_has_no_own_config(self):
+        """File-level configs are gone: presentation has one owner and a
+        File resolves it through its parent Project."""
 
         with tempfile.TemporaryDirectory() as tmpdir:
             self._make_project_dir(tmpdir)
@@ -663,16 +821,13 @@ class TestPlotConfigFromYAML:
                 time=np.linspace(0, 100, 30),
             )
 
-            config = file.plot_config
-            for attr, expected in self.EXPECTED.items():
-                assert getattr(config, attr) == expected, (
-                    f"File.plot_config.{attr}: "
-                    f"expected {expected!r}, got {getattr(config, attr)!r}"
-                )
+            assert not hasattr(file, "plot_config")
+            assert file.p.plot_config is project.plot_config
 
     #
     def test_model_plot_config_inherits_yaml(self):
-        """Model.plot_config must match File.plot_config."""
+        """Model.plot_config must carry every non-default YAML value
+        (resolved through the project-owned config)."""
 
         with tempfile.TemporaryDirectory() as tmpdir:
             self._make_project_dir(tmpdir)
@@ -734,8 +889,7 @@ class TestPlotConfigPropagation:
         """Create a project/file/model with a reversed energy axis."""
 
         project = make_project()
-        project.x_dir = x_dir
-        project.e_label = "Binding Energy (eV)"
+        project.plot_config.update(x_dir=x_dir, x_label="Binding Energy (eV)")
 
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 201)
@@ -782,7 +936,7 @@ class TestPlotConfigPropagation:
         """Component.plot() should not double-flip when x_lim is already reversed."""
 
         file = self._make_file_with_model(x_dir="rev")
-        file.plot_config = file.plot_config.copy(x_lim=(63.0, -2.6))
+        file.p.plot_config.update(x_lim=(63.0, -2.6))
         assert file.model_active is not None  # type guard
         component = file.model_active.components[0]
 
@@ -904,8 +1058,7 @@ class TestHighLevelPlotOverrides:
         """Return a File with a loaded energy model, default x_dir='def'."""
 
         project = make_project()
-        project.e_label = "Binding Energy (eV)"
-        project.x_dir = "def"
+        project.plot_config.update(x_label="Binding Energy (eV)", x_dir="def")
 
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 201)
@@ -1085,3 +1238,146 @@ class TestHighLevelPlotOverrides:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+#
+#
+class TestPlotFitRes2dNanAware:
+    """plot_fit_res_2d must handle a NaN-padded fit array (full_range mode)
+    without warning/crashing, and report min/max from the real values."""
+
+    #
+    def test_nan_padded_fit_renders_without_warning(self, recwarn):
+        rng = np.random.default_rng(0)
+        data = rng.random((6, 8))
+        fit = np.full((6, 8), np.nan)
+        fit[2:4, 3:6] = data[2:4, 3:6] * 0.9  # the "fit window"
+
+        uplt.plot_fit_res_2d(
+            data=data,
+            fit=fit,
+            x_lim=[3, 6],
+            y_lim=[2, 4],
+            save_img=0,
+        )
+        fig = plt.gcf()
+        try:
+            assert not any("All-NaN" in str(w.message) for w in recwarn.list)
+            fit_ax = next(
+                ax for ax in fig.axes if ax.get_title().startswith("Fit [min:")
+            )
+            expected_min = np.nanmin(fit)
+            assert f"{expected_min:.3E}" in fit_ax.get_title()
+        finally:
+            plt.close("all")
+
+
+#
+#
+class TestRenderingImportBoundary:
+    """utils/plot.py owns all production rendering: no matplotlib or corner
+    import may exist anywhere else under src/trspecfit/ (docstring examples
+    don't count — this parses real import statements)."""
+
+    #
+    def test_no_matplotlib_outside_utils_plot(self):
+        import ast
+
+        src_root = Path(uplt.__file__).parents[1]  # src/trspecfit
+        plot_py = Path(uplt.__file__).resolve()
+        offenders: list[str] = []
+        for py in sorted(src_root.rglob("*.py")):
+            if py.resolve() == plot_py:
+                continue
+            tree = ast.parse(py.read_text())
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module or ""]
+                else:
+                    continue
+                for name in names:
+                    if name.split(".")[0] in {"matplotlib", "corner"}:
+                        offenders.append(
+                            f"{py.relative_to(src_root)}:{node.lineno} imports {name}"
+                        )
+        assert offenders == []
+
+
+#
+#
+class TestPlotFitOverlay1d:
+    """Output-level checks for the describe_model-style overlay renderer."""
+
+    #
+    def test_curves_labels_and_scaled_residual(self):
+        x = np.linspace(0.0, 10.0, 50)
+        observed = np.sin(x) + 1.5
+        comp_a = 0.6 * observed
+        comp_b = 0.4 * observed
+        fit = comp_a + comp_b
+        init = np.full_like(x, observed.mean())
+        config = PlotConfig(res_mult=3)
+
+        uplt.plot_fit_overlay_1d(
+            x,
+            observed,
+            fit=fit,
+            components=[comp_a, comp_b],
+            init=init,
+            legend=["LinBack_01", "GLP_01"],
+            config=config,
+            save_img=0,
+        )
+        ax = plt.gca()
+        try:
+            labels = [line.get_label() for line in ax.get_lines()]
+            assert labels[0] == "data"
+            assert "initial guess" in labels
+            assert "LinBack_01" in labels and "GLP_01" in labels
+            assert "final fit" in labels
+            res_line = next(
+                line
+                for line in ax.get_lines()
+                if str(line.get_label()).endswith("*residual")
+            )
+            np.testing.assert_allclose(res_line.get_ydata(), (observed - fit) * 3)
+        finally:
+            plt.close("all")
+
+    #
+    def test_requires_fit_or_init_and_leaks_no_figure(self):
+        x = np.arange(5.0)
+        n_figs = len(plt.get_fignums())
+        with pytest.raises(ValueError, match="fit= or init="):
+            uplt.plot_fit_overlay_1d(x, x, save_img=0)
+        assert len(plt.get_fignums()) == n_figs  # validated before creation
+
+
+#
+#
+class TestFinalizePlotExplicitFigure:
+    """_finalize_plot acts on the figure it is given — never on pyplot's
+    implicit current one. A decoy figure created after the target (and
+    therefore current) must survive untouched while the target is saved
+    and closed."""
+
+    #
+    def test_saves_and_closes_only_the_target_figure(self, tmp_path):
+        target, ax = plt.subplots(figsize=(2.0, 2.0), dpi=50)
+        ax.plot([0, 1], [0, 1])
+        decoy, dax = plt.subplots(figsize=(4.0, 4.0), dpi=50)  # now current
+        dax.plot([0, 1], [1, 0])
+        path = tmp_path / "target.png"
+        try:
+            uplt._finalize_plot(target, -1, path, 50)  # save-only + close
+
+            img = plt.imread(path)
+            # 2 in x 50 dpi ~ 100 px (tight bbox wiggles); the 4-in decoy
+            # would have produced ~200 px.
+            assert max(img.shape[0], img.shape[1]) < 160
+            assert not plt.fignum_exists(target.number)
+            assert plt.fignum_exists(decoy.number)
+        finally:
+            plt.close("all")

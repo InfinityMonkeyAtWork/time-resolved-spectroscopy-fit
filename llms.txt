@@ -32,9 +32,35 @@ file.add_time_dependence('2D', 'GLP_01_x0', 'models_time.yaml', 'shift')
 file.fit_2d('2D')
 
 # 3) inspect results
-df = file.get_fit_results(fit_type='2d')             # pandas DataFrame
+df = file.get_parameters(fit_type='2d')             # pandas DataFrame
+file.plot_fit(fit_type='2d')                         # observed/fit/residual
 file.save_fit(...)                                   # HDF5 fit archive
 ```
+
+All `get_*` / `plot_*` result accessors read the persisted fit record
+(latest matching fit), so they work identically on a live session and on
+archives loaded via `FitResults.load(path)`.
+
+Every fit is kept as a distinct variant (a changed bound, `vary` flag,
+seed, or data correction makes a new one; exact re-runs stay in the
+session history and deduplicate to the latest when saving).
+`project.results` is the query layer: `compare_models()` compares
+fit-quality metrics across runs (each row carries a short `handle` id),
+`variants()` shows how one model's runs differ in their *inputs*,
+`diff(a, b)` reports what changed between two runs, and
+`set_label(ref, "name")` names a chosen one. The single-fit accessors
+(`get_parameters`, `get_correlations`, `get_confidence_intervals`,
+`get_mcmc`, `plot_fit`, `plot_mcmc`, `plot_sbs_slices`,
+`plot_param_evolution`) accept `handle=` to pin an exact run.
+`save_fits(select=...)` / `export_fits(select=...)` choose what to
+persist (`"all"` / `"latest"` / `"best"` + `by=` / a handle prefix or
+label), and `project.drop_fits(ref)` prunes junk runs from the session.
+
+Multi-file joint fits (`project.fit_2d(model_name=...)`, sharing
+parameters marked `vary: project` across files) return a
+`JointFitResult` — combined parameter table, per-file parameter maps,
+joint uncertainty/MCMC, whole-objective metrics — also reachable via
+`project.results.find_joint()` / `get_joint()` / `plot_joint_mcmc()`.
 
 Simulation mirrors this: build a model the same way, then use
 `trspecfit.Simulator` (`simulate_1d`, `simulate_2d`, `simulate_n`) to
@@ -90,9 +116,15 @@ Component types (see the API reference for signatures):
 
 ## Pitfalls for scripted / headless use
 
-- Fit and plot methods display figures by default. Pass `show_plot=False`
-  where available, or `save_img=-1` (save without display; `0` = display,
-  `1` = both) when running outside a notebook.
+- Fits never write to disk; persistence is always an explicit `save_fits`
+  (HDF5) or `export_fits` (CSV/PNG) call. Fits do display figures by
+  default — to run headless, set `project.show_output = 0`. This governs
+  the `fit_baseline` / `fit_spectrum` / `fit_slice_by_slice` / `fit_2d`
+  calls; those methods do not accept `save_img` (passing it raises
+  `TypeError`).
+- The low-level plot and setup helpers instead take their own arguments:
+  pass `show_plot=False` where available, or `save_img=-1` (save without
+  display; `0` = display, `1` = both) when running outside a notebook.
 - Time axes for multi-cycle dynamics should not sample exactly on subcycle
   boundaries — assignment there flips with floating-point representation,
   and `trspecfit` warns when it detects this.

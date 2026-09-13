@@ -4,13 +4,17 @@ Exercises load_model, select_model, delete_model, reset_models,
 set_fit_limits, and define_baseline.
 """
 
+import typing
 import unittest.mock
 
 import numpy as np
+import pandas as pd
 import pytest
 from _utils import make_project
+from lmfit.minimizer import MinimizerResult
 
 from trspecfit import File
+from trspecfit.utils import lmfit as ulmfit
 
 
 #
@@ -118,19 +122,23 @@ class TestModelManagement:
             )
 
     #
-    def test_load_model_rejects_duplicate_name(self):
-        """load_model should raise ValueError when trying to load a model again."""
+    def test_load_model_overwrites_duplicate_name(self):
+        """Re-loading a name replaces the live model with a warning —
+        completed fits live in the fit history, so nothing durable is lost."""
 
         file = self._make_file_with_axes()
-        file.load_model(
+        first = file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="simple_energy",
         )
-        with pytest.raises(ValueError, match="already exists"):
-            file.load_model(
+        with pytest.warns(UserWarning, match="overwriting"):
+            second = file.load_model(
                 model_yaml="models/file_energy.yaml",
                 model_info="simple_energy",
             )
+        assert second is not first
+        assert file.model_active is second
+        assert len([m for m in file.models if m.name == "simple_energy"]) == 1
 
     #
     def test_load_model_rejects_nonexistent_submodel(self):
@@ -1053,13 +1061,20 @@ class TestFitPreconditions:
         file = self._make_file_with_model()
         file.p.spec_fun_str = "fit_model_mcp"
 
+        # bare MinimizerResult (no .params) marks this as a placeholder:
+        # slot capture skips it, so no real fit machinery runs
+        mock_result = ulmfit.FitOutput(
+            par_ini=None,
+            par_fin=typing.cast("ulmfit.TypedMinimizerResult", MinimizerResult()),
+            conf_ci=pd.DataFrame(),
+            emcee_fin=None,
+            emcee_ci=pd.DataFrame(),
+        )
         with (
             unittest.mock.patch(
                 "trspecfit.trspecfit.fitlib.fit_wrapper",
-                return_value=[None, object(), None, None, None],
+                return_value=mock_result,
             ) as mock_fit,
-            unittest.mock.patch("trspecfit.trspecfit.fitlib.plt_fit_res_1d"),
-            unittest.mock.patch.object(file, "_save_sbs_fit_legacy"),
             unittest.mock.patch("trspecfit.trspecfit.fitlib.time_display"),
         ):
             file.fit_slice_by_slice(
@@ -1149,69 +1164,22 @@ class TestFitPreconditions:
         with pytest.raises(ValueError, match="missing"):
             file.fit_2d("simple_energy")
 
-    # -- save_sbs_fit --
+    # -- removed legacy savers --
 
     #
-    def test_save_sbs_fit_no_model_raises(self):
-        """Legacy SbS save raises ValueError when SbS model is missing."""
+    def test_legacy_savers_are_gone(self):
+        """save_sbs_fit / save_2d_fit (deprecated) and their _save_*_legacy
+        impls were removed with the auto-export slot routing; export_fit is
+        the only export entry point on File."""
 
         file = self._make_file_with_model()
-        file.model_sbs = None
-        with pytest.raises(ValueError, match="incomplete"):
-            file._save_sbs_fit_legacy("/tmp/dummy")
-
-    #
-    def test_save_sbs_fit_no_data_raises(self):
-        """Legacy SbS save raises ValueError when data is missing."""
-
-        file = self._make_file_with_model()
-        file.model_sbs = file.model_active
-        file.data = None
-        with pytest.raises(ValueError, match="Data missing"):
-            file._save_sbs_fit_legacy("/tmp/dummy")
-
-    # -- save_2d_fit --
-
-    #
-    def test_save_2d_fit_no_model_raises(self):
-        """Legacy 2D save raises ValueError when 2D model is missing."""
-
-        file = self._make_file_with_model()
-        file.model_2d = None
-        with pytest.raises(ValueError, match="missing"):
-            file._save_2d_fit_legacy("/tmp/dummy")
-
-    #
-    def test_save_2d_fit_no_data_raises(self):
-        """Legacy 2D save raises ValueError when data is missing."""
-
-        file = self._make_file_with_model()
-        file.model_2d = file.model_active
-        file.data = None
-        with pytest.raises(ValueError, match="missing"):
-            file._save_2d_fit_legacy("/tmp/dummy")
-
-    # -- deprecation warnings --
-
-    #
-    def test_save_sbs_fit_emits_deprecation_warning(self):
-        """save_sbs_fit emits DeprecationWarning pointing at export_fit."""
-
-        file = self._make_file_with_model()
-        file.model_sbs = None  # short-circuit so we don't need a real fit
-        with pytest.warns(DeprecationWarning, match="export_fit"):
-            with pytest.raises(ValueError):
-                file.save_sbs_fit("/tmp/dummy")
-
-    #
-    def test_save_2d_fit_emits_deprecation_warning(self):
-        """save_2d_fit emits DeprecationWarning pointing at export_fit."""
-
-        file = self._make_file_with_model()
-        file.model_2d = None  # short-circuit so we don't need a real fit
-        with pytest.warns(DeprecationWarning, match="export_fit"):
-            with pytest.raises(ValueError):
-                file.save_2d_fit("/tmp/dummy")
+        for name in (
+            "save_sbs_fit",
+            "save_2d_fit",
+            "_save_sbs_fit_legacy",
+            "_save_2d_fit_legacy",
+        ):
+            assert not hasattr(file, name)
 
 
 #
@@ -1313,6 +1281,50 @@ class TestFileNameAndProjectAccess:
         File(parent_project=project, path="scan2/data.csv", name="data_2")
         assert project["data"].path == "scan1/data.csv"
         assert project["data_2"].path == "scan2/data.csv"
+
+    #
+    def test_file_name_reassignment_raises(self):
+        """File.name is identity — a silent rename would orphan every slot
+        recorded under the old name (fit_archive_principles.md, Principle 1)."""
+
+        project = make_project(name="guard")
+        file = File(parent_project=project, path="scan1/data.csv")
+        with pytest.raises(AttributeError, match="identity"):
+            file.name = "renamed"
+        assert file.name == "data"
+
+    #
+    def test_project_name_reassignment_raises(self):
+        project = make_project(name="guard")
+        with pytest.raises(AttributeError, match="identity"):
+            project.name = "renamed"
+        assert project.name == "guard"
+
+    #
+    def test_model_name_reassignment_raises(self):
+        project = make_project(name="guard")
+        file = File(parent_project=project, energy=np.linspace(80, 90, 10))
+        file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+        model = file.model_active
+        assert model is not None  # type guard
+        with pytest.raises(AttributeError, match="identity"):
+            model.name = "renamed"
+        assert model.name == "single_glp"
+
+    #
+    def test_duplicate_model_name_overwrites_previous(self):
+        """One name never maps to two live models — re-loading a name
+        replaces the previous object (with a warning), so every name-based
+        lookup (select_model, slot model_name) stays unambiguous."""
+
+        project = make_project(name="guard")
+        file = File(parent_project=project, energy=np.linspace(80, 90, 10))
+        file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+        with pytest.warns(UserWarning, match="overwriting"):
+            file.load_model(
+                model_yaml="models/file_energy.yaml", model_info="single_glp"
+            )
+        assert len(file.models) == 1
 
 
 #
@@ -1451,12 +1463,9 @@ class TestDescribeWaterfall:
         """Waterfall plot should use z_label/z_type for y axis, not time settings."""
 
         file = self._make_file(n_time=5)
-        file.p.z_label = "Absorbance"
-        file.p.z_type = "log"
-        file.p.y_dir = "rev"
-        file.p.y_type = "lin"
-        # Reset cached config so it picks up the new project settings
-        file._plot_config = None
+        file.p.plot_config.update(
+            z_label="Absorbance", z_type="log", y_dir="rev", y_type="lin"
+        )
         with unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d:
             file.describe()
         _, kwargs = mock_1d.call_args
@@ -1652,6 +1661,18 @@ class TestProjectConfigLoading:
         config = tmp_path / "project.yaml"
         config.write_text("show_output: [unclosed\n")
         with pytest.raises(ValueError, match="Failed to load config"):
+            Project(path=tmp_path, config_file="project.yaml")
+
+    #
+    def test_config_name_key_raises(self, tmp_path):
+        """Project.name is identity — a YAML `name:` key must not rename
+        the project through the generic config-setattr path."""
+
+        from trspecfit import Project
+
+        config = tmp_path / "project.yaml"
+        config.write_text("name: renamed\n")
+        with pytest.raises(ValueError, match="cannot rename the project"):
             Project(path=tmp_path, config_file="project.yaml")
 
     #

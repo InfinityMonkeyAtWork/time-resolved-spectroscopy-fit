@@ -621,6 +621,8 @@ def _wrap_jitted(jitted: Callable, n_opt: int) -> Callable[[np.ndarray], np.ndar
 
     #
     def evaluate(theta: np.ndarray) -> np.ndarray:
+        """Validate theta shape, then call the jitted evaluator."""
+
         theta_arr = np.asarray(theta, dtype=np.float64)
         if theta_arr.shape != (n_opt,):
             raise ValueError(

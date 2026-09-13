@@ -37,7 +37,7 @@ import pytest
 from _utils import make_project, simulate_noisy
 from roundtrip.families import FAMILIES
 
-from trspecfit import FitResults
+from trspecfit import File, FitResults
 from trspecfit.utils.fit_io import SavedFitSlot
 
 
@@ -88,8 +88,8 @@ def _save_load_one(project, archive_path) -> tuple[SavedFitSlot, FitResults]:
 def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> None:
     """Assert every persisted SavedFitSlot field round-trips exactly.
 
-    Covers identity (fingerprint, hashes, selection), arrays, metrics,
-    params, and provenance. Also verifies the design invariant that
+    Covers the identity chain (hashes, version stamps, selection), arrays,
+    metrics, params, and provenance. Also verifies the design invariant that
     ``observed - fit`` reproduces residuals on the loaded slot alone (no
     ``file.data`` lookup) — both via direct subtraction and against the
     stored chi2.
@@ -101,9 +101,12 @@ def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> 
     assert loaded.fit_type == original.fit_type
     assert loaded.selection_json == original.selection_json
     assert loaded.selection == original.selection
-    assert loaded.history_key == original.history_key
-    assert loaded.observed_sha256 == original.observed_sha256
-    assert loaded.file_fingerprint == original.file_fingerprint
+    assert loaded.handle == original.handle
+    assert loaded.optimization_hash == original.optimization_hash
+    assert loaded.input_files == original.input_files
+    assert loaded.model_structure == original.model_structure
+    assert loaded.fit_view_sha256 == original.fit_view_sha256
+    assert loaded.joint_ref == original.joint_ref
 
     # --- arrays --------------------------------------------------------
     np.testing.assert_array_equal(loaded.observed, original.observed)
@@ -122,6 +125,8 @@ def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> 
             np.testing.assert_allclose(
                 loaded.metrics[k], original.metrics[k], rtol=0, atol=0, equal_nan=True
             )
+            # Per-slice metric arrays are frozen like every read array.
+            assert not loaded.metrics[k].flags.writeable
     else:
         for k in metric_keys:
             orig_v = original.metrics[k]
@@ -146,10 +151,92 @@ def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> 
     # --- params --------------------------------------------------------
     _assert_params_equal(loaded.params, original.params, fit_type=original.fit_type)
 
+    # --- uncertainty payloads (None ↔ None or exact) --------------------
+    _assert_optional_df_equal(loaded.conf_ci, original.conf_ci, label="conf_ci")
+    _assert_optional_df_equal(loaded.correl, original.correl, label="correl")
+    _assert_optional_df_equal(
+        loaded.params_meta, original.params_meta, label="params_meta"
+    )
+    _assert_optional_df_equal(
+        loaded.params_stderr, original.params_stderr, label="params_stderr"
+    )
+    assert loaded.fit_settings == original.fit_settings
+    if original.correl is not None:
+        assert loaded.correl is not None  # type guard
+        # The square matrix persists only column labels; the reader must
+        # restore index == columns.
+        assert list(loaded.correl.index) == list(loaded.correl.columns)
+    if original.mcmc is None:
+        assert loaded.mcmc is None
+    else:
+        assert loaded.mcmc is not None  # type guard
+        assert set(loaded.mcmc.keys()) == set(original.mcmc.keys())
+        _assert_optional_df_equal(
+            loaded.mcmc["flatchain"], original.mcmc["flatchain"], label="flatchain"
+        )
+        _assert_optional_df_equal(loaded.mcmc["ci"], original.mcmc["ci"], label="ci")
+        assert loaded.mcmc["lnsigma"] == original.mcmc["lnsigma"]
+        orig_acc = original.mcmc["acceptance_fraction"]
+        if orig_acc is None:
+            assert loaded.mcmc["acceptance_fraction"] is None
+        else:
+            np.testing.assert_array_equal(loaded.mcmc["acceptance_fraction"], orig_acc)
+
     # --- provenance ----------------------------------------------------
     assert loaded.fit_alg == original.fit_alg
-    assert loaded.yaml_filename == original.yaml_filename
+    assert loaded.model_yaml == original.model_yaml
+    assert loaded.label == original.label
     assert loaded.timestamp == original.timestamp
+
+    # --- correction snapshots -------------------------------------------
+    for corr in ("dark", "calibration"):
+        orig_corr = getattr(original, corr)
+        loaded_corr = getattr(loaded, corr)
+        if orig_corr is None:
+            assert loaded_corr is None
+        else:
+            np.testing.assert_array_equal(loaded_corr, orig_corr)
+
+    # --- components (None for 2d) ----------------------------------------
+    if original.fit_type == "2d":
+        assert original.components is None
+        assert loaded.components is None
+        assert original.component_names is None
+        assert loaded.component_names is None
+    else:
+        assert original.components is not None
+        assert loaded.components is not None
+        np.testing.assert_array_equal(loaded.components, original.components)
+        assert loaded.component_names == original.component_names
+        if original.fit_type == "sbs":
+            assert loaded.components.shape[0] == loaded.observed.shape[0]  # n_slices
+            assert loaded.components.shape[2] == loaded.observed.shape[1]  # n_energy
+            assert loaded.components.shape[1] == len(loaded.component_names)
+            recon = np.sum(loaded.components, axis=1)
+        else:
+            assert loaded.components.shape[1] == loaded.observed.shape[0]
+            assert loaded.components.shape[0] == len(loaded.component_names)
+            recon = np.sum(loaded.components, axis=0)
+        # Components must sum back to the persisted fit curve.
+        np.testing.assert_allclose(recon, loaded.fit, rtol=1e-8, atol=1e-8)
+
+    # --- fit_ini / params_init -------------------------------------------
+    # None only on the project-level joint-fit path; every family/fit_type
+    # exercised here goes through a per-File fit method, so fit_ini is
+    # always populated.
+    assert original.fit_ini is not None
+    assert loaded.fit_ini is not None
+    np.testing.assert_array_equal(loaded.fit_ini, original.fit_ini)
+    assert loaded.fit_ini.shape == loaded.fit.shape
+    if original.fit_type == "sbs":
+        assert original.params_init is not None
+        assert loaded.params_init is not None
+        _assert_optional_df_equal(
+            loaded.params_init, original.params_init, label="params_init"
+        )
+    else:
+        assert original.params_init is None
+        assert loaded.params_init is None
 
     # --- residual reconstruction (design invariant) --------------------
     # chi2_raw is the lmfit-unweighted SSE diagnostic; chi2 is σ-calibrated
@@ -165,6 +252,29 @@ def _assert_slot_round_tripped(loaded: SavedFitSlot, original: SavedFitSlot) -> 
             )
     else:
         assert loaded.metrics["chi2_raw"] == pytest.approx(float(np.sum(residual**2)))
+
+
+#
+def _assert_optional_df_equal(
+    loaded: pd.DataFrame | None, original: pd.DataFrame | None, *, label: str
+) -> None:
+    """None ↔ None, or column labels + cell values equal (str cells exact,
+    float cells exact-or-NaN-matched)."""
+
+    if original is None:
+        assert loaded is None, f"{label}: orig=None, loaded is not None"
+        return
+    assert loaded is not None, f"{label}: orig is a DataFrame, loaded=None"
+    assert list(loaded.columns) == list(original.columns), label
+    assert len(loaded) == len(original), label
+    for col in original.columns:
+        for o, ll in zip(original[col].to_list(), loaded[col].to_list(), strict=True):
+            if isinstance(o, float) and np.isnan(o):
+                assert isinstance(ll, float) and np.isnan(ll), f"{label}.{col}"
+            elif isinstance(o, float):
+                assert ll == pytest.approx(o, rel=0, abs=0), f"{label}.{col}"
+            else:
+                assert ll == o, f"{label}.{col}"
 
 
 #
@@ -225,10 +335,18 @@ def test_baseline_roundtrip(family_id: str, tmp_path) -> None:
     project = fit_file.p
     archive_path = tmp_path / "baseline.fit.h5"
 
-    loaded_slot, _ = _save_load_one(project, archive_path)
+    loaded_slot, loaded_results = _save_load_one(project, archive_path)
     original = project._fit_history[0]
     assert original.fit_type == "baseline"
     _assert_slot_round_tripped(loaded_slot, original)
+
+    # --- per-file aux_axis (None unless the family needs it) --------------
+    provider = loaded_results._provider_for(loaded_slot)
+    if family.needs_aux:
+        assert fit_file.aux_axis is not None
+        np.testing.assert_array_equal(provider.aux_axis, fit_file.aux_axis)
+    else:
+        assert provider.aux_axis is None
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +415,17 @@ def test_sbs_roundtrip(family_id: str, tmp_path) -> None:
     # Per-slice metrics are arrays sized to the time axis.
     assert loaded_slot.metrics["chi2"].shape == (len(fit_file.time),)
     _assert_slot_round_tripped(loaded_slot, original)
+
+    # Cross-check params_init against each slice's true seed straight from
+    # the live SbS results — joint validation that this feature and the
+    # fitlib.fit_wrapper stage-2 init_value fix agree with each other.
+    assert loaded_slot.params_init is not None  # type guard
+    for i, result in enumerate(fit_file.results_sbs):
+        assert result.par_ini is not None  # type guard
+        for name in loaded_slot.params_init.columns:
+            assert loaded_slot.params_init.iloc[i][name] == pytest.approx(
+                result.par_ini[name].value
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -413,8 +542,185 @@ def test_multi_slot_roundtrip(tmp_path) -> None:
     loaded = FitResults.load(archive_path)
     assert len(loaded) == 3
 
-    # Match loaded slots to originals by history_key (order-independent).
-    by_key = {s.history_key: s for s in loaded}
+    # Match loaded slots to originals by handle (order-independent).
+    by_key = {s.handle: s for s in loaded}
     for original in project._fit_history:
-        assert original.history_key in by_key
-        _assert_slot_round_tripped(by_key[original.history_key], original)
+        assert original.handle in by_key
+        _assert_slot_round_tripped(by_key[original.handle], original)
+
+
+# ---------------------------------------------------------------------------
+# correlation-matrix round-trip
+# ---------------------------------------------------------------------------
+
+
+#
+def test_correl_roundtrip(tmp_path) -> None:
+    """leastsq always produces covariance, so the slot must capture the
+    correlation matrix and round-trip it with index == columns intact.
+
+    (The parametrized round-trips above use Nelder, where covariance —
+    and therefore ``correl`` — depends on numdifftools being installed;
+    this test pins the deterministic path.)
+    """
+
+    _, fit_file, family = _build_fit_file("F1")
+    fit_file.fit_baseline(
+        model_name=family.model_name("default"),
+        stages=1,
+        fit_alg_1="leastsq",
+        try_ci=0,
+    )
+    project = fit_file.p
+    original = project._fit_history[0]
+    assert original.correl is not None  # type guard
+    n_vary = int(original.params["vary"].sum())
+    assert original.correl.shape == (n_vary, n_vary)
+    np.testing.assert_allclose(np.diag(original.correl.to_numpy()), 1.0)
+
+    loaded_slot, _ = _save_load_one(project, tmp_path / "correl.fit.h5")
+    _assert_slot_round_tripped(loaded_slot, original)
+
+
+# ---------------------------------------------------------------------------
+# joint-bundle round-trip
+# ---------------------------------------------------------------------------
+
+
+#
+def _build_joint_project(*, noise_level: float = 0.05):
+    """Two-file project ready for ``Project.fit_2d`` (shared tau, per-file A).
+
+    Compact version of ``test_project_fit._make_shared_tau_project``:
+    per-file baseline fit (result injection), then the shared 2D model
+    with dynamics. Noisy data so leastsq produces a covariance.
+    """
+
+    project = make_project(name="joint_roundtrip")
+    for i, (amplitude, seed) in enumerate([(20.0, 42), (14.0, 43)]):
+        truth_project = make_project(name="truth")
+        truth = File(parent_project=truth_project)
+        truth.energy = np.linspace(83, 87, 30)
+        truth.time = np.linspace(-2, 10, 24)
+        truth.dim = 2
+        truth.load_model(
+            model_yaml="models/project_energy.yaml", model_info="project_glp"
+        )
+        truth.add_time_dependence(
+            target_model="project_glp",
+            target_parameter="GLP_01_x0",
+            dynamics_yaml="models/project_time.yaml",
+            dynamics_model=["MonoExpProject"],
+        )
+        truth.model_active.lmfit_pars["GLP_01_A"].value = amplitude
+        data = simulate_noisy(truth.model_active, noise_level=noise_level, seed=seed)
+        file = File(
+            parent_project=project,
+            name=f"file_{i}",
+            data=data,
+            energy=truth.energy.copy(),
+            time=truth.time.copy(),
+        )
+        file.load_model(
+            model_yaml="models/project_energy.yaml", model_info="project_glp_base"
+        )
+        file.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+        file.fit_baseline(model_name="project_glp_base", stages=1, try_ci=0)
+        file.load_model(
+            model_yaml="models/project_energy.yaml", model_info="project_glp"
+        )
+        file.add_time_dependence(
+            target_model="project_glp",
+            target_parameter="GLP_01_x0",
+            dynamics_yaml="models/project_time.yaml",
+            dynamics_model=["MonoExpProject"],
+        )
+    return project
+
+
+#
+@pytest.mark.slow
+def test_joint_bundle_roundtrip(tmp_path) -> None:
+    """A project-level joint fit round-trips as one bundle.
+
+    One ``joint/`` record plus one projection per file: identity fields,
+    combined parameter table, whole-objective metrics, joint correlation,
+    parameter maps, and the projection slots resolving to the same
+    objects stored under ``files``. Also exercises save-filter bundle
+    expansion: saving ``file="file_0"`` must pull in the sibling
+    projection and the joint record (a joint bundle is saved whole),
+    while file_1's baseline fit stays filtered out.
+    """
+
+    project = _build_joint_project()
+    record = project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
+    assert record.correl is not None  # type guard
+
+    archive_path = tmp_path / "joint.fit.h5"
+    project.save_fits(archive_path, file="file_0", show_output=0)
+
+    loaded = FitResults.load(archive_path)
+    assert {(s.file_name, s.fit_type) for s in loaded} == {
+        ("file_0", "baseline"),
+        ("file_0", "2d"),
+        ("file_1", "2d"),
+    }
+    (jrec,) = loaded.find_joint()
+    assert loaded.get_joint(model="project_glp") is jrec
+    assert jrec.optimization_hash == record.optimization_hash
+    assert jrec.input_files == record.input_files
+    assert jrec.model_structure == record.model_structure
+    assert jrec.fit_alg == record.fit_alg
+    _assert_params_equal(jrec.params, record.params, fit_type="2d")
+    _assert_optional_df_equal(jrec.correl, record.correl, label="joint.correl")
+    # The six whole-objective metrics round-trip; r2 is omitted on disk
+    # and rehydrates as NaN (it is NaN on the live record too).
+    for key in ("chi2_raw", "chi2_red_raw", "chi2", "chi2_red", "aic", "bic"):
+        live_v, loaded_v = record.metrics[key], jrec.metrics[key]
+        assert (np.isnan(live_v) and np.isnan(loaded_v)) or loaded_v == live_v, key
+    assert np.isnan(jrec.metrics["r2"])
+
+    # Projections resolve by handle to the same slot objects under files;
+    # each carries the bundle reference and its per-file payload.
+    loaded_2d = {s.file_name: s for s in loaded if s.fit_type == "2d"}
+    for live_proj, loaded_proj in zip(
+        record.projections, jrec.projections, strict=True
+    ):
+        slot = loaded_proj.slot
+        assert slot is loaded_2d[slot.file_name]
+        assert slot.handle == live_proj.slot.handle
+        assert slot.joint_ref == jrec.optimization_hash
+        assert loaded_proj.parameter_map == dict(live_proj.parameter_map)
+        # The map recovers local names from combined ones by lookup.
+        assert set(loaded_proj.parameter_map.values()) == set(slot.params["name"])
+        # Count-dependent metrics do not decompose by file: NaN on disk
+        # and after rehydration alike.
+        for key in ("chi2_red_raw", "chi2_red", "aic", "bic"):
+            assert np.isnan(slot.metrics[key]), key
+        assert np.isfinite(slot.metrics["chi2_raw"])
+
+
+# ---------------------------------------------------------------------------
+# schema-version compatibility
+# ---------------------------------------------------------------------------
+
+
+#
+def test_reader_rejects_unknown_schema_version(tmp_path) -> None:
+    """Versions outside SUPPORTED_READ_VERSIONS raise a clear ValueError."""
+
+    import h5py
+
+    from trspecfit.utils.hdf5 import require_group
+
+    _, fit_file, family = _build_fit_file("F1")
+    fit_file.fit_baseline(model_name=family.model_name("default"), stages=1, try_ci=0)
+    archive_path = tmp_path / "v1.fit.h5"
+    fit_file.p.save_fits(archive_path, show_output=0)
+    with h5py.File(archive_path, "r+") as h5:
+        require_group(h5["metadata"], "metadata").attrs["schema_version"] = "1"
+
+    with pytest.raises(ValueError, match=r"schema_version '1'"):
+        FitResults.load(archive_path)

@@ -6,7 +6,9 @@
 - **Token Efficiency:** Be concise. Reference file paths and line numbers rather than quoting large code blocks.
 - **Subagent Protocol:** Use subagents for repo-wide scans, parallel research, or scanning large directories. Instruct them to return only concise summaries to keep the main context window lean.
 - **Guardrails:** Use this file for coding guardrails; heavier review checklists live in `docs/ai/code-review.md`.
-- **Task recipes & skills:** Common repo tasks have step-by-step recipes in `docs/ai/*.md` (add-function, changelog, check-docs, check-example, benchmark, bump-versions, code-review), each mirrored by a thin `/`-invokable wrapper in `.claude/skills/` whose source of truth is the `docs/ai` file. Most set `disable-model-invocation: true`, so they will NOT appear in an agent's auto-invoke list—before hand-rolling one of these tasks, consult the matching `docs/ai` recipe directly.
+- **Review Proportionality:** When reviewing or drafting, classify each edge case as user-reachable now, reachable through current internal callers, introduced or exposed by the change under review, or theoretical/future. The first three require a concrete trigger and should be routed to the appropriate enforcement level. Theoretical cases may be mentioned in one or two sentences, but must not expand the design, plan, tests, or implementation without explicit human approval.
+- **Decision Altitude:** Record ownership, identity, authority, and other hard-to-reverse contracts in design docs. Enforce mechanisms and validation in code; put exact examples, tolerances, boundary values, and regression assertions in tests. A design doc may state an invariant and its rationale, but should not reproduce its test mechanics in prose.
+- **Task recipes & skills:** Common repo tasks have step-by-step recipes in `docs/ai/*.md` (add-function, changelog, check-docs, check-example, benchmark, bump-versions, code-review), each mirrored by a thin `/`-invokable wrapper in `.claude/skills/` whose source of truth is the `docs/ai` file. All are agent-invocable except `bump-versions` (`disable-model-invocation: true`, reserved for explicit `/bump-versions`); when a wrapper is unavailable, follow the matching `docs/ai` recipe directly.
 - **Renaming / API changes:** grep the entire repo—notebooks, YAML, tests, and docs all reference the public API.
 
 
@@ -22,7 +24,9 @@
 - **Two-Layer Design:**
   - **Authoring / User-facing layer** (`mcp.py`, `trspecfit.py`, `simulator.py`, and YAML parsing in `utils/parsing.py`): Optimize for readability, human-usability, validation, and clear errors. Performance is not prioritized here.
   - **Compiled Hot-Path layer** (`graph_ir.py`, `eval_1d.py`, `eval_2d.py`, and numeric bodies in `functions/`): Performance-critical and array-oriented. Avoid Python objects and model-structure branching in inner loops.
-- **Bridge & Logic:** `spectra.py` bridges fitting to the compiled evaluator. `fitlib.py` drives `lmfit`, CI, MCMC, and fit-result plotting.
+- **Bridge & Logic:** `spectra.py` bridges fitting to the compiled evaluator. `fitlib.py` drives `lmfit`, CI, and MCMC.
+- **Rendering Boundary:** All production matplotlib/corner rendering lives in `utils/plot.py` (renderers take plain data — arrays, DataFrames, data-holding dataclasses — plus `PlotConfig`, never `File`/`Model`/live lmfit objects); no other `src/trspecfit/` module may import matplotlib — enforced by a source-boundary test. Figure lifecycle (save/show/close) goes through `_finalize_plot(fig, ...)` on the explicit Figure, never pyplot's implicit current one.
+- **Fit-to-Slot Boundary:** Slot construction never reimplements evaluation, fit-window slicing, parameter projection, or metric calculation—reuse the canonical helpers. Copy optimizer-owned output; never reconstruct it from live model state. See `docs/design/repo_architecture.md`.
 - **Registries:** Check `config/`, `functions/`, and `utils/` for shared registries and helpers before adding new ones.
 - **Source of Truth:** Treat `docs/design/supported_models.md` as the source of truth for supported model combinations, expressions, and compositions.
 - **Module Map:** Full reference at `docs/design/repo_architecture.md`.

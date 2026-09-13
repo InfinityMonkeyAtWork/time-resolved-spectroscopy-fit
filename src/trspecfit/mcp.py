@@ -105,8 +105,6 @@ class Model:
 
     Attributes
     ----------
-    name : str
-        Model identifier
     yaml_f_name : str or None
         Name of YAML file this model was loaded from (without extension)
     peak_fcts : list
@@ -129,8 +127,10 @@ class Model:
         Constants for residual function (x, data, package, function_str, ...)
     args : tuple or None
         Arguments for fit function (model, dim)
-    result : list
-        Fit results from fit_wrapper [par_ini, par_fin, conf_ci, emcee_fin, emcee_ci]
+    result : trspecfit.utils.lmfit.FitOutput or None
+        Fit result from ``fitlib.fit_wrapper`` (fields ``par_ini`` /
+        ``par_fin`` / ``conf_ci`` / ``emcee_fin`` / ``emcee_ci``);
+        None until fitted
     parent_file : File or None
         Parent File object (set when model is loaded)
     dim : int or None
@@ -174,10 +174,35 @@ class Model:
     """
 
     #
+    @property
+    def name(self) -> str:
+        """Model name — identity within its parent File, set at construction."""
+
+        return self._name
+
+    #
+    @name.setter
+    def name(self, value: str) -> None:
+        raise AttributeError(
+            "Model.name is the model's identity and cannot be reassigned; "
+            "it is set at construction (the YAML model key)."
+        )
+
+    #
     def __init__(self, model_name: str = "test") -> None:
-        self.name: str = model_name
+        self._name: str = model_name
         # file name of yaml file containing model details
         self.yaml_f_name: str | None = None
+        # ordered top-level YAML keys this model was composed from — order
+        # is identity and assigns dynamics subcycles; () for models built
+        # programmatically without a YAML source
+        self.submodel_names: tuple[str, ...] = ()
+        # YAML snippet provenance, one record per top-level key:
+        # (role, name, source_file, target_par, sequence_index, text) —
+        # the shape of fit_io.ModelYamlRecord; () when no YAML source
+        self.yaml_records: tuple[
+            tuple[str, str, str, str | None, int | None, str], ...
+        ] = ()
         # functions of spectral components of fit
         self.peak_fcts: list[Callable] = []
         # list of objects of type defined in Component class
@@ -197,7 +222,7 @@ class Model:
         # fit parameters and results
         self.const: tuple | None = None
         self.args: tuple | None = None
-        self.result: list = []
+        self.result: ulmfit.FitOutput | None = None
         # ATTRIBUTES THAT SHOULD BE INHERITED FROM A PARENT ENTITY WHEN LOADING MODEL
         self.parent_file: Any | None = None  # parent reference
         # self.data = None # (currently) not necessary
@@ -260,13 +285,73 @@ class Model:
                 if par.p_model is not None:
                     par.p_model.parent_model = self
 
+    #
+    def dynamics_entries(self) -> list[tuple[str, tuple[str, ...], float]]:
+        """
+        ``(target_par, submodel_names, frequency)`` per dynamics attachment.
+
+        Feeds ``fit_io.encode_model_structure``: the names are the ordered
+        top-level YAML keys retained at load time (order assigns
+        subcycles). Walks profile-nested parameters too — a dynamics
+        attached inside a profile is part of this model's structure.
+        """
+
+        entries: list[tuple[str, tuple[str, ...], float]] = []
+        for comp in self.components:
+            for par in comp.pars:
+                if par.t_model is not None:
+                    entries.append(
+                        (
+                            par.t_model.name,
+                            par.t_model.submodel_names,
+                            float(par.t_model.frequency),
+                        )
+                    )
+                if par.p_model is not None:
+                    for pcomp in par.p_model.components:
+                        for ppar in pcomp.pars:
+                            if ppar.t_model is not None:
+                                entries.append(
+                                    (
+                                        ppar.t_model.name,
+                                        ppar.t_model.submodel_names,
+                                        float(ppar.t_model.frequency),
+                                    )
+                                )
+        return entries
+
+    #
+    def yaml_provenance(
+        self,
+    ) -> tuple[tuple[str, str, str, str | None, int | None, str], ...]:
+        """
+        All YAML snippet records: this model's, then its attachments'.
+
+        Empty when the model (and every attachment) was built
+        programmatically with no YAML source.
+        """
+
+        records = list(self.yaml_records)
+        for comp in self.components:
+            for par in comp.pars:
+                if par.t_model is not None:
+                    records.extend(par.t_model.yaml_records)
+                if par.p_model is not None:
+                    records.extend(par.p_model.yaml_records)
+                    for pcomp in par.p_model.components:
+                        for ppar in pcomp.pars:
+                            if ppar.t_model is not None:
+                                records.extend(ppar.t_model.yaml_records)
+        return tuple(records)
+
+    #
     @property
     def plot_config(self) -> PlotConfig:
         """
-        Get plot configuration from parent File.
+        Get the project-owned plot configuration.
 
-        Models inherit plot settings from their parent File, ensuring
-        consistent plotting across all models for the same dataset.
+        Resolves through ``parent_file.p`` — presentation state has one
+        owner (the Project) and is resolved at render time.
 
         Returns
         -------
@@ -275,7 +360,7 @@ class Model:
         """
 
         if hasattr(self, "parent_file") and self.parent_file is not None:
-            return cast("PlotConfig", self.parent_file.plot_config)
+            return cast("PlotConfig", self.parent_file.p.plot_config)
 
         # Fallback to defaults if no parent
         return PlotConfig()
@@ -1066,7 +1151,7 @@ class Model:
             Path for saving figure (if save_img != 0)
         config : PlotConfig, optional
             Override the model's inherited plot configuration for this call.
-            If None, uses the model's own plot_config.
+            If None, uses the project-owned plot_config.
         **plot_kwargs : dict
             Per-call overrides for any PlotConfig field (e.g. ``colors``,
             ``ticksize``, ``legend``). Applied on top of *config*.
@@ -1151,7 +1236,7 @@ class Model:
             Color scale limits (min, max)
         config : PlotConfig, optional
             Override the model's inherited plot configuration for this call.
-            If None, uses the model's own plot_config.
+            If None, uses the project-owned plot_config.
         **plot_kwargs : dict
             Per-call overrides for any PlotConfig field (e.g. ``z_colormap``,
             ``ticksize``). Applied on top of *config*.
@@ -2769,6 +2854,7 @@ class Dynamics(Model):
             uplt.plot_1d(
                 data=[self.time_norm, self.n_sub, self.n_counter],
                 x=self.time,
+                config=self.plot_config,
                 x_label=f"Time (1E{time_unit}s)",
                 y_type="log",
                 legend=legends,

@@ -851,7 +851,8 @@ class TestFileFit2D:
 
         # Verify writeback: model_2d.lmfit_pars should match result params
         assert fit_file.model_2d is not None  # type guard
-        result_params = fit_file.model_2d.result[1].params
+        assert fit_file.model_2d.result is not None  # type guard
+        result_params = fit_file.model_2d.result.par_fin.params
         for name in fit_file.model_2d.parameter_names:
             model_val = fit_file.model_2d.lmfit_pars[name].value
             result_val = result_params[name].value
@@ -916,7 +917,8 @@ class TestFileFit2D:
         fit_file.fit_2d(model_name="single_glp", stages=2, try_ci=0)
 
         assert fit_file.model_2d is not None  # type guard
-        SD_fit = fit_file.model_2d.result[1].params[SD_name].value
+        assert fit_file.model_2d.result is not None  # type guard
+        SD_fit = fit_file.model_2d.result.par_fin.params[SD_name].value
         assert np.isclose(SD_fit, SD_truth, rtol=2e-2), (
             f"kernel width not recovered: truth={SD_truth}, fit={SD_fit:.4f}"
         )
@@ -1336,7 +1338,8 @@ class TestFileFitBaseline:
 
         # Verify writeback
         assert fit_file.model_base is not None  # type guard
-        result_params = fit_file.model_base.result[1].params
+        assert fit_file.model_base.result is not None  # type guard
+        result_params = fit_file.model_base.result.par_fin.params
         for name in fit_file.model_base.parameter_names:
             model_val = fit_file.model_base.lmfit_pars[name].value
             result_val = result_params[name].value
@@ -1484,10 +1487,10 @@ class TestFileFitSliceBySlice:
         for s_i, (r_serial, r_parallel) in enumerate(
             zip(serial, parallel, strict=True)
         ):
-            # result_sbs[1] is the lmfit MinimizerResult; compare its
-            # final parameter values across the two paths.
-            params_serial = r_serial[1].params
-            params_parallel = r_parallel[1].params
+            # par_fin is the lmfit MinimizerResult; compare its final
+            # parameter values across the two paths.
+            params_serial = r_serial.par_fin.params
+            params_parallel = r_parallel.par_fin.params
             assert list(params_serial.keys()) == list(params_parallel.keys())
             for name in params_serial.keys():
                 np.testing.assert_allclose(
@@ -1531,7 +1534,10 @@ class TestFileFitSliceBySlice:
         fit_file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
 
         assert fit_file.model_base is not None  # type guard
-        expected = ulmfit.par_extract(fit_file.model_base.result[1], return_type="list")
+        assert fit_file.model_base.result is not None  # type guard
+        expected = ulmfit.par_extract(
+            fit_file.model_base.result.par_fin, return_type="list"
+        )
         seed_values = None
 
         if seed_source == "model":

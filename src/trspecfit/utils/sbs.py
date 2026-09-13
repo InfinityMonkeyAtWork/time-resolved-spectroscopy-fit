@@ -7,14 +7,14 @@ worker to install a shared model and dispatch args as worker-local
 globals, and ``sbs_fit_one_slice`` consumes them to fit a single slice.
 
 The module also exposes the seed-handling helpers used in the serial
-path (``extract_sbs_seed_template``, ``prepare_sbs_model_for_slice``).
+path (``extract_sbs_seed_template``, ``prepare_sbs_model_for_slice``) and
+the per-slice plot bookkeeping shared by ``File.plot_sbs_slices`` and
+``FitResults.plot_sbs_slices`` (``resolve_sbs_slice_indices``,
+``sbs_slice_title``).
 """
 
 from __future__ import annotations
 
-import contextlib
-import pathlib
-import sys
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -22,7 +22,6 @@ import numpy as np
 import pandas as pd
 
 from trspecfit import fitlib
-from trspecfit.config.plot import PlotConfig
 from trspecfit.utils import lmfit as ulmfit
 
 if TYPE_CHECKING:
@@ -74,6 +73,36 @@ def extract_sbs_seed_template(
 
 
 #
+def resolve_sbs_slice_indices(n_slices: int, slices: Sequence[int] | None) -> list[int]:
+    """Normalize a ``plot_sbs_slices(slices=...)`` argument to concrete indices.
+
+    ``None`` means all slices, ``[0, n_slices)``. Raises ``ValueError``
+    listing every out-of-range index at once (not just the first).
+    """
+
+    if slices is None:
+        return list(range(n_slices))
+    slice_indices = [int(s) for s in slices]
+    bad = [s for s in slice_indices if not 0 <= s < n_slices]
+    if bad:
+        raise ValueError(f"Slice indices out of range [0, {n_slices}): {bad}")
+    return slice_indices
+
+
+#
+def sbs_slice_title(
+    base_title: str, s_i: int, time: np.ndarray | None, n_slices: int
+) -> str:
+    """Per-slice panel title: ``base_title`` plus the slice index and,
+    when a matching time axis is available, its time value.
+    """
+
+    if time is not None and time.shape[0] == n_slices:
+        return f"{base_title} — slice {s_i} (t = {time[s_i]:.4g})"
+    return f"{base_title} — slice {s_i}"
+
+
+#
 def prepare_sbs_model_for_slice(
     model: mcp.Model,
     dispatch_args: tuple[Any, ...],
@@ -108,36 +137,6 @@ def prepare_sbs_model_for_slice(
 
 
 #
-@contextlib.contextmanager
-def sanitized_spawn_main():
-    """Hide a non-importable ``__main__.__file__`` from spawn workers.
-
-    When a notebook is executed via IPython's ``%run example.ipynb``,
-    ``__main__.__file__`` points at the notebook JSON; multiprocessing's
-    spawn ``prepare()`` would re-run that path via ``runpy`` in every
-    worker and crash (the JSON is not Python). SbS workers never need
-    ``__main__`` content — everything they use is installed by
-    ``sbs_worker_init`` from trspecfit modules — so drop the attribute
-    for the pool's lifetime and restore it afterwards. A regular
-    ``python script.py`` main keeps its ``.py`` ``__file__`` untouched.
-    """
-
-    main_mod = sys.modules.get("__main__")
-    if main_mod is None:
-        yield
-        return
-    main_file = getattr(main_mod, "__file__", None)
-    sanitize = main_file is not None and not str(main_file).endswith(".py")
-    if sanitize:
-        del main_mod.__file__
-    try:
-        yield
-    finally:
-        if sanitize:
-            main_mod.__file__ = main_file
-
-
-#
 def sbs_worker_init(
     model: mcp.Model,
     dispatch_args: tuple[Any, ...],
@@ -148,14 +147,14 @@ def sbs_worker_init(
     Runs once per worker process before any task. Stashes the deep-pickled
     model and GIR/MCP dispatch args as worker-local globals so individual
     slice tasks don't have to pay the pickle cost on every submission.
-    Forces matplotlib to the non-interactive Agg backend so the per-slice
-    plot calls inside workers don't try to open a display.
+    Forces matplotlib to the non-interactive Agg backend so nothing in a
+    worker process ever tries to open a display.
     """
 
     global _WORKER_MODEL, _WORKER_DISPATCH_ARGS, _WORKER_SEED_TEMPLATE
-    import matplotlib
+    from trspecfit.utils import plot as uplt
 
-    matplotlib.use("Agg", force=True)
+    uplt.use_headless_backend()
     _WORKER_MODEL = model
     _WORKER_DISPATCH_ARGS = dispatch_args
     _WORKER_SEED_TEMPLATE = seed_template
@@ -174,11 +173,8 @@ def sbs_fit_one_slice(
     data_base_argmax_energy: float | None,
     fit_fun_str: str,
     stages: int,
-    path_slice: pathlib.Path,
-    plot_config: PlotConfig,
     fit_wrapper_kwargs: dict[str, Any],
-    auto_export: bool = True,
-) -> tuple[int, list[Any]]:
+) -> tuple[int, ulmfit.FitOutput]:
     """Fit one energy slice in a worker process.
 
     Uses worker-local ``_WORKER_MODEL`` and ``_WORKER_DISPATCH_ARGS``
@@ -189,7 +185,7 @@ def sbs_fit_one_slice(
 
     Returns
     -------
-    tuple[int, list]
+    tuple[int, ulmfit.FitOutput]
         (slice_index, fit_wrapper_result) so the caller can reassemble
         out-of-order completions back into slice order.
     """
@@ -201,7 +197,7 @@ def sbs_fit_one_slice(
     dispatch_args = _WORKER_DISPATCH_ARGS
     seed_template = _WORKER_SEED_TEMPLATE
 
-    initial_guess = prepare_sbs_model_for_slice(
+    prepare_sbs_model_for_slice(
         model,
         dispatch_args,
         seed_template,
@@ -226,25 +222,7 @@ def sbs_fit_one_slice(
         par=model.lmfit_pars,
         stages=stages,
         show_output=0,
-        save_output=1 if auto_export else 0,
-        save_path=path_slice,
         **fit_wrapper_kwargs,
     )
-
-    if auto_export:
-        fitlib.plt_fit_res_1d(
-            x=const[0],
-            y=const[1],
-            fit_fun_str=fit_fun_str,
-            par_init=initial_guess,
-            par_fin=result_sbs[1],
-            args=args,
-            plot_sum=False,
-            show_init=True,
-            fit_lim=e_lim,
-            config=plot_config,
-            save_img=-1,
-            save_path=path_slice.with_suffix(".png"),
-        )
 
     return s_i, result_sbs

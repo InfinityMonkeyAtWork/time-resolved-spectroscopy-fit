@@ -107,13 +107,17 @@ for plotting. Users can swap in a custom spectrum function via
 converts the combined-parameter mapping into gather index arrays at
 fit setup).
 
-### `fitlib.py` — lmfit wrappers, CI, MCMC, plotting
+### `fitlib.py` — lmfit wrappers, CI, MCMC
 
 The fitting machinery: residual function, `fit_wrapper` (global + local
 solvers), confidence intervals via `lmfit.conf_interval`, MCMC via
-`lmfit.emcee`, and the 1D/2D fit-result plotting (`plt_fit_res_1d`,
-`plt_fit_res_2d`). Internal module — method docstrings stay minimal,
-module-level doc carries the weight.
+`lmfit.emcee`, and `eval_model_curves_1d` (model-curve evaluation for
+display — rendering itself lives in `utils/plot.py`; this module
+imports no matplotlib). `fit_wrapper` returns a typed
+`utils.lmfit.FitOutput` (`par_ini` / `par_fin` / `conf_ci` /
+`emcee_fin` / `emcee_ci`), which is what `Model.result` and the
+per-slice entries of `File.results_sbs` hold. Internal module — method
+docstrings stay minimal, module-level doc carries the weight.
 
 ### `simulator.py` — synthetic data generation
 
@@ -127,17 +131,49 @@ training-data synthesis.
 ### `fit_results.py` — completed-fit inspection / comparison
 
 User-facing `FitResults` class — the immutable view over a list of
-`SavedFitSlot`. Two construction paths: `FitResults.load(path)` for
-loaded archives and the `Project.results` property for in-session work.
-A `FitResults` is frozen at construction (the underlying slot list is
+`SavedFitSlot`, and the single read/query/plot surface of the
+results-ownership contract: everything a user asks about a completed fit
+is answered from slots, never from live `Model.result`. Two construction
+paths: `FitResults.load(path)` for loaded archives and the
+`Project.results` property for in-session work; both attach **captured**
+`SavedFile` providers supplying energy/time axes and full uncropped raw
+data, owning their slots by parent association — never the live `File`,
+so a completed fit reads the same file-level context before and after
+serialization. Parent association is the only provider mechanism. Styling is the
+project-owned `PlotConfig`, passed at construction (`Project.results`
+passes the live one; loaded archives decode the persisted
+`project/plot_config`). Without a provider, plotting falls back to the
+slot's cropped data and index axes; result access remains available. A
+`FitResults` is frozen at construction (the underlying slot list is
 copied), so `r1 = p.results; <run another fit>; r2 = p.results` gives
 two distinct snapshots — `r1` does not see the new slot. Query API:
-`find` / `get` / `files` / `models` / iteration. Comparison:
-`compare_models` (returns a metrics DataFrame; refuses to compare
-slots whose `observed_sha256` differs on the same `(file, fit_type)`)
-and `plot_residuals` (smoke-test-grade panels, no energy/time labels —
-slots don't carry parent-file axes). The save/export side lives in
-`utils/fit_io.py`; this module is read-only on top of those slots.
+`find` / `get` / `files` / `models` / iteration, plus the schema-7 query
+layer — every slot has a stored 64-hex `handle`, and any unambiguous
+prefix (or exact user `label`, set post-hoc via `set_label()`) names one
+exact run: `handle=` pins the single-slot accessors and plot methods
+(mutually exclusive with the `file`/`model`/`fit_type` filter trio),
+`variants()` tabulates how the runs of one `(file, model, fit_type)`
+group differ in their *inputs* (constant columns suppressed), and
+`diff(a, b)` reports pairwise input/output differences — bundle-level
+for joint fits (projection refs escalate to the joint record). The
+selection/pruning counterparts live on `Project`: `select=`/`by=` on
+`save_fits` / `export_fits` and `drop_fits(ref)`. Project-level joint
+fit records (`JointFitResult`, carried alongside the slots by
+`Project.results` and rehydrated by `FitResults.load`) have their own
+surface — `find_joint` / `get_joint` / `plot_joint_mcmc`; iteration and
+`len()` stay per-file-slot so one optimization is never counted N+1
+times. Accessors (latest matching slot; `File.get_*` is thin sugar):
+`get_parameters` / `get_correlations` / `get_confidence_intervals` /
+`get_mcmc`. Comparison: `compare_models` (a metrics DataFrame with a
+short `handle` column; refuses to compare slots whose
+`fit_view_sha256` differs on the same `(file, fit_type)`, drops
+σ-scaled columns from the dynamic defaults when a compared group mixes
+`sigma_eff`, and drops default columns that are undefined on every
+matched row). Plotting (`File.plot_*` sugar; also the fit methods'
+inline-display path): `plot_fit`, `plot_param_evolution`,
+`plot_residuals`. The save/export side lives in `utils/fit_io.py`; this
+module is read-only on top of those slots (the one sanctioned mutation
+is `label`, the archive's mutable display field).
 
 ## Fit results: save / export / load architecture
 
@@ -167,6 +203,35 @@ HDF5 archive ────► reader ────► FitResults (FitResults.load 
                                 Independent of _fit_history; never merged in.
 ```
 
+`Project.fit_2d` additionally captures one `JointFitResult` per
+optimization (combined parameter table, per-file parameter maps, joint
+`conf_ci`/`correl`/MCMC, whole-objective metrics) into the parallel
+append-only `Project._joint_fit_history`, published together with its
+per-file projection slots as one bundle — a capture failure publishes
+neither. Decisions in [joint_fit_result.md](archive/joint_fit_result.md).
+
+### The fit-to-slot capture boundary
+
+A slot-specific evaluator, fit-window slicer, parameter projector, or metric
+implementation is never acceptable. Slot construction reuses the canonical
+helpers used by fitting.
+
+The `_slot_from_<fit_type>` call is the capture point. Every argument crossing
+that boundary must already be resolved from live `File` and `Model` state, and
+the constructed `SavedFitSlot` owns its required copies. Nothing downstream
+may consult live state to complete a slot's fit payload. `FitResults` may
+consult an attached provider for presentation context—axes and full-range
+data—and renders with its construction-time `PlotConfig`; neither is slot
+state. Providers for completed results are themselves captured `SavedFile`
+records (Principle 0's capture boundary), so this consultation never
+reaches live `File` state either.
+
+| Category | Slot rule |
+|---|---|
+| Optimizer-owned output | Copy exactly from the optimizer output; never reconstruct it from live model state. |
+| File/model metadata | Copy at the capture point through one shared helper. |
+| Derived arrays and metrics | Materialize only through the canonical helpers shared with fitting. |
+
 **Two different I/O directions, two different surfaces:**
 
 - **Save / load** (round-trippable): `Project.save_fits(path)` →
@@ -182,15 +247,25 @@ HDF5 archive ────► reader ────► FitResults (FitResults.load 
 one-line delegates to the corresponding `Project.*` / `FitResults.*`
 methods. There is no `File.load_fit`: load is path-scoped, not file-scoped.
 
-The legacy `File.save_sbs_fit` / `File.save_2d_fit` are deprecated
-aliases that emit `DeprecationWarning` and forward to the new
-`File.export_fit`. The legacy on-disk layout is preserved internally
-by `_save_sbs_fit_legacy` / `_save_2d_fit_legacy`, which are called
-from inside `fit_slice_by_slice` / `fit_2d` / `Project.fit_2d` on every
-fit unless the auto-export side effect is disabled via
-`Project.auto_export = False` (default `True`). Both are scheduled for
-removal before v1.0.0; new code should use `Project.export_fits` /
-`File.export_fit`.
+Fits never write to disk (v0.14.0): the fit methods compute, display
+(per `show_output`), and capture `SavedFitSlot`s — persistence is always
+the explicit `save_fits` (HDF5) / `export_fits` (CSV/PNG tree) pair, fed
+from the slot history, with default outputs
+`./fit_results/{Project.name}.fit.h5` (save) and
+`./fit_results/{Project.name}/` (export). Interactive display (`show_output >=
+1`) renders inline from the just-captured slot via the `FitResults` plot
+API — the figure a user sees is the one the API reproduces later.
+On-demand diagnostics replace the old fit-time file dumps:
+`FitResults.plot_mcmc` re-renders the emcee walker-acceptance and corner
+figures from the persisted payload (live or loaded archive);
+`FitResults.plot_sbs_slices` likewise renders per-slice fit panels from
+the persisted slot (`observed`/`fit`/`fit_ini`/`components`,
+optionally saved to one PNG per slice), with `File.plot_sbs_slices` as
+sugar — no live `Model`/`File` evaluation, matching `plot_fit`. The
+pre-0.14 auto-export
+machinery (`Project.auto_export`, `Project.path_results`,
+`File.model_path`, the legacy `save_sbs_fit` / `save_2d_fit` savers, and
+`fit_wrapper`'s CSV/TXT dump block) was removed.
 
 ## `config/` — runtime configuration
 
@@ -207,8 +282,10 @@ function, register it here.**
 ### `config/plot.py`
 
 `PlotConfig` dataclass. The single source of truth for plot appearance
-(axis labels/limits/direction, colormaps, DPI, etc.). Inheritance chain:
-Project defaults → File overrides → Model inherits → per-call overrides.
+(axis labels/limits/direction, colormaps, DPI, etc.). Presentation is
+project-owned (fit_archive_principles.md, Principle 2): one
+`Project.plot_config` instance, resolved at render time, with per-call
+`config=` overrides — files and models hold no configs of their own.
 Use `PlotConfig` whenever you add a plotting function — do not invent new
 keyword arguments for styling.
 
@@ -282,20 +359,29 @@ directly.
 ### `utils/fit_io.py`
 
 Fit-results persistence. Owns the `SavedProject` / `SavedFile` /
-`SavedFitSlot` dataclasses (the on-disk data model), the four
+`SavedFitSlot` dataclasses (the on-disk data model), the project-level
+joint record (`JointFitResult` / `JointFitProjection`, built by
+`_joint_result_from_project_fit`, serialized as the `project/joint/`
+sidecar, and reconstructed as the same type on read), the four
 per-fit-type slot extractors (`_slot_from_baseline`,
 `_slot_from_spectrum`, `_slot_from_sbs`, `_slot_from_2d` — all called
 once at fit completion with copied snapshot args, never live `Model`
-references), the identity helpers (`compute_file_fingerprint`,
-`compute_history_key`, `compute_archive_slot_key`,
-`build_selection_json`, `compute_observed_sha256`), the
-snapshot-collapse helper (`collapse_history_to_snapshot`), and the
-HDF5 reader/writer (`read_archive`, `write_archive`) plus the CSV/PNG
-exporter (`write_csv_export`). The `SavedFitSlot` is the **single
-source of truth for completed-fit state** — neither `Model` nor `File`
-carries observed/fit/metrics. New persistence work lands here, not in
-`fitlib` or `trspecfit.py`. See `docs/design/fit_archive_schema.md`
-for the on-disk schema.
+references) plus the first-slot file capture (`capture_saved_file`),
+the schema-7 identity chain (`compute_file_content_hash`,
+`compute_file_version_stamp`, `encode_input_files`,
+`encode_model_structure`, `encode_optimizer_settings`,
+`compute_optimization_hash`, `compute_slot_handle`, and the
+comparability hash `compute_fit_view_sha256`), the snapshot-collapse
+helpers (`collapse_history_to_snapshot` /
+`collapse_joint_history_to_snapshot` — dedup plus the divergence rule),
+the query-layer primitives (`resolve_fit_reference`,
+`select_snapshot_slots`, `set_fit_label`, `joint_comparability`), and
+the HDF5 reader/writer (`read_archive`, `write_archive`) plus the
+CSV/PNG exporter (`write_csv_export`). The `SavedFitSlot` is the
+**single source of truth for completed-fit state** — neither `Model`
+nor `File` carries observed/fit/metrics. New persistence work lands
+here, not in `fitlib` or `trspecfit.py`. See
+`docs/design/fit_archive_schema.md` for the on-disk schema.
 
 ### `utils/lmfit.py`
 
@@ -315,11 +401,21 @@ adding new YAML syntax.
 
 ### `utils/plot.py`
 
-Generic matplotlib helpers used by the library and user notebooks:
-1D/2D data plotting, image loading (`load_plot`, `load_plot_grid`) for
-embedding saved figures in reports, axis formatting utilities. All
-plotting functions take a `PlotConfig`. Specialized plotting (e.g. fit
-residuals) lives in `fitlib.py`, not here.
+The one production rendering module — no other module under
+`src/trspecfit/` may import matplotlib or corner (enforced by a
+source-boundary test). Generic 1D/2D data plotting, image loading
+(`load_plot`, `load_plot_grid`), axis formatting utilities, and every
+fit-result renderer: `plot_fit_panel_1d` (archive-style panel + residual),
+`plot_fit_overlay_1d` (describe_model's single-panel overlay),
+`plot_fit_res_2d` (data/fit/residual maps), `plot_par_series` (SbS
+parameter evolution), `plot_mcmc_diagnostics` (walker acceptance +
+corner), `plot_residual_panels_1d` / `plot_residual_maps_2d`
+(side-by-side comparisons), and `use_headless_backend` (worker
+processes). Renderers take plain data — arrays, DataFrames, and
+data-holding dataclasses like `MCMCResult` — plus a `PlotConfig`; never
+`File`/`Model`/live lmfit objects. Evaluation and slot selection stay
+with the callers, and every renderer finalizes (save/show/close)
+through `_finalize_plot` on its explicit Figure.
 
 ### `utils/sweep.py`
 

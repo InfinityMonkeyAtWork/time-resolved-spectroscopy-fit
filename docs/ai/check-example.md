@@ -24,11 +24,11 @@ For each criterion report one of:
   (e.g. narrative present but a section never says *why*).
 - **FAIL** — criterion not met; list the specific gap with file/cell.
 - **N/A** — criterion does not apply to this notebook's deliberate variant
-  (e.g. `auto_export` on an export-topic notebook). State *why* it is N/A.
+  (e.g. untracked export artifacts beside an export-topic notebook). State
+  *why* it is N/A.
 
 The pre-pass also prints **INFO** lines — facts it found but cannot judge
-(missing `data/`, no `*_truth.yaml`, `auto_export` unset, prose-voice
-candidates). These are **not defects**: resolve every INFO to PASS / N/A / FAIL
+(missing `data/`, no `*_truth.yaml`, prose-voice candidates). These are **not defects**: resolve every INFO to PASS / N/A / FAIL
 by reading the notebook. A clean example ends with **0 FAIL, 0 WARN** even when
 the pre-pass emitted several INFO lines.
 
@@ -43,11 +43,11 @@ judgment checks. Work through the list in order.
 ```
 
 This gathers evidence for the scriptable criteria (stripped outputs, required
-files, committed truth, `auto_export`, side-effect artifacts, the roadmap/TOC
-numbering). It emits **PASS/WARN/FAIL** for what it can decide deterministically
-(committed outputs and artifacts FAIL; the roadmap/TOC numbering PASS or WARN);
-everything intent-dependent (missing `data/`, no `*_truth.yaml`, `auto_export`
-unset) and
+files, committed truth, removed config keys, side-effect artifacts, the
+roadmap/TOC numbering). It emits **PASS/WARN/FAIL** for what it can decide
+deterministically (committed outputs, artifacts, and removed keys FAIL; the
+roadmap/TOC numbering PASS or WARN); everything intent-dependent (missing
+`data/`, no `*_truth.yaml`) and
 the prose-voice candidates come out as **INFO** for you to resolve. Fold its
 output into criteria 2, 3, 4, 5, 9, and 10 below. It does **not** execute the notebook
 (criterion 1 is the slow one — run it separately).
@@ -95,9 +95,10 @@ sibling with no prose explaining it. If the reuse is stated up front, PASS.
 
 ## 4. No surprise side-effects
 
-`project.yaml` sets `auto_export: False` with an explanatory comment, so the
-fit calls don't spray CSV/PNG dumps. N/A when persistence/export is the
-notebook's actual topic — say so.
+Fits never write to disk (v0.14.0), so no opt-out is needed — but a stale
+removed key (`auto_export:`, `path_results:`) in `project.yaml` makes
+`Project()` raise at load and FAILs here. On-disk artifacts must come only
+from the notebook's explicit `save_fits` / `export_fits` calls.
 
 Artifact severity: **committed** CSV/PNG/`.fit.h5` fit outputs FAIL (they
 pollute the repo). **Untracked/gitignored** outputs are reported INFO, not a

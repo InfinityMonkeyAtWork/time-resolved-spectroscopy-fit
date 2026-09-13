@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [0.14.0] - 2026-09-13
+
+### Added
+
+- **Fit-archive query layer.** Every fit slot has a stored `handle` (any unambiguous prefix names one run); `FitResults.variants()` tabulates how a group's runs differ in their inputs, `diff(a, b)` compares two runs, `set_label(ref, label)` names one, and every single-fit accessor and plot method accepts `handle=`.
+- **Fit selection and pruning.** `save_fits` / `export_fits` gain `select=` (`"all"`, `"latest"`, `"best"` + `by=`, or a handle prefix / label; joint bundles always save whole), and `Project.drop_fits(ref)` removes a run or a joint bundle from the session history.
+- **`seed=`** on `fit_wrapper` and every fit method: a passthrough to stochastic stage-1 optimizers, recorded in `fit_settings` and part of fit identity when supplied.
+- **Project-level joint fits are first-class records** (`docs/design/archive/joint_fit_result.md`). `Project.fit_2d` returns a `JointFitResult` with the combined parameter table, per-file parameter maps, joint `conf_ci` / `correl` / MCMC (the chain is no longer discarded), and whole-objective metrics; query it via `FitResults.find_joint` / `get_joint` / `plot_joint_mcmc`.
+- **Results accessors live on `FitResults`**: `get_parameters` / `get_correlations` / `get_confidence_intervals` / `get_mcmc` read the latest matching persisted slot (`file=` / `model=` / `fit_type=` filters), so they also work for SbS fits and loaded archives; the `File.get_*` methods delegate.
+- **Explicit plotting API**: `FitResults.plot_fit`, `plot_param_evolution`, `plot_mcmc`, and `plot_sbs_slices` (with `File.*` sugar) render any persisted fit with real axes, on live sessions and loaded archives alike; the fit methods' inline display uses the same API. `plot_sbs_slices(model=...)` can pick an older SbS fit by model name.
+- `PlotConfig.full_range` (default `True`): `plot_fit` shows the full data range with fit / residual / components only inside the fit window. `PlotConfig.show_init` (default `True`) overlays the initial guess.
+- **Fit slots persist more**: the correlation matrix, MCMC acceptance fraction, `fit_settings` (stages, methods, `try_ci`, SbS seeding, MCMC settings), SbS `params_meta` / `params_stderr` / `params_init`, per-component 1D curves, the initial-guess curve `fit_ini`, and each file's `aux_axis`.
+- `MCMCResult.lnsigma`: the sampled noise scale, previously stored but dropped by `get_mcmc`; `None` for weighted sampling.
+- `PlotConfig.to_json` / `from_json`: a strict canonical JSON round-trip (used by the archive); unknown keys and non-JSON values raise.
+
+### Fixed
+
+- `handle=` on the single-fit accessors and the `File.*` sugar now accepts an exact label, as documented.
+- `subtract_dark()` / `calibrate_data()` after a fit no longer makes `save_fits()` / `export_fits()` abort: slots resolve to files by name, and each slot records the correction state it was fit under.
+- Appending a same-name file with different data to an archive raises instead of filing the new fits under the old data.
+- Joint-fit projection slots report `NaN` for the count-dependent metrics (`chi2_red_raw` / `chi2_red` / `aic` / `bic`) instead of values computed with the joint `nvarys`; the joint record owns them.
+- Weighted MCMC (`MC(is_weighted=True)`) no longer samples a likelihood-free `__lnsigma` dimension.
+- `init_value` for `stages=2` fits reflected stage-1 output instead of the true seed.
+- MCMC with `workers > 1` no longer crashes under `%run notebook.ipynb` (the spawn pool now uses the same `__main__` guard as SbS).
+
+### Changed
+
+- **Breaking: fit-archive schema 7** (`docs/design/fit_archive_schema.md`). Only schema 7 reads (re-fit and re-save older archives); each slot stores its input identity, so any changed input (bound, `vary`, window, seed, data correction) archives as a distinct variant and identical re-runs dedup. Files store immutable `data_raw` plus per-slot corrections, joint fits persist as `project/joint/` records, and `PlotConfig` is persisted per project.
+- `save_fits` archives every variant by default (`select="all"`); `export_fits` exports the latest per `(file, model, fit_type)` group (`select="latest"`).
+- **Breaking: fits never write to disk.** The fit methods compute, display, and record slots; persist with `save_fits` (HDF5) or `export_fits` (CSV/PNG tree) and regenerate diagnostics with `plot_mcmc` / `plot_sbs_slices`. The per-slice `par_ini` CSVs and `lmfit.fit_report` text dumps are gone (their contents live in the archive).
+- **Breaking: result accessors renamed** — `get_fit_results` → `get_parameters`, `get_conf_intervals` → `get_confidence_intervals` (on `FitResults` and `File`); the unreleased `FitResults.label()` ships as `set_label()`. No shims.
+- **Breaking: one project-owned `PlotConfig`.** `Project.plot_config` replaces the flat plot attributes (`project.e_label`, `project.z_colormap`, …), and `File.plot_config` / `PlotConfig.from_project` are removed; `project.yaml` keys are unchanged, and removed spellings raise naming the replacement.
+- **Breaking: `Project.name`, `File.name`, and `Model.name` are immutable after construction**; a `name:` key in `project.yaml` is rejected. Content hashes remain as version stamps only.
+- **Breaking: `Project.name` defaults to `"my_project"`** (was `"test"`), so bare `save_fits()` / `export_fits()` write under `fit_results/my_project`.
+- **Breaking: `File.get_correlations` raises for covariance-less fits** (e.g. Nelder without numdifftools, joint fits) instead of returning an identity matrix.
+- **Breaking (advanced API): `fitlib.fit_wrapper` returns a frozen `FitOutput`** (`par_ini`, `par_fin`, `conf_ci`, `emcee_fin`, `emcee_ci`) instead of a five-element list, and an unfitted `Model.result` is `None`. `fitlib.results_to_df` / `results_to_fit_2d` are pure conversions (no CSV writes, no `save_df` / `save_2d` flags).
+- **Breaking (advanced API): all production rendering lives in `utils/plot.py`.** `fitlib.plt_fit_res_1d` / `plt_fit_res_2d` / `plt_fit_res_pars` are removed — use `utils.plot.plot_fit_res_2d`, `plot_par_series`, and `plot_fit_overlay_1d` (curves from `fitlib.eval_model_curves_1d`). Public plotting APIs and default figures are unchanged, except MCMC diagnostics now render at `dpi_plot`.
+- **Completed-fit rendering reads captured state**: `Project.results` and the fit-time display (MCMC diagnostics included) render from the captured `SavedFile` / slot payload, never the live `File`, so a figure looks the same before and after saving.
+- `File.load_model` overwrites a same-name model with a `UserWarning` instead of raising; completed fits are already captured in the history.
+- Figure titles: `describe_model(detail=1)` labels every panel "initial guess", and `plot_fit`'s 2D/SbS figures name the file and model.
+- `10_model_comparison` §4 and `11_save_load_export` teach the query layer: `variants()`, `diff()`, `set_label`, `drop_fits`, and `select=`.
+- **`12_uncertainty_mcmc` reworked**: `stderr` is a marginal width that fails on a non-quadratic χ² surface, not on correlation; the noise gate uses the RMS per-pixel σ over the fitted window; and §4 runs the same short 2D chain started at the right noise scale and ten times too low, side by side.
+
+### Removed
+
+- **Breaking: `Project.auto_export`, `Project.path_results`, `File.model_path`, `Project.ext`, `Project.da_fmt`, and `Project.da_slices_fmt`**; a `project.yaml` that still sets any of them fails at load with migration guidance. `fitlib.fit_wrapper` loses `save_output` / `save_path` / `num_fmt` / `delim`.
+- **Breaking: `File.save_sbs_fit` / `File.save_2d_fit`** and their legacy implementations; use `File.export_fit` / `Project.export_fits`.
+
 ## [0.13.0] - 2026-07-13
 
 ### Added

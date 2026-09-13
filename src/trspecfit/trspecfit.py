@@ -53,12 +53,12 @@ See examples/ directory for complete workflows.
 
 import concurrent.futures
 import copy
+import dataclasses
 import multiprocessing
 import os
 import pathlib
 import re
 import time
-import types
 import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
@@ -72,39 +72,34 @@ import lmfit
 import numpy as np
 import pandas as pd
 from IPython.display import display
+from lmfit.minimizer import MinimizerResult
 from ruamel.yaml import YAML
 from tqdm import tqdm
 
 from trspecfit import fitlib, mcp
 
 # standardized plotting configuration
-from trspecfit.config.plot import PlotConfig
+from trspecfit.config.plot import (
+    PLOT_FIELD_NAMES,
+    PLOT_TUPLE_FIELDS,
+    PlotConfig,
+)
 from trspecfit.fit_results import FitResults
 
 # function library for energy, time, and profile components
 from trspecfit.functions import energy as fcts_energy
 from trspecfit.functions import profile as fcts_profile
 from trspecfit.functions import time as fcts_time
+from trspecfit.utils import arrays as uarrays
 from trspecfit.utils import fit_io
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import parsing as uparsing
 from trspecfit.utils import plot as uplt
 from trspecfit.utils import sbs as usbs
+from trspecfit.utils import spawn as uspawn
 
 PathLike = str | pathlib.Path
 ModelRef = str | int | list[str]
-
-
-#
-def _fp_key(fingerprint: dict[str, Any]) -> tuple[Any, ...]:
-    """Hashable key for a file fingerprint (used for slot grouping/match)."""
-
-    return (
-        fingerprint["data_sha256"],
-        fingerprint["energy_sha256"],
-        fingerprint["time_sha256"],
-        tuple(int(x) for x in fingerprint["shape"]),
-    )
 
 
 #
@@ -130,6 +125,68 @@ def _trspecfit_version() -> str:
         return "unknown"
 
 
+#
+def _yaml_records_for_model(
+    *,
+    model_yaml_path: pathlib.Path,
+    source_file: str,
+    model_info: list[str],
+    model_type: str,
+    par_name: str,
+) -> tuple[fit_io.ModelYamlRecord, ...]:
+    """
+    Snippet provenance records for one ``load_model`` call.
+
+    One record per top-level YAML key, in ``model_info`` order.
+    ``sequence_index`` is set for dynamics only (0 is the global element);
+    ``target_par`` for dynamics and profile attachments — ``par_name`` at
+    load time equals the attachment target (``Dynamics._name`` /
+    ``Profile._name``).
+    """
+
+    snippets = uparsing.dump_yaml_subtrees(model_yaml_path, model_info)
+    return tuple(
+        fit_io.ModelYamlRecord(
+            role=model_type,
+            name=key,
+            source_file=source_file,
+            target_par=par_name if model_type != "energy" else None,
+            sequence_index=index if model_type == "dynamics" else None,
+            text=snippets[key],
+        )
+        for index, key in enumerate(model_info)
+    )
+
+
+#
+def _model_yaml_records(model: "mcp.Model") -> tuple[fit_io.ModelYamlRecord, ...]:
+    """Slot-capture form of a model's YAML provenance (incl. attachments)."""
+
+    return tuple(fit_io.ModelYamlRecord(*rec) for rec in model.yaml_provenance())
+
+
+#
+def _effective_backend(fit_fun_str: str, args: tuple[Any, ...]) -> str:
+    """
+    Effective evaluator backend for provenance and identity.
+
+    The requested ``fit_fun_str`` is not necessarily what runs: without a
+    lowered plan, ``fit_model_gir`` / ``fit_model_jax`` fall through to
+    the interpreter, and a plan without JAX closures runs on the compiled
+    NumPy plan (1D always does — the JAX backend is 2D-only). The
+    dispatch site's ``args`` shape is the ground truth: 5 = JAX closures,
+    4 = compiled plan, 2 = interpreter.
+    """
+
+    if fit_fun_str == "fit_model_compare":
+        return "fit_model_compare"
+    if len(args) == 5:
+        return "fit_model_jax"
+    if len(args) == 4:
+        return "fit_model_gir"
+    return "fit_model_mcp"
+
+
 # multi-subcycle models allow for convolution only in the "0th subcycle"
 # i.e. first model_info element which affects all times t.
 # "conv" functions in individual subcycles are currently ignored
@@ -151,8 +208,10 @@ class Project:
     path : str or Path
         Base directory for project data files and YAML configuration.
         If None, defaults to 'test' directory.
-    name : str, default='test'
-        Name for this analysis run. Creates subdirectory in results folder.
+    name : str, default='my_project'
+        Name for this analysis run. Names the default output paths of
+        ``save_fits`` (``./fit_results/<name>.fit.h5``) and
+        ``export_fits`` (``./fit_results/<name>/``).
     config_file : str or Path, optional
         YAML configuration file name (located in path directory).
         If None, uses default settings only.
@@ -161,10 +220,6 @@ class Project:
     ----------
     path : Path
         Base project directory containing data and configuration
-    path_results : Path
-        Results directory (path + '_fits' suffix)
-    name : str
-        Name for this analysis run
     files : list of File
         All File instances registered with this Project
     show_output : int
@@ -185,8 +240,9 @@ class Project:
     Notes
     -----
     **Plot Configuration:**
-    Plot-related attributes (axis labels, directions, colormaps, DPI, etc.)
-    are used to construct PlotConfig objects. See trspecfit.config.plot.PlotConfig
+    Presentation is project-owned: ``Project.plot_config`` is the one
+    PlotConfig instance, resolved at render time (set fields on it or
+    override per call with ``config=``). See trspecfit.config.plot.PlotConfig
     for full documentation of available plot settings.
 
     **YAML Configuration:**
@@ -194,28 +250,33 @@ class Project:
     Only specified settings need to be included; others use defaults.
 
     **File I/O Settings:**
-    Attributes ext, num_fmt, delim, da_fmt, and da_slices_fmt control file
-    export formats and can be customized per project via YAML or direct
-    attribute assignment.
+    Attributes num_fmt and delim control CSV export formats and can be
+    customized per project via YAML or direct attribute assignment.
     """
 
     #
     def __init__(
         self,
         path: PathLike | None,
-        name: str = "test",
+        name: str = "my_project",
         config_file: PathLike | None = "project.yaml",
     ) -> None:
         self.path = pathlib.Path(path) if path is not None else pathlib.Path("test")
-        self.path_results = pathlib.Path(f"{path}_fits")
-        self.name = name
+        self._name = name
 
         self._config_file: PathLike | None = None
         self.files: list[File] = []
-        self._project_fit_result: list[Any] | None = None
         # Append-only log of completed fit slots, populated eagerly at fit
         # completion by the _slot_from_<fit_type> helpers in utils/fit_io.py.
         self._fit_history: list[fit_io.SavedFitSlot] = []
+        # Append-only log of project-level joint fit records; one entry per
+        # successful Project.fit_2d, published together with its per-file
+        # projection slots in _fit_history (one bundle).
+        self._joint_fit_history: list[fit_io.JointFitResult] = []
+        # Immutable per-file archive payloads (no slots), captured once at
+        # each file's first fit — save-time assembly attaches slots via
+        # dataclasses.replace and reads nothing from live state.
+        self._captured_files: dict[str, fit_io.SavedFile] = {}
 
         # Set defaults first
         self._set_defaults()
@@ -224,57 +285,71 @@ class Project:
         if config_file is not None:
             self._load_config(config_file)
 
+    # Removed flat presentation attributes (v0.14.0): writes must fail
+    # loudly with a migration pointer, mirroring _load_config's
+    # _removed_keys — a silent inert assignment would leave plots
+    # rendering defaults with no error.
+    _REMOVED_PLOT_ATTRS = frozenset(
+        PLOT_FIELD_NAMES | {"e_label", "t_label", "dpi_plt"}
+    ) - {"plot_config"}
+    _PLOT_ATTR_RENAMES = {  # noqa: RUF012 — class-level constant
+        "e_label": "x_label",
+        "t_label": "y_label",
+        "dpi_plt": "dpi_plot",
+    }
+
+    #
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in self._REMOVED_PLOT_ATTRS:
+            field = self._PLOT_ATTR_RENAMES.get(name, name)
+            raise AttributeError(
+                f"Project.{name} was removed in v0.14.0: presentation is "
+                f"project-owned — set project.plot_config.{field} instead."
+            )
+        super().__setattr__(name, value)
+
+    #
+    @property
+    def plot_config(self) -> PlotConfig:
+        """The one project-owned presentation config (see PlotConfig)."""
+
+        return self._plot_config
+
+    #
+    @plot_config.setter
+    def plot_config(self, value: PlotConfig) -> None:
+        if not isinstance(value, PlotConfig):
+            raise TypeError(
+                f"Project.plot_config must be a PlotConfig, got "
+                f"{type(value).__name__}. In project.yaml, put presentation "
+                f"keys at the top level rather than under a plot_config: "
+                f"mapping."
+            )
+        current = getattr(self, "_plot_config", None)
+        if current is None:
+            self._plot_config = value
+        else:
+            # Adopt in place: the config object's identity is stable for
+            # the Project's lifetime, so held FitResults views keep
+            # resolving the current styling at render time.
+            current.adopt(value)
+
     #
     def _set_defaults(self) -> None:
         """Set default project configuration."""
 
         self.show_output = 1
-        # When False, fit_* methods skip the automatic CSV/PNG side effects
-        # (fit_wrapper(save_output=1) and the legacy save_*_fit calls).
-        # Explicit File.export_fit / Project.export_fits still write.
-        self.auto_export = True
-        # Plot settings
-        self.e_label = "Energy"
-        self.t_label = "Time"
-        self.z_label = "Intensity"
-        self.x_dir = "def"
-        self.x_type = "lin"
-        self.y_dir = "def"
-        self.y_type = "lin"
-        self.z_colormap = "viridis"
-        self.z_colormap_res = "RdBu_r"
-        self.z_colorbar = "ver"
-        self.z_type = "lin"
-        self.dpi_plt = 100
-        self.dpi_save = 300
-        self.res_mult = 5
-        self.title = ""
-        self.x_lim = None
-        self.y_lim = None
-        self.data_slice = None
-        self.z_lim = None
-        self.colors = None
-        self.linestyles = None
-        self.linewidths = None
-        self.markers = None
-        self.markersizes = None
-        self.alphas = None
-        self.legend = None
-        self.waterfall = 0
-        self.vlines = None
-        self.hlines = None
-        self.refline_color = "#000000"
-        self.refline_style = ":"
-        self.ticksize = None
-        self.panel_size = (4.0, 3.0)
-        self.y_norm = 0
-        self.y_scale = None
+        # Presentation: one project-owned PlotConfig, resolved at render
+        # time (fit_archive_principles.md, Principle 2). Field defaults
+        # live on PlotConfig; only the axis labels are project-flavored.
+        self.plot_config = PlotConfig(
+            x_label="Energy",
+            y_label="Time",
+            z_label="Intensity",
+        )
         # File I/O settings
-        self.ext = ".dat"
         self.num_fmt = "%.6e"
         self.delim = ","
-        self.da_fmt = "%04d"
-        self.da_slices_fmt = "%06d"
         # Advanced settings
         self.spec_fun_str = "fit_model_gir"
         # Noise / sigma defaults — applied to every File at construction time.
@@ -286,6 +361,21 @@ class Project:
         self.sigma_data: float = float("nan")
 
     #
+    @property
+    def name(self) -> str:
+        """Project name — archive-level identity, set at construction."""
+
+        return self._name
+
+    #
+    @name.setter
+    def name(self, value: str) -> None:
+        raise AttributeError(
+            "Project.name is the project's identity and cannot be "
+            "reassigned; pass name= at construction."
+        )
+
+    #
     def __repr__(self) -> str:
         return f"Project(path='{self.path}', name='{self.name}')"
 
@@ -295,14 +385,41 @@ class Project:
         """
         Snapshot view over the in-session fit history.
 
-        Returns a fresh ``FitResults`` wrapping a copy of ``_fit_history``;
-        subsequent fits append to the log and do not affect previously
-        returned ``FitResults``. Object identity is unstable
-        (``p.results is p.results`` is False); the contents at a given access
-        are fixed.
+        Returns a fresh ``FitResults`` wrapping a copy of ``_fit_history``
+        and of ``_joint_fit_history``; subsequent fits append to the logs
+        and do not affect previously returned ``FitResults``. Object
+        identity is unstable (``p.results is p.results`` is False); the
+        contents at a given access are fixed. Axes/full-range providers
+        are the **captured** ``SavedFile`` payloads (each carrying its
+        history slots), never the live ``File`` objects — a completed fit
+        reads the same file-level context here as after
+        ``FitResults.load``, insulated from later live mutation. Styling
+        is the deliberate exception: the project-owned ``plot_config`` is
+        passed live and resolved at render time. Joint records are
+        reachable via ``find_joint`` / ``get_joint``; iteration and
+        ``len`` stay per-file-slot.
         """
 
-        return FitResults(slots=list(self._fit_history))
+        by_file: dict[str, list[fit_io.SavedFitSlot]] = {}
+        for slot in self._fit_history:
+            by_file.setdefault(slot.file_name, []).append(slot)
+        missing = sorted(set(by_file) - set(self._captured_files))
+        if missing:
+            raise RuntimeError(
+                f"Fit history holds slots for {missing!r} with no captured "
+                f"file payload — capture registers every file at its first "
+                f"fit, so this state should be impossible. Re-run the fits."
+            )
+        providers = [
+            dataclasses.replace(captured, slots=tuple(by_file.get(name, ())))
+            for name, captured in self._captured_files.items()
+        ]
+        return FitResults(
+            slots=list(self._fit_history),
+            files=providers,
+            joint=list(self._joint_fit_history),
+            config=self.plot_config,
+        )
 
     #
     def save_fits(
@@ -312,15 +429,19 @@ class Project:
         file: "int | str | File | Sequence[int | str | File] | None" = None,
         model: str | Sequence[str] | None = None,
         fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        select: str = "all",
+        by: str | None = None,
         overwrite: bool = False,
         show_output: int = 1,
     ) -> None:
         """
         Save filtered fit slots from ``_fit_history`` to an HDF5 archive.
 
-        Filters ``_fit_history`` by ``(file, model, fit_type)``, collapses
-        to latest-per-``history_key`` (snapshot semantics), assembles a
-        ``SavedProject``, and writes via ``utils.fit_io.write_archive``.
+        Filters ``_fit_history`` by ``(file, model, fit_type)``, dedups
+        exact re-runs (latest per ``handle`` — distinct variants are all
+        kept), applies ``select=``, expands joint bundles to whole,
+        assembles a ``SavedProject``, and writes via
+        ``utils.fit_io.write_archive``.
 
         Parameters
         ----------
@@ -332,25 +453,53 @@ class Project:
             Restrict to slots whose live ``Project.files`` entry matches.
             ``int`` indexes into ``self.files``; ``str`` matches
             ``File.name``; ``File`` is taken directly. Resolved to file
-            fingerprints, then matched against ``slot.file_fingerprint``.
+            names, then matched against ``slot.file_name``.
         model : str | sequence, optional
             String filter on ``slot.model_name``.
         fit_type : str | sequence, optional
             String filter on ``slot.fit_type``.
+        select : str, default "all"
+            Which variants to keep. ``"all"`` archives every distinct
+            configuration — the archive is the complete record.
+            ``"latest"`` keeps the newest run per ``(file, model,
+            fit_type)`` group; ``"best"`` keeps the group winner ranked by
+            ``by=``. Any other string is a slot-handle prefix, a
+            joint-optimization-hash prefix, or a label naming exact fits
+            (mutually exclusive with the ``file``/``model``/``fit_type``
+            filters). Whatever the selection, touching any slot of a
+            joint bundle pulls in the whole bundle — partial bundles are
+            not representable in the archive.
+        by : str, optional
+            Ranking criterion for ``select="best"`` — one of ``aic``,
+            ``bic``, ``chi2_red_raw`` (minimized) or ``chi2_red`` (ranked
+            by ``|x − 1|``, the distance from the noise floor; requires a
+            σ consistent across the group). Raw χ² and r² are deliberately
+            not offered — a fit with more free parameters almost always
+            wins on them while being the worse model. SbS slots rank by
+            the per-slice median. A group spanning multiple fit views
+            refuses to rank (metrics of different views are not
+            comparable).
         overwrite : bool, default False
-            Slot-scoped: a slot collision (same canonical identity already
-            in the archive) raises ``FileExistsError`` unless True.
+            Slot-scoped: required when a stored slot's fitted parameters
+            differ from the incoming ones, or when an attachment
+            (``conf_ci`` / ``correl`` / ``mcmc``) is present on both sides
+            — see ``fit_io.write_archive`` for the collision rules. The
+            same flag resolves an in-session divergence at collapse: two
+            re-runs of one configuration with differing results (a
+            non-deterministic, unseeded optimizer) raise by default and
+            keep the latest with a warning under ``overwrite=True``.
         show_output : int, default 1
             ``0`` to silence the per-call summary line.
-
-        Notes
-        -----
-        v1 behavior is snapshot-only (one slot per ``history_key``).
-        ``keep_history=True`` for full-log save is deferred.
         """
 
         project = self._build_saved_project_from_history(
-            file=file, model=model, fit_type=fit_type
+            file=file,
+            model=model,
+            fit_type=fit_type,
+            expand_joint_bundles=True,
+            overwrite=overwrite,
+            select=select,
+            by=by,
         )
         if project is None:
             if show_output:
@@ -378,17 +527,23 @@ class Project:
         file: "int | str | File | Sequence[int | str | File] | None" = None,
         model: str | Sequence[str] | None = None,
         fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        select: str = "latest",
+        by: str | None = None,
         overwrite: bool = False,
         show_output: int = 1,
     ) -> None:
         """
         Export filtered fit slots from ``_fit_history`` as a CSV/PNG tree.
 
-        Same filter + snapshot-collapse pipeline as :meth:`save_fits`, but
-        the output is a directory of human-readable artifacts rather than
-        an HDF5 archive. One-way export — there is no ``load`` counterpart;
-        round-tripping fits to disk is HDF5's job (use ``save_fits`` /
-        ``load_fits`` for that).
+        Same filter + snapshot-collapse + ``select=`` pipeline as
+        :meth:`save_fits`, but the output is a directory of human-readable
+        artifacts rather than an HDF5 archive. One-way export — there is
+        no ``load`` counterpart; round-tripping fits to disk is HDF5's job
+        (use ``save_fits`` / ``load_fits`` for that). Unlike
+        ``save_fits``, a filter touching one slot of a joint bundle does
+        **not** pull in the sibling files' projections: per-file trees
+        have no whole-bundle invariant, and ``File.export_fit`` must
+        never write another file's directories.
 
         Parameters
         ----------
@@ -404,10 +559,26 @@ class Project:
             String filter on ``slot.model_name``.
         fit_type : str | sequence, optional
             String filter on ``slot.fit_type``.
+        select : str, default "latest"
+            Which variants to export. Defaults to the newest run per
+            ``(file, model, fit_type)`` group — the export tree is a
+            human-readable summary, not the record (that is
+            ``save_fits``, whose default is ``"all"``). Pass ``"all"``
+            for every variant, ``"best"`` + ``by=`` for group winners, or
+            a handle prefix / joint-hash prefix / label for exact fits
+            (mutually exclusive with the ``file``/``model``/``fit_type``
+            filters).
+        by : str, optional
+            Ranking metric for ``select="best"``; see :meth:`save_fits`.
         overwrite : bool, default False
             Per-slot directory: a non-empty target dir raises
             ``FileExistsError`` unless True. Pre-checked across all slots
             before any writes (single conflict aborts the entire export).
+            Like ``save_fits``, the same flag resolves an in-session
+            divergence at collapse (two re-runs of one configuration
+            with differing results keep the latest under
+            ``overwrite=True``) — one flag, one meaning: replace what
+            conflicts.
         show_output : int, default 1
             ``0`` to silence the per-call summary line.
 
@@ -426,12 +597,12 @@ class Project:
         - 2d / sbs: fit_2d.csv, observed_2d.csv, energy.csv, time.csv,
           2D_data_fit_res.png.
         - sbs only: fit_pars.csv (per-slice param values) and one PNG per
-          parameter from plt_fit_res_pars.
+          parameter from utils.plot.plot_par_series.
 
         The optional hash directory suffix appears only when more than one
         slot in the snapshot shares the same file, model, and fit type (i.e.
-        different selections); the hash is the first 8 chars of the history
-        key.
+        different selections); the hash is the first 8 chars of the slot
+        handle.
         """
 
         if format != "csv":
@@ -441,7 +612,13 @@ class Project:
             )
 
         project = self._build_saved_project_from_history(
-            file=file, model=model, fit_type=fit_type
+            file=file,
+            model=model,
+            fit_type=fit_type,
+            expand_joint_bundles=False,
+            overwrite=overwrite,
+            select=select,
+            by=by,
         )
         if project is None:
             if show_output:
@@ -453,20 +630,12 @@ class Project:
         else:
             root = pathlib.Path(filepath)
 
-        # Per-file plot_config preserves File.plot_config customizations
-        # (axis labels, colormaps, etc.) — File.save_sbs_fit / save_2d_fit
-        # used self.plot_config for plotting, and we keep that contract.
-        plot_configs: dict[str, Any] = {}
-        for sf in project.files:
-            live = self._find_file_for_slot(sf.slots[0])
-            if live is not None and live.plot_config is not None:
-                plot_configs[sf.name] = live.plot_config
         n_written = fit_io.write_csv_export(
             root,
             project=project,
             num_fmt=self.num_fmt,
             delim=self.delim,
-            plot_config=plot_configs,
+            plot_config=self.plot_config,
             overwrite=overwrite,
         )
         if show_output:
@@ -476,82 +645,213 @@ class Project:
             )
 
     #
+    def drop_fits(self, ref: str, *, show_output: int = 1) -> None:
+        """
+        Remove one fit — or one whole joint bundle — from the in-session
+        history.
+
+        Explicit pruning for junk runs, so they never reach
+        :meth:`save_fits` / :meth:`export_fits`. ``ref`` is a slot-handle
+        prefix, a joint-optimization-hash prefix, or a label (read them
+        off ``results.compare_models()`` / ``results.variants()``).
+        Dropping a slot removes every history entry sharing its handle
+        (exact re-runs). A projection of a joint bundle cannot be dropped
+        alone — the bundle is one optimization; pass its joint hash to
+        drop the record plus every projection. Never touches archives on
+        disk; previously returned ``FitResults`` views keep their
+        snapshot.
+
+        Raises
+        ------
+        LookupError
+            If ``ref`` matches nothing or is ambiguous.
+        ValueError
+            If ``ref`` names a projection of a joint bundle — the message
+            names the bundle hash and its file count.
+        """
+
+        target = fit_io.resolve_fit_reference(
+            ref, slots=self._fit_history, joint_records=self._joint_fit_history
+        )
+        if isinstance(target, fit_io.SavedFitSlot):
+            if target.joint_ref is not None:
+                record = next(
+                    (
+                        jr
+                        for jr in self._joint_fit_history
+                        if jr.optimization_hash == target.joint_ref
+                    ),
+                    None,
+                )
+                n_files = len(record.projections) if record is not None else "?"
+                raise ValueError(
+                    f"Slot {target.handle[:8]} is a projection of joint "
+                    f"bundle {target.joint_ref[:8]} ({n_files} files) — a "
+                    f"bundle is one optimization and drops whole: "
+                    f"drop_fits('{target.joint_ref[:8]}')."
+                )
+            n_runs = sum(1 for s in self._fit_history if s.handle == target.handle)
+            self._fit_history[:] = [
+                s for s in self._fit_history if s.handle != target.handle
+            ]
+            if show_output:
+                print(
+                    f"Dropped slot {target.handle[:8]} (file "
+                    f"{target.file_name!r}, model {target.model_name!r}, "
+                    f"{target.fit_type}): {n_runs} run(s) removed from the "
+                    f"in-session history."
+                )
+            return
+        ref_hash = target.optimization_hash
+        n_records = sum(
+            1 for jr in self._joint_fit_history if jr.optimization_hash == ref_hash
+        )
+        n_proj = sum(1 for s in self._fit_history if s.joint_ref == ref_hash)
+        self._joint_fit_history[:] = [
+            jr for jr in self._joint_fit_history if jr.optimization_hash != ref_hash
+        ]
+        self._fit_history[:] = [s for s in self._fit_history if s.joint_ref != ref_hash]
+        if show_output:
+            print(
+                f"Dropped joint bundle {ref_hash[:8]} (model "
+                f"{target.model_name!r}): {n_records} record(s) and "
+                f"{n_proj} projection slot(s) removed from the in-session "
+                f"history."
+            )
+
+    #
     def _build_saved_project_from_history(
         self,
         *,
         file: "int | str | File | Sequence[int | str | File] | None",
         model: str | Sequence[str] | None,
         fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None,
+        expand_joint_bundles: bool,
+        overwrite: bool,
+        select: str = "all",
+        by: str | None = None,
     ) -> fit_io.SavedProject | None:
         """
-        Apply the standard filter + collapse pipeline to ``_fit_history``
-        and return a fully-populated ``SavedProject``.
+        Apply the standard filter + collapse + ``select=`` pipeline to
+        ``_fit_history`` and return a fully-populated ``SavedProject``.
 
-        Returns ``None`` when no slots survive the filter so callers can
-        emit a "nothing to do" message and short-circuit. Used by
+        Returns ``None`` when no slots survive, so callers can emit a
+        "nothing to do" message and short-circuit. Used by
         :meth:`save_fits` and :meth:`export_fits` so both go through the
-        identical filter / collapse / file-grouping logic.
+        identical filter / collapse / selection / file-grouping logic.
+
+        ``select`` keywords (``"all"`` / ``"latest"`` / ``"best"`` +
+        ``by=``) apply after the collapse, per ``(file, model, fit_type)``
+        group (``fit_io.select_snapshot_slots``). Any other value is a
+        reference — handle prefix, joint-hash prefix, or label — resolved
+        against the whole history and mutually exclusive with the filter
+        trio (one names exact fits, the other describes a group).
+
+        ``overwrite`` resolves in-session divergence at collapse: two
+        re-runs of one configuration with differing fitted values (a
+        non-deterministic optimizer) raise by default and keep the
+        latest with a warning under ``overwrite=True`` — the same rule
+        and the same flag as the archive-boundary collision
+        (fit_archive_principles.md §"One rule, both boundaries").
+
+        With ``expand_joint_bundles=True`` (the archive path), a selection
+        that touches any slot of a joint bundle silently expands to the
+        whole bundle — its joint record plus every sibling projection
+        slot — because partial bundles are not representable in the
+        archive (the writer would raise). The expansion runs *after*
+        ``select=``, so the bundle invariant wins over a per-group
+        selection that would have split a bundle. The CSV export passes
+        ``False``: per-file trees have no bundle invariant, and a
+        per-file ``export_fit`` must not write a sibling file's
+        directories; the returned project then carries no joint records
+        at all (the CSV writer does not render them).
+
+        File payloads come from the first-slot capture
+        (``_captured_files``); nothing is read from live state at save
+        time, so slots fitted under different correction states coexist —
+        each carries its own ``dark`` / ``calibration``.
         """
 
-        file_ids = self._resolve_save_file_filter(file)
-        models_filter = _to_str_set(model)
-        types_filter = _to_str_set(fit_type)
+        if by is not None and select != "best":
+            raise ValueError('by= is only meaningful with select="best".')
+        is_ref = select not in fit_io.SELECT_RESERVED
+        if is_ref and (file is not None or model is not None or fit_type is not None):
+            raise ValueError(
+                "select=<handle/label> names exact fits and cannot be "
+                "combined with the file=/model=/fit_type= filters."
+            )
 
         filtered: list[fit_io.SavedFitSlot] = []
-        for slot in self._fit_history:
-            slot_id = (_fp_key(slot.file_fingerprint), slot.file_name)
-            if file_ids is not None and slot_id not in file_ids:
-                continue
-            if models_filter is not None and slot.model_name not in models_filter:
-                continue
-            if types_filter is not None and slot.fit_type not in types_filter:
-                continue
-            filtered.append(slot)
+        if is_ref:
+            target = fit_io.resolve_fit_reference(
+                select,
+                slots=self._fit_history,
+                joint_records=self._joint_fit_history,
+            )
+            if isinstance(target, fit_io.SavedFitSlot):
+                filtered = [s for s in self._fit_history if s.handle == target.handle]
+            else:
+                ref_hash = target.optimization_hash
+                filtered = [s for s in self._fit_history if s.joint_ref == ref_hash]
+        else:
+            file_ids = self._resolve_save_file_filter(file)
+            models_filter = _to_str_set(model)
+            types_filter = _to_str_set(fit_type)
+            for slot in self._fit_history:
+                if file_ids is not None and slot.file_name not in file_ids:
+                    continue
+                if models_filter is not None and slot.model_name not in models_filter:
+                    continue
+                if types_filter is not None and slot.fit_type not in types_filter:
+                    continue
+                filtered.append(slot)
 
-        snapshot = fit_io.collapse_history_to_snapshot(filtered)
+        snapshot = fit_io.collapse_history_to_snapshot(filtered, overwrite=overwrite)
+        if not is_ref:
+            snapshot = fit_io.select_snapshot_slots(
+                snapshot, select=select, by=by, history_order=filtered
+            )
         if not snapshot:
             return None
 
-        # Group slots by source file identity (fingerprint + file_name) so
-        # two distinct Project.files with byte-identical raw arrays but
-        # different names are kept separate. Project enforces unique
-        # File.name in-session, so name disambiguates fingerprint
-        # collisions; the archive's full identity tuple is
-        # (fingerprint, name, original_path) — see fit_archive_schema.md.
-        by_id: dict[tuple[tuple[Any, ...], str], list[fit_io.SavedFitSlot]] = {}
+        # Expand to whole joint bundles: latest record per optimization
+        # hash (divergence rule applied to the bundles this save touches),
+        # then every sibling projection of each touched bundle.
+        joint_records: list[fit_io.JointFitResult] = []
+        if expand_joint_bundles:
+            touched = {s.joint_ref for s in snapshot if s.joint_ref is not None}
+            joint_records = fit_io.collapse_joint_history_to_snapshot(
+                [
+                    jr
+                    for jr in self._joint_fit_history
+                    if jr.optimization_hash in touched
+                ],
+                overwrite=overwrite,
+            )
+            selected_handles = {s.handle for s in snapshot}
+            for jr in joint_records:
+                for proj in jr.projections:
+                    if proj.slot.handle not in selected_handles:
+                        snapshot.append(proj.slot)
+                        selected_handles.add(proj.slot.handle)
+
+        # Group slots by file identity — the guarded, unique File.name
+        # (fit_archive_principles.md, Principle 1).
+        by_id: dict[str, list[fit_io.SavedFitSlot]] = {}
         for s in snapshot:
-            by_id.setdefault((_fp_key(s.file_fingerprint), s.file_name), []).append(s)
+            by_id.setdefault(s.file_name, []).append(s)
 
         saved_files: list[fit_io.SavedFile] = []
-        for slots in by_id.values():
-            live = self._find_file_for_slot(slots[0])
-            if live is None:
+        for name, slots in by_id.items():
+            captured = self._captured_files.get(name)
+            if captured is None:
                 raise ValueError(
-                    f"Slot for file {slots[0].file_name!r} has no matching "
-                    f"Project.files entry; cannot read raw arrays. "
-                    f"Re-attach the file or filter it out."
+                    f"Slot for file {name!r} has no captured file payload. "
+                    f"Capture registers the payload at the file's first "
+                    f"fit, so this history was not produced by a fit on "
+                    f"this Project."
                 )
-            assert live.data is not None  # type guard
-            assert live.energy is not None  # type guard
-            saved_files.append(
-                fit_io.SavedFile(
-                    name=live.name,
-                    original_path=str(live.path),
-                    dim=int(live.dim),
-                    shape=tuple(int(x) for x in live.data.shape),
-                    fingerprint=slots[0].file_fingerprint,
-                    data=live.data,
-                    energy=live.energy,
-                    time=(
-                        live.time
-                        if live.time is not None
-                        else np.array([], dtype=np.float64)
-                    ),
-                    e_lim=list(live.e_lim) if live.e_lim else None,
-                    t_lim=list(live.t_lim) if live.t_lim else None,
-                    slots=tuple(slots),
-                )
-            )
+            saved_files.append(dataclasses.replace(captured, slots=tuple(slots)))
 
         now = fit_io._now_iso()
         return fit_io.SavedProject(
@@ -560,7 +860,9 @@ class Project:
             schema_version=fit_io.SCHEMA_VERSION,
             timestamp_created=now,
             timestamp_updated=now,
+            plot_config=self.plot_config,
             files=tuple(saved_files),
+            joint=tuple(joint_records),
         )
 
     #
@@ -591,13 +893,11 @@ class Project:
     def _resolve_save_file_filter(
         self,
         arg: "int | str | File | Sequence[int | str | File] | None",
-    ) -> set[tuple[tuple[Any, ...], str]] | None:
+    ) -> set[str] | None:
         """
-        Map a ``file=...`` arg for :meth:`save_fits` to a set of slot-identity
-        keys ``(fingerprint_key, file_name)``. Both components are matched
-        against the slot to disambiguate two ``Project.files`` with
-        byte-identical raw arrays but distinct names. Returns ``None`` if
-        ``arg`` is ``None`` (no filter).
+        Map a ``file=...`` arg for :meth:`save_fits` to a set of file
+        names — the slot-identity key (unique and guarded in-session).
+        Returns ``None`` if ``arg`` is ``None`` (no filter).
         """
 
         if arg is None:
@@ -607,7 +907,7 @@ class Project:
             items = [arg]
         else:
             items = arg
-        keys: set[tuple[tuple[Any, ...], str]] = set()
+        keys: set[str] = set()
         for item in items:
             if isinstance(item, int):
                 f = self.files[item]
@@ -619,32 +919,8 @@ class Project:
                 raise TypeError(
                     f"Unsupported file filter entry type: {type(item).__name__}"
                 )
-            keys.add((_fp_key(f.fingerprint()), f.name))
+            keys.add(f.name)
         return keys
-
-    #
-    def _find_file_for_slot(self, slot: fit_io.SavedFitSlot) -> "File | None":
-        """
-        Look up the live ``File`` whose name and fingerprint match a slot.
-
-        Both name and fingerprint must match; either alone can produce a
-        false positive when (a) the user has two byte-identical files in
-        the project under different names, or (b) a file was renamed
-        post-fit so the slot's name no longer matches the live one. The
-        slot's recorded ``file_name`` is the authoritative in-session
-        identity (Project enforces unique names), and the fingerprint
-        cross-checks that the live arrays still match.
-        """
-
-        target_fp = _fp_key(slot.file_fingerprint)
-        for f in self.files:
-            if f.name != slot.file_name:
-                continue
-            if f.data is None or f.energy is None:
-                continue
-            if _fp_key(f.fingerprint()) == target_fp:
-                return f
-        return None
 
     #
     def __getitem__(self, key: int | str) -> "File":
@@ -698,7 +974,6 @@ class Project:
 
         print("Project")
         print(f"  path:         {self.path}")
-        print(f"  results:      {self.path_results}")
         print(f"  name:         {self.name}")
         if self._config_file is not None:
             print(f"  config:       {self._config_file}")
@@ -736,7 +1011,7 @@ class Project:
                 except ValueError:
                     axes_ok = False
                 if files_2d and axes_ok:
-                    config = files_2d[0].plot_config
+                    config = self.plot_config
                     datasets = [f.data for f in files_2d if f.data is not None]
                     uplt.plot_2d_grid(
                         datasets=datasets,
@@ -754,27 +1029,25 @@ class Project:
                     )
 
         if detail >= 2:
-            print("\n  Plot settings:")
-            print(f"    e_label:    {self.e_label}")
-            print(f"    t_label:    {self.t_label}")
-            print(f"    z_label:    {self.z_label}")
-            print(f"    x_dir:      {self.x_dir}")
-            print(f"    x_type:     {self.x_type}")
-            print(f"    y_dir:      {self.y_dir}")
-            print(f"    y_type:     {self.y_type}")
-            print(f"    z_colormap: {self.z_colormap}")
-            print(f"    z_colormap_res: {self.z_colormap_res}")
-            print(f"    z_colorbar: {self.z_colorbar}")
-            print(f"    z_type:     {self.z_type}")
-            print(f"    dpi_plt:    {self.dpi_plt}")
-            print(f"    dpi_save:   {self.dpi_save}")
-            print(f"    res_mult:   {self.res_mult}")
+            cfg = self.plot_config
+            print("\n  Plot settings (project-owned PlotConfig):")
+            print(f"    x_label:    {cfg.x_label}")
+            print(f"    y_label:    {cfg.y_label}")
+            print(f"    z_label:    {cfg.z_label}")
+            print(f"    x_dir:      {cfg.x_dir}")
+            print(f"    x_type:     {cfg.x_type}")
+            print(f"    y_dir:      {cfg.y_dir}")
+            print(f"    y_type:     {cfg.y_type}")
+            print(f"    z_colormap: {cfg.z_colormap}")
+            print(f"    z_colormap_res: {cfg.z_colormap_res}")
+            print(f"    z_colorbar: {cfg.z_colorbar}")
+            print(f"    z_type:     {cfg.z_type}")
+            print(f"    dpi_plot:   {cfg.dpi_plot}")
+            print(f"    dpi_save:   {cfg.dpi_save}")
+            print(f"    res_mult:   {cfg.res_mult}")
             print("\n  File I/O settings:")
-            print(f"    ext:        {self.ext}")
             print(f"    num_fmt:    {self.num_fmt}")
             print(f"    delim:      {repr(self.delim)}")
-            print(f"    da_fmt:     {self.da_fmt}")
-            print(f"    DA_slices:  {self.da_slices_fmt}")
 
     #
     def _load_config(self, config_file: PathLike) -> None:
@@ -803,14 +1076,51 @@ class Project:
             # Update attributes from config
             for key, value in config.items():
                 normalized_key = key.replace("-", "_")
+                # Historical project-attribute spellings stay valid in
+                # YAML; canonical names are the PlotConfig fields.
                 _key_map = {
-                    "x_label": "e_label",
-                    "y_label": "t_label",
-                    "dpi_plot": "dpi_plt",
+                    "e_label": "x_label",
+                    "t_label": "y_label",
+                    "dpi_plt": "dpi_plot",
+                }
+                _removed_keys = {
+                    "auto_export": (
+                        "fits no longer write to disk; use "
+                        "save_fits()/export_fits() to persist results"
+                    ),
+                    "path_results": (
+                        "the fit-time output tree is gone; save_fits()/"
+                        "export_fits() take an explicit path (defaults "
+                        "./fit_results/<name>.fit.h5 and ./fit_results/<name>/)"
+                    ),
+                    "ext": "unused, never wired to any export path; remove it",
+                    "da_fmt": "unused, never wired to any export path; remove it",
+                    "da_slices_fmt": (
+                        "SbS per-slice PNG filenames now use a fixed "
+                        "'{slice_index:06d}.png' convention; remove it"
+                    ),
                 }
                 project_key = _key_map.get(normalized_key) or normalized_key
 
-                if hasattr(self, project_key):
+                if project_key in _removed_keys:
+                    raise ValueError(
+                        f"Config key '{key}' was removed in v0.14.0: "
+                        f"{_removed_keys[project_key]}. "
+                        f"Remove it from {config_path}."
+                    )
+                if project_key == "name":
+                    raise ValueError(
+                        f"Config key 'name' cannot rename the project: "
+                        f"Project.name is identity, set at construction. "
+                        f"Remove it from {config_path}."
+                    )
+                if project_key in PLOT_FIELD_NAMES:
+                    # Presentation keys land on the project-owned config.
+                    # Tuple-typed fields arrive as YAML lists.
+                    if project_key in PLOT_TUPLE_FIELDS and value is not None:
+                        value = tuple(value)
+                    setattr(self.plot_config, project_key, value)
+                elif hasattr(self, project_key):
                     setattr(self, project_key, value)
                 else:
                     if self.show_output >= 1:
@@ -1069,18 +1379,11 @@ class Project:
                 t_start=t_start,
                 print_str=(f"Baseline fit complete for {len(self.files)} files: "),
             )
-            # Show saved baseline fit plots in a grid
-            import matplotlib.image as mpimg
-
-            images = []
+            # Show each file's baseline fit inline from its slot.
+            results = self.results
             for f in self.files:
-                img_path = (
-                    f.model_path(model_name, fit_type="baseline") / "base_fit.png"
-                )
-                if img_path.exists():
-                    images.append(mpimg.imread(str(img_path)))
-            if images:
-                uplt.plot_grid(images, columns=min(3, len(images)))
+                if results.find(file=f.name, model=model_name, fit_type="baseline"):
+                    results.plot_fit(file=f, model=model_name, fit_type="baseline")
 
     # ------------------------------------------------------------------
     # Project-level fitting
@@ -1330,7 +1633,7 @@ class Project:
         model_name: str,
         stages: int = 2,
         **fit_wrapper_kwargs,
-    ) -> None:
+    ) -> fit_io.JointFitResult:
         """
         Fit all files simultaneously with shared/independent parameters.
 
@@ -1338,6 +1641,11 @@ class Project:
         once, and distributes final results back to each file's model.
         Parameter sharing is controlled by the ``vary`` field in each
         model's YAML (``"project"``/``"file"``/``"static"``).
+
+        Every successful call captures one ``JointFitResult`` (combined
+        parameter table, parameter maps, joint uncertainty and MCMC,
+        whole-objective metrics) plus one per-file 2d projection slot,
+        published together to the project histories.
 
         Parameters
         ----------
@@ -1347,6 +1655,14 @@ class Project:
             Number of optimization stages (see ``fitlib.fit_wrapper``).
         **fit_wrapper_kwargs
             Additional keyword arguments passed to ``fitlib.fit_wrapper``.
+
+        Returns
+        -------
+        fit_io.JointFitResult
+            The captured joint record — the same object appended to the
+            history, so ignoring the return value stays valid; it remains
+            reachable via ``Project.results.find_joint()`` /
+            ``get_joint()``.
         """
 
         t_start = time.time()
@@ -1445,95 +1761,138 @@ class Project:
             par=combined_pars,
             stages=stages,
             show_output=1 if self.show_output >= 1 else 0,
-            save_output=0,
             **fit_wrapper_kwargs,
         )
 
         # Distribute final parameters back to file models and hook into
-        # the standard File 2D-fit lifecycle so that save_2d_fit() and
-        # get_fit_results("2d") work on project-fitted files.
+        # the standard File 2D-fit lifecycle so that export_fit() and
+        # get_parameters("2d") work on project-fitted files.
         mapping = project_fit_info["mapping"]
         models = project_fit_info["models"]
-        joint_result = result[1] if result[1] else None
-        if joint_result:
-            final_pars = joint_result.params
-            for proj_name, file_idx, local_name in mapping:
-                if proj_name in final_pars:
-                    models[file_idx].lmfit_pars[local_name].value = final_pars[
-                        proj_name
-                    ].value
+        joint_par_fin = result.par_fin
+        final_pars = joint_par_fin.params
+        for proj_name, file_idx, local_name in mapping:
+            if proj_name in final_pars:
+                models[file_idx].lmfit_pars[local_name].value = final_pars[
+                    proj_name
+                ].value
 
-        # method/nvarys come from the joint optimizer; per-file stderr/CI are
+        # method comes from the joint optimizer; per-file stderr/CI are
         # absent by design (joint covariance does not decompose cleanly per
-        # file). conf_ci is an empty DataFrame so _append_2d_slot's
-        # `result[2].empty` check works without branching.
-        joint_method = (
-            getattr(joint_result, "method", "unknown") if joint_result else "unknown"
-        )
-        joint_nvarys = int(getattr(joint_result, "nvarys", 0)) if joint_result else 0
+        # file), and so is nvarys — the joint varying-parameter count does
+        # not decompose by file either, so the placeholder carries none and
+        # the projection slots' count-dependent metrics stay NaN. conf_ci is
+        # an empty DataFrame so the slot builder's `conf_ci.empty` check
+        # works without branching.
+        joint_method = str(getattr(joint_par_fin, "method", "unknown"))
         for f, model in zip(self.files, models, strict=True):
             f.model_2d = model
             assert model is not None  # type guard
             assert f.energy is not None and f.data is not None  # type guard
-            # Length-5 list mirrors fit_wrapper's [par_ini, par_fin, conf_ci,
-            # emcee_fin, emcee_ci]. Project fits do not run per-file MCMC, so
-            # emcee slots are inert (None / empty DataFrame).
-            model.result = [
-                None,
-                types.SimpleNamespace(
-                    params=model.lmfit_pars,
-                    method=joint_method,
-                    nvarys=joint_nvarys,
+            # Per-file FitOutput whose par_fin is a minimal MinimizerResult
+            # (params/method only, no covar/nvarys): the joint optimization
+            # has no per-file initial guess, and project fits do not run
+            # per-file MCMC, so those fields are inert (None / empty).
+            model.result = ulmfit.FitOutput(
+                par_ini=None,
+                par_fin=cast(
+                    "ulmfit.TypedMinimizerResult",
+                    MinimizerResult(
+                        params=model.lmfit_pars,
+                        method=joint_method,
+                    ),
                 ),
-                pd.DataFrame(),
-                None,
-                pd.DataFrame(),
-            ]
-            # const/args mirror File.fit_2d so _append_2d_slot can evaluate
+                conf_ci=pd.DataFrame(),
+                emcee_fin=None,
+                emcee_ci=pd.DataFrame(),
+            )
+            # const/args mirror File.fit_2d so the slot builder can evaluate
             # the per-file fit grid via fitlib.residual_fun. Per-file
             # re-evaluation always uses the interpreter — the fused JAX
             # closures cover the whole project, not single files.
             model.const = (f.energy, f.data, "fit_model_mcp", 0, f.e_lim, f.t_lim)
             model.args = (model, 2)
 
-        self._project_fit_result = result
-
-        # Append a per-file 2D slot to Project._fit_history so the joint fit
-        # is discoverable via Project.results, matching the File.fit_2d()
-        # entry point.
-        if joint_result:
-            for f in self.files:
-                f._append_2d_slot(model_name=model_name, fit_fun_str="fit_model_mcp")
-
-        # Save per-file 2D fit results (silently)
-        if self.auto_export:
-            saved = self.show_output
-            self.show_output = 0
-            try:
-                for f in self.files:
-                    if f.model_2d is not None:
-                        path_2d = f.model_path(model_name, fit_type="2d")
-                        f._save_2d_fit_legacy(save_path=path_2d)
-            finally:
-                self.show_output = saved
+        # Build the per-file projection slots and the joint record first;
+        # publish to either history only after every piece exists, so a
+        # capture failure publishes neither (one optimization, one bundle).
+        # fit_fun_str is the effective joint backend by construction — the
+        # JAX branch only switches after building the fused closures.
+        joint_fit_settings = fit_io.build_fit_settings(
+            stages=stages,
+            backend=fit_fun_str,
+            fit_wrapper_kwargs=fit_wrapper_kwargs,
+        )
+        # Joint identity: one optimization over N files. Each file's entry
+        # carries its version stamp (correction state) and its 2d-window
+        # selection; the parameter table and initial state are the
+        # combined optimizer's.
+        input_entries: list[tuple[str, str, str]] = []
+        structure_entries = []
+        for f, model in zip(self.files, models, strict=True):
+            version_stamp, _, _ = f._capture_file_identity()
+            selection_json = fit_io.build_selection_json(
+                "2d",
+                e_lim=list(f.e_lim) if f.e_lim else None,
+                t_lim=list(f.t_lim) if f.t_lim else None,
+            )
+            input_entries.append((f.name, version_stamp, selection_json))
+            assert model is not None  # type guard
+            structure_entries.append(f._model_structure_entry(model))
+        input_files_joint = fit_io.encode_input_files(
+            scope="project", entries=input_entries
+        )
+        model_structure_joint = fit_io.encode_model_structure(structure_entries)
+        assert result.par_ini is not None  # type guard — the joint fit seeds
+        parameter_metadata, init_values = fit_io.params_identity(result.par_ini)
+        joint_hash = fit_io.compute_optimization_hash(
+            input_files_json=input_files_joint,
+            fit_type="2d",
+            model_structure_json=model_structure_joint,
+            parameter_metadata=parameter_metadata,
+            initial_state=[init_values],
+            optimizer_settings_json=fit_io.optimizer_settings_from_provenance(
+                joint_fit_settings
+            ),
+        )
+        slots_2d: list[fit_io.SavedFitSlot] = []
+        for f in self.files:
+            slot = f._build_2d_slot(
+                model_name=model_name,
+                fit_fun_str="fit_model_mcp",
+                fit_settings=joint_fit_settings,
+                joint_identity=(joint_hash, input_files_joint),
+                joint_model_structure=model_structure_joint,
+            )
+            assert slot is not None  # type guard — par_fin.params is always set
+            slots_2d.append(slot)
+        joint_record = fit_io._joint_result_from_project_fit(
+            model_name=model_name,
+            optimization_hash=joint_hash,
+            input_files=input_files_joint,
+            model_structure=model_structure_joint,
+            mapping=mapping,
+            slots=slots_2d,
+            fit_output=result,
+            fit_settings=joint_fit_settings,
+        )
+        self._fit_history.extend(slots_2d)
+        self._joint_fit_history.append(joint_record)
 
         if self.show_output >= 1:
             fitlib.time_display(
                 t_start=t_start,
                 print_str="Time elapsed for project-level 2D fit: ",
             )
-            # Show saved 2D fit plots in a grid
-            import matplotlib.image as mpimg
-
-            images = []
+            # Show each file's data/fit/residual maps inline from its slot,
+            # then the joint MCMC diagnostics when a posterior was sampled
+            # (mirrors File.fit_2d's fit-time plotting).
             for f in self.files:
-                img_path = (
-                    f.model_path(model_name, fit_type="2d") / "2D_data_fit_res.png"
-                )
-                if img_path.exists():
-                    images.append(mpimg.imread(str(img_path)))
-            if images:
-                uplt.plot_grid(images, columns=min(3, len(images)))
+                f.plot_fit(model=model_name, fit_type="2d")
+            if joint_record.mcmc is not None:
+                self.results.plot_joint_mcmc(model=model_name)
+
+        return joint_record
 
 
 #
@@ -1613,7 +1972,7 @@ class File:
         Model used for baseline fitting
     model_sbs : Model or None
         Model used for Slice-by-Slice fitting
-    results_sbs : list
+    results_sbs : list of ulmfit.FitOutput
         Slice-by-Slice fit results for all time slices
     model_spec : Model or None
         Model used for individual spectrum fitting
@@ -1621,8 +1980,6 @@ class File:
         Extracted 1D spectrum for individual spectrum fitting
     spec_t_abs, spec_t_ind : list
         Time bounds for spectrum extraction (absolute values and indices)
-    plot_config : PlotConfig
-        Plot configuration (created from parent Project on first access)
 
     Notes
     -----
@@ -1662,17 +2019,17 @@ class File:
         # pass parent project or (default) create a functioning test project environment
         self.p = parent_project if parent_project is not None else Project(path=None)
         self.path = path  # path to load/save [?] data from
-        self.name = name if name is not None else pathlib.Path(path).stem
+        file_name = name if name is not None else pathlib.Path(path).stem
         # Check for duplicate names before registering
         existing = [f.name for f in self.p.files]
-        if self.name in existing:
+        if file_name in existing:
             raise ValueError(
-                f'Duplicate file name "{self.name}". '
+                f'Duplicate file name "{file_name}". '
                 f"Pass an explicit name= to disambiguate "
-                f'(e.g. name="{self.name}_2").'
+                f'(e.g. name="{file_name}_2").'
             )
+        self._name = file_name
         self.p.files.append(self)  # register with parent project
-        self._plot_config: PlotConfig | None = None  # create plot config from project
         self.data = data  # (time-[optional] and) energy-dependent data to fit
         self.data_raw: np.ndarray | None = data.copy() if data is not None else None
         self.dim = 0 if data is None else data.ndim  # 1/2 D for energy/+time
@@ -1715,7 +2072,7 @@ class File:
         self.model_sbs: mcp.Model | None = None
         self.model_2d: mcp.Model | None = None
         # all Slice-by-Slice fit results (different from model_sbs.result)
-        self.results_sbs: list = []
+        self.results_sbs: list[ulmfit.FitOutput] = []
         #
         self.model_spec: mcp.Model | None = None  # model for individual spectrum fit
         self.data_spec: np.ndarray | None = None  # extracted 1D spectrum
@@ -1734,24 +2091,40 @@ class File:
         if self.energy is not None:
             self.set_fit_limits(energy_limits=None, show_plot=False)
 
+    #
     @property
     def plot_config(self) -> PlotConfig:
-        """
-        Get plot config for this File.
+        """Removed in v0.14.0 — presentation is project-owned."""
 
-        Created from parent Project on first access. File can then customize
-        persistently (e.g., for different time axes across files).
-        """
+        raise AttributeError(
+            "File.plot_config was removed in v0.14.0: presentation is "
+            "project-owned — use file.p.plot_config, or pass config= to "
+            "the plot call."
+        )
 
-        if self._plot_config is None:
-            self._plot_config = PlotConfig.from_project(self.p)
-        return self._plot_config
-
+    #
     @plot_config.setter
-    def plot_config(self, config: PlotConfig) -> None:
-        """Allow setting a custom config for this File"""
+    def plot_config(self, value: PlotConfig) -> None:
+        raise AttributeError(
+            "File.plot_config was removed in v0.14.0: presentation is "
+            "project-owned — set fields on file.p.plot_config, or pass "
+            "config= to the plot call."
+        )
 
-        self._plot_config = config
+    #
+    @property
+    def name(self) -> str:
+        """File name — identity within its Project, set at construction."""
+
+        return self._name
+
+    #
+    @name.setter
+    def name(self, value: str) -> None:
+        raise AttributeError(
+            "File.name is the file's identity and cannot be reassigned; "
+            "pass name= at construction."
+        )
 
     #
     def __repr__(self) -> str:
@@ -1807,7 +2180,7 @@ class File:
                 "Pass time= when constructing File."
             )
 
-        config = self.plot_config
+        config = self.p.plot_config
 
         if self.dim == 1:
             uplt.plot_1d(
@@ -2010,6 +2383,9 @@ class File:
         Model
             The loaded model. For ``'energy'`` models the model is also
             registered in ``self.models`` and set as the active model.
+            Re-loading an existing energy-model name replaces the live
+            model object (with a warning); completed fits are unaffected —
+            they are kept in the project fit history.
         """
 
         # normalize bare string to single-element list
@@ -2027,12 +2403,16 @@ class File:
                 " in model_info."
             )
         if model_type == "energy":
-            if self.select_model(model_info) is not None:
-                raise ValueError(
-                    f'Model named "{self.model_list_to_name(model_info)}"'
-                    " already exists. Delete the existing model"
-                    " or change the name of the new model."
+            existing = self.select_model(model_info)
+            if existing is not None:
+                warnings.warn(
+                    f'Model "{self.model_list_to_name(model_info)}" already '
+                    f"exists on file '{self.name}' — overwriting the live "
+                    f"model object. Completed fits are unaffected (they are "
+                    f"kept in the fit history).",
+                    stacklevel=2,
                 )
+                self.models.remove(existing)
 
         # Load and process YAML file with appropriate numbering strategy
         model_yaml_path = self.p.path / pathlib.Path(model_yaml)
@@ -2076,6 +2456,7 @@ class File:
 
         # Inherit necessary model attributes from function input, file, and project
         loaded_model.yaml_f_name = pathlib.Path(model_yaml).stem  # yaml file name
+        loaded_model.submodel_names = tuple(model_info)
         loaded_model.dim = 1  # start with 1, +1 when adding dynamics
         if isinstance(loaded_model, mcp.Dynamics):
             loaded_model.subcycles = len(model_info) - 1
@@ -2105,6 +2486,17 @@ class File:
                 c_temp = mcp.Component(c_name, fcts_package, subcycle)
                 c_temp.add_pars(c_info)
                 all_comps.append(c_temp)
+
+        # Snippet provenance — after the loop, so an unknown submodel name
+        # raises the friendly "not found in <file>" error above, never a
+        # bare KeyError from the snippet slicer.
+        loaded_model.yaml_records = _yaml_records_for_model(
+            model_yaml_path=model_yaml_path,
+            source_file=pathlib.Path(model_yaml).name,
+            model_info=model_info,
+            model_type=model_type,
+            par_name=par_name,
+        )
 
         # Add all components (and their parameters) to model
         loaded_model.add_components(all_comps)
@@ -2147,9 +2539,15 @@ class File:
         # parameter list
         mod.describe(detail=0)
 
+        title_mod = (
+            f"File: {self.path}, "
+            f'Model: "{mod.name}" (from "{mod.yaml_f_name}.yaml")'
+            ": initial guess"
+        )
+
         if detail == 1 and isinstance(mod, mcp.Dynamics):
-            mod.create_value_1d(store_1d=1)  # update individual component spectra
-            mod.plot_1d(plot_sum=False)  # plot guess only (individual components)
+            # plot guess only (individual components; plot_1d evaluates)
+            mod.plot_1d(plot_sum=False, title=title_mod)
 
         if detail == 1 and mod.dim == 1:
             if self.energy is None or self.data_base is None:
@@ -2159,26 +2557,24 @@ class File:
                     stacklevel=2,
                 )
                 return
-            mod.create_value_1d(store_1d=1)  # update individual component spectra
-            # plot initial guess (individual components), data, and residual
-            title_mod = (
-                f"File: {self.path}, "
-                f'Model: "{model_info}" (from "{mod.yaml_f_name}.yaml")'
-                ": initial guess"
-            )
-            fitlib.plt_fit_res_1d(
-                x=self.energy,
-                y=self.data_base,
-                fit_fun_str=self.p.spec_fun_str,
-                par_init=[],
-                par_fin=mod.lmfit_pars,
+            # evaluate here (fitlib owns the spectra dispatch), render the
+            # initial guess (individual components), data, and residual
+            # via the shared array-based renderer
+            total, comps = fitlib.eval_model_curves_1d(
+                self.energy,
+                self.p.spec_fun_str,
+                mod.lmfit_pars,
                 args=(mod, 1),
-                plot_sum=False,
-                show_init=False,
+            )
+            uplt.plot_fit_overlay_1d(
+                x=self.energy,
+                observed=self.data_base,
+                fit=total,
+                components=comps,
+                legend=[comp.name for comp in mod.components],
                 title=title_mod,
                 fit_lim=self.e_lim,
-                config=self.plot_config,
-                legend=[comp.name for comp in mod.components],
+                config=self.p.plot_config,
             )
 
         if detail == 1 and mod.dim == 2:
@@ -2190,14 +2586,15 @@ class File:
                 )
                 return
             # plot data, fit, and residual 2D maps
-            fitlib.plt_fit_res_2d(
+            uplt.plot_fit_res_2d(
                 data=self.data,
                 fit=mod.value_2d,
                 x=self.energy,
                 y=self.time,
-                config=self.plot_config,
+                config=self.p.plot_config,
                 x_lim=self.e_lim,
                 y_lim=self.t_lim,
+                title=title_mod,
             )
 
     #
@@ -2245,60 +2642,15 @@ class File:
         self.models = []
 
     #
-    def fingerprint(self) -> dict[str, Any]:
-        """
-        Multi-sha content fingerprint of this file.
-
-        Recomputed on every call so corrections that mutate ``self.data``
-        (subtract_dark, calibrate_data, reset_corrections) propagate into
-        slot identity. Sha256 over typical data is sub-ms; the cost is
-        negligible compared to a fit, and a stale cache silently collapses
-        pre- and post-correction slots into the same ``history_key``.
-        """
-
-        if self.data is None or self.energy is None:
-            raise ValueError("Cannot fingerprint a File without data and energy axis.")
-        return fit_io.compute_file_fingerprint(
-            data=self.data, energy=self.energy, time=self.time
-        )
-
-    #
-    def model_path(
-        self,
-        model_name: str,
-        *,
-        fit_type: Literal["baseline", "spectrum", "sbs", "2d"],
-    ) -> pathlib.Path:
-        """
-        Build the path where model fit results are saved.
-
-        Layout: ``{Project.path_results}/{File.name}/{fit_type}/{model_name}/``.
-        Only computes the path — directories are created by the write sites
-        when a file is actually saved.
-
-        Parameters
-        ----------
-        model_name : str
-            Name of model (must exist in self.models)
-        fit_type : {"baseline", "spectrum", "sbs", "2d"}
-            Fit type segment in the output path.
-
-        Returns
-        -------
-        Path
-            Path to model results directory
-        """
-
-        return self.p.path_results / self.name / fit_type / model_name
-
-    #
     def _apply_corrections(self) -> None:
         """Rebuild ``data`` from ``data_raw`` by applying dark and calibration."""
 
         assert self.data_raw is not None  # type guard
         assert self.dark is not None  # type guard
         assert self.calibration is not None  # type guard
-        self.data = (self.data_raw - self.dark) / self.calibration
+        self.data = uarrays.apply_corrections(
+            self.data_raw, dark=self.dark, calibration=self.calibration
+        )
         # recompute baseline if it was previously defined
         if self.base_t_abs:
             self.define_baseline(
@@ -2466,8 +2818,8 @@ class File:
                     self.data_base,
                 ],
                 x=self.energy,
-                config=self.plot_config,
-                y_label=self.plot_config.z_label,  # intensity, not the t_label
+                config=self.p.plot_config,
+                y_label=self.p.plot_config.z_label,  # intensity, not the t_label
                 title=(
                     f"Baseline data: t in [{t_lo:.4g}, {t_hi:.4g}] "
                     f"(idx: [{self.base_t_ind[0]}, {self.base_t_ind[1] - 1}])"
@@ -2549,8 +2901,8 @@ class File:
                 uplt.plot_1d(
                     data=[self.data, y_cut],
                     x=[energy, x_cut],
-                    config=self.plot_config,
-                    y_label=self.plot_config.z_label,  # intensity, not the t_label
+                    config=self.p.plot_config,
+                    y_label=self.p.plot_config.z_label,  # intensity, not the t_label
                     waterfall=(np.max(np.abs(y_cut)) - np.min(np.abs(y_cut))) / 8,
                     legend=["all", "cut"],
                     vlines=self.e_lim_abs,
@@ -2566,7 +2918,7 @@ class File:
                     data=self.data,
                     x=energy,
                     y=self.time,
-                    config=self.plot_config,
+                    config=self.p.plot_config,
                     vlines=self.e_lim_abs,
                     hlines=self.t_lim_abs,
                 )
@@ -2616,8 +2968,9 @@ class File:
         materialized at their fit completion; ``compare_models()`` reads
         those snapshots and is therefore unaffected by σ changes made after
         the fit. For an alternative calibration of *existing* results, divide
-        the always-present ``chi2_red_raw`` column by ``alt_sigma**2``
-        directly on the returned DataFrame — no API needed.
+        the raw ``chi2_red_raw`` column by ``alt_sigma**2`` directly on the
+        returned DataFrame — no API needed. (Request it via ``metrics=`` if
+        the dynamic default dropped it; it is ``NaN`` on joint projections.)
 
         Raises
         ------
@@ -2681,13 +3034,6 @@ class File:
                 "Run define_baseline() first to extract the baseline region."
             )
 
-        # get initial guess
-        initial_guess = ulmfit.par_extract(
-            self.model_base.lmfit_pars, return_type="list"
-        )
-        # define path where baseline fit results will be saved to
-        path_base_results = self.model_path(model_name, fit_type="baseline")
-
         # const = (x, data, package, fnctn string, unpack, energy limits, time limits)
         _fun_str = self.p.spec_fun_str
         self.model_base.const = (
@@ -2701,66 +3047,45 @@ class File:
         # --- dispatch: GIR fast path vs interpreter ---
         _args = self._build_1d_dispatch_args(self.model_base, _fun_str)
         self.model_base.args = _args
-        # CSV format/delimiter: project defaults unless caller overrides
-        lmfit_wrapper_kwargs.setdefault("num_fmt", self.p.num_fmt)
-        lmfit_wrapper_kwargs.setdefault("delim", self.p.delim)
         # fit (optionally) with confidence intervals
-        self.model_base.result = fitlib.fit_wrapper(
+        fit_out = fitlib.fit_wrapper(
             const=self.model_base.const,
             args=self.model_base.args,
             par_names=self.model_base.parameter_names,
             par=self.model_base.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
-            save_output=1 if self.p.auto_export else 0,
-            save_path=path_base_results / model_name,
             **lmfit_wrapper_kwargs,
         )
+        self.model_base.result = fit_out
 
         # Write optimized values back to model.lmfit_pars.  fit_wrapper
         # optimizes a deepcopy, so model.lmfit_pars may be stale when
         # the GIR path was used (it never calls model.update_value).
-        if stages >= 1 and self.model_base.result[1] != []:
+        if stages >= 1:
             self.model_base.update_value(
-                new_par_values=ulmfit.par_extract(
-                    self.model_base.result[1], return_type="list"
-                )
+                new_par_values=ulmfit.par_extract(fit_out.par_fin, return_type="list")
             )
-            self._append_baseline_slot(model_name=model_name, fit_fun_str=_fun_str)
-            if self.p.auto_export:
-                self.save_baseline_fit(save_path=path_base_results)
-
-        # display/plot and save baseline fit summary
-        title_base = (
-            f"File: {self.path}, "
-            f'Model: "{model_name}" (from "{self.model_base.yaml_f_name}.yaml")'
-        )
-
-        save_plot = self.p.auto_export
-        show_plot = self.p.show_output >= 1
-        if save_plot or show_plot:
-            fitlib.plt_fit_res_1d(
-                x=self.energy,
-                y=self.data_base,
-                fit_fun_str=self.p.spec_fun_str,
-                par_init=initial_guess,
-                par_fin=self.model_base.result[1],
-                args=self.model_base.args,
-                plot_sum=False,
-                show_init=True,
-                title=title_base,
-                fit_lim=self.e_lim,
-                config=self.plot_config,
-                legend=[comp.name for comp in self.model_base.components],
-                save_img=uplt._save_img_flag(save=save_plot, show=show_plot),
-                save_path=path_base_results / "base_fit.png",
+            self._append_baseline_slot(
+                model_name=model_name,
+                fit_fun_str=_fun_str,
+                fit_settings=fit_io.build_fit_settings(
+                    stages=stages,
+                    backend=_effective_backend(_fun_str, _args),
+                    fit_wrapper_kwargs=lmfit_wrapper_kwargs,
+                ),
             )
+
+        if self.p.show_output >= 1:
+            self.plot_fit(model=model_name, fit_type="baseline")
+            if fit_out.emcee_fin is not None:
+                self.plot_mcmc(model=model_name, fit_type="baseline")
 
         if stages >= 1 and self.p.show_output >= 1:
             fitlib.time_display(
                 t_start=t_base, print_str="Time elapsed for baseline fit: "
             )
-            display(self.model_base.result[1].params)  # display final pars below figure
+            display(fit_out.par_fin.params)  # display final pars below figure
 
     #
     def _save_1d_fit(self, model: mcp.Model | None, save_path: PathLike) -> None:
@@ -2773,8 +3098,8 @@ class File:
 
         if model is None or self.energy is None:
             raise ValueError("Model/energy missing; nothing to save.")
-        if not model.result or not getattr(model.result[1], "params", None):
-            return  # mocked / placeholder; nothing to dump
+        if model.result is None or not getattr(model.result.par_fin, "params", None):
+            return  # unfitted or mocked / placeholder; nothing to dump
         model.create_value_1d(store_1d=1)
         if model.value_1d is None:
             raise ValueError(
@@ -2914,12 +3239,6 @@ class File:
             )
 
         assert self.data_spec is not None  # type guard
-        # get initial guess
-        initial_guess = ulmfit.par_extract(
-            self.model_spec.lmfit_pars, return_type="list"
-        )
-        # define path where spectrum fit results will be saved to
-        path_spec_results = self.model_path(model_name, fit_type="spectrum")
 
         # const = (x, data, fnctn string, unpack, energy limits, time limits)
         _fun_str = self.p.spec_fun_str
@@ -2934,28 +3253,22 @@ class File:
         # --- dispatch: GIR fast path vs interpreter ---
         _args = self._build_1d_dispatch_args(self.model_spec, _fun_str)
         self.model_spec.args = _args
-        # CSV format/delimiter: project defaults unless caller overrides
-        lmfit_wrapper_kwargs.setdefault("num_fmt", self.p.num_fmt)
-        lmfit_wrapper_kwargs.setdefault("delim", self.p.delim)
         # fit
-        self.model_spec.result = fitlib.fit_wrapper(
+        fit_out = fitlib.fit_wrapper(
             const=self.model_spec.const,
             args=self.model_spec.args,
             par_names=self.model_spec.parameter_names,
             par=self.model_spec.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
-            save_output=1 if self.p.auto_export else 0,
-            save_path=path_spec_results / model_name,
             **lmfit_wrapper_kwargs,
         )
+        self.model_spec.result = fit_out
 
         # Write optimized values back to model.lmfit_pars (see fit_baseline).
-        if stages >= 1 and self.model_spec.result[1] != []:
+        if stages >= 1:
             self.model_spec.update_value(
-                new_par_values=ulmfit.par_extract(
-                    self.model_spec.result[1], return_type="list"
-                )
+                new_par_values=ulmfit.par_extract(fit_out.par_fin, return_type="list")
             )
             self._append_spectrum_slot(
                 model_name=model_name,
@@ -2963,47 +3276,23 @@ class File:
                 time_point=time_point,
                 time_range=list(time_range) if time_range is not None else None,
                 time_type=time_type,
+                fit_settings=fit_io.build_fit_settings(
+                    stages=stages,
+                    backend=_effective_backend(_fun_str, _args),
+                    fit_wrapper_kwargs=lmfit_wrapper_kwargs,
+                ),
             )
-            if self.p.auto_export:
-                self.save_spectrum_fit(save_path=path_spec_results)
 
-        # display/plot and save spectrum fit summary
-        time_label = (
-            f"t = {self.spec_t_abs[0]:.4g}"
-            if self.spec_t_abs[0] == self.spec_t_abs[1]
-            else f"t in [{self.spec_t_abs[0]:.4g}, {self.spec_t_abs[1]:.4g}]"
-        )
-        title_spec = (
-            f"File: {self.path}, {time_label}, "
-            f'Model: "{model_name}" '
-            f'(from "{self.model_spec.yaml_f_name}.yaml")'
-        )
-
-        save_fig = self.p.auto_export
-        show_fig = show_plot and self.p.show_output >= 1
-        if save_fig or show_fig:
-            fitlib.plt_fit_res_1d(
-                x=self.energy,
-                y=self.data_spec,
-                fit_fun_str=self.p.spec_fun_str,
-                par_init=initial_guess,
-                par_fin=self.model_spec.result[1],
-                args=self.model_spec.args,
-                plot_sum=False,
-                show_init=True,
-                title=title_spec,
-                fit_lim=self.e_lim,
-                config=self.plot_config,
-                legend=[comp.name for comp in self.model_spec.components],
-                save_img=uplt._save_img_flag(save=save_fig, show=show_fig),
-                save_path=path_spec_results / "spec_fit.png",
-            )
+        if show_plot and self.p.show_output >= 1:
+            self.plot_fit(model=model_name, fit_type="spectrum")
+            if fit_out.emcee_fin is not None:
+                self.plot_mcmc(model=model_name, fit_type="spectrum")
 
         if stages >= 1 and self.p.show_output >= 1:
             fitlib.time_display(
                 t_start=t_spec, print_str="Time elapsed for spectrum fit: "
             )
-            display(self.model_spec.result[1].params)
+            display(fit_out.par_fin.params)
 
     #
     def save_spectrum_fit(self, save_path: PathLike) -> None:
@@ -3028,6 +3317,8 @@ class File:
         *,
         model: str | Sequence[str] | None = None,
         fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        select: str = "all",
+        by: str | None = None,
         overwrite: bool = False,
         show_output: int = 1,
     ) -> None:
@@ -3037,7 +3328,9 @@ class File:
         One-line delegate to ``self.p.save_fits(file=self, ...)``. Useful
         when the user holds a ``File`` reference and wants to persist its
         fits without first reaching into the parent ``Project``. See
-        :meth:`Project.save_fits` for full semantics.
+        :meth:`Project.save_fits` for full semantics (including
+        ``select=`` — reference-style values are project-wide and cannot
+        be combined with this per-file filter).
         """
 
         self.p.save_fits(
@@ -3045,6 +3338,8 @@ class File:
             file=self,
             model=model,
             fit_type=fit_type,
+            select=select,
+            by=by,
             overwrite=overwrite,
             show_output=show_output,
         )
@@ -3057,6 +3352,8 @@ class File:
         format: Literal["csv"] = "csv",
         model: str | Sequence[str] | None = None,
         fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
+        select: str = "latest",
+        by: str | None = None,
         overwrite: bool = False,
         show_output: int = 1,
     ) -> None:
@@ -3064,7 +3361,9 @@ class File:
         Export this file's fit slots as a CSV/PNG tree.
 
         One-line delegate to ``self.p.export_fits(file=self, ...)``. See
-        :meth:`Project.export_fits` for full semantics and output layout.
+        :meth:`Project.export_fits` for full semantics (including
+        ``select=`` — reference-style values are project-wide and cannot
+        be combined with this per-file filter) and output layout.
         """
 
         self.p.export_fits(
@@ -3073,55 +3372,11 @@ class File:
             file=self,
             model=model,
             fit_type=fit_type,
+            select=select,
+            by=by,
             overwrite=overwrite,
             show_output=show_output,
         )
-
-    #
-    # ------------------------------------------------------------------
-    # Deprecated aliases — scheduled for removal before v1.0.0.
-    # See TODO.md "Build & release → Remove legacy/backwards-compat code".
-    # ------------------------------------------------------------------
-
-    #
-    def save_sbs_fit(self, save_path: PathLike) -> None:
-        """
-        .. deprecated::
-            Use :meth:`File.export_fit` (``fit_type="sbs"``) instead.
-            ``save_sbs_fit`` is scheduled for removal before v1.0.0.
-
-        Behavior is preserved: this wrapper still writes the legacy
-        on-disk layout. Only the warning is new.
-        """
-
-        warnings.warn(
-            "File.save_sbs_fit is deprecated and will be removed before "
-            "v1.0.0; use File.export_fit(fit_type='sbs', filepath=...) "
-            "for the supported export pipeline.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self._save_sbs_fit_legacy(save_path)
-
-    #
-    def save_2d_fit(self, save_path: PathLike) -> None:
-        """
-        .. deprecated::
-            Use :meth:`File.export_fit` (``fit_type="2d"``) instead.
-            ``save_2d_fit`` is scheduled for removal before v1.0.0.
-
-        Behavior is preserved: this wrapper still writes the legacy
-        on-disk layout. Only the warning is new.
-        """
-
-        warnings.warn(
-            "File.save_2d_fit is deprecated and will be removed before "
-            "v1.0.0; use File.export_fit(fit_type='2d', filepath=...) "
-            "for the supported export pipeline.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self._save_2d_fit_legacy(save_path)
 
     #
     def fit_slice_by_slice(
@@ -3218,7 +3473,7 @@ class File:
         if seed_adapt not in (None, "argmax_shift"):
             raise ValueError("seed_adapt must be None or 'argmax_shift'.")
         if seed_source == "baseline" and (
-            self.model_base is None or not self.model_base.result
+            self.model_base is None or self.model_base.result is None
         ):
             raise ValueError(
                 "Baseline seed requested but baseline model is not fitted yet; "
@@ -3234,17 +3489,15 @@ class File:
                 "run define_baseline() first or use seed_adapt=None."
             )
 
-        # define path where SbS fit results will be saved to
-        path_sbs_results = self.model_path(model_name, fit_type="sbs")
-
         if seed_source == "model":
             seed_template = ulmfit.par_extract(
                 self.model_sbs.lmfit_pars, return_type="list"
             )
         elif seed_source == "baseline":
             assert self.model_base is not None  # type guard
+            assert self.model_base.result is not None  # type guard
             seed_template = ulmfit.par_extract(
-                self.model_base.result[1], return_type="list"
+                self.model_base.result.par_fin, return_type="list"
             )
         else:
             seed_template = usbs.extract_sbs_seed_template(
@@ -3279,19 +3532,11 @@ class File:
 
         n_slices = len(self.data)
 
-        def _slice_path(s_i: int) -> pathlib.Path:
-            return path_sbs_results / "slices" / str(self.p.da_slices_fmt % s_i)
-
         # resolve worker count: None -> auto, otherwise honour user.
         if n_workers is None:
             n_workers = max(1, (os.cpu_count() or 1) - 1)
         # No point spawning more workers than slices.
         n_workers = max(1, min(n_workers, n_slices))
-
-        # CSV format/delimiter: project defaults unless caller overrides
-        # (forwarded into both the serial and parallel SbS dispatch paths)
-        fit_wrapper_kwargs.setdefault("num_fmt", self.p.num_fmt)
-        fit_wrapper_kwargs.setdefault("delim", self.p.delim)
 
         if n_workers == 1:
             # serial path (debug escape hatch). tqdm (not a raw print with
@@ -3303,14 +3548,12 @@ class File:
             # ipywidgets-based tqdm.notebook inside a kernel, and ipywidgets is
             # not a dependency -- it would emit "IProgress not found" warnings.
             self.results_sbs = []
-            for s_i, s in tqdm(
+            for _s_i, s in tqdm(
                 enumerate(self.data),
                 total=n_slices,
                 desc="SbS fit (serial)",
             ):
-                path_slice = _slice_path(s_i)
-
-                initial_guess = usbs.prepare_sbs_model_for_slice(
+                usbs.prepare_sbs_model_for_slice(
                     self.model_sbs,
                     _args_sbs,
                     seed_template,
@@ -3335,35 +3578,17 @@ class File:
                     par=self.model_sbs.lmfit_pars,
                     stages=stages,
                     show_output=0,
-                    save_output=1 if self.p.auto_export else 0,
-                    save_path=path_slice,
                     **fit_wrapper_kwargs,
                 )
                 self.results_sbs.append(result_sbs)
-
-                if self.p.auto_export:
-                    fitlib.plt_fit_res_1d(
-                        x=const[0],
-                        y=const[1],
-                        fit_fun_str=self.p.spec_fun_str,
-                        par_init=initial_guess,
-                        par_fin=result_sbs[1],
-                        args=args,
-                        plot_sum=False,
-                        show_init=True,
-                        fit_lim=self.e_lim,
-                        config=self.plot_config,
-                        save_img=-1,
-                        save_path=path_slice.with_suffix(".png"),
-                    )
         else:
             # parallel path: spawn pool, install model once per worker.
             # sanitized_spawn_main keeps workers from re-running a
             # non-.py __main__ (e.g. a notebook executed via %run).
             ctx = multiprocessing.get_context("spawn")
-            by_id: dict[int, list[Any]] = {}
+            by_id: dict[int, ulmfit.FitOutput] = {}
             with (
-                usbs.sanitized_spawn_main(),
+                uspawn.sanitized_spawn_main(),
                 concurrent.futures.ProcessPoolExecutor(
                     max_workers=n_workers,
                     mp_context=ctx,
@@ -3384,10 +3609,7 @@ class File:
                         data_base_argmax_energy=data_base_argmax_energy,
                         fit_fun_str=_fun_str,
                         stages=stages,
-                        path_slice=_slice_path(s_i),
-                        plot_config=self.plot_config,
                         fit_wrapper_kwargs=fit_wrapper_kwargs,
-                        auto_export=self.p.auto_export,
                     ): s_i
                     for s_i in range(n_slices)
                 }
@@ -3406,7 +3628,7 @@ class File:
                     raise
             self.results_sbs = [by_id[i] for i in sorted(by_id)]
             # mirror the serial path's final model state so downstream
-            # consumers (save_sbs_fit, plot helpers) see identical
+            # consumers (slot capture, plot helpers) see identical
             # const/args regardless of which path produced the results.
             self.model_sbs.const = (
                 self.energy,
@@ -3419,16 +3641,33 @@ class File:
             self.model_sbs.args = _args_sbs
 
         if stages >= 1:
-            # Extract slot BEFORE save_sbs_fit / seed restoration so the slot
-            # captures pristine per-slice fit state (results_sbs and parameter
-            # names taken before any post-fit cleanup).
-            self._append_sbs_slot(model_name=model_name, fit_fun_str=_fun_str)
-            # Display the data/fit/residual maps (and varied-parameter plots)
-            # when interactive (show_output); save only when auto_export.
-            if self.p.auto_export or self.p.show_output >= 1:
-                self._save_sbs_fit_legacy(
-                    save_path=path_sbs_results, save_files=self.p.auto_export
-                )
+            # Extract slot BEFORE seed restoration so the slot captures
+            # pristine per-slice fit state (results_sbs and parameter names
+            # taken before any post-fit cleanup).
+            slot_sbs = self._append_sbs_slot(
+                model_name=model_name,
+                fit_fun_str=_fun_str,
+                fit_settings=fit_io.build_fit_settings(
+                    stages=stages,
+                    backend=_effective_backend(_fun_str, _args_sbs),
+                    fit_wrapper_kwargs=fit_wrapper_kwargs,
+                    seed_source=seed_source,
+                    seed_adapt=seed_adapt,
+                    # capture the normalized template (ordered by
+                    # parameter_names), not the raw user input — explicit
+                    # seeds arrive as dicts/lists/Parameters alike
+                    seed_values=(
+                        [float(v) for v in seed_template]
+                        if seed_source == "explicit"
+                        else None
+                    ),
+                ),
+            )
+            if self.p.show_output >= 1 and slot_sbs is not None:
+                # Inline display via the explicit plot API (reads the slot
+                # just appended): varied-parameter evolution + fit maps.
+                self.plot_param_evolution(model=model_name)
+                self.plot_fit(model=model_name, fit_type="sbs")
         self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
         self.model_sbs.args = _args_sbs
         if stages >= 1 and self.p.show_output >= 1:
@@ -3437,99 +3676,130 @@ class File:
             )
 
     #
-    def _save_sbs_fit_legacy(
-        self, save_path: PathLike, *, save_files: bool = True
-    ) -> None:
-        """
-        Legacy SbS export — preserves the original on-disk layout used by
-        the auto-export path inside :meth:`fit_slice_by_slice`.
-
-        Internal use only. The public ``save_sbs_fit`` is a deprecated
-        wrapper that forwards to :meth:`export_fit` (different layout);
-        prefer :meth:`export_fit` for new code.
-
-        Parameters
-        ----------
-        save_files : bool, default True
-            When ``True`` (auto-export), write the CSVs and save the figures.
-            When ``False`` (interactive display only), skip the CSVs and just
-            show the varied-parameter and data/fit/residual plots inline.
-        """
-
-        if self.model_sbs is None or self.time is None:
-            raise ValueError(
-                "Slice-by-Slice model/results are incomplete; nothing to save."
-            )
-        if self.data is None:
-            raise ValueError("Data missing; cannot save Slice-by-Slice fit.")
-        if self.energy is None:
-            raise ValueError("Energy axis missing; cannot save Slice-by-Slice fit.")
-        if self.model_sbs.const is None or self.model_sbs.args is None:
-            raise ValueError(
-                "Slice-by-Slice model const/args missing; cannot reconstruct 2D fit."
-            )
-        if save_files:
-            pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
-            # axis sidecars (one value per row); paired with fit_2d.csv
-            np.savetxt(
-                pathlib.Path(save_path) / "energy.csv",
-                np.asarray(self.energy),
-                fmt=self.p.num_fmt,
-                delimiter=self.p.delim,
-            )
-            np.savetxt(
-                pathlib.Path(save_path) / "time.csv",
-                np.asarray(self.time),
-                fmt=self.p.num_fmt,
-                delimiter=self.p.delim,
-            )
-        # convert results, specifically par_fin to dataframe; this also plots
-        # the varied parameters as a function of time. save_df follows the
-        # standard convention: save+show / save-only when writing files, else
-        # show-only (save_df=0) so the varied-parameter curves appear inline.
-        df_sbs = fitlib.results_to_df(
-            results=self.results_sbs,
-            x=self.time,
-            index=np.arange(0, len(self.time)),
-            config=self.plot_config,
-            save_df=(-1 if self.p.show_output == 0 else 1) if save_files else 0,
-            save_path=save_path,
-            num_fmt=self.p.num_fmt,
-            delim=self.p.delim,
-        )
-
-        # get slice-by-slice fit spectra as a 2D map (write CSV only when saving)
-        fit_2d_sbs = fitlib.results_to_fit_2d(
-            results=df_sbs,
-            parameter_names=self.model_sbs.parameter_names,
-            const=self.model_sbs.const,
-            args=self.model_sbs.args,
-            num_fmt=self.p.num_fmt,
-            delim=self.p.delim,
-            save_2d=(-1 if self.p.show_output == 0 else 1) if save_files else 0,
-            save_path=save_path,
-        )
-
-        # plot data, fit, and residual 2D maps (save only when writing files)
-        fitlib.plt_fit_res_2d(
-            data=self.data,
-            fit=fit_2d_sbs,
-            x=self.energy,
-            y=self.time,
-            config=self.plot_config,
-            x_lim=self.e_lim,
-            y_lim=self.t_lim,
-            save_img=(-1 if self.p.show_output == 0 else 1) if save_files else 0,
-            save_path=save_path,
-        )
-
-    #
     # ------------------------------------------------------------------
     # Slot capture (eager extraction into Project._fit_history)
     # ------------------------------------------------------------------
 
     #
-    def _append_baseline_slot(self, *, model_name: str, fit_fun_str: str) -> None:
+    def _effective_corrections(self) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """
+        ``(dark, calibration)`` in force; identity corrections map to None.
+
+        An all-zeros dark / all-ones calibration consumes data identically
+        to "no correction", so it must capture identically — equal data
+        states get equal version stamps, and the archived slot omits the
+        no-op arrays.
+        """
+
+        dark = self.dark
+        if dark is not None and not np.any(dark):
+            dark = None
+        calibration = self.calibration
+        if calibration is not None and bool(np.all(calibration == 1)):
+            calibration = None
+        return dark, calibration
+
+    #
+    def _capture_file_identity(
+        self,
+    ) -> tuple[str, np.ndarray | None, np.ndarray | None]:
+        """
+        ``(version_stamp, dark, calibration)`` for slot capture.
+
+        Registers the file's immutable ``SavedFile`` payload on first use
+        (``Project._captured_files``) — the single point where file
+        content crosses the capture boundary. Raises if ``data_raw`` or an
+        axis changed since the first captured fit: in-place mutation would
+        put slots from different measurements under one name.
+        """
+
+        assert self.data_raw is not None  # type guard
+        assert self.energy is not None  # type guard
+        content_hash = fit_io.compute_file_content_hash(
+            data_raw=self.data_raw,
+            energy=self.energy,
+            time=self.time,
+            aux_axis=self.aux_axis,
+        )
+        captured = self.p._captured_files.get(self.name)
+        if captured is None:
+            self.p._captured_files[self.name] = fit_io.capture_saved_file(
+                name=self.name,
+                original_path=str(self.path),
+                dim=int(self.dim),
+                data_raw=self.data_raw,
+                energy=self.energy,
+                time=self.time,
+                aux_axis=self.aux_axis,
+                file_content_hash=content_hash,
+            )
+        elif captured.file_content_hash != content_hash:
+            raise RuntimeError(
+                f"File {self.name!r}: data_raw or an axis changed since the "
+                f"file's first captured fit — in-place mutation is not "
+                f"supported. Load the data as a new File (or under a new "
+                f"name) instead."
+            )
+        dark, calibration = self._effective_corrections()
+        version_stamp = fit_io.compute_file_version_stamp(
+            file_content_hash=content_hash, dark=dark, calibration=calibration
+        )
+        return version_stamp, dark, calibration
+
+    #
+    def _model_structure_entry(
+        self, model: mcp.Model
+    ) -> tuple[str, list[str], list[tuple[str, tuple[str, ...], float]]]:
+        """
+        This file's ``(name, energy_models, dynamics)`` row for
+        ``fit_io.encode_model_structure``.
+
+        Energy names are the top-level YAML keys retained at load time;
+        a programmatically built model falls back to its model name.
+        """
+
+        energy_names = list(model.submodel_names) or [model.name]
+        return (self.name, energy_names, model.dynamics_entries())
+
+    #
+    def _slot_capture_meta(self, result_fin: Any) -> dict[str, Any]:
+        """
+        File-level metadata shared by every slot-capture site.
+
+        The one place the capture boundary copies File-level identity
+        (version stamp + correction snapshots), the fit-view aux axis,
+        noise state, and the optimizer's method/nvarys — splat into the
+        ``_slot_from_<fit_type>`` builders so the four fit types cannot
+        drift apart. ``n_free_pars`` is ``None`` when the result carries
+        no ``nvarys`` (the minimal per-file result of a project-level
+        joint fit — the joint count does not decompose by file), which
+        makes the count-dependent metrics NaN.
+        """
+
+        nvarys = getattr(result_fin, "nvarys", None)
+        version_stamp, dark, calibration = self._capture_file_identity()
+        return {
+            "file_name": self.name,
+            "fit_alg": str(getattr(result_fin, "method", "unknown")),
+            "n_free_pars": int(nvarys) if nvarys is not None else None,
+            "noise_type": self.noise_type,
+            "sigma_source": self.sigma_source,
+            "sigma_type": self.sigma_type,
+            "sigma_data": self.sigma_data,
+            "version_stamp": version_stamp,
+            "dark": dark,
+            "calibration": calibration,
+            "aux_axis": self.aux_axis,
+        }
+
+    #
+    def _append_baseline_slot(
+        self,
+        *,
+        model_name: str,
+        fit_fun_str: str,
+        fit_settings: dict[str, Any],
+    ) -> fit_io.SavedFitSlot | None:
         """
         Build a SavedFitSlot from the just-completed baseline fit and append
         it to ``self.p._fit_history``. Uses copied snapshot args so the slot
@@ -3540,10 +3810,12 @@ class File:
         assert self.data_base is not None  # type guard
         assert self.energy is not None  # type guard
         if self.data is None:
-            return  # data_base-only fixture / no source File data to fingerprint
-        result_fin = self.model_base.result[1]
+            return None  # data_base-only fixture / no File data to capture
+        fit_out = self.model_base.result
+        assert fit_out is not None  # type guard
+        result_fin = fit_out.par_fin
         if not hasattr(result_fin, "params"):
-            return  # mocked / placeholder result; nothing to record
+            return None  # mocked / placeholder result; nothing to record
         # Evaluate model on the same grid as data_base, then crop to e_lim
         # so observed.shape == fit.shape and matches the residual grid.
         fit_full = np.asarray(
@@ -3563,36 +3835,83 @@ class File:
         else:
             observed = self.data_base.copy()
             fit_arr = fit_full.copy()
+        # Per-component decomposition, evaluated on the full grid (same
+        # correctness reasoning as fit_full above) then cropped to e_lim.
+        from trspecfit import spectra
+
+        par_fin_vals = ulmfit.par_extract(result_fin.params, return_type="list")
+        assert self.model_base.args is not None  # type guard
+        components_full = getattr(spectra, fit_fun_str)(
+            self.energy, par_fin_vals, False, *self.model_base.args
+        )
+        component_names = [comp.name for comp in self.model_base.components]
+        if e_lim:
+            components = np.stack(
+                [np.asarray(c)[e_lim[0] : e_lim[1]] for c in components_full], axis=0
+            )
+        else:
+            components = np.stack([np.asarray(c) for c in components_full], axis=0)
+        # Model evaluated at the true pre-fit seed, same grid as fit_arr.
+        # None on the project-level joint-fit path (no per-file par_ini).
+        fit_ini_arr = None
+        if fit_out.par_ini is not None:
+            fit_ini_full = np.asarray(
+                fitlib.residual_fun(
+                    par=fit_out.par_ini,
+                    x=self.energy,
+                    data=self.data_base,
+                    fit_fun_str=fit_fun_str,
+                    args=self.model_base.args,
+                    res_type="fit",
+                )
+            )
+            fit_ini_arr = (
+                fit_ini_full[e_lim[0] : e_lim[1]].copy()
+                if e_lim
+                else fit_ini_full.copy()
+            )
         params_df = ulmfit.par_to_df(
             result_fin.params,
             col_type="min",
             par_names=self.model_base.parameter_names,
         )
-        conf_ci = self.model_base.result[2]
-        mcmc = fit_io._mcmc_payload(
-            self.model_base.result[3],
-            self.model_base.result[4],
+        conf_ci = fit_out.conf_ci
+        correl = ulmfit.correl_from_result(result_fin)
+        mcmc = fit_io._mcmc_payload(fit_out.emcee_fin, fit_out.emcee_ci)
+        assert fit_out.par_ini is not None  # type guard (file-scope fits seed)
+        parameter_metadata, init_values = fit_io.params_identity(fit_out.par_ini)
+        base_ind = list(self.base_t_ind) if self.base_t_ind else []
+        time_view = (
+            self.time[base_ind[0] : base_ind[1]]
+            if self.time is not None and base_ind
+            else None
         )
         slot = fit_io._slot_from_baseline(
-            file_fingerprint=self.fingerprint(),
-            file_name=self.name,
+            **self._slot_capture_meta(result_fin),
             model_name=model_name,
-            fit_alg=str(getattr(result_fin, "method", "unknown")),
-            yaml_filename=self.model_base.yaml_f_name,
+            model_structure=fit_io.encode_model_structure(
+                [self._model_structure_entry(self.model_base)]
+            ),
+            model_yaml=_model_yaml_records(self.model_base),
             params_df=params_df,
             observed=observed,
             fit=fit_arr,
-            base_t_ind=list(self.base_t_ind),
+            base_t_ind=base_ind,
             e_lim=e_lim,
-            n_free_pars=int(getattr(result_fin, "nvarys", 0)),
-            noise_type=self.noise_type,
-            sigma_source=self.sigma_source,
-            sigma_type=self.sigma_type,
-            sigma_data=self.sigma_data,
+            parameter_metadata=parameter_metadata,
+            initial_state=[init_values],
+            energy=(self.energy[e_lim[0] : e_lim[1]] if e_lim else self.energy),
+            time=time_view,
             conf_ci=conf_ci if not conf_ci.empty else None,
+            correl=correl,
             mcmc=mcmc,
+            fit_settings=fit_settings,
+            components=components,
+            component_names=component_names,
+            fit_ini=fit_ini_arr,
         )
         self.p._fit_history.append(slot)
+        return slot
 
     #
     def _append_spectrum_slot(
@@ -3603,15 +3922,18 @@ class File:
         time_point: float | None,
         time_range: list[float] | None,
         time_type: str,
-    ) -> None:
+        fit_settings: dict[str, Any],
+    ) -> fit_io.SavedFitSlot | None:
         """Build and append a SavedFitSlot for a completed spectrum fit."""
 
         assert self.model_spec is not None  # type guard
         assert self.data_spec is not None  # type guard
         assert self.energy is not None  # type guard
-        result_fin = self.model_spec.result[1]
+        fit_out = self.model_spec.result
+        assert fit_out is not None  # type guard
+        result_fin = fit_out.par_fin
         if not hasattr(result_fin, "params"):
-            return  # mocked / placeholder result; nothing to record
+            return None  # mocked / placeholder result; nothing to record
         fit_full = np.asarray(
             fitlib.residual_fun(
                 par=result_fin.params,
@@ -3629,22 +3951,63 @@ class File:
         else:
             observed = self.data_spec.copy()
             fit_arr = fit_full.copy()
+        # Per-component decomposition, evaluated on the full grid (same
+        # correctness reasoning as fit_full above) then cropped to e_lim.
+        from trspecfit import spectra
+
+        par_fin_vals = ulmfit.par_extract(result_fin.params, return_type="list")
+        assert self.model_spec.args is not None  # type guard
+        components_full = getattr(spectra, fit_fun_str)(
+            self.energy, par_fin_vals, False, *self.model_spec.args
+        )
+        component_names = [comp.name for comp in self.model_spec.components]
+        if e_lim:
+            components = np.stack(
+                [np.asarray(c)[e_lim[0] : e_lim[1]] for c in components_full], axis=0
+            )
+        else:
+            components = np.stack([np.asarray(c) for c in components_full], axis=0)
+        # Model evaluated at the true pre-fit seed, same grid as fit_arr.
+        # None on the project-level joint-fit path (no per-file par_ini).
+        fit_ini_arr = None
+        if fit_out.par_ini is not None:
+            fit_ini_full = np.asarray(
+                fitlib.residual_fun(
+                    par=fit_out.par_ini,
+                    x=self.energy,
+                    data=self.data_spec,
+                    fit_fun_str=fit_fun_str,
+                    args=self.model_spec.args,
+                    res_type="fit",
+                )
+            )
+            fit_ini_arr = (
+                fit_ini_full[e_lim[0] : e_lim[1]].copy()
+                if e_lim
+                else fit_ini_full.copy()
+            )
         params_df = ulmfit.par_to_df(
             result_fin.params,
             col_type="min",
             par_names=self.model_spec.parameter_names,
         )
-        conf_ci = self.model_spec.result[2]
-        mcmc = fit_io._mcmc_payload(
-            self.model_spec.result[3],
-            self.model_spec.result[4],
+        conf_ci = fit_out.conf_ci
+        correl = ulmfit.correl_from_result(result_fin)
+        mcmc = fit_io._mcmc_payload(fit_out.emcee_fin, fit_out.emcee_ci)
+        assert fit_out.par_ini is not None  # type guard (file-scope fits seed)
+        parameter_metadata, init_values = fit_io.params_identity(fit_out.par_ini)
+        time_view = (
+            self.time[self.spec_t_ind[0] : self.spec_t_ind[1]]
+            if self.time is not None and self.spec_t_ind
+            else None
         )
         slot = fit_io._slot_from_spectrum(
-            file_fingerprint=self.fingerprint(),
-            file_name=self.name,
+            **self._slot_capture_meta(result_fin),
             model_name=model_name,
-            fit_alg=str(getattr(result_fin, "method", "unknown")),
-            yaml_filename=self.model_spec.yaml_f_name,
+            model_structure=fit_io.encode_model_structure(
+                [self._model_structure_entry(self.model_spec)]
+            ),
+            model_yaml=_model_yaml_records(self.model_spec),
             params_df=params_df,
             observed=observed,
             fit=fit_arr,
@@ -3652,18 +4015,29 @@ class File:
             time_range=time_range,
             time_type=time_type,
             e_lim=e_lim,
-            n_free_pars=int(getattr(result_fin, "nvarys", 0)),
-            noise_type=self.noise_type,
-            sigma_source=self.sigma_source,
-            sigma_type=self.sigma_type,
-            sigma_data=self.sigma_data,
+            parameter_metadata=parameter_metadata,
+            initial_state=[init_values],
+            energy=(self.energy[e_lim[0] : e_lim[1]] if e_lim else self.energy),
+            time=time_view,
             conf_ci=conf_ci if not conf_ci.empty else None,
+            correl=correl,
             mcmc=mcmc,
+            fit_settings=fit_settings,
+            components=components,
+            component_names=component_names,
+            fit_ini=fit_ini_arr,
         )
         self.p._fit_history.append(slot)
+        return slot
 
     #
-    def _append_sbs_slot(self, *, model_name: str, fit_fun_str: str) -> None:
+    def _append_sbs_slot(
+        self,
+        *,
+        model_name: str,
+        fit_fun_str: str,
+        fit_settings: dict[str, Any],
+    ) -> fit_io.SavedFitSlot | None:
         """
         Build and append a SavedFitSlot for a completed slice-by-slice fit.
 
@@ -3677,17 +4051,23 @@ class File:
         assert self.model_sbs is not None  # type guard
         assert self.data is not None  # type guard
         assert self.energy is not None  # type guard
-        if not self.results_sbs or not hasattr(self.results_sbs[0][1], "params"):
-            return  # mocked / placeholder results; nothing to record
+        if not self.results_sbs or not hasattr(self.results_sbs[0].par_fin, "params"):
+            return None  # mocked / placeholder results; nothing to record
         n_slices = len(self.data)
         e_lim = list(self.e_lim) if self.e_lim else None
         # Per-slice observed view + per-slice model evaluation. residual_fun
         # is called once per slice with that slice's final params.
+        from trspecfit import spectra
+
+        assert self.model_sbs.args is not None  # type guard
         observed_rows = []
         fit_rows = []
+        component_rows = []
+        fit_ini_rows = []
+        component_names = [comp.name for comp in self.model_sbs.components]
         for s_i in range(n_slices):
             slice_data = self.data[s_i]
-            slice_par = self.results_sbs[s_i][1].params
+            slice_par = self.results_sbs[s_i].par_fin.params
             fit_full = np.asarray(
                 fitlib.residual_fun(
                     par=slice_par,
@@ -3698,58 +4078,149 @@ class File:
                     res_type="fit",
                 )
             )
+            slice_par_vals = ulmfit.par_extract(slice_par, return_type="list")
+            components_full = getattr(spectra, fit_fun_str)(
+                self.energy, slice_par_vals, False, *self.model_sbs.args
+            )
+            # Per-slice seed is already available at no extra cost (the
+            # worker returns the full FitOutput, not a stripped payload).
+            slice_par_ini = self.results_sbs[s_i].par_ini
+            fit_ini_full = np.asarray(
+                fitlib.residual_fun(
+                    par=slice_par_ini,
+                    x=self.energy,
+                    data=slice_data,
+                    fit_fun_str=fit_fun_str,
+                    args=self.model_sbs.args,
+                    res_type="fit",
+                )
+            )
             if e_lim:
                 observed_rows.append(slice_data[e_lim[0] : e_lim[1]].copy())
                 fit_rows.append(fit_full[e_lim[0] : e_lim[1]].copy())
+                component_rows.append(
+                    np.stack(
+                        [np.asarray(c)[e_lim[0] : e_lim[1]] for c in components_full],
+                        axis=0,
+                    )
+                )
+                fit_ini_rows.append(fit_ini_full[e_lim[0] : e_lim[1]].copy())
             else:
                 observed_rows.append(slice_data.copy())
                 fit_rows.append(fit_full.copy())
+                component_rows.append(
+                    np.stack([np.asarray(c) for c in components_full], axis=0)
+                )
+                fit_ini_rows.append(fit_ini_full.copy())
         observed = np.stack(observed_rows, axis=0)
         fit_arr = np.stack(fit_rows, axis=0)
+        components = np.stack(component_rows, axis=0)
+        fit_ini = np.stack(fit_ini_rows, axis=0)
         # Per-slice DataFrame (one row per slice, columns = parameter values).
         params_df = ulmfit.list_of_par_to_df(self.results_sbs)
+        params_init = ulmfit.list_of_par_ini_to_df(self.results_sbs)
         # n_free_pars + fit_alg captured from slice 0 (consistent across slices
         # because the same model_sbs is used for every slice).
-        slice0_result = self.results_sbs[0][1]
-        slice0_conf_ci = self.results_sbs[0][2]
-        # MCMC payload — captured from slice 0, mirroring fit_alg / nvarys.
-        # Per-slice MCMC chains are not stored; aggregate analysis uses
-        # slice 0 as the representative.
+        slice0_result = self.results_sbs[0].par_fin
+        slice0_conf_ci = self.results_sbs[0].conf_ci
+        # MCMC and correl payloads — captured from slice 0, mirroring
+        # fit_alg / nvarys. Per-slice MCMC chains / correlation matrices
+        # are not stored; aggregate analysis uses slice 0 as the
+        # representative.
         slice0_mcmc = fit_io._mcmc_payload(
-            self.results_sbs[0][3],
-            self.results_sbs[0][4],
+            self.results_sbs[0].emcee_fin,
+            self.results_sbs[0].emcee_ci,
         )
+        slice0_correl = ulmfit.correl_from_result(slice0_result)
+        # Shared per-parameter metadata (vary/bounds/expr are slice-invariant;
+        # captured from slice 0) and per-slice stderr — both column-aligned
+        # with the wide params frame.
+        params_meta = ulmfit.par_to_df(
+            slice0_result.params, col_type=["name", "vary", "min", "max", "expr"]
+        )
+        params_stderr = ulmfit.list_of_par_stderr_to_df(self.results_sbs)
+        # Identity: shared metadata from slice 0 (one model, one vary set
+        # for every slice); the initial-state matrix is per-slice seeds.
+        parameter_metadata, _ = fit_io.params_identity(self.results_sbs[0].par_ini)
+        initial_state = [fit_io.params_identity(r.par_ini)[1] for r in self.results_sbs]
         slot = fit_io._slot_from_sbs(
-            file_fingerprint=self.fingerprint(),
-            file_name=self.name,
+            **self._slot_capture_meta(slice0_result),
             model_name=model_name,
-            fit_alg=str(getattr(slice0_result, "method", "unknown")),
-            yaml_filename=self.model_sbs.yaml_f_name,
+            model_structure=fit_io.encode_model_structure(
+                [self._model_structure_entry(self.model_sbs)]
+            ),
+            model_yaml=_model_yaml_records(self.model_sbs),
             params_df=params_df,
             observed=observed,
             fit=fit_arr,
             e_lim=e_lim,
             t_lim=None,
-            n_free_pars=int(getattr(slice0_result, "nvarys", 0)),
-            noise_type=self.noise_type,
-            sigma_source=self.sigma_source,
-            sigma_type=self.sigma_type,
-            sigma_data=self.sigma_data,
+            parameter_metadata=parameter_metadata,
+            initial_state=initial_state,
+            energy=(self.energy[e_lim[0] : e_lim[1]] if e_lim else self.energy),
+            time=self.time,
             conf_ci=slice0_conf_ci if not slice0_conf_ci.empty else None,
+            correl=slice0_correl,
             mcmc=slice0_mcmc,
+            params_meta=params_meta,
+            params_stderr=params_stderr,
+            fit_settings=fit_settings,
+            components=components,
+            component_names=component_names,
+            fit_ini=fit_ini,
+            params_init=params_init,
         )
         self.p._fit_history.append(slot)
+        return slot
 
     #
-    def _append_2d_slot(self, *, model_name: str, fit_fun_str: str) -> None:
+    def _append_2d_slot(
+        self,
+        *,
+        model_name: str,
+        fit_fun_str: str,
+        fit_settings: dict[str, Any],
+    ) -> fit_io.SavedFitSlot | None:
         """Build and append a SavedFitSlot for a completed 2D global fit."""
+
+        slot = self._build_2d_slot(
+            model_name=model_name,
+            fit_fun_str=fit_fun_str,
+            fit_settings=fit_settings,
+        )
+        if slot is not None:
+            self.p._fit_history.append(slot)
+        return slot
+
+    #
+    def _build_2d_slot(
+        self,
+        *,
+        model_name: str,
+        fit_fun_str: str,
+        fit_settings: dict[str, Any],
+        joint_identity: tuple[str, str] | None = None,
+        joint_model_structure: str | None = None,
+    ) -> fit_io.SavedFitSlot | None:
+        """
+        Build a SavedFitSlot for a completed 2D global fit without
+        publishing it. ``Project.fit_2d`` builds all projection slots (and
+        the joint record) before appending anything, so a capture failure
+        publishes neither history. On that joint path it passes
+        ``joint_identity`` (the bundle's ``(optimization_hash,
+        input_files)``) and ``joint_model_structure`` (the N-file
+        structure); a file-scope fit passes neither and the local identity
+        chain is computed from this fit's own captured state.
+        """
 
         assert self.model_2d is not None  # type guard
         assert self.data is not None  # type guard
         assert self.energy is not None  # type guard
-        result_fin = self.model_2d.result[1]
+        fit_out = self.model_2d.result
+        assert fit_out is not None  # type guard
+        result_fin = fit_out.par_fin
         if not hasattr(result_fin, "params"):
-            return  # mocked / placeholder result; nothing to record
+            return None  # mocked / placeholder result; nothing to record
         # Evaluate the 2D model on the full grid; crop to (t_lim, e_lim) so
         # observed.shape == fit.shape and matches the residual grid.
         fit_full = np.asarray(
@@ -3774,36 +4245,73 @@ class File:
             fit_arr = fit_arr[:, e_lim[0] : e_lim[1]]
         observed = observed.copy()
         fit_arr = fit_arr.copy()
+        # Model evaluated at the true pre-fit seed, same grid as fit_arr.
+        # None on the project-level joint-fit path (no per-file par_ini).
+        fit_ini_arr = None
+        if fit_out.par_ini is not None:
+            fit_ini_full = np.asarray(
+                fitlib.residual_fun(
+                    par=fit_out.par_ini,
+                    x=self.energy,
+                    data=self.data,
+                    fit_fun_str=fit_fun_str,
+                    args=self.model_2d.args,
+                    res_type="fit",
+                )
+            )
+            if t_lim:
+                fit_ini_full = fit_ini_full[t_lim[0] : t_lim[1], :]
+            if e_lim:
+                fit_ini_full = fit_ini_full[:, e_lim[0] : e_lim[1]]
+            fit_ini_arr = fit_ini_full.copy()
         params_df = ulmfit.par_to_df(
             result_fin.params,
             col_type="min",
             par_names=self.model_2d.parameter_names,
         )
-        conf_ci = self.model_2d.result[2]
-        mcmc = fit_io._mcmc_payload(
-            self.model_2d.result[3],
-            self.model_2d.result[4],
-        )
+        conf_ci = fit_out.conf_ci
+        # covar is absent on the project-fit path (minimal MinimizerResult)
+        # and for covariance-less optimizers; correl stays None there,
+        # mirroring the per-file absence of stderr / conf_ci.
+        correl = ulmfit.correl_from_result(result_fin)
+        mcmc = fit_io._mcmc_payload(fit_out.emcee_fin, fit_out.emcee_ci)
+        parameter_metadata = None
+        initial_state = None
+        if joint_identity is None:
+            assert fit_out.par_ini is not None  # type guard (file-scope seeds)
+            parameter_metadata, init_values = fit_io.params_identity(fit_out.par_ini)
+            initial_state = [init_values]
+            model_structure = fit_io.encode_model_structure(
+                [self._model_structure_entry(self.model_2d)]
+            )
+        else:
+            assert joint_model_structure is not None  # type guard
+            model_structure = joint_model_structure
+        time_view = None
+        if self.time is not None:
+            time_view = self.time[t_lim[0] : t_lim[1]] if t_lim else self.time
         slot = fit_io._slot_from_2d(
-            file_fingerprint=self.fingerprint(),
-            file_name=self.name,
+            **self._slot_capture_meta(result_fin),
             model_name=model_name,
-            fit_alg=str(getattr(result_fin, "method", "unknown")),
-            yaml_filename=self.model_2d.yaml_f_name,
+            model_structure=model_structure,
+            model_yaml=_model_yaml_records(self.model_2d),
             params_df=params_df,
             observed=observed,
             fit=fit_arr,
             e_lim=e_lim,
             t_lim=t_lim,
-            n_free_pars=int(getattr(result_fin, "nvarys", 0)),
-            noise_type=self.noise_type,
-            sigma_source=self.sigma_source,
-            sigma_type=self.sigma_type,
-            sigma_data=self.sigma_data,
+            parameter_metadata=parameter_metadata,
+            initial_state=initial_state,
+            joint_identity=joint_identity,
+            energy=(self.energy[e_lim[0] : e_lim[1]] if e_lim else self.energy),
+            time=time_view,
             conf_ci=conf_ci if not conf_ci.empty else None,
+            correl=correl,
             mcmc=mcmc,
+            fit_settings=fit_settings,
+            fit_ini=fit_ini_arr,
         )
-        self.p._fit_history.append(slot)
+        return slot
 
     #
     def _resolve_model(self, model_name: str | None) -> mcp.Model:
@@ -3887,30 +4395,9 @@ class File:
 
         if self.time is None:
             raise ValueError("Time axis is not set.")
-        n = len(self.time)
-        if time_type == "abs":
-            if t_start == t_stop:
-                ind_start = int(np.searchsorted(self.time, t_start, side="left"))
-                ind_stop = ind_start + 1
-            else:
-                ind_start = int(np.searchsorted(self.time, t_start, side="left"))
-                ind_stop = int(np.searchsorted(self.time, t_stop, side="right"))
-        elif time_type == "ind":
-            ind_start = int(t_start)
-            ind_stop = int(t_stop) + 1 if t_start == t_stop else int(t_stop + 1)
-        else:
-            raise ValueError(
-                f"Unknown time_type '{time_type}'. Expected 'abs' or 'ind'."
-            )
-        if ind_start >= ind_stop or ind_start >= n or ind_stop <= 0:
-            raise ValueError(
-                f"Time selection resolves to an empty or out-of-range slice "
-                f"[{ind_start}:{ind_stop}). "
-                f"Time axis has {n} points [{self.time[0]}, {self.time[-1]}]."
-            )
-        ind_start = max(ind_start, 0)
-        ind_stop = min(ind_stop, n)
-        return [ind_start, ind_stop]
+        return uarrays.resolve_time_selection(
+            self.time, t_start, t_stop, time_type=time_type
+        )
 
     #
     def add_time_dependence(
@@ -4095,9 +4582,6 @@ class File:
         if self.energy is None or self.time is None or self.data is None:
             raise ValueError("Data/axes missing; cannot run 2D fit.")
 
-        # define path where 2D fit results will be saved to
-        path_2d_results = self.model_path(model_name, fit_type="2d")
-
         # set all fixed 2D fit parameters equal to baseline model results
         base_df = ulmfit.par_to_df(self.model_base.lmfit_pars, col_type="min")
         self.model_2d.update_value(
@@ -4164,132 +4648,99 @@ class File:
         )
         self.model_2d.args = _args
 
-        # CSV format/delimiter: project defaults unless caller overrides
-        fit_wrapper_kwargs.setdefault("num_fmt", self.p.num_fmt)
-        fit_wrapper_kwargs.setdefault("delim", self.p.delim)
         # fit (with confidence intervals)
-        self.model_2d.result = fitlib.fit_wrapper(
+        fit_out = fitlib.fit_wrapper(
             const=self.model_2d.const,
             args=self.model_2d.args,
             par_names=self.model_2d.parameter_names,
             par=self.model_2d.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
-            save_output=1 if self.p.auto_export else 0,
-            save_path=path_2d_results / model_name,
             **fit_wrapper_kwargs,
         )
+        self.model_2d.result = fit_out
         # Write optimized values back to model.lmfit_pars.  fit_wrapper
         # optimizes a deepcopy, so model.lmfit_pars may be stale — especially
         # on the GIR path where fit_model_gir never calls model.update_value.
-        if stages >= 1 and self.model_2d.result[1] != []:
-            final_params = self.model_2d.result[1].params
+        slot_2d: fit_io.SavedFitSlot | None = None
+        if stages >= 1:
+            final_params = fit_out.par_fin.params
             for name in self.model_2d.parameter_names:
                 if name in final_params:
                     self.model_2d.lmfit_pars[name].value = final_params[name].value
-            self._append_2d_slot(model_name=model_name, fit_fun_str=_fun_str)
+            slot_2d = self._append_2d_slot(
+                model_name=model_name,
+                fit_fun_str=_fun_str,
+                fit_settings=fit_io.build_fit_settings(
+                    stages=stages,
+                    backend=_effective_backend(_fun_str, _args),
+                    fit_wrapper_kwargs=fit_wrapper_kwargs,
+                ),
+            )
 
         if stages >= 1:
-            # Display the data/fit/residual maps when interactive (show_output),
-            # save them only when auto_export — mirroring fit_baseline.
-            if self.p.auto_export or self.p.show_output >= 1:
-                self._save_2d_fit_legacy(
-                    save_path=path_2d_results, save_files=self.p.auto_export
-                )
+            if self.p.show_output >= 1 and slot_2d is not None:
+                self.plot_fit(model=model_name, fit_type="2d")
+                if fit_out.emcee_fin is not None:
+                    self.plot_mcmc(model=model_name, fit_type="2d")
             if self.p.show_output >= 1:
                 fitlib.time_display(
                     t_start=t_2d, print_str="Time elapsed for 2D model fit: "
                 )
                 # display final pars below figure
-                display(self.model_2d.result[1].params)
+                display(fit_out.par_fin.params)
 
     #
-    def _save_2d_fit_legacy(
-        self, save_path: PathLike, *, save_files: bool = True
-    ) -> None:
+    def _assert_fit_handle_owned(self, handle: str) -> None:
         """
-        Legacy 2D export — preserves the original on-disk layout used by
-        the auto-export path inside :meth:`fit_2d` and
-        :meth:`Project.fit_2d`.
+        Guard File-level ``handle=`` access: the slot must belong to this
+        file.
 
-        Internal use only. The public ``save_2d_fit`` is a deprecated
-        wrapper that forwards to :meth:`export_fit` (different layout);
-        prefer :meth:`export_fit` for new code.
-
-        Parameters
-        ----------
-        save_files : bool, default True
-            When ``True`` (auto-export), write the CSVs and save the figure.
-            When ``False`` (interactive display only), skip the CSVs and just
-            show the data/fit/residual maps inline.
+        Handles are project-wide; a ``File`` accessor silently answering
+        for another file's fit would be worse than requiring
+        ``project.results`` for cross-file access.
         """
 
-        if (
-            self.model_2d is None
-            or self.energy is None
-            or self.time is None
-            or self.data is None
-        ):
-            raise ValueError("2D model/data/axes missing; nothing to save.")
-        self.model_2d.create_value_2d()  # update 2D spectrum to final fit result
-        if self.model_2d.value_2d is None:
+        slot = self.p.results.get(handle=handle)
+        if slot.file_name != self.name:
             raise ValueError(
-                "2D model evaluation did not produce value_2d; nothing to save."
+                f"Slot {slot.handle[:8]} belongs to file "
+                f"{slot.file_name!r}, not {self.name!r} — read it via "
+                f"project.results or the owning File."
             )
-        if save_files:
-            pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
-            # save 2D fit map as CSV (rows=time, cols=energy), mirroring save_sbs_fit
-            np.savetxt(
-                pathlib.Path(save_path) / "fit_2d.csv",
-                self.model_2d.value_2d,
-                fmt=self.p.num_fmt,
-                delimiter=self.p.delim,
-            )
-            # axis sidecars (one value per row); paired with fit_2d.csv
-            np.savetxt(
-                pathlib.Path(save_path) / "energy.csv",
-                np.asarray(self.energy),
-                fmt=self.p.num_fmt,
-                delimiter=self.p.delim,
-            )
-            np.savetxt(
-                pathlib.Path(save_path) / "time.csv",
-                np.asarray(self.time),
-                fmt=self.p.num_fmt,
-                delimiter=self.p.delim,
-            )
-        # plot data, fit, and residual 2D maps (save only when writing files)
-        fitlib.plt_fit_res_2d(
-            data=self.data,
-            fit=self.model_2d.value_2d,
-            x=self.energy,
-            y=self.time,
-            config=self.plot_config,
-            x_lim=self.e_lim,
-            y_lim=self.t_lim,
-            save_img=(-1 if self.p.show_output == 0 else 1) if save_files else 0,
-            save_path=save_path,
-        )
-        # dpi_plot = round(1.5 *self.p.dpi_plt), NOT AVAILABLE YET (fig_size)
 
     #
-    def get_fit_results(
+    def get_parameters(
         self,
         *,
-        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] = "baseline",
+        model: str | None = None,
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] | None = None,
+        handle: str | None = None,
     ) -> pd.DataFrame:
         """
-        Return fit results as a DataFrame for programmatic access.
+        Return the fitted parameters of the latest matching fit.
+
+        Sugar for ``self.p.results.get_parameters(file=self, ...)`` — reads
+        the persisted fit slot (latest matching fit), so results survive
+        model reloads and are identical to what ``save_fits`` archives.
 
         Parameters
         ----------
-        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default='baseline'
+        model : str, optional
+            Restrict to a single model name. Default: latest fit of
+            ``fit_type`` regardless of model.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit results to return:
 
             - 'baseline': Baseline/ground-state fit (from ``fit_baseline``)
             - 'spectrum': Single-spectrum fit (from ``fit_spectrum``)
             - 'sbs': Slice-by-Slice fit (from ``fit_slice_by_slice``)
             - '2d': 2D global fit (from ``fit_2d``)
+
+        handle : str, optional
+            Slot-handle prefix or exact label pinning one exact run of **this file**;
+            mutually exclusive with the ``model``/``fit_type`` filters. A
+            handle naming another file's slot raises.
 
         Returns
         -------
@@ -4305,123 +4756,87 @@ class File:
             If the requested fit has not been performed yet.
         """
 
-        if fit_type == "baseline":
-            if self.model_base is None or not self.model_base.result:
-                raise ValueError("No baseline fit results. Run fit_baseline() first.")
-            return ulmfit.par_to_df(
-                self.model_base.result[1].params,
-                col_type="min",
-                par_names=self.model_base.parameter_names,
+        if handle is not None:
+            self._assert_fit_handle_owned(handle)
+            return self.p.results.get_parameters(
+                model=model, fit_type=fit_type, handle=handle
             )
-        if fit_type == "spectrum":
-            if self.model_spec is None or not self.model_spec.result:
-                raise ValueError("No spectrum fit results. Run fit_spectrum() first.")
-            return ulmfit.par_to_df(
-                self.model_spec.result[1].params,
-                col_type="min",
-                par_names=self.model_spec.parameter_names,
-            )
-        if fit_type == "sbs":
-            if not self.results_sbs:
-                raise ValueError(
-                    "No Slice-by-Slice fit results. Run fit_slice_by_slice() first."
-                )
-            return ulmfit.list_of_par_to_df(self.results_sbs)
-        if fit_type == "2d":
-            if self.model_2d is None or not self.model_2d.result:
-                raise ValueError("No 2D fit results. Run fit_2d() first.")
-            return ulmfit.par_to_df(
-                self.model_2d.result[1].params,
-                col_type="min",
-                par_names=self.model_2d.parameter_names,
-            )
-        raise ValueError(
-            f"Unknown fit_type={fit_type!r}; "
-            "use 'baseline', 'spectrum', 'sbs', or '2d'."
-        )
-
-    #
-    def _result_model(self, fit_type: str) -> mcp.Model:
-        """Resolve the fitted Model for a fit_type, or raise if not yet fit.
-
-        Shared by get_correlations / get_conf_intervals / get_mcmc. Slice-by-
-        Slice is excluded — its per-slice results have a different shape (use
-        ``get_fit_results(fit_type='sbs')``).
-        """
-
-        models = {
-            "baseline": (self.model_base, "fit_baseline"),
-            "spectrum": (self.model_spec, "fit_spectrum"),
-            "2d": (self.model_2d, "fit_2d"),
-        }
-        if fit_type == "sbs":
-            raise ValueError(
-                "get_correlations / get_conf_intervals / get_mcmc are not "
-                "available for Slice-by-Slice fits (per-slice results); use "
-                "get_fit_results(fit_type='sbs')."
-            )
-        if fit_type not in models:
-            raise ValueError(
-                f"Unknown fit_type={fit_type!r}; use 'baseline', 'spectrum', or '2d'."
-            )
-        model, fit_method = models[fit_type]
-        if model is None or not model.result:
-            raise ValueError(f"No {fit_type} fit results. Run {fit_method}() first.")
-        return model
+        return self.p.results.get_parameters(file=self, model=model, fit_type=fit_type)
 
     #
     def get_correlations(
         self,
         *,
-        fit_type: Literal["baseline", "spectrum", "2d"] = "baseline",
+        model: str | None = None,
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] | None = None,
+        handle: str | None = None,
     ) -> pd.DataFrame:
         """
         Return the parameter correlation matrix from a completed fit.
 
+        Sugar for ``self.p.results.get_correlations(file=self, ...)`` —
+        reads the persisted fit slot (latest matching fit). For SbS fits
+        the matrix is slice 0's (the representative slice).
+
         Parameters
         ----------
-        fit_type : {'baseline', 'spectrum', '2d'}, default='baseline'
-            Which fit to read (see :meth:`get_fit_results`).
+        model : str, optional
+            Restrict to a single model name. Default: latest fit of
+            ``fit_type`` regardless of model.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
+            Which fit to read (see :meth:`get_parameters`).
+        handle : str, optional
+            Slot-handle prefix or exact label pinning one exact run of this file;
+            mutually exclusive with the ``model``/``fit_type`` filters.
 
         Returns
         -------
         pd.DataFrame
             Square matrix indexed by the varying parameter names: 1.0 on the
-            diagonal, lmfit's pairwise correlations off-diagonal (0.0 where a
-            pair is uncorrelated or the optimizer reported no covariance).
+            diagonal, lmfit's pairwise correlations off-diagonal.
 
         Raises
         ------
         ValueError
-            If the requested fit has not been performed yet.
+            If the requested fit has not been performed yet, or produced no
+            covariance (e.g. Nelder without numdifftools, or a project-level
+            joint fit).
         """
 
-        params = self._result_model(fit_type).result[1].params
-        names = [n for n in params if params[n].vary]
-        mat = pd.DataFrame(np.eye(len(names)), index=names, columns=names, dtype=float)
-        for n in names:
-            for other, corr in (params[n].correl or {}).items():
-                if other in mat.columns:
-                    mat.loc[n, other] = corr
-        return mat
+        if handle is not None:
+            self._assert_fit_handle_owned(handle)
+            return self.p.results.get_correlations(
+                model=model, fit_type=fit_type, handle=handle
+            )
+        return self.p.results.get_correlations(
+            file=self, model=model, fit_type=fit_type
+        )
 
     #
-    def get_conf_intervals(
+    def get_confidence_intervals(
         self,
         *,
-        fit_type: Literal["baseline", "spectrum", "2d"] = "baseline",
+        model: str | None = None,
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] | None = None,
+        handle: str | None = None,
     ) -> pd.DataFrame:
         """
         Return the profiled confidence-interval table from a completed fit.
 
-        Populated only when the fit ran with ``try_ci=1`` (otherwise an empty
-        DataFrame). Columns are the per-sigma bounds with the best-fit value in
-        the middle (see ``fitlib.fit_wrapper``).
+        Sugar for ``self.p.results.get_confidence_intervals(file=self, ...)`` —
+        reads the persisted fit slot (latest matching fit). Populated only
+        when the fit ran with ``try_ci=1`` (otherwise an empty DataFrame).
+        For SbS fits the table is slice 0's.
 
         Parameters
         ----------
-        fit_type : {'baseline', 'spectrum', '2d'}, default='baseline'
+        model : str, optional
+            Restrict to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to read.
+        handle : str, optional
+            Slot-handle prefix or exact label pinning one exact run of this file;
+            mutually exclusive with the ``model``/``fit_type`` filters.
 
         Returns
         -------
@@ -4434,23 +4849,40 @@ class File:
             If the requested fit has not been performed yet.
         """
 
-        return self._result_model(fit_type).result[2]
+        if handle is not None:
+            self._assert_fit_handle_owned(handle)
+            return self.p.results.get_confidence_intervals(
+                model=model, fit_type=fit_type, handle=handle
+            )
+        return self.p.results.get_confidence_intervals(
+            file=self, model=model, fit_type=fit_type
+        )
 
     #
     def get_mcmc(
         self,
         *,
-        fit_type: Literal["baseline", "spectrum", "2d"] = "baseline",
+        model: str | None = None,
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] | None = None,
+        handle: str | None = None,
     ) -> ulmfit.MCMCResult:
         """
         Return the MCMC outputs (quantile table, chain, acceptance) of a fit.
 
-        Available only when the fit ran with ``mc_settings`` enabling MCMC.
+        Sugar for ``self.p.results.get_mcmc(file=self, ...)`` — reads the
+        persisted fit slot (latest matching fit). Available only when the
+        fit ran with ``mc_settings`` enabling MCMC. For SbS fits the payload
+        is slice 0's.
 
         Parameters
         ----------
-        fit_type : {'baseline', 'spectrum', '2d'}, default='baseline'
+        model : str, optional
+            Restrict to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to read.
+        handle : str, optional
+            Slot-handle prefix or exact label pinning one exact run of this file;
+            mutually exclusive with the ``model``/``fit_type`` filters.
 
         Returns
         -------
@@ -4464,17 +4896,233 @@ class File:
             If the requested fit has not been performed, or had no MCMC step.
         """
 
-        model = self._result_model(fit_type)
-        emcee_fin = model.result[3]
-        if emcee_fin is None:
-            raise ValueError(
-                f"No MCMC results for the {fit_type} fit. Re-run with "
-                "mc_settings=MC(use_mc=1, ...)."
+        if handle is not None:
+            self._assert_fit_handle_owned(handle)
+            return self.p.results.get_mcmc(
+                model=model, fit_type=fit_type, handle=handle
             )
-        return ulmfit.MCMCResult(
-            table=model.result[4],
-            flatchain=emcee_fin.flatchain,
-            acceptance_fraction=np.asarray(emcee_fin.acceptance_fraction),
+        return self.p.results.get_mcmc(file=self, model=model, fit_type=fit_type)
+
+    #
+    def plot_fit(
+        self,
+        *,
+        model: str | None = None,
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] | None = None,
+        handle: str | None = None,
+        config: PlotConfig | None = None,
+        show_plot: bool = True,
+        full_range: bool | None = None,
+        show_init: bool | None = None,
+    ) -> None:
+        """
+        Plot the latest matching fit: observed, fit, and residual.
+
+        Sugar for ``self.p.results.plot_fit(file=self, ...)`` — reads the
+        persisted fit slot and uses this file's axes and the project's
+        ``plot_config``.
+        See :meth:`FitResults.plot_fit`.
+
+        Parameters
+        ----------
+        model : str, optional
+            Restrict to a single model name. Default: latest fit of
+            ``fit_type`` regardless of model.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
+            Which fit to plot.
+        handle : str, optional
+            Slot-handle prefix or exact label pinning one exact run of this file;
+            mutually exclusive with the ``model``/``fit_type`` filters.
+        config : PlotConfig, optional
+            Styling override; defaults to the project's ``plot_config``.
+        show_plot : bool, default True
+            Set ``False`` to build without displaying.
+        full_range : bool, optional
+            Show the full, uncropped data range instead of just the fit
+            window. Default: ``config.full_range``. See
+            :meth:`FitResults.plot_fit`.
+        show_init : bool, optional
+            Draw the dotted-gold initial-guess overlay. Default:
+            ``config.show_init``. See :meth:`FitResults.plot_fit`.
+        """
+
+        if handle is not None:
+            self._assert_fit_handle_owned(handle)
+            self.p.results.plot_fit(
+                model=model,
+                fit_type=fit_type,
+                handle=handle,
+                config=config,
+                show_plot=show_plot,
+                full_range=full_range,
+                show_init=show_init,
+            )
+            return
+        self.p.results.plot_fit(
+            file=self,
+            model=model,
+            fit_type=fit_type,
+            config=config,
+            show_plot=show_plot,
+            full_range=full_range,
+            show_init=show_init,
+        )
+
+    #
+    def plot_param_evolution(
+        self,
+        *,
+        model: str | None = None,
+        handle: str | None = None,
+        params: Sequence[str] | None = None,
+        config: PlotConfig | None = None,
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Plot per-parameter evolution vs time for the latest SbS fit.
+
+        Sugar for ``self.p.results.plot_param_evolution(file=self, ...)``.
+        Defaults to the varied parameters; see
+        :meth:`FitResults.plot_param_evolution`.
+
+        Parameters
+        ----------
+        model : str, optional
+            Restrict to a single model name.
+        handle : str, optional
+            Slot-handle prefix or exact label pinning one exact SbS run of this file;
+            mutually exclusive with the ``model`` filter.
+        params : sequence of str, optional
+            Which parameters to plot (default: varied parameters).
+        config : PlotConfig, optional
+            Styling override; defaults to the project's ``plot_config``.
+        show_plot : bool, default True
+            Set ``False`` to build without displaying.
+        """
+
+        if handle is not None:
+            self._assert_fit_handle_owned(handle)
+            self.p.results.plot_param_evolution(
+                model=model,
+                handle=handle,
+                params=params,
+                config=config,
+                show_plot=show_plot,
+            )
+            return
+        self.p.results.plot_param_evolution(
+            file=self,
+            model=model,
+            params=params,
+            config=config,
+            show_plot=show_plot,
+        )
+
+    #
+    def plot_mcmc(
+        self,
+        *,
+        model: str | None = None,
+        fit_type: Literal["baseline", "spectrum", "sbs", "2d"] | None = None,
+        handle: str | None = None,
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Plot the MCMC diagnostics (walker acceptance, corner plot) of a fit.
+
+        Sugar for ``self.p.results.plot_mcmc(file=self, ...)`` — reads the
+        persisted fit slot (latest matching fit). Available only when the
+        fit ran with ``mc_settings`` enabling MCMC. See
+        :meth:`FitResults.plot_mcmc`.
+
+        Parameters
+        ----------
+        model : str, optional
+            Restrict to a single model name.
+        fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
+            Which fit to plot. For SbS fits the payload is slice 0's.
+        handle : str, optional
+            Slot-handle prefix or exact label pinning one exact run of this file;
+            mutually exclusive with the ``model``/``fit_type`` filters.
+        show_plot : bool, default True
+            Set ``False`` to build without displaying.
+        """
+
+        if handle is not None:
+            self._assert_fit_handle_owned(handle)
+            self.p.results.plot_mcmc(
+                model=model,
+                fit_type=fit_type,
+                handle=handle,
+                show_plot=show_plot,
+            )
+            return
+        self.p.results.plot_mcmc(
+            file=self,
+            model=model,
+            fit_type=fit_type,
+            show_plot=show_plot,
+        )
+
+    #
+    def plot_sbs_slices(
+        self,
+        *,
+        model: str | None = None,
+        handle: str | None = None,
+        slices: Sequence[int] | None = None,
+        config: PlotConfig | None = None,
+        show_init: bool | None = None,
+        save_path: PathLike | None = None,
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Plot per-slice fit panels for the most recent Slice-by-Slice fit.
+
+        Sugar for ``self.p.results.plot_sbs_slices(file=self, ...)`` —
+        reads the persisted fit slot and uses this file's axes and
+        ``plot_config``. See :meth:`FitResults.plot_sbs_slices`.
+
+        Parameters
+        ----------
+        model : str, optional
+            Restrict to a single model name.
+        handle : str, optional
+            Slot-handle prefix or exact label pinning one exact SbS run of this file;
+            mutually exclusive with the ``model`` filter.
+        slices : sequence of int, optional
+            Slice indices to render. Default: all slices.
+        config : PlotConfig, optional
+            Styling override; defaults to the project's ``plot_config``.
+        show_init : bool, optional
+            Overlay the per-slice initial guess. Default: ``config.show_init``.
+        save_path : str or Path, optional
+            Directory to write one PNG per slice, named
+            ``{slice_index:06d}.png``. Default ``None`` = display-only.
+        show_plot : bool, default True
+            Set ``False`` to build without displaying.
+        """
+
+        if handle is not None:
+            self._assert_fit_handle_owned(handle)
+            self.p.results.plot_sbs_slices(
+                model=model,
+                handle=handle,
+                slices=slices,
+                config=config,
+                show_init=show_init,
+                save_path=save_path,
+                show_plot=show_plot,
+            )
+            return
+        self.p.results.plot_sbs_slices(
+            file=self,
+            model=model,
+            slices=slices,
+            config=config,
+            show_init=show_init,
+            save_path=save_path,
+            show_plot=show_plot,
         )
 
     #
@@ -4491,7 +5139,7 @@ class File:
         Sugar for ``self.p.results.compare_models(file=self, models=...)``.
         Pass model names as positional arguments; omit them to include
         every model fit on this file. See :meth:`FitResults.compare_models`
-        for the full kwarg semantics, the defensive ``observed_sha256``
+        for the full kwarg semantics, the defensive ``fit_view_sha256``
         cross-check, and the dynamic column set driven by whether a sigma
         was set via :meth:`File.set_sigma`.
 

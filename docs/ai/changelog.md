@@ -6,6 +6,11 @@ history before a release.
 Update `CHANGELOG.md` with a new entry based on git history since the last
 documented release. Use [Keep a Changelog](https://keepachangelog.com) format.
 
+The writing rules in step 3 also bind a single bullet added to the
+`[Unreleased]` section during feature work, outside this recipe. That is
+where verbosity creeps in: per-commit narrative bullets accumulate and nobody
+re-runs the recipe over them before release.
+
 ## Arguments
 
 - Optional version string (e.g. `0.7.0`)
@@ -57,15 +62,27 @@ Write human-readable changelog entries. Rules:
 - **Mention breaking changes prominently.** If an API was renamed or removed,
   say what the old name was and what to use instead.
 - **Use backticks** for code identifiers (function names, parameter names, etc).
-- Each bullet should be one concise sentence, two at most.
+- **Budget: one sentence, two at most, under 60 words per bullet.** Breaking
+  changes get a bold lead and the replacement; nothing gets a paragraph.
+- **Rationale does not belong here.** Why a change was made, measured numbers,
+  and worked examples go to `docs/design/` (or the archived plan); a bullet may
+  link the design doc, never restate it. A reader who wants the details of an
+  example notebook will run it, not read about it.
+- **Collapse intermediate states the release never shipped.** If a field or
+  schema went through several unreleased versions (e.g. archive schema 3 → 7
+  within one release), describe only the final state.
 
 ## 4. Update `CHANGELOG.md`
 
-- Read `CHANGELOG.md` to match the existing style and header. The file uses
-  [Keep a Changelog](https://keepachangelog.com) format and
-  [Semantic Versioning](https://semver.org/).
+- Read `CHANGELOG.md` to match the existing header and section format. The
+  file uses [Keep a Changelog](https://keepachangelog.com) format and
+  [Semantic Versioning](https://semver.org/). Match the format, not the length
+  of existing bullets — earlier sections may already be over budget.
 - Insert the new version entry **after the header and before any existing
-  entries**. If there's an `[Unreleased]` section, replace it.
+  entries**. If there's an `[Unreleased]` section, rewrite it into the versioned
+  entry under the step-3 rules — merge bullets that grew additively, drop
+  superseded intermediate states, and cut rationale — rather than renaming the
+  heading and appending.
 - Format:
 
 ```text
@@ -80,6 +97,22 @@ Write human-readable changelog entries. Rules:
 
 - Use today's date for the release date.
 
-## 5. Show the result
+## 5. Check the budget
+
+List every bullet in the new entry over the budget and shorten it before
+showing the result (the `<version>` is the heading you just wrote):
+
+```bash
+python - <<'EOF'
+import re, pathlib
+t = pathlib.Path("CHANGELOG.md").read_text()
+sec = t.split("## [<version>]", 1)[1].split("\n## [", 1)[0]
+for b in re.split(r"\n(?=- )", sec):
+    if b.startswith("- ") and len(b.split()) > 60:
+        print(len(b.split()), b[:80])
+EOF
+```
+
+## 6. Show the result
 
 Print the new entry so the user can review it before committing.
