@@ -13,6 +13,24 @@ Full set covered.
 
 Clear this file per `CLAUDE.md` once the fixes land.
 
+## Execution order (agreed 2026-09-13)
+
+1. Rebase onto `main` — done.
+2. Normalization commit — done: `scripts/normalize_notebooks.py` pins the
+   kernel metadata (canonical `kernelspec`, no `language_info.version`); every
+   notebook is nbformat 4.5 with cell ids (closes item 6).
+3. Review the rebuilt skill (mechanics script + criteria doc); fix what falls
+   out before using it as the regression gate.
+4. Fix defects one commit per notebook: 01, 02, 04, 03, 20, 12, 11, 10, 21.
+   Item 20 (`expFun` vocabulary across 01/04/21) is one cross-notebook commit.
+   Re-verify item 15 before fixing it. After each notebook: mechanical
+   pre-pass + executed audit, confirm its findings are gone.
+5. Close out: one `[Unreleased]` CHANGELOG line, the two API gaps into
+   `TODO.md`, clear this file (archive-or-changelog decision).
+
+Decisions: item 4 gets a markdown note, no data regeneration. Criterion 7
+requires Tips **and** Next Steps, so 10, 11 and 20 each get a Next Steps.
+
 ---
 
 ## Physics / claims wrong — highest priority
