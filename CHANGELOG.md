@@ -162,7 +162,7 @@ This file is maintained using the shared changelog workflow in
 
 ### Changed
 
-- **Examples reorganized around user-workflow tracks.** The suite now progresses from basic fitting through model comparison, save/load/export, uncertainty analysis, and multi-file workflows, with clearer numbering and filenames. See `examples/fitting_workflows/README.md` for the legend and `docs/design/examples_upgrade.md` for the design.
+- **Examples reorganized around user-workflow tracks.** The suite now progresses from basic fitting through model comparison, save/load/export, uncertainty analysis, and multi-file workflows, with clearer numbering and filenames. See `examples/fitting_workflows/README.md` for the legend and `docs/design/examples_architecture.md` for the design.
 - **Basic and post-fit workflows split more cleanly.** `01_basic_fitting` now focuses on first-fit results (`get_fit_results` + plots); comparison, persistence/export, and uncertainty analysis live in dedicated follow-up notebooks (`10`–`12`).
 - **Multi-file independent fitting example added.** `20_multi_file_independent_fit` bridges single-file fitting and shared-parameter project fitting (`21_multi_file_shared_fit`).
 - Benchmark harness (`docs/ai/benchmark.md`, `.claude/skills/benchmark/benchmark_gir.py`) updated for the new example numbering: batch mode (`--example 0`) iterates examples 1–4; project-level fitting now lives at `21_multi_file_shared_fit` and remains outside the harness.

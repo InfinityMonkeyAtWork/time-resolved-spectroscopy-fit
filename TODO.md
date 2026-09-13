@@ -29,7 +29,7 @@
 
 ## Performance & architecture
 
-- [ ] **JAX backend follow-ons**: the backend itself shipped in v0.12.0 (Phases A–D of [docs/design/jax-planning.md](docs/design/jax-planning.md); execution record in [docs/design/archive/jax-backend.md](docs/design/archive/jax-backend.md)). Remaining candidates, none scheduled:
+- [ ] **JAX backend follow-ons**: the backend itself shipped in v0.12.0 (Phases A–D of [docs/design/archive/jax-planning.md](docs/design/archive/jax-planning.md); execution record in [docs/design/archive/jax-backend.md](docs/design/archive/jax-backend.md)). Remaining candidates, none scheduled:
   - Full-parameter-vector evaluator variant for interactive use (fixed-value edits without recompile) plus session-level evaluator caching — see [docs/design/ui.md](docs/design/ui.md).
   - vmap-batched slice-by-slice solver (the one workload where lmfit overhead plausibly dominates; would be the Phase E pilot) — see [docs/design/ui.md](docs/design/ui.md).
   - `fit_model_compare`-style runtime JAX parity mode, or a cheaper one-shot pre-fit parity check on the JAX path.

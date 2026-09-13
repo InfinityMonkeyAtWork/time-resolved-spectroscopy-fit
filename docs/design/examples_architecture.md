@@ -93,8 +93,9 @@ project.results.compare_models(...)
 ```
 
 More complex; comes after multi-file independent, not straight after the basics.
-The joint multi-file residual is currently MVP — not yet lowered to GIR (see
-`TODO.md`), which is the present source of its slowness, not a permanent trait.
+The joint fit runs on the fused compiled backend since v0.13.0 (see
+[`project-level-fits.md`](project-level-fits.md)); batching identical-grid
+files via `vmap` is still open (`TODO.md`).
 
 **Synthetic-data / ML user** — forward simulation, validation, training data.
 Entry: `synthetic_data/` (`01_simulator`, `02_ml_training_data`). These keep

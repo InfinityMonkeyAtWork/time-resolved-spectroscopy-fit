@@ -6,7 +6,7 @@ orphan: true
 
 Forward-looking note (2026-07-11). Captures the design direction for
 the "Project-level fit backend" TODO item, written just after the JAX
-backend landed (see [jax-planning.md](jax-planning.md) and the
+backend landed (see [archive/jax-planning.md](archive/jax-planning.md) and the
 `eval_jax.py` section of [repo_architecture.md](repo_architecture.md)).
 **Implemented 2026-07-13** as designed — see the implementation status
 and measured results at the end of this note.
@@ -79,7 +79,7 @@ evaluates the plans, and the shared-fit workload is where JAX's
   `vmap` batching; unrolled fusion in one program still applies.
 - **Mixed lowerability**: one non-JAX-lowerable file currently implies
   falling back for the whole project. Mixed-backend execution is
-  explicitly next-track in [jax-planning.md](jax-planning.md); the
+  explicitly next-track in [archive/jax-planning.md](archive/jax-planning.md); the
   first implementation should fall back whole-project (JAX -> NumPy
   plans -> MCP) rather than mix.
 - Same constraints as the single-file JAX path: closures do not pickle
