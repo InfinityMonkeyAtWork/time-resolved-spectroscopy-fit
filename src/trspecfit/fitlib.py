@@ -728,7 +728,7 @@ def fit_wrapper(
     ... )
 
     >>> # Fit with MCMC for uncertainty quantification
-    >>> mc = ulmfit.MC(use_emcee=1, steps=5000, nwalkers=50)
+    >>> mc = ulmfit.MC(use_mc=1, steps=5000, nwalkers=50)
     >>> results = fit_wrapper(
     ...     const=const,
     ...     args=args,
