@@ -25,14 +25,14 @@ base:
 # GLP_02_x0 inherits it through its expression.
 2D:
     Offset:
-      y0: [50, False, 0, 1000]
+      y0: [50, False]
     Shirley:
-        pShirley: [8.0E-4, False, 1.0E-9, 1.0]
+        pShirley: [8.0E-4, False]
     GLP:                       # GLP_01 -- position becomes time-dependent
-      A: [300, False, 0, 1000]
+      A: [300, False]
       x0: [84.5, True, 82, 88]
-      F: [1.0, False, 0.75, 2.5]
-      m: [0.3, False, 0, 1]
+      F: [1.0, False]
+      m: [0.3, False]
     GLP:                       # GLP_02 -- inherits GLP_01's dynamics via x0 expr
       A: ["3/4*GLP_01_A"]      # fixed intensity ratio (3:4)
       x0: ["GLP_01_x0 + 3.67"] # fixed energy splitting (eV)
