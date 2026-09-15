@@ -68,19 +68,20 @@ them.
 ```
 
 This gathers evidence for the scriptable criteria: notebook-JSON schema,
-stripped outputs, required
-files, committed truth, removed config keys, side-effect artifacts, roadmap/TOC
-numbering, relative links, heading numbering style, prose-voice candidates,
-`§` cross-references (with self-references marked), near-duplicate API names,
-private-attribute access, imports outside the import cell, repeated phrases,
-near-verbatim passages, repeated calls, API names the prose mentions but the
-code never calls, behaviour claims (raises / refuses / warns) with no
-demonstrating cell, measured-looking numbers quoted in prose (percentages,
-multipliers, decimal σ distances, approximate values, point timings), over-long
-sentences, over-wide code lines, style shared with same-decade peers, and YAML
-comment wrapping. It emits **PASS/WARN/FAIL** for what it can decide
-deterministically (committed outputs, artifacts, removed keys, and broken
-relative links FAIL; roadmap/TOC numbering, mixed heading styles, and
+stripped outputs, required files, committed truth, removed config keys, side-
+effect artifacts, roadmap/TOC numbering, relative links, heading numbering
+style, prose-voice candidates, `§` cross-references (with self-references
+marked), near-duplicate API names, private-attribute access, imports outside
+the import cell, repeated phrases, near-verbatim passages, repeated calls, API
+names the prose mentions but the code never calls, behaviour claims (raises /
+refuses / warns) with no demonstrating cell, measured-looking numbers quoted in
+prose (percentages, multipliers, decimal σ distances, approximate values, point
+timings), over-long sentences, over-wide code lines, style shared with same-
+decade peers, and YAML comment wrapping. It emits **PASS/WARN/FAIL** for what
+it can decide deterministically (notebook JSON that does not parse or disagrees
+with its declared nbformat, a missing `example.ipynb`, committed outputs,
+committed artifacts, removed config keys, and broken relative links FAIL; non-
+consecutive or roadmap-mismatched `## N` numbering, mixed heading styles, and
 private-attribute access in code WARN); everything intent-dependent comes out
 as **INFO** for you to resolve. Several scans are deliberately narrowed so
 their output stays worth reading: prose-voice reports PASS when it finds no
@@ -90,13 +91,13 @@ notebook calls it" claim; private-access ignores globs and filenames
 (`models_*_truth.yaml` is not an attribute); measured values runs only on a
 notebook with a stochastic step; near-verbatim looks only inside one notebook,
 because criterion 14 does not compare notebooks; peer consistency needs two
-peers before it calls a majority, and with fewer reports only a notebook
-inconsistent with itself. Fold its output into criteria 1, 2, 3, 4, 5, 6, 7, 8,
-9, 10, 12, 14, and 15 below. It does **not** execute the notebook (criterion 1
-is
-the slow one — run it separately); its `--dump` mode reads the executed copy
-back for criteria 1 and 12 and ends with a footer listing every warning or
-error the run printed and whether any prose or comment mentions it.
+peers before it calls a majority — with one peer it names the split, since
+neither notebook is the outlier — and always reports a notebook inconsistent
+with itself. Fold its output into criteria 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12,
+14, and 15 below. It does **not** execute the notebook (criterion 1 is the slow
+one — run it separately); its `--dump` mode reads the executed copy back for
+criteria 1 and 12 and ends with a footer listing every warning or error the run
+printed and whether any prose or comment mentions it.
 
 ## Criterion boundaries
 
@@ -119,9 +120,15 @@ largest single overhead in an audit.
    echoing a keyword from the prose is the intended anchor and never counts,
    however redundant it looks.
 4. **Is it true, present, once, and hard to read?** → **10**.
+5. **Is it true, present, once, readable, but in the wrong place or form?**
+   → the criterion that owns the form: off-topic content or a bypassed
+   wrapper → **7**, a kwarg restating its default or missing its reason →
+   **6**, two names or two idioms for one thing → **13**, a private
+   attribute in code → **15**.
 
-A finding that genuinely survives all four is reported once, under the
-earliest that fits, with a one-clause pointer to the other — never twice.
+A finding none of the five claims is not a finding. One that two criteria
+could claim is reported once, under the earliest that fits, with a one-clause
+pointer to the other — never twice.
 Report the *defect*, not the criterion's phrasing: two criteria describing one
 sentence from different altitudes is one finding.
 
@@ -225,7 +232,7 @@ as artifacts.
 
 ## 5. One main message, why-driven narrative & roadmap-as-TOC
 
-Three parts:
+Five parts:
 
 - **One clear main message.** The notebook has a single takeaway, stated
   plainly in the opening — e.g. 10: "`file.compare_models()` ranks candidate
@@ -396,9 +403,9 @@ Readability defects are separate from voice and also WARN — quote the line:
   character, the statement each peer reaches a shared module by (`import numpy
   as np` against `from numpy import array`), and the name a peer binds the same
   call's result to (`file` against `f`). A module this notebook simply does not
-  import is not a divergence. Where the decade itself has no convention, there
-  is nothing to match and the outlier is whichever notebook is inconsistent
-  with *itself*.
+  import is not a divergence. A two-notebook decade has no majority, so the
+pre-pass names the split rather than an outlier; a notebook inconsistent
+with *itself* is always reported.
 
 ## 11. Method assumptions & failure modes
 
@@ -629,7 +636,7 @@ recognise it? Flag:
 
 - **Private attributes** (`Project._fit_history`) in prose, and worse in code
   (`len(project._fit_history)`) — a tutorial that reaches into private state
-  teaches the reader to do the same. FAIL in code, WARN in prose; the pre-pass
+  teaches the reader to do the same. WARN in code, INFO in prose; the pre-pass
   finds both.
 - **Internal names the notebook never has to teach:** class names the reader
   never constructs (`SavedFitSlot`), hash fields (`fit_view_sha256`),

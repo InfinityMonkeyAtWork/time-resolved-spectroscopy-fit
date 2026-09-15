@@ -1,16 +1,14 @@
 """Mechanical (scriptable) checks for an examples/fitting_workflows notebook.
-
-Covers the statically-checkable parts of docs/ai/check-example.md: notebook-JSON
-schema (1), stripped outputs (9), roadmap/TOC numbering (5), required files (3),
-committed truth (2),
-removed config keys (4), side-effect artifacts (4), relative links (7), YAML
-comment wrapping (8), heading numbering style, prose-voice candidates, long
-sentences, over-wide code lines and style shared with same-decade peers (10),
-imports outside the import cell (6), `§`
-cross-references, near-duplicate API names, prose-only names, undemonstrated
+Covers the statically-checkable parts of docs/ai/check-example.md: notebook-
+JSON schema (1), stripped outputs (9), roadmap/TOC numbering (5), required
+files (3), committed truth (2), removed config keys (4), side-effect artifacts
+(4), relative links (7), YAML comment wrapping (8), heading numbering style,
+prose-voice candidates, long sentences, over-wide code lines and style shared
+with same-decade peers (10), imports outside the import cell (6), `§` cross-
+references, near-duplicate API names, prose-only names, undemonstrated
 behaviour claims and measured-looking numbers quoted in prose (12), repeated
-phrases, near-verbatim passages and repeated calls (14), and
-private-attribute access (15).
+phrases, near-verbatim passages and repeated calls (14), and private-attribute
+access (15).
 Prints a PASS / WARN / FAIL / INFO line per check — INFO marks a fact the agent
 must resolve by reading (evidence, not a verdict). The judgment criteria
 (1, 6, 7, 8, 11, 13, plus the prose/message parts of 5, 10, 12, 14, 15) are
@@ -29,7 +27,11 @@ import tokenize
 from functools import lru_cache
 from pathlib import Path
 
-EXAMPLES_ROOT = Path("examples/fitting_workflows")
+# The script lives at <repo>/.claude/skills/check-example/, so every path is
+# anchored to the repo rather than to the caller's cwd.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+EXAMPLES_ROOT = REPO_ROOT / "examples" / "fitting_workflows"
+REGISTRY_DIR = REPO_ROOT / "src" / "trspecfit" / "functions"
 
 Cell = tuple[int, str, str]  # (index, cell_type, source)
 
@@ -118,7 +120,7 @@ BEHAVIOR_CLAIM_RE = re.compile(
     r"KeyError|RuntimeError|warns?|warning)\b"
 )
 DEMO_RE = re.compile(
-    r"^\s*(try:|except\b|with pytest\.raises|warnings\.catch_warnings)", re.M
+    r"^\s*(try:|except\b|with\s+(?:pytest\.raises|warnings\.catch_warnings))", re.M
 )
 TIMING_CONTEXT_RE = re.compile(r"(?i)\b(runtime|run time|takes|elapsed)\b")
 # --dump footer (criterion 1): output lines that carry a warning or error.
@@ -131,7 +133,9 @@ SIGNAL_RE = re.compile(
 SIGNAL_PREFIX_RE = re.compile(
     r"^.*?(?:\b\w*(?:Warning|Error)\b\s*:\s*|\b(?:WARNING|ERROR)(?::\w+)?:\s*)"
 )
-BARE_CALL_RE = re.compile(r"^\w+\(.*\)$")
+# A bare call on its own line is Python echoing the source of a warning
+# (`warnings.warn(msg)`), not a second warning.
+BARE_CALL_RE = re.compile(r"^[\w.]+\(.*\)$")
 # A number with a time unit ("~30–40 s", "2 min"); the context word above
 # must appear on the same line.
 TIMING_VALUE_RE = re.compile(r"\d+\s*(?:s|secs?|seconds?|ms|mins?|minutes?|h|hours?)\b")
@@ -157,6 +161,27 @@ MEASURED_VALUE_RE = re.compile(
 
 
 #
+def repo_rel(path: Path) -> str:
+    """`path` as git prints it: relative to the repo root, forward slashes."""
+
+    try:
+        return path.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
+#
+def valid_json(nb_path: Path) -> bool:
+    """True if the file exists and parses as JSON (a corrupt sibling is skipped)."""
+
+    try:
+        json.loads(nb_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return True
+
+
+#
 def not_gitignored(paths: list[Path]) -> list[Path]:
     """Drop paths git ignores (e.g. the `<name>_fits/` artifact trees)."""
 
@@ -164,14 +189,15 @@ def not_gitignored(paths: list[Path]) -> list[Path]:
         return paths
     try:
         ignored = subprocess.run(
-            ["git", "check-ignore", "--", *(str(p) for p in paths)],
+            ["git", "check-ignore", "--", *(repo_rel(p) for p in paths)],
             capture_output=True,
             text=True,
+            cwd=REPO_ROOT,
         ).stdout.split("\n")
     except FileNotFoundError:
         return paths
     ignored_set = {line for line in ignored if line}
-    return [p for p in paths if str(p) not in ignored_set]
+    return [p for p in paths if repo_rel(p) not in ignored_set]
 
 
 #
@@ -369,7 +395,7 @@ def check_roadmap_toc(nb_path: Path) -> tuple[str, str]:
         return "WARN", "no numbered `## N` sections"
     start = headers[0]
     if start not in (0, 1) or headers != list(range(start, start + len(headers))):
-        return "FAIL", f"`## N` sections not consecutive: {headers}"
+        return "WARN", f"`## N` sections not consecutive: {headers}"
     open_nums = [
         int(m.group(1))
         for line in md[0].splitlines()
@@ -581,7 +607,7 @@ def registry_function_names() -> frozenset[str]:
     """
 
     names: set[str] = set()
-    for src in Path("src/trspecfit/functions").glob("*.py"):
+    for src in REGISTRY_DIR.glob("*.py"):
         names.update(re.findall(r"^def (\w+)", src.read_text(encoding="utf-8"), re.M))
     return frozenset(names)
 
@@ -990,7 +1016,6 @@ def scan_code_width(nb_path: Path, width: int = 88) -> tuple[str, str]:
 
 
 #
-IMPORT_LINE_RE = re.compile(r"^\s*(?:import|from)\s")
 # A top-level `name = callee(...)` binding; the callee may be dotted.
 BINDING_RE = re.compile(r"^(\w+)\s*=\s*([\w.]+)\(", re.M)
 
@@ -1000,7 +1025,11 @@ def peer_examples(ex: Path) -> list[Path]:
     """Examples whose leading digit matches this one — its decade, minus itself."""
 
     return [
-        d for d in all_example_dirs() if d.name[0] == ex.name[0] and d.name != ex.name
+        d
+        for d in all_example_dirs()
+        if d.name[0] == ex.name[0]
+        and d.name != ex.name
+        and valid_json(d / "example.ipynb")
     ]
 
 
@@ -1317,14 +1346,15 @@ def check_artifacts(ex: Path) -> tuple[str, str]:
         return "PASS", "no fit artifacts in tree"
     try:
         tracked_out = subprocess.run(
-            ["git", "ls-files", "--", *(str(a) for a in arts)],
+            ["git", "ls-files", "--", *(repo_rel(a) for a in arts)],
             capture_output=True,
             text=True,
+            cwd=REPO_ROOT,
         ).stdout
         tracked = {line for line in tracked_out.splitlines() if line}
     except FileNotFoundError:
         tracked = set()
-    committed = [a for a in arts if str(a) in tracked]
+    committed = [a for a in arts if repo_rel(a) in tracked]
     if committed:
         listed = ", ".join(str(a) for a in committed[:4])
         return "FAIL", f"committed artifacts: {listed}"
@@ -1351,6 +1381,24 @@ def trim_stream(text: str) -> str:
         kept.append(line)
     if collapsed:
         kept.append(f"[… {collapsed} report/progress line(s) collapsed]")
+    return "\n".join(kept)
+
+
+#
+def trim_stderr(text: str) -> str:
+    """Drop progress bars from a stderr stream; keep every warning line whole."""
+
+    kept: list[str] = []
+    bars = 0
+    for line in text.replace("\r", "\n").splitlines():
+        if not line.strip():
+            continue
+        if "%|" in line or "it/s]" in line or "s/it]" in line:
+            bars += 1
+            continue
+        kept.append(line)
+    if bars:
+        kept.append(f"[… {bars} progress line(s) collapsed]")
     return "\n".join(kept)
 
 
@@ -1421,12 +1469,15 @@ def print_warning_footer(
 def dump_executed(nb_path: Path, max_chars: int = 2500) -> None:
     """Print an executed notebook cell by cell with trimmed outputs.
 
-    Figures and lmfit ``Parameters`` reprs collapse to one line; stderr
-    streams (warnings) and error outputs are kept whole so criterion 1 can
-    read them. Everything else is the evidence for criterion 12. A footer
-    lists every warning/error line and whether the prose mentions it.
+    Figures and lmfit ``Parameters`` reprs collapse to one line; stderr keeps
+    every warning line whole and drops only progress bars, and error outputs
+    are kept whole, so criterion 1 can read them. Everything else is the
+    evidence for criterion 12. A footer lists every warning/error line and
+    whether the prose mentions it.
     """
 
+    if not valid_json(nb_path):
+        sys.exit(f"{nb_path}: notebook JSON does not parse")
     nb = json.loads(nb_path.read_text(encoding="utf-8"))
     cells = load_cells(nb_path)
     signals: list[tuple[int, str]] = []
@@ -1442,7 +1493,7 @@ def dump_executed(nb_path: Path, max_chars: int = 2500) -> None:
                 raw = "".join(out.get("text", []))
                 name = out.get("name", "stdout")
                 signals += [(ci, m) for m in signal_lines(raw)]
-                body = raw.strip() if name == "stderr" else trim_stream(raw)
+                body = trim_stderr(raw) if name == "stderr" else trim_stream(raw)
                 if body:
                     print(f"--- {name} ---")
                     print(body[:max_chars])
@@ -1482,7 +1533,15 @@ def report_example(ex: Path) -> tuple[int, int]:
     nb = ex / "example.ipynb"
     print(f"# Mechanical checks: {ex}")
     rows: list[tuple[str, str, str]] = []
-    if nb.is_file():
+    if nb.is_file() and not valid_json(nb):
+        rows.append(
+            (
+                "1  Notebook schema",
+                "FAIL",
+                "notebook JSON does not parse (conflict markers or a truncated save?)",
+            )
+        )
+    elif nb.is_file():
         rows.append(("1  Notebook schema", *check_notebook_schema(nb)))
         rows.append(("9  Stripped outputs", *check_stripped(nb)))
         rows.append(("5  Roadmap/TOC", *check_roadmap_toc(nb)))
