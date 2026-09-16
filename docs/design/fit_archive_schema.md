@@ -313,8 +313,12 @@ influence the result — built by `build_fit_settings`:
 - sbs: `seed_source`, `seed_adapt`, `seed_values` (JSON `null` is
   meaningful — "no seed adaptation" is provenance too; these choose
   initial parameter values and are unrelated to the RNG `seed`);
-- when MCMC was enabled: an `mc` sub-dict (`use_mc`, `steps`, `nwalkers`,
-  `burn`, `thin`, `ntemps`, `is_weighted`, `sigma_ini/min/max`).
+- when MCMC ran: an `mc` sub-dict with the settings as resolved at fit time
+  (`use_mc`, `steps`, `nwalkers`, `burn`, `thin`, `ntemps`, `is_weighted`;
+  `sigma_ini/min/max` for unweighted sampling only; `seed` when one was
+  set — the sampler seed, distinct from the optimizer `seed` above). Knobs
+  the caller left at `None` appear with their derived values. SbS records
+  slice 0's, mirroring the slot's slice-0 MCMC payload.
 
 Execution details that cannot change the result (SbS / emcee worker
 counts; serial ≡ parallel dispatch is pinned by test) are deliberately

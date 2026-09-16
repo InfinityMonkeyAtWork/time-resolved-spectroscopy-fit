@@ -37,6 +37,7 @@ if TYPE_CHECKING:
         success: bool
         errorbars: bool
         nvarys: int
+        ndata: int
         nfree: int
         chisqr: float
         redchi: float
@@ -688,6 +689,10 @@ class FitOutput:
     emcee_ci : pd.DataFrame
         MCMC confidence intervals (quantiles of the flatchain, same
         column structure as ``conf_ci``). Empty if MCMC not used.
+    mc_settings : MC or None
+        The MCMC settings as they ran — the caller's ``MC`` with every
+        derivable knob resolved from the optimizer result (see
+        ``MC.resolve``). None if MCMC not used.
     """
 
     par_ini: lmfit.Parameters | None
@@ -695,6 +700,47 @@ class FitOutput:
     conf_ci: pd.DataFrame
     emcee_fin: TypedMinimizerResult | None
     emcee_ci: pd.DataFrame
+    mc_settings: MC | None = None
+
+
+#
+def _validate_sigma(
+    sigma_ini: float | None,
+    sigma_min: float | None,
+    sigma_max: float | None,
+    *,
+    derived: bool = False,
+) -> None:
+    """
+    Check the noise-scale knobs that are set; ``None`` means "derive later".
+
+    ``derived`` marks ``sigma_ini`` as the fit-derived start, so the error
+    names the value and the way out instead of blaming a kwarg the caller
+    never passed.
+    """
+
+    for name, value in (
+        ("sigma_ini", sigma_ini),
+        ("sigma_min", sigma_min),
+        ("sigma_max", sigma_max),
+    ):
+        if value is not None and not (np.isfinite(value) and value > 0):
+            raise ValueError(f"{name} must be a positive finite number, got {value}")
+    if sigma_min is not None and sigma_max is not None and not sigma_min < sigma_max:
+        raise ValueError("sigma_min must be < sigma_max")
+    if sigma_ini is None:
+        return
+    below = sigma_min is not None and sigma_ini < sigma_min
+    above = sigma_max is not None and sigma_ini > sigma_max
+    if below or above:
+        if derived:
+            raise ValueError(
+                f"sigma_ini derived from the fit ({sigma_ini:.4g}, the RMS "
+                f"residual) lies outside the explicit bounds "
+                f"[sigma_min, sigma_max] = [{sigma_min}, {sigma_max}]; pass "
+                "sigma_ini explicitly or widen/drop the bounds"
+            )
+        raise ValueError("sigma_ini must lie within [sigma_min, sigma_max]")
 
 
 #
@@ -703,9 +749,12 @@ class MC:
     """
     Configuration for lmfit.emcee MCMC sampling.
 
-    Stores settings for Markov Chain Monte Carlo parameter space exploration
-    using lmfit's emcee wrapper. Provides a convenient way to manage and pass
-    MCMC configuration settings.
+    Holds the settings ``fitlib.fit_wrapper`` passes to
+    ``lmfit.Minimizer.emcee``. Knobs left at ``None`` are derived from the
+    optimizer result at fit time by :meth:`resolve`, which returns a fully
+    explicit copy: that copy is what ran, is returned as
+    ``FitOutput.mc_settings`` and is recorded in the fit slot's provenance.
+    A fit never mutates the object it was given.
 
     Parameters
     ----------
@@ -715,70 +764,64 @@ class MC:
         - 1: Always use MCMC
         - 2: Use MCMC if conf_interval fails
     steps : int, default=5000
-        Number of MCMC steps per walker
-    nwalkers : int, default=1
-        Number of MCMC walkers (should be >> number of parameters)
+        Number of MCMC steps per walker.
+    nwalkers : int or None, default=None
+        Number of MCMC walkers. None derives ``2 * n_dim`` with a floor of
+        20, where ``n_dim`` counts the varying parameters plus the
+        ``__lnsigma`` nuisance for unweighted sampling. An explicit value
+        below ``2 * n_dim`` raises at fit time: emcee's stretch move needs at
+        least that many.
     burn : int, default=0
-        Number of burn-in steps to discard (default 500 if starting far from optimum)
+        Leading steps discarded from every walker. The chain starts at the
+        optimizer's solution, so 0 is adequate; raise it when the walkers
+        start far from the optimum.
     thin : int, default=1
-        Thinning factor (keep every Nth sample, default 20 for independence)
+        Keep every ``thin``-th step. 1 keeps the whole chain; larger values
+        reduce the autocorrelation between retained samples.
     ntemps : int, default=1
-        Number of temperatures for parallel tempering
+        Number of temperatures for parallel tempering.
     workers : int, default=1
         Number of parallel workers (1 = serial). Workers > 1 run the
         sampling in a spawn-backed process pool (safe in multithreaded
         processes, unlike fork), costing ~1-2 s of pool startup per fit.
     is_weighted : bool, default=False
-        Whether to use weighted samples
-    sigma_ini : float, default=0.1
-        Initial guess for the noise scale sampled via the ``__lnsigma``
-        nuisance parameter (used when ``is_weighted=False``), in data
-        units. Start it near the known/estimated noise level — a far-off
-        init costs the walkers their burn-in just to find the scale.
-    sigma_min : float, default=0.001
-        Lower bound for the sampled noise scale (data units).
-    sigma_max : float, default=2.0
-        Upper bound for the sampled noise scale (data units). Widen this
-        when the data's noise level exceeds 2 in raw data units.
+        Whether the residual is already in units of sigma. False samples
+        the noise scale as the ``__lnsigma`` nuisance parameter; True trusts
+        the residual's scale, has no nuisance, and ignores the sigma knobs.
+    sigma_ini : float or None, default=None
+        Start of the sampled noise scale (data units). None derives the
+        fit's RMS residual, ``sqrt(chisqr / ndata)`` of the optimizer result:
+        the maximum-likelihood sigma of the unweighted Gaussian model on the
+        data view the fit saw. Started far off the true scale, the walkers
+        spend the chain hunting for it and the posterior widths are
+        unreliable.
+    sigma_min, sigma_max : float or None, default=None
+        Bounds of the sampled noise scale (data units). None derives two
+        decades either side of the start. A derived start outside explicit
+        bounds raises at fit time.
+    seed : int or None, default=None
+        Seed for the sampler's random state (initial walker spread and
+        proposals), forwarded to ``lmfit.Minimizer.emcee(seed=)``. Makes a
+        chain reproducible; the optimizer result does not depend on it
+        (``fit_wrapper(seed=)`` seeds the stage-1 optimizer instead).
 
     Attributes
     ----------
-    use_emcee : int
-        MCMC usage flag
-    steps : int
-        Number of MCMC steps
-    nwalkers : int
-        Number of walkers
-    burn : int
-        Burn-in steps
-    thin : int
-        Thinning factor
-    ntemps : int
-        Temperature levels
-    workers : int
-        Parallel workers
-    is_weighted : bool
-        Use weighted samples
+    Same names as the parameters. On the copy returned by :meth:`resolve`
+    every derivable knob is explicit, except that the ``sigma_*`` knobs stay
+    None when ``is_weighted`` is True.
 
     Examples
     --------
-    >>> # Basic MCMC settings
-    >>> mc_config = MC(use_mc=1, steps=10000, nwalkers=50)
-    >>> result = fit_wrapper(..., mc_settings=mc_config)
+    >>> # everything derived from the fit
+    >>> result = fit_wrapper(..., mc_settings=MC(use_mc=1, steps=10000))
+    >>> result.mc_settings.nwalkers  # what ran
 
-    >>> # Parallel tempering with multiple workers
-    >>> mc_config = MC(use_mc=1, steps=5000, nwalkers=100,
-    ...                ntemps=10, workers=4)
-
-    >>> # Use MCMC as fallback if conf_interval fails
-    >>> mc_config = MC(use_mc=2, steps=5000, nwalkers=50)
+    >>> # reproducible chain, explicit walkers
+    >>> mc_config = MC(use_mc=1, steps=5000, nwalkers=50, seed=7)
 
     Notes
     -----
-    - nwalkers should be at least 2 * n_parameters
-    - burn-in needed if starting point far from optimum
-      (set burn=0 if starting from fit)
-    - thin > 1 reduces autocorrelation in samples
     - workers > 1 enables parallel sampling in a spawn-backed process pool
       (not supported on the JAX evaluator path)
 
@@ -794,21 +837,27 @@ class MC:
         *,
         use_mc: int = 0,
         steps: int = 5000,
-        nwalkers: int = 1,
+        nwalkers: int | None = None,
         burn: int = 0,
         thin: int = 1,
         ntemps: int = 1,
         workers: int = 1,
         is_weighted: bool = False,
-        sigma_ini: float = 0.1,
-        sigma_min: float = 0.001,
-        sigma_max: float = 2.0,
+        sigma_ini: float | None = None,
+        sigma_min: float | None = None,
+        sigma_max: float | None = None,
+        seed: int | None = None,
     ) -> None:
-        if not (sigma_min < sigma_max):
-            raise ValueError("sigma_min must be < sigma_max")
-        if not (sigma_min <= sigma_ini <= sigma_max):
-            raise ValueError("sigma_ini must lie within [sigma_min, sigma_max]")
-        self.use_emcee = use_mc
+        if use_mc not in (0, 1, 2):
+            raise ValueError(
+                f"use_mc must be 0 (off), 1 (always) or 2 (if CI fails), got {use_mc}"
+            )
+        if nwalkers is not None and nwalkers < 2:
+            raise ValueError(f"nwalkers must be >= 2 or None (derived), got {nwalkers}")
+        if seed is not None and (isinstance(seed, bool) or seed < 0):
+            raise ValueError(f"seed must be a non-negative int or None, got {seed!r}")
+        _validate_sigma(sigma_ini, sigma_min, sigma_max)
+        self.use_mc = use_mc
         self.steps = steps
         self.nwalkers = nwalkers
         self.burn = burn
@@ -819,11 +868,81 @@ class MC:
         self.sigma_ini = sigma_ini
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
+        self.seed = seed
+
+    #
+    def resolve(self, *, sigma_fit: float, n_dim: int) -> MC:
+        """
+        Fill every derivable knob from the optimizer result; return a copy.
+
+        Parameters
+        ----------
+        sigma_fit : float
+            RMS residual of the optimizer result, ``sqrt(chisqr / ndata)``,
+            in data units: the start of the sampled noise scale when
+            ``sigma_ini`` is None.
+        n_dim : int
+            Sampled dimensions: varying parameters plus one for ``__lnsigma``
+            when ``is_weighted`` is False.
+
+        Raises
+        ------
+        ValueError
+            Derived start outside explicit sigma bounds; explicit ``nwalkers``
+            below emcee's minimum of ``2 * n_dim``; a non-positive
+            ``sigma_fit`` when the start must be derived.
+        """
+
+        sigma_ini: float | None = None
+        sigma_min: float | None = None
+        sigma_max: float | None = None
+        if not self.is_weighted:
+            if self.sigma_ini is None:
+                if not (np.isfinite(sigma_fit) and sigma_fit > 0):
+                    raise ValueError(
+                        f"cannot derive sigma_ini: the fit's RMS residual is "
+                        f"{sigma_fit} (noiseless data?); pass sigma_ini explicitly"
+                    )
+                start, derived = float(sigma_fit), True
+            else:
+                start, derived = self.sigma_ini, False
+            sigma_ini = start
+            sigma_min = start / 100.0 if self.sigma_min is None else self.sigma_min
+            sigma_max = start * 100.0 if self.sigma_max is None else self.sigma_max
+            _validate_sigma(sigma_ini, sigma_min, sigma_max, derived=derived)
+        if self.nwalkers is None:
+            nwalkers = max(20, 2 * n_dim)
+        elif self.nwalkers < 2 * n_dim:
+            raise ValueError(
+                f"nwalkers={self.nwalkers} is below emcee's minimum of "
+                f"2 * n_dim = {2 * n_dim} ({n_dim} sampled dimensions: the "
+                "varying parameters"
+                + ("" if self.is_weighted else " plus __lnsigma")
+                + "); raise it or pass nwalkers=None to derive it"
+            )
+        else:
+            nwalkers = self.nwalkers
+        return MC(
+            use_mc=self.use_mc,
+            steps=self.steps,
+            nwalkers=nwalkers,
+            burn=self.burn,
+            thin=self.thin,
+            ntemps=self.ntemps,
+            workers=self.workers,
+            is_weighted=self.is_weighted,
+            sigma_ini=sigma_ini,
+            sigma_min=sigma_min,
+            sigma_max=sigma_max,
+            seed=self.seed,
+        )
 
     #
     def __repr__(self) -> str:
         return (
-            f"MC(use_mc={self.use_emcee}, steps={self.steps}, nwalkers={self.nwalkers})"
+            f"MC(use_mc={self.use_mc}, steps={self.steps}, "
+            f"nwalkers={self.nwalkers}, sigma_ini={self.sigma_ini}, "
+            f"seed={self.seed})"
         )
 
 

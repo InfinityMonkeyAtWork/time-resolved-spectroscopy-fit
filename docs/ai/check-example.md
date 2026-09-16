@@ -517,7 +517,8 @@ binds this notebook's code. Then verify each entry, in this order:
   what a statistic *is* (`stderr` is a marginal width, not a conditional
   one), what a warning *means* (emcee's 50τ message says τ cannot be
   estimated, not that the chain is unconverged), or what a default *does*
-  (`sigma_ini=0.1` in data units) is checked against the upstream docstring
+  (`sigma_ini=None` starts the sampled noise scale at the fit's RMS
+  residual) is checked against the upstream docstring
   or source — lmfit, emcee, scipy — and the library's own. A plausible
   paraphrase that the upstream text contradicts is a FAIL: it is the one
   kind of error a reader cannot catch from the notebook alone.

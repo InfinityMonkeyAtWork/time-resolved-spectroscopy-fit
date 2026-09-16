@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [0.15.0] - 2026-09-16
+
+### Added
+
+- **Reproducible MCMC chains.** `MC(seed=)` seeds the sampler (walker spread and proposals) and is recorded in the slot's `fit_settings["mc"]`; the optimizer result does not depend on it.
+
+### Changed
+
+- **`MC` defaults come from the fit.** `sigma_ini`, `sigma_min`, `sigma_max` and `nwalkers` default to `None` and are resolved from the optimizer result (RMS residual, two decades of bounds, `2 × n_dim` walkers with a floor of 20); the resolved copy is returned as `FitOutput.mc_settings` and is what provenance records. A chain started at the old fixed `sigma_ini=0.1` on data with ten times that noise returned widths orders of magnitude off `stderr`.
+- **`MC.use_emcee` renamed to `use_mc`**, matching the constructor keyword; no alias.
+- The `mc` provenance block is written only when MCMC ran, and omits the sigma knobs for weighted sampling.
+
+### Fixed
+
+- `use_mc=2` no longer mutates the caller's `MC` when the profiled CI fails: one failed slice in a slice-by-slice fit used to flip every later slice into MCMC.
+- Explicit `nwalkers` below emcee's `2 × n_dim` minimum raises a `ValueError` naming the requirement instead of emcee's opaque `RuntimeError`; the `MC` docstrings for `burn`/`thin` no longer cite defaults the signature contradicts.
+
 ## [0.14.1] - 2026-09-15
 
 ### Fixed

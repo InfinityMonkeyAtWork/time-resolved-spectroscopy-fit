@@ -986,6 +986,10 @@ class TestJointFitResult:
         assert record.mcmc.acceptance_fraction is not None  # type guard
         assert record.mcmc.acceptance_fraction.shape == (32,)
         assert all(p.slot.mcmc is None for p in record.projections)
+        # provenance holds the settings as resolved for the joint objective:
+        # the derived sigma start is the concatenated residual's RMS
+        assert record.fit_settings["mc"]["nwalkers"] == 32
+        assert record.fit_settings["mc"]["sigma_ini"] > 0
 
         # The joint chain renders through the shared MCMC primitive.
         n_figs = len(plt.get_fignums())
