@@ -1675,7 +1675,7 @@ def can_lower_2d(graph: GraphIR) -> bool:
 # can_lower_jax_2d
 # ---------------------------------------------------------------------------
 
-# JAX backend (docs/design/jax-planning.md, Phases B + C): covers the
+# JAX backend (docs/design/archive/jax-planning.md, Phases B + C): covers the
 # full lowered 2D surface, including profiles, convolution, subcycle
 # dynamics, and Voigt (Weideman wofz approximation in eval_jax).  The
 # sets exist so future NumPy-side widening does not silently imply JAX

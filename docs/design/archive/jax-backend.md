@@ -6,7 +6,7 @@ orphan: true
 
 > **Status: implemented** (2026-07-11, `jax-backend` branch, v0.12.0).
 > Execution record of the JAX track planned in
-> [../jax-planning.md](../jax-planning.md). The backend lives in
+> [jax-planning.md](jax-planning.md). The backend lives in
 > `eval_jax.py`, gated by `graph_ir.can_lower_jax_2d`, selected via
 > `Project.spec_fun_str = "fit_model_jax"`. Phase E (optimizer
 > replacement) was deferred. Follow-on design notes:

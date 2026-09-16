@@ -1,6 +1,11 @@
 # use these models to add time-dependence to a parameter in a 2D model
 # (available functions info: /src/trspecfit/functions/time.py)
 
+# vary field uses "project" / "file" / "static" strings
+# - "project": shared across all files in project.fit_2d (fitted once)
+# - "file": independent per file (fitted separately)
+# - "static": fixed (not fitted), set from the baseline fit
+# In a per-file fit (this notebook) project and file both mean vary=True.
 MonoExpPosIRF:
     gaussCONV:
         SD: [5, project, 1.0E-6, 10]

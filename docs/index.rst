@@ -21,7 +21,7 @@ A Python library for fitting multi-component spectral models to time-resolved sp
    design/lowered_evaluator
    design/fit_archive_schema
    design/roundtrip_test_matrix
-   design/examples_upgrade
+   design/examples_architecture
    ai/index
 
 .. toctree::

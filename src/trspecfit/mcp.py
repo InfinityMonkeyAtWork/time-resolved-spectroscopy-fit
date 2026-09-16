@@ -2747,7 +2747,7 @@ class Dynamics(Model):
         --------
         >>> t_model = Dynamics('param')
         >>> t_model.time = np.array([0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3])
-        >>> t_model.frequency = 10  # 10 Hz = 0.1 s period
+        >>> t_model.frequency = 10  # period 0.1 in the time axis's own units
         >>> t_model.subcycles = 2   # Two subcycles per period
         >>> t_model.normalize_time()
         >>>

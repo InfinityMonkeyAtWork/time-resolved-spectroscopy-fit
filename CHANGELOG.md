@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [0.14.1] - 2026-09-15
+
+### Fixed
+
+- **Example notebooks corrected.** 33 defects found by `/check-example`: reversed physics descriptions (01, 04), a wrong χ² formula (10), a kwarg that does not exist (11), unexplained warnings and confidence tables (03, 20, 21), results printed without their truth. Every notebook now pairs its fitted values with the truth behind the data and runs without unexplained warnings.
+
+### Changed
+
+- Notebook kernel metadata is pinned by the `normalize_notebooks.py` pre-commit hook (canonical `kernelspec`, no `language_info.version`), so opening a notebook in another kernel no longer yields a committable diff; all notebooks are nbformat 4.5.
+
 ## [0.14.0] - 2026-09-13
 
 ### Added
@@ -162,7 +172,7 @@ This file is maintained using the shared changelog workflow in
 
 ### Changed
 
-- **Examples reorganized around user-workflow tracks.** The suite now progresses from basic fitting through model comparison, save/load/export, uncertainty analysis, and multi-file workflows, with clearer numbering and filenames. See `examples/fitting_workflows/README.md` for the legend and `docs/design/examples_upgrade.md` for the design.
+- **Examples reorganized around user-workflow tracks.** The suite now progresses from basic fitting through model comparison, save/load/export, uncertainty analysis, and multi-file workflows, with clearer numbering and filenames. See `examples/fitting_workflows/README.md` for the legend and `docs/design/examples_architecture.md` for the design.
 - **Basic and post-fit workflows split more cleanly.** `01_basic_fitting` now focuses on first-fit results (`get_fit_results` + plots); comparison, persistence/export, and uncertainty analysis live in dedicated follow-up notebooks (`10`–`12`).
 - **Multi-file independent fitting example added.** `20_multi_file_independent_fit` bridges single-file fitting and shared-parameter project fitting (`21_multi_file_shared_fit`).
 - Benchmark harness (`docs/ai/benchmark.md`, `.claude/skills/benchmark/benchmark_gir.py`) updated for the new example numbering: batch mode (`--example 0`) iterates examples 1–4; project-level fitting now lives at `21_multi_file_shared_fit` and remains outside the harness.

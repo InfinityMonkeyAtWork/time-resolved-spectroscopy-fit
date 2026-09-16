@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trspecfit"
-version = "0.14.0"
+version = "0.14.1"
 authors = [
     {name = "Johannes Mahl", email = "infinitymonkeyatwork@gmail.com"},
 ]
@@ -70,7 +70,7 @@ dev = [
 ]
 
 # Experimental JAX evaluator backend (CPU wheel; see
-# docs/design/jax-planning.md). Tests that exercise it skip when
+# docs/design/archive/jax-planning.md). Tests that exercise it skip when
 # jax is not installed.
 jax = [
   "jax>=0.4.35",

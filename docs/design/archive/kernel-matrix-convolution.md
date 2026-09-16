@@ -140,7 +140,7 @@ operator, on both the mcp and GIR paths, in one branch. Two motivations:
    past the step change.
 2. **Architecture.** It removes theta-dependent kernel array shapes — the
    main jit blocker for the JAX track
-   ([jax-planning.md](../jax-planning.md)) — and retires the SciPy
+   ([jax-planning.md](jax-planning.md)) — and retires the SciPy
    convolution dependency in the lowered path.
 
 The mcp and GIR changes cannot be split across branches: parity tests
@@ -271,7 +271,7 @@ trace sampled on the time axis:
 
 ## Relationship to the JAX track
 
-Land this before Phase B/C of [jax-planning.md](../jax-planning.md). It
+Land this before Phase B/C of [jax-planning.md](jax-planning.md). It
 removes two blockers listed there: the SciPy convolution utilities in
 the lowered path, and the theta-dependent kernel shapes introduced by
 the dynamic-support fix. After this change, porting convolution to JAX

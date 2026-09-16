@@ -2,7 +2,7 @@
 orphan: true
 ---
 
-# Planning Note: JAX Backend, Jacobians, and Optimizer
+# Archived Planning Note: JAX Backend, Jacobians, and Optimizer
 
 > **Status (2026-07-11):** Phases A–D of this plan are implemented
 > (`eval_jax.py`, `can_lower_jax_2d`, `fit_model_jax` + `Dfun`
@@ -19,20 +19,20 @@ called "ready".
 
 That conclusion rests on the current architecture:
 
-- [`evaluate_2d(plan, theta)`](../../src/trspecfit/eval_2d.py) and
-  [`evaluate_1d(plan, theta)`](../../src/trspecfit/eval_1d.py) already expose
+- [`evaluate_2d(plan, theta)`](../../../src/trspecfit/eval_2d.py) and
+  [`evaluate_1d(plan, theta)`](../../../src/trspecfit/eval_1d.py) already expose
   theta-level evaluator entry points.
-- [`ScheduledPlan2D`](../../src/trspecfit/graph_ir.py) and
+- [`ScheduledPlan2D`](../../../src/trspecfit/graph_ir.py) and
   `ScheduledPlan1D` are already mostly packed-array execution plans rather than
   live model objects.
-- [`fit_model_gir`](../../src/trspecfit/spectra.py) already extracts the
+- [`fit_model_gir`](../../../src/trspecfit/spectra.py) already extracts the
   optimizer-visible `theta` vector from the full parameter list and routes into
   the compiled evaluator.
 - Parity coverage already exists for static 1D/2D models, profiles,
   convolution/IRF, and subcycle-aware cases in
-  [`tests/test_evaluate_1d.py`](../../tests/test_evaluate_1d.py),
-  [`tests/test_evaluate_2d.py`](../../tests/test_evaluate_2d.py), and
-  [`tests/test_gir_integration.py`](../../tests/test_gir_integration.py).
+  [`tests/test_evaluate_1d.py`](../../../tests/test_evaluate_1d.py),
+  [`tests/test_evaluate_2d.py`](../../../tests/test_evaluate_2d.py), and
+  [`tests/test_gir_integration.py`](../../../tests/test_gir_integration.py).
 
 What remains is real backend work, not "finish the GIR architecture" work.
 
@@ -82,7 +82,7 @@ useful cleanup before or during a JAX port:
 - **Kernel-matrix convolution has landed** (2026-07): the lowered
   convolution path now evaluates registry kernels elementwise on a
   precomputed dt matrix and applies a quadrature-weighted matmul
-  ([kernel-matrix-convolution.md](archive/kernel-matrix-convolution.md)). All
+  ([kernel-matrix-convolution.md](kernel-matrix-convolution.md)). All
   array shapes in the convolution path are theta-independent, so the
   former jit blocker (per-theta kernel support lengths) is gone.
 
@@ -106,7 +106,7 @@ The main technical work is in the evaluator itself:
   the compiled path.
 - **SciPy-dependent kernels need JAX-compatible replacements.** The
   kernel-matrix change
-  ([kernel-matrix-convolution.md](archive/kernel-matrix-convolution.md)) retired
+  ([kernel-matrix-convolution.md](kernel-matrix-convolution.md)) retired
   the SciPy convolution utilities from the lowered path, and the removal
   of `voigtCONV`/`lorentzCONV` (2026-07) retired `wofz` from
   `functions/time.py` entirely — the conv path is now JAX-expressible
@@ -119,7 +119,7 @@ The main technical work is in the evaluator itself:
 Even after a working JAX evaluator exists, Jacobian / optimizer work is still
 its own layer:
 
-- [`fitlib.py`](../../src/trspecfit/fitlib.py) currently constructs
+- [`fitlib.py`](../../../src/trspecfit/fitlib.py) currently constructs
   `lmfit.Minimizer` without a Jacobian hook. If we want analytic Jacobians
   while keeping lmfit, we need explicit `Dfun` plumbing.
 - A fully custom JAX optimizer is a larger decision than "use JAX for
@@ -192,7 +192,7 @@ Add the remaining lowered features incrementally:
 - profile-varying parameters,
 - subcycle-aware dynamics,
 - resolved-trace convolution (kernel-matrix form; see
-  [kernel-matrix-convolution.md](archive/kernel-matrix-convolution.md)),
+  [kernel-matrix-convolution.md](kernel-matrix-convolution.md)),
 - Voigt / special-function support.
 
 Each widening step should ship with direct parity tests against the existing

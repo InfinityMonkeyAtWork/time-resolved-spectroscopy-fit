@@ -2,10 +2,9 @@
 
 No active multi-step feature.
 
-Cleared 2026-09-02 after the fit-archive schema-7 milestone (Parts A/B)
-and the renderer consolidation (Part C). The living design docs are
-`docs/design/fit_archive_principles.md` and
-`docs/design/fit_archive_schema.md`; the conversion history lives in
-`docs/design/archive/fit_archive_schema_plan.md` and the CHANGELOG; the
-full step-by-step execution log (including every review round) is in
-this file's git history on branch `fit-archive-schema-7`.
+Cleared 2026-09-15 after the example-fixes pass (33 defects found by
+`/check-example`, fixed one notebook per commit on branch `example-fixes`,
+v0.14.1). The defect list with a note under each item on what changed and
+why lives in this file's git history on that branch; the CHANGELOG carries
+the release note, and the rebuilt skill (`docs/ai/check-example.md`) is what
+keeps the bar.

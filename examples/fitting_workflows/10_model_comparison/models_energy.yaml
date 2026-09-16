@@ -48,8 +48,9 @@ sbs_x0_only:
       F: [1.5, False]
       m: [0.3, False]
 
-# sbs_x0_A: x0 AND A both vary per slice. More flexible (marginally lower
-# chi2_red on most slices) but pays for an extra free parameter in AIC/BIC.
+# sbs_x0_A: x0 AND A both vary per slice. More flexible: the raw chi2 drops on
+# nearly every slice, but chi2_red, AIC and BIC charge for the extra free
+# parameter and favour it on only a minority of slices.
 sbs_x0_A:
     LinBack:
       m: [1E-2, False]

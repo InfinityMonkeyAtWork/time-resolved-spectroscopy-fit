@@ -1,4 +1,4 @@
-# Execution Plan: Lowered Evaluator
+# Lowered Evaluator (GIR): Design and Spec
 
 > Implementation history (Phases 1-6): [archive/lowered_evaluator_implementation.md](archive/lowered_evaluator_implementation.md).
 

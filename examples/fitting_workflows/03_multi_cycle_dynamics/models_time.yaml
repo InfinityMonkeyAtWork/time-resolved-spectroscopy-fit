@@ -1,7 +1,6 @@
-# Use these models to add multi-cycle time-dependence to a parameter in a
-# 2D model: pass a list of model names to add_time_dependence(). Element 0
-# applies globally (all times); elements 1+ alternate as subcycles within
-# each 1/frequency period.
+# Use these models to add multi-cycle time-dependence to a parameter in a 2D model:
+# pass a list of model names to add_time_dependence(). Element 0 applies globally
+# (all times); elements 1+ alternate as subcycles within each 1/frequency period.
 # For available functions see: /src/trspecfit/functions/time.py
 
 # Global element 0: Gaussian instrument response function (IRF).
