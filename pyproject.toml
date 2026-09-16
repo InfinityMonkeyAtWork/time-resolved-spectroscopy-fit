@@ -70,7 +70,7 @@ dev = [
 ]
 
 # Experimental JAX evaluator backend (CPU wheel; see
-# docs/design/jax-planning.md). Tests that exercise it skip when
+# docs/design/archive/jax-planning.md). Tests that exercise it skip when
 # jax is not installed.
 jax = [
   "jax>=0.4.35",
