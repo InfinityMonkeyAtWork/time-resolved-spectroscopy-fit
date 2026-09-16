@@ -18,6 +18,7 @@
 ## Noise and simulation
 
 - [ ] **Future `sigma_type` expansion in FitResults**: the constant, user-supplied sigma schema has landed (`SIGMA_TYPE_CONSTANT` in [fit_io.py](src/trspecfit/utils/fit_io.py) ~L54; `validate_noise_metadata` hard-locks `sigma_type` to `"constant"`), so this is now unblocked: extend uncertainty handling beyond scalar `sigma_data`. Keep `noise_type` for the statistical assumption/distribution and use `sigma_type` for sigma shape: initially `constant`, later `per_spectrum` and `per_point`. Add HDF5 storage, validation, baseline/SBS/2D alignment, `compare_models()` behavior, and tests for vector/matrix sigma. Defer automatic Poisson-derived sigma until residual-space variance propagation is explicit.
+- [ ] **Weight the residual by per-point sigma**: every fit is unweighted least squares with lmfit's redchi-scaled covariance, which assumes uniform noise. On photon-counting data the noise at the peak is about 1.6x the window average, so stderr, CI and MCMC widths of peak parameters are optimistic by that factor (03 controls, 2026-09-15: seed scatter over quoted stderr 1.4-2.3 with Poisson noise, at most 1.1 with Gaussian noise of equal power; a 790-slice baseline fixes only SD). Fix: an optional per-point `sigma` array, or `sqrt(counts)` behind a counting flag, dividing the residual in `residual_fun` ([fitlib.py](src/trspecfit/fitlib.py)). Extends the `sigma_type` item above; affects every fit type since they share the residual.
 
 ## Plotting & results
 
