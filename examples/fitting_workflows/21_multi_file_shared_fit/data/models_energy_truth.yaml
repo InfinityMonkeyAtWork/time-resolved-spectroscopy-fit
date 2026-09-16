@@ -5,8 +5,8 @@ single_peak:
     LinBack:
       m: [4E-1, True, -1, 1]
       b: [0, True, -5, 5]
-      xStart: [0, False, 0, 20]
-      xStop: [20, False, 0, 20]
+      xStart: [0, False]
+      xStop: [20, False]
     GLP:
       A: [10, True, 5, 15]
       x0: [10, True, 5, 15]
