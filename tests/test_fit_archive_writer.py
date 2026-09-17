@@ -345,16 +345,20 @@ def test_identical_resave_is_a_noop(tmp_path):
 #
 def test_absent_to_present_enriches_without_overwrite(tmp_path):
     """Row 2: running MCMC/CI after a save attaches with no overwrite=;
-    label is mutable alongside."""
+    label is mutable alongside, and the fit_settings keys that describe the
+    attachments (try_ci, mc) travel with them."""
 
     path = tmp_path / "one.fit.h5"
     sf, slot, _ = _make_file_and_slot("A")
     fit_io.write_archive(path, project=_make_project([sf]))
+    assert slot.fit_settings is not None  # type guard
+    mc_block = {"use_mc": 1, "steps": 20, "nwalkers": 8, "seed": 7}
     enriched = dataclasses.replace(
         slot,
         conf_ci=pd.DataFrame({"name": ["GLP_01_A"], "low": [0.5], "high": [1.5]}),
         mcmc=_mcmc_payload(),
         label="with-ci",
+        fit_settings={**slot.fit_settings, "try_ci": 1, "mc": mc_block},
     )
     fit_io.write_archive(
         path, project=_make_project([dataclasses.replace(sf, slots=(enriched,))])
@@ -365,6 +369,16 @@ def test_absent_to_present_enriches_without_overwrite(tmp_path):
         assert require_group(sg["metadata"], "slot metadata").attrs["label"] == (
             "with-ci"
         )
+    (stored,) = fit_io.read_archive(path).files[0].slots
+    assert stored.fit_settings == {**slot.fit_settings, "try_ci": 1, "mc": mc_block}
+    # A later save without MCMC keeps the stored chain, so it keeps the
+    # chain's provenance too (per-key sync, not a wholesale replace).
+    fit_io.write_archive(path, project=_make_project([sf]))
+    (stored,) = fit_io.read_archive(path).files[0].slots
+    assert stored.mcmc is not None
+    assert stored.fit_settings is not None  # type guard
+    assert stored.fit_settings["mc"] == mc_block
+    assert stored.fit_settings["try_ci"] == 1
 
 
 #
@@ -375,27 +389,40 @@ def test_present_on_both_and_differing_requires_overwrite(tmp_path):
 
     path = tmp_path / "one.fit.h5"
     sf, slot, _ = _make_file_and_slot("A")
+    base_settings = slot.fit_settings
+    assert base_settings is not None  # type guard
+
+    def with_chain(chain, *, seed):
+        return dataclasses.replace(
+            slot,
+            mcmc=chain,
+            fit_settings={**base_settings, "mc": {"steps": 20, "seed": seed}},
+        )
+
     long_chain = _mcmc_payload(seed=7)
-    with_long = dataclasses.replace(slot, mcmc=long_chain)
+    with_long = with_chain(long_chain, seed=7)
     fit_io.write_archive(
         path, project=_make_project([dataclasses.replace(sf, slots=(with_long,))])
     )
     short_chain = {**_mcmc_payload(seed=8)}
     short_chain["flatchain"] = short_chain["flatchain"].iloc[:5]
-    with_short = dataclasses.replace(slot, mcmc=short_chain)
+    with_short = with_chain(short_chain, seed=8)
     project_short = _make_project([dataclasses.replace(sf, slots=(with_short,))])
     with pytest.raises(FileExistsError, match="pass\\s+overwrite=True"):
         fit_io.write_archive(path, project=project_short)
-    # The archived (long) chain is intact after the failed save.
-    loaded = fit_io.read_archive(path)
-    stored = loaded.files[0].slots[0].mcmc
-    assert stored is not None  # type guard
-    assert_frame_equal(stored["flatchain"], long_chain["flatchain"])
+    # The archived (long) chain and its provenance are intact after the
+    # failed save.
+    (loaded_slot,) = fit_io.read_archive(path).files[0].slots
+    assert loaded_slot.mcmc is not None  # type guard
+    assert_frame_equal(loaded_slot.mcmc["flatchain"], long_chain["flatchain"])
+    assert loaded_slot.fit_settings is not None  # type guard
+    assert loaded_slot.fit_settings["mc"]["seed"] == 7
     fit_io.write_archive(path, project=project_short, overwrite=True)
-    loaded = fit_io.read_archive(path)
-    stored = loaded.files[0].slots[0].mcmc
-    assert stored is not None  # type guard
-    assert len(stored["flatchain"]) == 5
+    (loaded_slot,) = fit_io.read_archive(path).files[0].slots
+    assert loaded_slot.mcmc is not None  # type guard
+    assert len(loaded_slot.mcmc["flatchain"]) == 5
+    assert loaded_slot.fit_settings is not None  # type guard
+    assert loaded_slot.fit_settings["mc"]["seed"] == 8
 
 
 #
@@ -577,6 +604,7 @@ def test_joint_attachments_enrich_and_collide_and_roundtrip(tmp_path):
         jr,
         correl=pd.DataFrame(np.eye(3), index=combined, columns=combined),
         mcmc=fit_io.mcmc_result_from_payload(chain),
+        fit_settings={**jr.fit_settings, "mc": {"steps": 20, "seed": 11}},
     )
     project_rich = dataclasses.replace(project, joint=(jr_rich,))
     fit_io.write_archive(path, project=project_rich)  # absent -> present
@@ -591,6 +619,7 @@ def test_joint_attachments_enrich_and_collide_and_roundtrip(tmp_path):
     assert isinstance(jrec.mcmc, MCMCResult)
     assert_frame_equal(jrec.mcmc.flatchain, chain["flatchain"])
     assert jrec.mcmc.lnsigma == 0.5
+    assert jrec.fit_settings["mc"] == {"steps": 20, "seed": 11}  # travels with it
     assert np.isnan(jrec.metrics["r2"])  # r2 omitted on disk -> NaN
     # Projection slots resolve by handle to the same objects under files.
     assert jrec.projections[0].slot is loaded.files[0].slots[0]

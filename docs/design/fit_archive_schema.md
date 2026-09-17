@@ -313,8 +313,12 @@ influence the result — built by `build_fit_settings`:
 - sbs: `seed_source`, `seed_adapt`, `seed_values` (JSON `null` is
   meaningful — "no seed adaptation" is provenance too; these choose
   initial parameter values and are unrelated to the RNG `seed`);
-- when MCMC was enabled: an `mc` sub-dict (`use_mc`, `steps`, `nwalkers`,
-  `burn`, `thin`, `ntemps`, `is_weighted`, `sigma_ini/min/max`).
+- when MCMC ran: an `mc` sub-dict with the settings as resolved at fit time
+  (`use_mc`, `steps`, `nwalkers`, `burn`, `thin`, `ntemps`, `is_weighted`;
+  `sigma_ini/min/max` for unweighted sampling only; `seed` when one was
+  set — the sampler seed, distinct from the optimizer `seed` above). Knobs
+  the caller left at `None` appear with their derived values. SbS records
+  slice 0's, mirroring the slot's slice-0 MCMC payload.
 
 Execution details that cannot change the result (SbS / emcee worker
 counts; serial ≡ parallel dispatch is pinned by test) are deliberately
@@ -346,7 +350,10 @@ Attachments merge **individually**: `conf_ci` may enrich in the same
 write that leaves `mcmc/` untouched. "Richer" is not a criterion —
 comparing a longer chain against a shorter one at better acceptance has
 no well-defined answer, so any present → different-present replacement
-is opt-in.
+is opt-in. The `fit_settings` keys that describe an attachment travel
+with it: writing or replacing `conf_ci` updates `try_ci`, writing or
+replacing `mcmc/` updates the `mc` block, from the incoming record's
+provenance; every other key is fixed by the handle and stays as stored.
 
 `label` is the one **mutable** field: rewritten whenever the incoming
 record carries one, with no `overwrite` required, and never deleted by

@@ -1822,6 +1822,7 @@ class Project:
             stages=stages,
             backend=fit_fun_str,
             fit_wrapper_kwargs=fit_wrapper_kwargs,
+            mc_settings=result.mc_settings,
         )
         # Joint identity: one optimization over N files. Each file's entry
         # carries its version stamp (correction state) and its 2d-window
@@ -3073,6 +3074,7 @@ class File:
                     stages=stages,
                     backend=_effective_backend(_fun_str, _args),
                     fit_wrapper_kwargs=lmfit_wrapper_kwargs,
+                    mc_settings=fit_out.mc_settings,
                 ),
             )
 
@@ -3280,6 +3282,7 @@ class File:
                     stages=stages,
                     backend=_effective_backend(_fun_str, _args),
                     fit_wrapper_kwargs=lmfit_wrapper_kwargs,
+                    mc_settings=fit_out.mc_settings,
                 ),
             )
 
@@ -3651,6 +3654,9 @@ class File:
                     stages=stages,
                     backend=_effective_backend(_fun_str, _args_sbs),
                     fit_wrapper_kwargs=fit_wrapper_kwargs,
+                    # slice 0's resolved settings, mirroring the slot's
+                    # slice-0 MCMC payload
+                    mc_settings=self.results_sbs[0].mc_settings,
                     seed_source=seed_source,
                     seed_adapt=seed_adapt,
                     # capture the normalized template (ordered by
@@ -4675,6 +4681,7 @@ class File:
                     stages=stages,
                     backend=_effective_backend(_fun_str, _args),
                     fit_wrapper_kwargs=fit_wrapper_kwargs,
+                    mc_settings=fit_out.mc_settings,
                 ),
             )
 

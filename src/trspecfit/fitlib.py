@@ -632,14 +632,10 @@ def fit_wrapper(
         - 1: Calculate CI if error bars available (result.errorbars=True)
 
     mc_settings : ulmfit.MC, default=ulmfit.MC()
-        MCMC configuration object:
-
-        - use_emcee: 0 (skip), 1 (always), 2 (if CI fails)
-        - steps: Number of MCMC steps per walker
-        - nwalkers: Number of MCMC walkers
-        - burn, thin, ntemps, workers, is_weighted: MCMC parameters
-
-        See ulmfit.MC class for details
+        MCMC configuration (``use_mc``: 0 skip, 1 always, 2 if CI fails).
+        Knobs left at None are resolved from the optimizer result into a
+        copy that is returned as ``FitOutput.mc_settings``; the object
+        passed in is never mutated. See ``ulmfit.MC`` for every knob.
     fit_alg_1 : str, default='Nelder'
         First/only optimization method. Common options:
 
@@ -869,6 +865,8 @@ def fit_wrapper(
         + ["+" + str(sigma) for sigma in ci_sigmas]
     )
 
+    run_mcmc = mc_settings.use_mc == 1
+    mc_run: ulmfit.MC | None = None
     # conf_interval (https://lmfit.github.io/lmfit-py/confidence.html)
     if try_ci == 1:
         if _result_errorbars(par_fin):
@@ -884,14 +882,14 @@ def fit_wrapper(
             conf_ci = pd.DataFrame()
             if show_output >= 1:
                 print("\nNo successful error bar determination via conf_interval")
-            if mc_settings.use_emcee == 2:
-                # conf_interval didn't work -> use lmfit.emcee()
-                mc_settings.use_emcee = 1
+            if mc_settings.use_mc == 2:
+                # conf_interval didn't work -> fall back to lmfit.emcee()
+                run_mcmc = True
     elif try_ci == 0:
         conf_ci = pd.DataFrame()
 
     # lmfit.emcee() [not a fit, it is a way to sample the parameter space!]
-    if mc_settings.use_emcee == 1:
+    if run_mcmc:
         t_emcee0 = time.time()
         # deepcopy first: __lnsigma is an MCMC sampling construct, not a model
         # parameter. _result_params returns the live par_fin.params (stored as
@@ -900,15 +898,25 @@ def fit_wrapper(
         # consumer of that result (display, get_parameters, SbS tables).
         # emcee gets the copy.
         par_fin_params = copy.deepcopy(_result_params(par_fin))
-        if not mc_settings.is_weighted:
+        # Resolve the derivable MC knobs from the optimizer result into a
+        # copy: sigma from the RMS residual (the MLE sigma of the unweighted
+        # Gaussian model on the data view this fit saw), walkers from the
+        # sampled dimension count. The caller's MC is left untouched.
+        n_dim = int(par_fin.nvarys) + (0 if mc_settings.is_weighted else 1)
+        sigma_fit = float(np.sqrt(par_fin.chisqr / par_fin.ndata))
+        mc_run = mc_settings.resolve(sigma_fit=sigma_fit, n_dim=n_dim)
+        if not mc_run.is_weighted:
             # __lnsigma only enters lmfit's log-probability for unweighted
             # sampling; adding it to a weighted run would sample a flat,
             # likelihood-free direction and report a meaningless posterior.
+            assert mc_run.sigma_ini is not None  # type guard
+            assert mc_run.sigma_min is not None  # type guard
+            assert mc_run.sigma_max is not None  # type guard
             par_fin_params.add(
                 "__lnsigma",
-                value=np.log(mc_settings.sigma_ini),
-                min=np.log(mc_settings.sigma_min),
-                max=np.log(mc_settings.sigma_max),
+                value=np.log(mc_run.sigma_ini),
+                min=np.log(mc_run.sigma_min),
+                max=np.log(mc_run.sigma_max),
             )
         if show_output >= 1:
             print(
@@ -919,15 +927,16 @@ def fit_wrapper(
         # i.e. not close to the optimized parameter set, so burn=0 is ok here!
         emcee_kwargs: dict[str, Any] = {
             "params": par_fin_params,
-            "steps": mc_settings.steps,
-            "nwalkers": mc_settings.nwalkers,
-            "burn": mc_settings.burn,
-            "thin": mc_settings.thin,
-            "ntemps": mc_settings.ntemps,
-            "is_weighted": mc_settings.is_weighted,
+            "steps": mc_run.steps,
+            "nwalkers": mc_run.nwalkers,
+            "burn": mc_run.burn,
+            "thin": mc_run.thin,
+            "ntemps": mc_run.ntemps,
+            "is_weighted": mc_run.is_weighted,
+            "seed": mc_run.seed,
             "progress": show_output >= 1,
         }
-        if isinstance(mc_settings.workers, int) and mc_settings.workers > 1:
+        if isinstance(mc_run.workers, int) and mc_run.workers > 1:
             # lmfit would build a default-context Pool, which fork()s on
             # Linux < 3.14 — deadlock-prone in multithreaded processes.
             # Supply a spawn-backed pool instead (lmfit hands any object
@@ -938,12 +947,12 @@ def fit_wrapper(
             ctx = multiprocessing.get_context("spawn")
             with (
                 uspawn.sanitized_spawn_main(),
-                ctx.Pool(mc_settings.workers) as pool,
+                ctx.Pool(mc_run.workers) as pool,
             ):
                 # lmfit annotates workers as int but accepts pool-likes
                 emcee_fin = mini.emcee(workers=cast("int", pool), **emcee_kwargs)
         else:
-            emcee_fin = mini.emcee(workers=mc_settings.workers, **emcee_kwargs)
+            emcee_fin = mini.emcee(workers=mc_run.workers, **emcee_kwargs)
         emcee_fin_params = _result_params(emcee_fin)
         emcee_flatchain = cast(
             "pd.DataFrame", getattr(emcee_fin, "flatchain", pd.DataFrame())
@@ -997,7 +1006,7 @@ def fit_wrapper(
         emcee_ci.columns = ci_cols
         if show_output >= 1:
             print(display(emcee_ci))
-    else:  # use_emcee equal to 0, or equal to 2 and conf_interval worked
+    else:  # use_mc 0, or 2 with a working conf_interval
         emcee_fin = None
         emcee_ci = pd.DataFrame()
 
@@ -1009,6 +1018,7 @@ def fit_wrapper(
         conf_ci=conf_ci,
         emcee_fin=cast("ulmfit.TypedMinimizerResult | None", emcee_fin),
         emcee_ci=emcee_ci,
+        mc_settings=mc_run,
     )
 
 

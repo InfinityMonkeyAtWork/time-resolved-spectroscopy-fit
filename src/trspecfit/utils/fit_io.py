@@ -1150,6 +1150,7 @@ def build_fit_settings(
     stages: int,
     backend: str,
     fit_wrapper_kwargs: dict[str, Any] | None = None,
+    mc_settings: ulmfit.MC | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
     """
@@ -1161,7 +1162,10 @@ def build_fit_settings(
     analytic Jacobian's qualified name when one was supplied, the
     optimizer RNG seed when one was supplied (forwarded to the stage-1
     method by ``fitlib.fit_wrapper``), the
-    profiled-CI request, MCMC sampling settings (when enabled), plus any
+    profiled-CI request, the MCMC sampling settings as they ran
+    (``mc_settings`` is the resolved ``FitOutput.mc_settings`` copy, present
+    iff MCMC ran; the sampler seed lives in that block, not in the top-level
+    ``seed``), plus any
     fit-type-specific extras the caller passes verbatim (e.g. SbS
     ``seed_source`` / ``seed_adapt`` / ``seed_values`` — ``None`` values
     are kept: "no seed adaptation" is provenance too). Execution details
@@ -1188,21 +1192,30 @@ def build_fit_settings(
     seed = kwargs.get("seed")
     if seed is not None:
         settings["seed"] = int(seed)
-    mc = kwargs.get("mc_settings")
-    # MC stores its use_mc constructor arg as the use_emcee attribute.
-    if mc is not None and getattr(mc, "use_emcee", False):
-        settings["mc"] = {
-            "use_mc": int(mc.use_emcee),
-            "steps": int(mc.steps),
-            "nwalkers": int(mc.nwalkers),
-            "burn": int(mc.burn),
-            "thin": int(mc.thin),
-            "ntemps": int(mc.ntemps),
-            "is_weighted": bool(mc.is_weighted),
-            "sigma_ini": float(mc.sigma_ini),
-            "sigma_min": float(mc.sigma_min),
-            "sigma_max": float(mc.sigma_max),
+    if mc_settings is not None:
+        # the resolved copy: what ran, not what the caller passed (knobs
+        # left at None were derived from the fit)
+        assert mc_settings.nwalkers is not None  # type guard
+        mc_block: dict[str, Any] = {
+            "use_mc": int(mc_settings.use_mc),
+            "steps": int(mc_settings.steps),
+            "nwalkers": int(mc_settings.nwalkers),
+            "burn": int(mc_settings.burn),
+            "thin": int(mc_settings.thin),
+            "ntemps": int(mc_settings.ntemps),
+            "is_weighted": bool(mc_settings.is_weighted),
         }
+        if not mc_settings.is_weighted:
+            # the noise-scale nuisance exists only for unweighted sampling
+            assert mc_settings.sigma_ini is not None  # type guard
+            assert mc_settings.sigma_min is not None  # type guard
+            assert mc_settings.sigma_max is not None  # type guard
+            mc_block["sigma_ini"] = float(mc_settings.sigma_ini)
+            mc_block["sigma_min"] = float(mc_settings.sigma_min)
+            mc_block["sigma_max"] = float(mc_settings.sigma_max)
+        if mc_settings.seed is not None:
+            mc_block["seed"] = int(mc_settings.seed)
+        settings["mc"] = mc_block
     settings.update(extra)
     return settings
 
@@ -2493,6 +2506,14 @@ _JOINT_METRICS_KEYS = ("chi2_raw", "chi2_red_raw", "chi2", "chi2_red", "aic", "b
 # Optional post-fit payloads that merge individually under the four-case
 # collision rules (see write_archive).
 _RESULT_ATTACHMENTS = ("conf_ci", "correl", "mcmc")
+# fit_settings keys that describe an attachment rather than the optimization.
+# They travel with the attachment when a stored record is enriched or an
+# attachment replaced, so the provenance never contradicts the payloads;
+# every other key is fixed by the matching handle / optimization hash.
+_ATTACHMENT_PROVENANCE: dict[str, tuple[str, ...]] = {
+    "conf_ci": ("try_ci",),
+    "mcmc": ("mc",),
+}
 # Fitted-value equivalence for handle collisions
 # (fit_archive_principles.md §"Equivalence is defined, not loose"):
 # |a − b| <= atol + rtol·|b|, per parameter matched by name. The atol term
@@ -3081,6 +3102,7 @@ def _merge_result_group(
     label: str | None,
     overwrite: bool,
     context: str,
+    fit_settings: Mapping[str, Any] | None,
 ) -> None:
     """
     Enrich a stored result whose fitted parameters agree with the incoming
@@ -3088,23 +3110,59 @@ def _merge_result_group(
 
     Attachments merge individually: absent-in-archive ones are written,
     stored ones the incoming record lacks are kept, and present-on-both
-    ones require ``overwrite`` (each is then replaced in place). ``label``
-    is mutable and rewritten whenever the incoming record carries one.
+    ones require ``overwrite`` (each is then replaced in place). The
+    ``fit_settings`` keys that describe a written attachment
+    (``_ATTACHMENT_PROVENANCE``) are copied from the incoming record's
+    provenance in the same step; the stored record keeps every other key.
+    ``label`` is mutable and rewritten whenever the incoming record carries
+    one.
     """
 
     if both and not overwrite:
         # Should have been caught by _precheck_collisions; defense in
         # depth in case the writer is called directly without precheck.
         _raise_for_conflicts(False, both, context=context)
+    written: list[str] = []
     for name, value in attachments.items():
         if value is None:
             continue
         if name in existing:
             del existing[name]
         _write_result_attachment(existing, name, value)
+        written.append(name)
+    meta = require_group(existing["metadata"], "metadata")
+    if written:
+        _sync_attachment_provenance(meta, written=written, incoming=fit_settings)
     if label is not None:
-        meta = require_group(existing["metadata"], "metadata")
         meta.attrs["label"] = label
+
+
+#
+def _sync_attachment_provenance(
+    meta: h5py.Group,
+    *,
+    written: Sequence[str],
+    incoming: Mapping[str, Any] | None,
+) -> None:
+    """
+    Update the stored ``fit_settings`` keys owned by the attachments just
+    written (see ``_ATTACHMENT_PROVENANCE``): set from the incoming
+    provenance when it carries them, dropped when it does not.
+    """
+
+    stored: dict[str, Any] = (
+        json.loads(_attr_str(meta.attrs["fit_settings"]))
+        if "fit_settings" in meta.attrs
+        else {}
+    )
+    source = dict(incoming or {})
+    for name in written:
+        for key in _ATTACHMENT_PROVENANCE.get(name, ()):
+            if key in source:
+                stored[key] = source[key]
+            else:
+                stored.pop(key, None)
+    meta.attrs["fit_settings"] = json.dumps(stored, sort_keys=True)
 
 
 #
@@ -3191,6 +3249,7 @@ def _write_slot(
                 label=slot.label,
                 overwrite=overwrite,
                 context=f"Slot {slot.handle[:8]} (file={slot.file_name!r})",
+                fit_settings=slot.fit_settings,
             )
             return
         if not overwrite:
@@ -3351,6 +3410,7 @@ def _write_joint(
                 label=jr.label,
                 overwrite=overwrite,
                 context=f"Joint record {jr.optimization_hash[:8]}",
+                fit_settings=jr.fit_settings,
             )
             return
         if not overwrite:
