@@ -2506,6 +2506,14 @@ _JOINT_METRICS_KEYS = ("chi2_raw", "chi2_red_raw", "chi2", "chi2_red", "aic", "b
 # Optional post-fit payloads that merge individually under the four-case
 # collision rules (see write_archive).
 _RESULT_ATTACHMENTS = ("conf_ci", "correl", "mcmc")
+# fit_settings keys that describe an attachment rather than the optimization.
+# They travel with the attachment when a stored record is enriched or an
+# attachment replaced, so the provenance never contradicts the payloads;
+# every other key is fixed by the matching handle / optimization hash.
+_ATTACHMENT_PROVENANCE: dict[str, tuple[str, ...]] = {
+    "conf_ci": ("try_ci",),
+    "mcmc": ("mc",),
+}
 # Fitted-value equivalence for handle collisions
 # (fit_archive_principles.md §"Equivalence is defined, not loose"):
 # |a − b| <= atol + rtol·|b|, per parameter matched by name. The atol term
@@ -3094,6 +3102,7 @@ def _merge_result_group(
     label: str | None,
     overwrite: bool,
     context: str,
+    fit_settings: Mapping[str, Any] | None,
 ) -> None:
     """
     Enrich a stored result whose fitted parameters agree with the incoming
@@ -3101,23 +3110,59 @@ def _merge_result_group(
 
     Attachments merge individually: absent-in-archive ones are written,
     stored ones the incoming record lacks are kept, and present-on-both
-    ones require ``overwrite`` (each is then replaced in place). ``label``
-    is mutable and rewritten whenever the incoming record carries one.
+    ones require ``overwrite`` (each is then replaced in place). The
+    ``fit_settings`` keys that describe a written attachment
+    (``_ATTACHMENT_PROVENANCE``) are copied from the incoming record's
+    provenance in the same step; the stored record keeps every other key.
+    ``label`` is mutable and rewritten whenever the incoming record carries
+    one.
     """
 
     if both and not overwrite:
         # Should have been caught by _precheck_collisions; defense in
         # depth in case the writer is called directly without precheck.
         _raise_for_conflicts(False, both, context=context)
+    written: list[str] = []
     for name, value in attachments.items():
         if value is None:
             continue
         if name in existing:
             del existing[name]
         _write_result_attachment(existing, name, value)
+        written.append(name)
+    meta = require_group(existing["metadata"], "metadata")
+    if written:
+        _sync_attachment_provenance(meta, written=written, incoming=fit_settings)
     if label is not None:
-        meta = require_group(existing["metadata"], "metadata")
         meta.attrs["label"] = label
+
+
+#
+def _sync_attachment_provenance(
+    meta: h5py.Group,
+    *,
+    written: Sequence[str],
+    incoming: Mapping[str, Any] | None,
+) -> None:
+    """
+    Update the stored ``fit_settings`` keys owned by the attachments just
+    written (see ``_ATTACHMENT_PROVENANCE``): set from the incoming
+    provenance when it carries them, dropped when it does not.
+    """
+
+    stored: dict[str, Any] = (
+        json.loads(_attr_str(meta.attrs["fit_settings"]))
+        if "fit_settings" in meta.attrs
+        else {}
+    )
+    source = dict(incoming or {})
+    for name in written:
+        for key in _ATTACHMENT_PROVENANCE.get(name, ()):
+            if key in source:
+                stored[key] = source[key]
+            else:
+                stored.pop(key, None)
+    meta.attrs["fit_settings"] = json.dumps(stored, sort_keys=True)
 
 
 #
@@ -3204,6 +3249,7 @@ def _write_slot(
                 label=slot.label,
                 overwrite=overwrite,
                 context=f"Slot {slot.handle[:8]} (file={slot.file_name!r})",
+                fit_settings=slot.fit_settings,
             )
             return
         if not overwrite:
@@ -3364,6 +3410,7 @@ def _write_joint(
                 label=jr.label,
                 overwrite=overwrite,
                 context=f"Joint record {jr.optimization_hash[:8]}",
+                fit_settings=jr.fit_settings,
             )
             return
         if not overwrite:

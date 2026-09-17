@@ -11,6 +11,7 @@ This module provides utilities for:
 
 from __future__ import annotations
 
+import numbers
 import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, overload
@@ -704,6 +705,20 @@ class FitOutput:
 
 
 #
+def _as_int(value: Any, name: str, *, minimum: int) -> int:
+    """
+    An integral value (Python or NumPy int, not bool) at or above ``minimum``,
+    normalized to ``int`` so it reaches emcee and the archive as one type.
+    """
+
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+        raise ValueError(f"{name} must be an int, got {value!r}")
+    if value < minimum:
+        raise ValueError(f"{name} must be >= {minimum}, got {value}")
+    return int(value)
+
+
+#
 def _validate_sigma(
     sigma_ini: float | None,
     sigma_min: float | None,
@@ -852,23 +867,21 @@ class MC:
             raise ValueError(
                 f"use_mc must be 0 (off), 1 (always) or 2 (if CI fails), got {use_mc}"
             )
-        if nwalkers is not None and nwalkers < 2:
-            raise ValueError(f"nwalkers must be >= 2 or None (derived), got {nwalkers}")
-        if seed is not None and (isinstance(seed, bool) or seed < 0):
-            raise ValueError(f"seed must be a non-negative int or None, got {seed!r}")
         _validate_sigma(sigma_ini, sigma_min, sigma_max)
         self.use_mc = use_mc
-        self.steps = steps
-        self.nwalkers = nwalkers
-        self.burn = burn
-        self.thin = thin
-        self.ntemps = ntemps
+        self.steps = _as_int(steps, "steps", minimum=1)
+        self.nwalkers = (
+            None if nwalkers is None else _as_int(nwalkers, "nwalkers", minimum=2)
+        )
+        self.burn = _as_int(burn, "burn", minimum=0)
+        self.thin = _as_int(thin, "thin", minimum=1)
+        self.ntemps = _as_int(ntemps, "ntemps", minimum=1)
         self.workers = workers
         self.is_weighted = is_weighted
         self.sigma_ini = sigma_ini
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
-        self.seed = seed
+        self.seed = None if seed is None else _as_int(seed, "seed", minimum=0)
 
     #
     def resolve(self, *, sigma_fit: float, n_dim: int) -> MC:

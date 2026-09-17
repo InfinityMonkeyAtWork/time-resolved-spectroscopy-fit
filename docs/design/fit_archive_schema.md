@@ -350,7 +350,10 @@ Attachments merge **individually**: `conf_ci` may enrich in the same
 write that leaves `mcmc/` untouched. "Richer" is not a criterion —
 comparing a longer chain against a shorter one at better acceptance has
 no well-defined answer, so any present → different-present replacement
-is opt-in.
+is opt-in. The `fit_settings` keys that describe an attachment travel
+with it: writing or replacing `conf_ci` updates `try_ci`, writing or
+replacing `mcmc/` updates the `mc` block, from the incoming record's
+provenance; every other key is fixed by the handle and stays as stored.
 
 `label` is the one **mutable** field: rewritten whenever the incoming
 record carries one, with no `overwrite` required, and never deleted by

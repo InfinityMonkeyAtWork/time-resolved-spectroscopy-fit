@@ -82,8 +82,13 @@ class TestMCConstruction:
         [
             ({"use_mc": 3}, "use_mc must be 0"),
             ({"nwalkers": 1}, "nwalkers must be >= 2"),
-            ({"seed": -1}, "seed must be a non-negative int"),
-            ({"seed": True}, "seed must be a non-negative int"),
+            ({"nwalkers": 4.5}, "nwalkers must be an int"),
+            ({"nwalkers": "8"}, "nwalkers must be an int"),
+            ({"seed": -1}, "seed must be >= 0"),
+            ({"seed": True}, "seed must be an int"),
+            ({"seed": 1.5}, "seed must be an int"),
+            ({"steps": 0}, "steps must be >= 1"),
+            ({"thin": 0}, "thin must be >= 1"),
             ({"sigma_min": 2.0, "sigma_max": 1.0}, "sigma_min must be <"),
             ({"sigma_ini": 10.0, "sigma_max": 2.0}, "sigma_ini must lie within"),
             ({"sigma_ini": 0.0}, "sigma_ini must be a positive"),
@@ -92,6 +97,12 @@ class TestMCConstruction:
     def test_rejects_inconsistent_settings(self, kwargs, match):
         with pytest.raises(ValueError, match=match):
             MC(**kwargs)
+
+    #
+    def test_numpy_integers_are_accepted_and_normalized(self):
+        mc = MC(nwalkers=np.int64(32), seed=np.int32(3), steps=np.uint16(50))
+        assert (mc.nwalkers, mc.seed, mc.steps) == (32, 3, 50)
+        assert all(type(v) is int for v in (mc.nwalkers, mc.seed, mc.steps))
 
 
 #
