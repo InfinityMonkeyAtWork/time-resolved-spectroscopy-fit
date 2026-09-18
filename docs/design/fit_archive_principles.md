@@ -1232,11 +1232,15 @@ the same fit.
 complete 64-character hex digest. Truncation is a presentation and addressing
 concern, never a storage one:
 
-- **Display** abbreviates to 8 characters, matching the existing export-path
-  convention (schema 6 already suffixes colliding export directories with the
-  first 8 characters of the history key).
-- **Lookup** accepts any prefix, and **raises on an ambiguous one** rather than
-  picking a match — the same contract as git.
+- **Display** abbreviates to 8 characters; the export directory of a fit is
+  named by the same 8 characters.
+- **Lookup** accepts exactly the 8-character display form or the full digest
+  (both case-insensitive), or an exact label — never a shorter prefix. A prefix
+  that is unique today can silently name a different fit after runs are added
+  or dropped, so a notebook cell keeps working while meaning something else.
+  The git-style "any unambiguous prefix" rule was the schema-7 design (2026-08)
+  and was withdrawn in v0.16.0 for that reason; an ambiguous match still raises
+  rather than picking, as a backstop.
 
 Storing a truncated digest would be irreversible: if abbreviation ever collided
 there would be no way to extend it, whereas an 8-character display width can be
@@ -1257,8 +1261,30 @@ Requiring a label at fit time is both a barrier and wrong on the merits — you
 rarely know at fit time which run mattered. Interactive prompting at export
 is also rejected: it breaks scripts, headless runs, and CI, and
 `show_output=0` API mode is first-class in this package. A label is set
-post-hoc (`results.set_label("a3f2", "final")`) and used for display, export
-directory names, and selection.
+post-hoc (`results.set_label("a3f2c9d1", "final")`) and is accepted wherever a
+handle is: display, selection, export, `diff`, `drop_fits`.
+
+**A label is a project-wide unique id** — the human-readable twin of the
+handle, which `compute_slot_handle` already makes project-unique by hashing the
+file name in. One namespace covers slot labels and joint labels. Uniqueness is
+enforced where the user has context — `set_label` refuses a label another
+record holds, naming the holder — and again at archive append, because sessions
+append independently: an incoming label already stored under a different handle
+or joint hash refuses the save, and `overwrite=True` moves it (the stored
+holder's `label` attr is deleted). That is the same "replace what conflicts"
+meaning `overwrite` has everywhere else, and it is the only way to re-point a
+label at a newer run from a later session, since loaded archives never merge
+into the live history. Without the on-disk half a duplicate could enter the
+archive and could not be repaired through the API.
+
+Rejected scopes (2026-09-17): **per-file uniqueness** (`"final"` on every
+file) needs filter-scoped resolution in every reference-taking call, a second
+rule keeping slot labels disjoint from joint labels, and still leaves the
+project-level `set_label` / `drop_fits` ambiguous; the convention
+`final-<file>` costs one f-string and keeps a label a complete pointer.
+**Character-set and hex-only rules** fell with their reasons: labels no longer
+name export directories, and exact-form lookup cannot mistake a label for a
+handle.
 
 Labels are also what make a **durable** pointer to a chosen fit. An explicit
 `accept` marker was considered and rejected: its only advantage over
@@ -1344,9 +1370,8 @@ perfectly valid.
 
 ### Pruning and selection
 
-Explicit only, never automatic: `results.drop([...])` by handle, or a
-selection criterion at save/export time. Selection criteria and their
-directions:
+Explicit only, never automatic: `drop_fits(ref)` by handle or label, or a
+selection criterion at save time. Selection criteria and their directions:
 
 | Criterion | Direction | Requires σ | Character |
 |---|---|---|---|
@@ -1365,17 +1390,27 @@ Group semantics: `"latest"` and `"best"` resolve within each
 
 ### Archive vs export
 
-**The archive is the record; the export is the presentation.** Both take the
-same `select=` parameter; the defaults differ:
+**The archive is the record; the export is the presentation of one result.**
+`save_fits(select=...)` defaults to `"all"` — the archive must never silently
+discard someone's work — and also accepts `"latest"`, `"best"` (with a `by=`
+criterion), or one exact reference. `export_fit(ref)` takes exactly one
+reference (handle or label) and writes exactly one fit: a slot to
+`<root>/<file>/<model>/<handle[:8]>/`, a joint record — or any of its
+projections — to `<root>/joint/<model>/<hash[:8]>/` with one subdirectory per
+file. Every directory carries a `fit_info.csv` naming the full handle, file,
+model, fit type, label and joint reference, so a reader without trspecfit knows
+what they hold. Exporting many fits is a loop over references, not a
+selection: an export is something you hand to a person, and the person
+receives a result, not a query.
 
-| | default | rationale |
-|---|---|---|
-| `save_fits(select=...)` | `"all"` | the archive must never silently discard someone's work |
-| `export_fits(select=...)` | `"latest"` | an export is a curated human-facing artifact |
-
-`select=` accepts `"all"`, `"latest"`, `"best"` (with a `by=` criterion), a
-slot handle or handle prefix, or a label. The differing defaults are
-principled, not inconsistent.
+Rejected (2026-09-17): **dropping export altogether** — the archive is only
+readable with trspecfit, and "I cannot show this to other people" is decisive;
+**a multi-fit export with `select=` and filters** — it needed its own collapse,
+per-group disambiguation (`__<hash>` and `__000` suffixes) and a second set of
+defaults, all of which existed to give directories human-readable names, which
+`fit_info.csv` now does; **`__<fit_type>` in the path** — the fit type is part
+of the optimization hash, so the handle already separates a baseline from a
+spectrum fit of the same model.
 
 ### Rejected: lineage pointers
 
