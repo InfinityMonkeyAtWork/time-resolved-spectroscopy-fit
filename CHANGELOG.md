@@ -17,6 +17,7 @@ This file is maintained using the shared changelog workflow in
 
 - **Breaking: references are exact.** Every `handle=` / `select=` / `ref` argument takes the 8-character handle shown in the tables, the full 64-character handle, or a label; shorter prefixes no longer match.
 - **Breaking: labels are unique project-wide** across slots and joint records, belong to the handle (an exact re-run inherits its label), and may not have the shape of a handle. `set_label` refuses a label another fit holds, and `save_fits` refuses to append a label the archive already holds under another fit unless `overwrite=True`, which moves it.
+- **Example notebooks 10, 11, 20 and 21 follow the export and reference changes** and were re-audited against their executed output. Notebooks 20 and 21 advertise only the `project` / `file` / `static` vary levels, and the peak-position dynamics are called a "shift" throughout (01, 10, 20, 21).
 
 ### Removed
 
