@@ -148,16 +148,16 @@ slot's cropped data and index axes; result access remains available. A
 copied), so `r1 = p.results; <run another fit>; r2 = p.results` gives
 two distinct snapshots — `r1` does not see the new slot. Query API:
 `find` / `get` / `files` / `models` / iteration, plus the schema-7 query
-layer — every slot has a stored 64-hex `handle`, and any unambiguous
-prefix (or exact user `label`, set post-hoc via `set_label()`) names one
-exact run: `handle=` pins the single-slot accessors and plot methods
+layer — every slot has a stored 64-hex `handle`, and its 8-character
+display form (or exact user `label`, set post-hoc via `set_label()`; labels
+are unique project-wide) names one exact run: `handle=` pins the single-slot accessors and plot methods
 (mutually exclusive with the `file`/`model`/`fit_type` filter trio),
 `variants()` tabulates how the runs of one `(file, model, fit_type)`
 group differ in their *inputs* (constant columns suppressed), and
 `diff(a, b)` reports pairwise input/output differences — bundle-level
 for joint fits (projection refs escalate to the joint record). The
 selection/pruning counterparts live on `Project`: `select=`/`by=` on
-`save_fits` / `export_fits` and `drop_fits(ref)`. Project-level joint
+`save_fits`, `export_fit(ref)` and `drop_fits(ref)`. Project-level joint
 fit records (`JointFitResult`, carried alongside the slots by
 `Project.results` and rehydrated by `FitResults.load`) have their own
 surface — `find_joint` / `get_joint` / `plot_joint_mcmc`; iteration and
@@ -195,7 +195,7 @@ fit_slice_by_slice / fit_2d  ────► result ───►  _slot_from_<fi
                                                            │
                                        ┌───────────────────┼──────────────────────┐
                                        ▼                   ▼                      ▼
-                       Project.results (wrapper)  Project.save_fits        Project.export_fits
+                       Project.results (wrapper)  Project.save_fits        Project.export_fit 
                                                   (filter + snapshot       (filter + CSV/PNG
                                                    collapse → HDF5)         tree)
 
@@ -239,8 +239,11 @@ reaches live `File` state either.
   `Project.load_fits(path)` convenience) deserializes back. Schema in
   [fit_archive_schema.md](fit_archive_schema.md). Append-mode by default;
   slot-scoped overwrite.
-- **Export** (one-way): `Project.export_fits(path, format="csv")` →
-  directory of human-readable CSVs and PNGs. No `load` counterpart —
+- **Export** (one-way): `Project.export_fit(ref, filepath=...)` → one fit
+  (a slot, or a whole joint bundle) as a directory of human-readable CSVs
+  and PNGs with a `fit_info.csv`, at `<root>/files/<file>/<model>/<handle8>/`
+  or `<root>/joint/<model>/<hash8>/` (projections under `files/`). No
+  `load` counterpart —
   round-tripping fits is HDF5's job.
 
 `File.save_fit` / `File.export_fit` / `File.compare_models` are
@@ -249,7 +252,7 @@ methods. There is no `File.load_fit`: load is path-scoped, not file-scoped.
 
 Fits never write to disk (v0.14.0): the fit methods compute, display
 (per `show_output`), and capture `SavedFitSlot`s — persistence is always
-the explicit `save_fits` (HDF5) / `export_fits` (CSV/PNG tree) pair, fed
+the explicit `save_fits` (HDF5) / `export_fit` (CSV/PNG directory) pair, fed
 from the slot history, with default outputs
 `./fit_results/{Project.name}.fit.h5` (save) and
 `./fit_results/{Project.name}/` (export). Interactive display (`show_output >=
@@ -377,7 +380,7 @@ helpers (`collapse_history_to_snapshot` /
 the query-layer primitives (`resolve_fit_reference`,
 `select_snapshot_slots`, `set_fit_label`, `joint_comparability`), and
 the HDF5 reader/writer (`read_archive`, `write_archive`) plus the
-CSV/PNG exporter (`write_csv_export`). The `SavedFitSlot` is the
+single-fit CSV/PNG exporter (`write_fit_export`). The `SavedFitSlot` is the
 **single source of truth for completed-fit state** — neither `Model`
 nor `File` carries observed/fit/metrics. New persistence work lands
 here, not in `fitlib` or `trspecfit.py`. See
@@ -439,7 +442,7 @@ For a 2D fit via `File.fit_2d`:
    `fitlib`. The completed result is then captured eagerly into a
    `SavedFitSlot` via `utils/fit_io.py` and appended to
    `Project._fit_history`; that slot is what `Project.results`,
-   `Project.save_fits`, and `Project.export_fits` operate on. Live
+   `Project.save_fits`, and `Project.export_fit` operate on. Live
    `Model.result` is never re-read by these paths — see
    "Fit results: save / export / load architecture" above.
 

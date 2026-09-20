@@ -1,7 +1,7 @@
 """
-Explicit ``Project.export_fits`` determinism.
+Explicit ``Project.export_fit`` determinism.
 
-Fits never write to disk (v0.14.0) — ``export_fits`` is the only CSV/PNG
+Fits never write to disk (v0.14.0) — ``export_fit`` is the only CSV/PNG
 writer, always fed from the persisted fit slots. Two exports of the same
 history into different roots must therefore produce identical trees; a
 divergence means the exporter grew run-dependent state (timestamps,
@@ -80,7 +80,7 @@ def _make_parity_fit_file(*, name: str, tmp_path: Path, spec_fun_str: str):
 #
 @pytest.mark.slow
 def test_sbs_export_parity(tmp_path):
-    """Two explicit SbS ``export_fits`` runs produce identical trees.
+    """Two explicit SbS ``export_fit`` runs produce identical trees.
 
     Both go through ``fit_io._export_slot``; the file sets and every
     shared artifact's values are compared.
@@ -97,11 +97,12 @@ def test_sbs_export_parity(tmp_path):
         try_ci=0,
     )
 
-    project.export_fits(tmp_path / "first", show_output=0)
-    first_dir = tmp_path / "first" / file.name / "single_glp__sbs"
+    handle = project.results.find(file=file.name, fit_type="sbs")[-1].handle
+    project.export_fit(handle, filepath=tmp_path / "first", show_output=0)
+    first_dir = tmp_path / "first" / "files" / file.name / "single_glp" / handle[:8]
     new_root = tmp_path / "new"
-    project.export_fits(new_root, show_output=0)
-    new_dir = new_root / file.name / "single_glp__sbs"
+    project.export_fit(handle, filepath=new_root, show_output=0)
+    new_dir = new_root / "files" / file.name / "single_glp" / handle[:8]
 
     # --- identical artifact sets (both trees written by _export_slot)
     first_names = {p.name for p in first_dir.rglob("*") if p.is_file()}
@@ -146,7 +147,7 @@ def test_sbs_export_parity(tmp_path):
 #
 @pytest.mark.slow
 def test_2d_export_parity(tmp_path):
-    """Two explicit 2D ``export_fits`` runs produce identical trees."""
+    """Two explicit 2D ``export_fit`` runs produce identical trees."""
 
     project, file = _make_parity_fit_file(
         name="parity_2d", tmp_path=tmp_path, spec_fun_str="fit_model_gir"
@@ -161,11 +162,13 @@ def test_2d_export_parity(tmp_path):
     )
     file.fit_2d("single_glp", stages=1, try_ci=0)
 
-    project.export_fits(tmp_path / "first", fit_type="2d", show_output=0)
-    first_dir = tmp_path / "first" / file.name / "single_glp__2d"
+    handle = project.results.find(file=file.name, fit_type="2d")[-1].handle
+    project.export_fit(handle, filepath=tmp_path / "first", show_output=0)
+    first_dir = tmp_path / "first" / "files" / file.name / "single_glp" / handle[:8]
     new_root = tmp_path / "new"
-    project.export_fits(new_root, fit_type="2d", show_output=0)
-    new_dir = new_root / file.name / "single_glp__2d"
+    handle = project.results.find(file=file.name, fit_type="2d")[-1].handle
+    project.export_fit(handle, filepath=new_root, show_output=0)
+    new_dir = new_root / "files" / file.name / "single_glp" / handle[:8]
 
     # --- identical artifact sets
     first_names = {p.name for p in first_dir.rglob("*") if p.is_file()}
@@ -212,8 +215,9 @@ def test_2d_export_includes_new_artifacts(tmp_path):
     file.fit_2d("single_glp", stages=1, try_ci=0)
 
     new_root = tmp_path / "new"
-    project.export_fits(new_root, fit_type="2d", show_output=0)
-    new_dir = new_root / file.name / "single_glp__2d"
+    handle = project.results.find(file=file.name, fit_type="2d")[-1].handle
+    project.export_fit(handle, filepath=new_root, show_output=0)
+    new_dir = new_root / "files" / file.name / "single_glp" / handle[:8]
 
     assert (new_dir / "observed_2d.csv").exists()
     assert (new_dir / "params.csv").exists()
@@ -238,34 +242,3 @@ def test_2d_export_includes_new_artifacts(tmp_path):
         "bic",
     ]
     assert len(metrics_df) == 1
-
-
-#
-def test_write_csv_export_rejects_removed_dict_config(tmp_path):
-    """The removed per-file dict form must fail before any filesystem
-    mutation — a partial export after an overwrite clear is the worst
-    outcome (mirrors the archive writer's precheck-before-mutation rule)."""
-
-    from trspecfit.config.plot import PlotConfig
-    from trspecfit.utils.fit_io import SavedProject, write_csv_export
-
-    project = SavedProject(
-        name="x",
-        trspecfit_version="0",
-        schema_version="7",
-        timestamp_created="",
-        timestamp_updated="",
-        plot_config=PlotConfig(),
-        files=(),
-        joint=(),
-    )
-    target = tmp_path / "out"
-    with pytest.raises(TypeError, match="removed in v0.14.0"):
-        write_csv_export(
-            target,
-            project=project,
-            num_fmt="%.6e",
-            delim=",",
-            plot_config={"f1": None},
-        )
-    assert not target.exists()  # validated before mkdir/clearing

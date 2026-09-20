@@ -30,7 +30,7 @@ def make_project(
     ``show_output=1`` for tests that exercise display/plot behavior.
 
     Fits never write to disk (v0.14.0); tests that exercise persistence call
-    ``save_fits`` / ``export_fits`` explicitly with a ``tmp_path``.
+    ``save_fits`` / ``export_fit`` explicitly with a ``tmp_path``.
     """
 
     project = Project(path="tests", name=name)

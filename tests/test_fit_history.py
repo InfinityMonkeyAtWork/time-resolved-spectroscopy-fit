@@ -2181,7 +2181,7 @@ class TestFitResultsCompareModelsSigmaColumns:
 #
 #
 class TestResolveFitReference:
-    """Prefix / label resolution semantics (B9 matrix rows).
+    """Reference resolution: exact 8/64 hash forms and exact labels.
 
     Real-fit end-to-end use (``get(handle=)``, ``select=``,
     ``drop_fits``) lives in ``test_fit_query.py``; these pin the
@@ -2189,12 +2189,11 @@ class TestResolveFitReference:
     """
 
     #
-    def test_unambiguous_prefix_resolves(self):
+    def test_display_form_resolves(self):
         a = _slot_stub(model_name="mA")
         b = _slot_stub(model_name="mB")
         assert a.handle != b.handle
-        got = resolve_fit_reference(a.handle[:8], slots=[a, b])
-        assert got is a
+        assert resolve_fit_reference(a.handle[:8], slots=[a, b]) is a
 
     #
     def test_full_handle_resolves(self):
@@ -2202,16 +2201,22 @@ class TestResolveFitReference:
         assert resolve_fit_reference(a.handle, slots=[a]) is a
 
     #
-    def test_ambiguous_prefix_raises(self):
-        """The empty prefix matches every handle — the degenerate ambiguity."""
-
-        a = _slot_stub(model_name="mA")
-        b = _slot_stub(model_name="mB")
-        with pytest.raises(LookupError, match="ambiguous"):
-            resolve_fit_reference("", slots=[a, b])
+    def test_hash_forms_are_case_insensitive(self):
+        a = _slot_stub()
+        assert resolve_fit_reference(a.handle[:8].upper(), slots=[a]) is a
+        assert resolve_fit_reference(a.handle.upper(), slots=[a]) is a
 
     #
-    def test_prefix_matching_nothing_raises(self):
+    def test_hex_fragments_of_other_lengths_are_not_prefixes(self):
+        """7 or 9 hex characters match nothing: there is no prefix matching."""
+
+        a = _slot_stub()
+        for ref in (a.handle[:7], a.handle[:9], a.handle[:63], ""):
+            with pytest.raises(LookupError, match="8-character handle"):
+                resolve_fit_reference(ref, slots=[a])
+
+    #
+    def test_unknown_label_raises(self):
         a = _slot_stub()
         with pytest.raises(LookupError, match="No fit matches"):
             resolve_fit_reference("no-such-fit", slots=[a])
@@ -2225,12 +2230,25 @@ class TestResolveFitReference:
 
     #
     def test_duplicate_label_is_ambiguous(self):
+        """Backstop: labels are unique by construction, but the resolver
+        never picks one of two holders."""
+
         a = _slot_stub(model_name="mA")
         b = _slot_stub(model_name="mB")
         set_fit_label(a, "dup")
         set_fit_label(b, "dup")
         with pytest.raises(LookupError, match="ambiguous"):
             resolve_fit_reference("dup", slots=[a, b])
+
+    #
+    def test_display_form_collision_is_ambiguous(self):
+        """Backstop for the astronomically unlikely 8-character collision."""
+
+        a = dataclasses.replace(_slot_stub(model_name="mA"), handle="a" * 64)
+        b = dataclasses.replace(_slot_stub(model_name="mB"), handle="a" * 8 + "b" * 56)
+        with pytest.raises(LookupError, match="full 64-character handle"):
+            resolve_fit_reference("a" * 8, slots=[a, b])
+        assert resolve_fit_reference(b.handle, slots=[a, b]) is b
 
     #
     def test_handle_accessor_resolves_label(self):
@@ -2261,7 +2279,7 @@ class TestResolveFitReference:
         assert resolve_fit_reference(a1.handle[:8], slots=[a1, a2]) is a2
 
     #
-    def test_joint_hash_prefix_resolves_the_record(self):
+    def test_joint_hash_display_form_resolves_the_record(self):
         record = _joint_record_stub()
         slots = [p.slot for p in record.projections]
         got = resolve_fit_reference(
@@ -2276,6 +2294,75 @@ class TestResolveFitReference:
             set_fit_label(a, "latest")
         with pytest.raises(ValueError, match="non-empty"):
             set_fit_label(a, "")
+        for hash_shaped in ("deadbeef", "DEADBEEF", "0" * 64):
+            with pytest.raises(ValueError, match="shape of a handle"):
+                set_fit_label(a, hash_shaped)
+
+
+#
+#
+class TestLabelUniqueness:
+    """``FitResults.set_label`` keeps labels unique across slots and joint
+    records — the label is the human-readable twin of the handle."""
+
+    #
+    def test_second_holder_is_refused_naming_the_first(self):
+        a = _slot_stub(model_name="mA")
+        b = _slot_stub(model_name="mB")
+        results = FitResults(slots=[a, b])
+        results.set_label(a.handle[:8], "final")
+        with pytest.raises(ValueError, match=f"already held by slot {a.handle[:8]}"):
+            results.set_label(b.handle[:8], "final")
+        assert b.label is None
+
+    #
+    def test_relabelling_the_holder_itself_is_allowed(self):
+        a = _slot_stub()
+        results = FitResults(slots=[a])
+        results.set_label(a.handle[:8], "final")
+        results.set_label("final", "final")
+        results.set_label(a.handle, "final")
+        assert a.label == "final"
+
+    #
+    def test_slot_and_joint_labels_share_one_namespace(self):
+        record = _joint_record_stub()
+        other = _slot_stub(model_name="solo")
+        results = FitResults(
+            slots=[*(p.slot for p in record.projections), other], joint=[record]
+        )
+        results.set_label(record.optimization_hash[:8], "final")
+        with pytest.raises(
+            ValueError, match=f"already held by joint {record.optimization_hash[:8]}"
+        ):
+            results.set_label(other.handle[:8], "final")
+        results.set_label(other.handle[:8], "solo-final")
+        with pytest.raises(ValueError, match="already held by slot"):
+            results.set_label(record.optimization_hash[:8], "solo-final")
+
+    #
+    def test_capture_carries_the_label_to_an_exact_rerun(self):
+        """``Project._record_slot`` / ``_record_joint``: a new entry with a
+        known handle inherits that handle's label; a new handle does not."""
+
+        project = make_project(name="carry")
+        a1 = _slot_stub(model_name="mA")
+        set_fit_label(a1, "final")
+        project._record_slot(a1)
+        a2 = _slot_stub(model_name="mA")
+        project._record_slot(a2)
+        assert a2.handle == a1.handle and a2.label == "final"
+        b = _slot_stub(model_name="mB")
+        project._record_slot(b)
+        assert b.label is None
+
+        j1 = _joint_record_stub()
+        set_fit_label(j1, "joint-final")
+        project._record_joint(j1)
+        j2 = _joint_record_stub()
+        project._record_joint(j2)
+        assert j2.optimization_hash == j1.optimization_hash
+        assert j2.label == "joint-final"
 
 
 #

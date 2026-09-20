@@ -222,7 +222,7 @@ sibling with no prose explaining it. If the reuse is stated up front, PASS.
 Fits never write to disk (v0.14.0), so no opt-out is needed — but a stale
 removed key (`auto_export:`, `path_results:`) in `project.yaml` makes
 `Project()` raise at load and FAILs here. On-disk artifacts must come only
-from the notebook's explicit `save_fits` / `export_fits` calls.
+from the notebook's explicit `save_fits` / `export_fit` calls.
 
 Artifact severity: **committed** CSV/PNG/`.fit.h5` fit outputs FAIL (they
 pollute the repo). **Untracked/gitignored** outputs are reported INFO, not a
@@ -460,7 +460,7 @@ must survive contact with the notebook's own output and with the codebase.
 Build the claim ledger first: every sentence that states a number, a count, a
 behaviour (raises, refuses, is optional, defaults to), a cross-reference, or an
 API promise — in this notebook *and* in the sibling a `%run` preamble pulls in,
-because a promise made there ("labels work anywhere a handle prefix does")
+because a promise made there ("a label works anywhere a handle does")
 binds this notebook's code. Then verify each entry, in this order:
 
 - **Cross-references land in the right place.** A `§N`, "above"/"below", or
@@ -492,7 +492,7 @@ binds this notebook's code. Then verify each entry, in this order:
   table; "two models" over three rows.
 - **The notebook does what the prose says it does.** A sentence describing
   calls the notebook never makes ("only writes via `save_fits` /
-  `export_fits`" in a notebook that never saves) is a FAIL. The pre-pass lists
+  `export_fit`" in a notebook that never saves) is a FAIL. The pre-pass lists
   API names mentioned in prose but never called; Tips and Next-Steps pointers
   are fine, statements about *this* notebook are not.
 - **Predictions are borne out, at the margin they claim.** "Lower on most

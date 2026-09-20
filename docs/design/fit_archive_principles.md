@@ -1266,9 +1266,14 @@ handle is: display, selection, export, `diff`, `drop_fits`.
 
 **A label is a project-wide unique id** — the human-readable twin of the
 handle, which `compute_slot_handle` already makes project-unique by hashing the
-file name in. One namespace covers slot labels and joint labels. Uniqueness is
+file name in. Like the handle it names the *configuration*: every history entry
+sharing a handle carries the same label, and an exact re-run inherits it at
+capture, so the snapshot collapse (newest entry per handle) cannot drop it.
+One namespace covers slot labels and joint labels. Uniqueness is
 enforced where the user has context — `set_label` refuses a label another
-record holds, naming the holder — and again at archive append, because sessions
+record holds, naming the holder; the check and the relabel of exact re-runs
+read the project's live history, not the `Project.results` snapshot they were
+called on — and again at archive append, because sessions
 append independently: an incoming label already stored under a different handle
 or joint hash refuses the save, and `overwrite=True` moves it (the stored
 holder's `label` attr is deleted). That is the same "replace what conflicts"
@@ -1282,9 +1287,10 @@ file) needs filter-scoped resolution in every reference-taking call, a second
 rule keeping slot labels disjoint from joint labels, and still leaves the
 project-level `set_label` / `drop_fits` ambiguous; the convention
 `final-<file>` costs one f-string and keeps a label a complete pointer.
-**Character-set and hex-only rules** fell with their reasons: labels no longer
-name export directories, and exact-form lookup cannot mistake a label for a
-handle.
+**A label may not have the shape of a reference** — exactly 8 or 64 hex
+characters — so lookup can never mean two fits; beyond that, the character-set
+and hex-only rules fell with their reason, since labels no longer name export
+directories.
 
 Labels are also what make a **durable** pointer to a chosen fit. An explicit
 `accept` marker was considered and rejected: its only advantage over
@@ -1395,9 +1401,12 @@ Group semantics: `"latest"` and `"best"` resolve within each
 discard someone's work — and also accepts `"latest"`, `"best"` (with a `by=`
 criterion), or one exact reference. `export_fit(ref)` takes exactly one
 reference (handle or label) and writes exactly one fit: a slot to
-`<root>/<file>/<model>/<handle[:8]>/`, a joint record — or any of its
-projections — to `<root>/joint/<model>/<hash[:8]>/` with one subdirectory per
-file. Every directory carries a `fit_info.csv` naming the full handle, file,
+`<root>/files/<file>/<model>/<handle[:8]>/`, a joint record — or any of its
+projections — to `<root>/joint/<model>/<hash[:8]>/` with the projections under
+`files/<file>/`. Every user-named segment sits under a fixed `files/` or
+`joint/` node — the same top-level split as the archive's `project/files/` and
+`project/joint/` — so no file or model name is ever reserved, and a bundle
+directory reads as the joint artifacts plus one folder of per-file parts. Every directory carries a `fit_info.csv` naming the full handle, file,
 model, fit type, label and joint reference, so a reader without trspecfit knows
 what they hold. Exporting many fits is a loop over references, not a
 selection: an export is something you hand to a person, and the person
@@ -1410,7 +1419,10 @@ per-group disambiguation (`__<hash>` and `__000` suffixes) and a second set of
 defaults, all of which existed to give directories human-readable names, which
 `fit_info.csv` now does; **`__<fit_type>` in the path** — the fit type is part
 of the optimization hash, so the handle already separates a baseline from a
-spectrum fit of the same model.
+spectrum fit of the same model; **reserving the exporter's artifact names as
+`File` names** (2026-09-20) — a rule on identity driven by presentation that
+grows with every new artifact; and **an export-time refusal** for such names —
+names are immutable, so the user would have no remedy.
 
 ### Rejected: lineage pointers
 

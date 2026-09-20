@@ -10,6 +10,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import numpy as np
+import pandas as pd
 import pytest
 from _utils import make_project, simulate_clean, simulate_noisy
 
@@ -553,12 +554,12 @@ class TestProjectFitLifecycle:
         for f in project.files:
             df = f.get_parameters(fit_type="2d")
             assert df is not None
-            assert "GLP_01_x0_expFun_01_tau" in df["name"].values
+            assert "GLP_01_x0_expFun_01_tau" in df["name"].to_numpy()
 
     #
     @pytest.mark.slow
-    def test_export_fit_works_after_project_fit(self, tmp_path):
-        """Slot export runs without error on project-fitted files."""
+    def test_export_fit_writes_the_joint_bundle(self, tmp_path):
+        """A projection reference exports the whole bundle under joint/."""
 
         project = make_project(name="project_fit")
         truth = _make_truth_file()
@@ -567,12 +568,30 @@ class TestProjectFitLifecycle:
         for i in range(2):
             _make_fit_file(project, clean, truth.energy, truth.time, name=f"file_{i}")
 
-        project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
-
+        record = project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
+        bundle_dir = tmp_path / "joint" / "project_glp" / record.optimization_hash[:8]
+        projection_handle = record.projections[0].slot.handle
+        out = project.files[0].export_fit(
+            projection_handle[:8], filepath=tmp_path, show_output=0
+        )
+        assert out == bundle_dir
+        assert (bundle_dir / "params.csv").exists()
+        assert (bundle_dir / "metrics.csv").exists()
         for f in project.files:
-            f.export_fit(tmp_path, fit_type="2d", show_output=0)
-            slot_dir = tmp_path / f.name / "project_glp__2d"
-            assert (slot_dir / "fit_2d.csv").exists()
+            assert (bundle_dir / "files" / f.name / "fit_2d.csv").exists()
+            assert (bundle_dir / "files" / f.name / "fit_info.csv").exists()
+        info = pd.read_csv(
+            bundle_dir / "fit_info.csv", dtype=str, keep_default_na=False
+        )
+        info = dict(zip(info["field"], info["value"], strict=True))
+        assert info["optimization_hash"] == record.optimization_hash
+        assert info["files"] == "file_0;file_1"
+        assert info["fit_type"] == "joint"
+        # The joint hash lands in the same place; a second export needs overwrite.
+        with pytest.raises(FileExistsError):
+            project.export_fit(
+                record.optimization_hash[:8], filepath=tmp_path, show_output=0
+            )
 
     #
     @pytest.mark.slow

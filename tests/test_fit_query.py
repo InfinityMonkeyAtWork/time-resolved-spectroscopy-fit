@@ -8,7 +8,7 @@ End-to-end tests for the B9 query layer on real fits (public API):
 - ``handle=`` accessor pinning, mutually exclusive with the filter trio.
 - ``FitResults.set_label()`` — post-hoc labels: selection, escalation to the
   joint record, archive round-trip.
-- ``select=`` / ``by=`` on ``save_fits`` / ``export_fits`` ("all" /
+- ``select=`` / ``by=`` on ``save_fits`` ("all" /
   "latest" / "best" / reference), including joint-bundle expansion.
 - ``Project.drop_fits()`` — pruning slots and whole joint bundles.
 
@@ -21,12 +21,15 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import h5py
 import numpy as np
 import pandas as pd
 import pytest
 from _utils import make_project, simulate_noisy
 
 from trspecfit import File, FitResults
+from trspecfit.utils.fit_io import set_fit_label
+from trspecfit.utils.hdf5 import require_group
 
 
 #
@@ -185,20 +188,20 @@ class TestVariantsTable:
 #
 class TestHandleAccessors:
     #
-    def test_get_by_prefix_and_mutual_exclusion(self):
+    def test_get_by_display_form_and_mutual_exclusion(self):
         project, _, handle_a, handle_b = _two_variant_baseline()
         results = project.results
 
-        assert results.get(handle=handle_b[:10]).handle == handle_b
+        assert results.get(handle=handle_b[:8]).handle == handle_b
         with pytest.raises(TypeError, match="cannot be combined"):
-            results.get(handle=handle_b[:10], model="single_glp")
+            results.get(handle=handle_b[:8], model="single_glp")
         with pytest.raises(TypeError, match="requires either"):
             results.get(file="fit")
         # Multi-match filter errors point at variants() + handle=.
         with pytest.raises(LookupError, match="variants"):
             results.get(file="fit", model="single_glp", fit_type="baseline")
 
-        params_a = results.get_parameters(handle=handle_a[:10])
+        params_a = results.get_parameters(handle=handle_a[:8])
         vary_x0 = params_a.loc[params_a["name"] == "GLP_01_x0", "vary"].iloc[0]
         assert bool(vary_x0) is True
 
@@ -206,9 +209,9 @@ class TestHandleAccessors:
     def test_plot_fit_accepts_handle(self):
         project, _, handle_a, _ = _two_variant_baseline()
         results = project.results
-        results.plot_fit(handle=handle_a[:10], show_plot=False)
+        results.plot_fit(handle=handle_a[:8], show_plot=False)
         with pytest.raises(TypeError, match="cannot be combined"):
-            results.plot_fit(handle=handle_a[:10], fit_type="baseline")
+            results.plot_fit(handle=handle_a[:8], fit_type="baseline")
 
     #
     def test_handle_accepts_a_label(self, tmp_path):
@@ -279,6 +282,154 @@ class TestLabelFlow:
         assert next(iter(loaded)).label == "keeper-2"
 
     #
+    def test_labels_are_unique_project_wide(self):
+        project, _, handle_a, handle_b = _two_variant_baseline()
+        results = project.results
+        results.set_label(handle_a[:8], "keeper")
+        with pytest.raises(ValueError, match=f"already held by slot {handle_a[:8]}"):
+            results.set_label(handle_b[:8], "keeper")
+        results.set_label("keeper", "keeper")  # the holder itself: allowed
+        assert results.get(handle="keeper").handle == handle_a
+
+    #
+    def test_resaving_the_session_state_moves_a_label(self, tmp_path):
+        """A relabel in session is persisted wholesale: the old holder's
+        rewrite frees the label, so it is not a label conflict (the
+        ``overwrite`` here is what any re-save of stored attachments needs;
+        without it the attachment check raises, not the label check)."""
+
+        project, _, handle_a, handle_b = _two_variant_baseline()
+        results = project.results
+        results.set_label(handle_a[:8], "keeper")
+        archive = tmp_path / "relabel.fit.h5"
+        project.save_fits(archive, show_output=0)
+
+        results.set_label(handle_a[:8], "old")
+        results.set_label(handle_b[:8], "keeper")
+        with pytest.raises(FileExistsError, match="already stores"):
+            project.save_fits(archive, show_output=0)
+        project.save_fits(archive, overwrite=True, show_output=0)
+        loaded = FitResults.load(archive)
+        assert loaded.get(handle=handle_a).label == "old"
+        assert loaded.get(handle=handle_b).label == "keeper"
+
+    #
+    def test_append_refuses_a_stored_label_unless_overwrite_moves_it(self, tmp_path):
+        """The later-session case: the stored holder is not part of the
+        write, so the archive would hold the label twice."""
+
+        project, _, handle_a, handle_b = _two_variant_baseline()
+        results = project.results
+        results.set_label(handle_a[:8], "keeper")
+        archive = tmp_path / "taken.fit.h5"
+        project.save_fits(archive, show_output=0)
+
+        results.set_label(handle_a[:8], "old")
+        results.set_label(handle_b[:8], "keeper")
+        with pytest.raises(ValueError, match="already held in the archive by slot"):
+            project.save_fits(archive, select=handle_b[:8], show_output=0)
+        project.save_fits(archive, select=handle_b[:8], overwrite=True, show_output=0)
+        loaded = FitResults.load(archive)
+        assert loaded.get(handle=handle_a).label is None  # stripped
+        assert loaded.get(handle="keeper").handle == handle_b
+
+    #
+    def test_two_incoming_holders_are_an_invariant_error(self, tmp_path):
+        project, file, _, _ = _two_variant_baseline()
+        slots = project.results.find(file=file.name, model="single_glp")
+        assert len(slots) == 2
+        for slot in slots:
+            set_fit_label(slot, "dup")  # bypasses set_label's guard on purpose
+        with pytest.raises(ValueError, match="carried by 2 records in this write"):
+            project.save_fits(tmp_path / "dup.fit.h5", show_output=0)
+
+    #
+    def test_label_belongs_to_the_handle_across_exact_reruns(self, tmp_path):
+        """An exact re-run inherits the label, so the archive keeps it; a
+        relabel reaches every entry of the handle."""
+
+        project, file, handle_a, _ = _two_variant_baseline()
+        model = next(m for m in file.models if m.name == "single_glp")
+        model.lmfit_pars["GLP_01_x0"].vary = True
+        seed = [p.value for p in model.lmfit_pars.values()]
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        # project.results is a snapshot: take a fresh view after each fit.
+        handle_c = project.results.find(file="fit", model="single_glp")[-1].handle
+        project.results.set_label(handle_c[:8], "keeper")
+
+        model.update_value(seed)  # fits write back; restore the exact seed
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        rerun = project.results.find(file="fit", model="single_glp")[-1]
+        assert rerun.handle == handle_c
+        assert rerun.label == "keeper"
+
+        archive = tmp_path / "rerun.fit.h5"
+        project.save_fits(archive, show_output=0)
+        assert FitResults.load(archive).get(handle="keeper").handle == handle_c
+
+        project.results.set_label("keeper", "final")
+        entries = [s for s in project._fit_history if s.handle == handle_c]
+        assert len(entries) == 2 and all(s.label == "final" for s in entries)
+        project.results.set_label(handle_a[:8], "keeper")  # no stale holder
+
+    #
+    def test_label_checks_and_relabels_reach_the_live_history(self, tmp_path):
+        """A ``Project.results`` view is a snapshot; labels are project
+        state. An older view must not create a duplicate past a newer fit,
+        and a relabel through it must reach every exact re-run."""
+
+        project, file, handle_a, _ = _two_variant_baseline()
+        model = next(m for m in file.models if m.name == "single_glp")
+        model.lmfit_pars["GLP_01_x0"].vary = True
+        seed = [p.value for p in model.lmfit_pars.values()]
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)  # run 1
+        handle_c = project.results.find(file="fit", model="single_glp")[-1].handle
+        old_view = project.results
+
+        model.update_value(seed)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)  # run 2
+        project.results.set_label(handle_c[:8], "keeper")
+        with pytest.raises(ValueError, match=f"already held by slot {handle_c[:8]}"):
+            old_view.set_label(handle_a[:8], "keeper")  # newer holder is seen
+
+        old_view.set_label(handle_c[:8], "final")  # relabel via the old view
+        model.update_value(seed)
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)  # run 3
+        entries = [s for s in project._fit_history if s.handle == handle_c]
+        assert [s.label for s in entries] == ["final", "final", "final"]
+        assert project.results.get(handle="final") is entries[-1]
+
+    #
+    def test_pre_existing_duplicates_on_disk_do_not_block_other_writes(self, tmp_path):
+        """Duplicates written before the uniqueness rule are left alone when
+        neither holder is part of the write (they stay ambiguous on load)."""
+
+        project, file, handle_a, handle_b = _two_variant_baseline()
+        results = project.results
+        results.set_label(handle_a[:8], "keeper")
+        archive = tmp_path / "legacy.fit.h5"
+        project.save_fits(archive, show_output=0)
+        with h5py.File(archive, "a") as h5:
+            files_group = require_group(h5["project/files"], "files")
+            for fkey in files_group.keys():
+                slots_group = require_group(files_group[f"{fkey}/slots"], "slots")
+                for skey in slots_group.keys():
+                    meta = require_group(slots_group[f"{skey}/metadata"], "metadata")
+                    if meta.attrs["handle"] == handle_b:
+                        meta.attrs["label"] = "keeper"  # legacy duplicate
+
+        model = next(m for m in file.models if m.name == "single_glp")
+        model.lmfit_pars["GLP_01_x0"].vary = True
+        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        handle_c = project.results.find(file="fit", model="single_glp")[-1].handle
+        assert handle_c not in (handle_a, handle_b)
+        project.save_fits(archive, select=handle_c[:8], show_output=0)
+        loaded = FitResults.load(archive)
+        assert {s.handle for s in loaded} == {handle_a, handle_b, handle_c}
+        with pytest.raises(LookupError, match="ambiguous"):
+            loaded.get(handle="keeper")
+
+    #
     def test_select_ref_excludes_filters(self, tmp_path):
         project, _, _, _ = _two_variant_baseline()
         with pytest.raises(ValueError, match="cannot be.*combined"):
@@ -309,28 +460,75 @@ class TestSelectOnSaveAndExport:
             project.save_fits(tmp_path / "b.fit.h5", select="latest", by="r2")
 
     #
-    def test_export_defaults_to_latest(self, tmp_path):
+    def test_export_fit_writes_one_directory_per_reference(self, tmp_path):
         project, _, handle_a, handle_b = _two_variant_baseline()
-
-        root_latest = tmp_path / "latest"
-        project.export_fits(root_latest, show_output=0)
-        dirs = sorted(p.name for p in (root_latest / "fit").iterdir())
-        assert dirs == ["single_glp__baseline"]  # one winner, no hash suffix
-
-        root_all = tmp_path / "all"
-        project.export_fits(root_all, select="all", show_output=0)
-        dirs = sorted(p.name for p in (root_all / "fit").iterdir())
-        assert dirs == sorted(
-            f"single_glp__baseline__{h[:8]}" for h in (handle_a, handle_b)
+        root = tmp_path / "out"
+        dir_a = project.export_fit(handle_a[:8], filepath=root, show_output=0)
+        dir_b = project.export_fit(handle_b, filepath=root, show_output=0)
+        assert dir_a == root / "files" / "fit" / "single_glp" / handle_a[:8]
+        assert dir_b == root / "files" / "fit" / "single_glp" / handle_b[:8]
+        assert (dir_a / "fit_1d.csv").exists()
+        assert (dir_a / "params.csv").exists()
+        info = pd.read_csv(dir_a / "fit_info.csv", dtype=str, keep_default_na=False)
+        info = dict(zip(info["field"], info["value"], strict=True))
+        assert info["handle"] == handle_a
+        assert (info["file"], info["model"], info["fit_type"]) == (
+            "fit",
+            "single_glp",
+            "baseline",
         )
+        assert info["label"] == "" and info["joint_ref"] == ""
 
     #
-    def test_handle_prefix_exports_one_exact_run(self, tmp_path):
+    def test_export_fit_by_label_and_overwrite(self, tmp_path):
         project, _, handle_a, _ = _two_variant_baseline()
-        root = tmp_path / "one"
-        project.export_fits(root, select=handle_a[:8], show_output=0)
-        dirs = sorted(p.name for p in (root / "fit").iterdir())
-        assert dirs == ["single_glp__baseline"]
+        project.results.set_label(handle_a[:8], "keeper")
+        root = tmp_path / "out"
+        out = project.export_fit("keeper", filepath=root, show_output=0)
+        assert out == root / "files" / "fit" / "single_glp" / handle_a[:8]
+        info = pd.read_csv(out / "fit_info.csv", dtype=str, keep_default_na=False)
+        assert dict(zip(info["field"], info["value"], strict=True))["label"] == "keeper"
+
+        with pytest.raises(FileExistsError, match="overwrite=True"):
+            project.export_fit("keeper", filepath=root, show_output=0)
+        (out / "stale.txt").write_text("x")
+        project.export_fit("keeper", filepath=root, overwrite=True, show_output=0)
+        assert not (out / "stale.txt").exists()
+        assert (out / "params.csv").exists()
+
+    #
+    def test_export_fit_default_root(self, tmp_path, monkeypatch):
+        project, _, handle_a, _ = _two_variant_baseline()
+        monkeypatch.chdir(tmp_path)
+        out = project.export_fit(handle_a[:8], show_output=0)
+        expected = (
+            tmp_path / "fit_results" / project.name / "files" / "fit" / "single_glp"
+        )
+        assert out.resolve() == (expected / handle_a[:8]).resolve()
+
+    #
+    def test_file_export_fit_refuses_another_files_fit(self, tmp_path):
+        project, file, _, _ = _two_variant_baseline()
+        assert file.data_raw is not None  # type guard
+        assert file.energy is not None  # type guard
+        assert file.time is not None  # type guard
+        file_2 = File(
+            parent_project=project,
+            name="fit2",
+            data=file.data_raw.copy(),
+            energy=file.energy.copy(),
+            time=file.time.copy(),
+        )
+        file_2.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+        file_2.define_baseline(
+            time_start=0, time_stop=3, time_type="ind", show_plot=False
+        )
+        file_2.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+        handle_2 = project.results.find(file="fit2")[-1].handle
+        with pytest.raises(ValueError, match="not of file 'fit'"):
+            file.export_fit(handle_2[:8], filepath=tmp_path)
+        out = file_2.export_fit(handle_2[:8], filepath=tmp_path, show_output=0)
+        assert out == tmp_path / "files" / "fit2" / "single_glp" / handle_2[:8]
 
 
 #
@@ -393,16 +591,16 @@ class TestFileApiParity:
         file_2.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
         handle_2 = project.results.find(file="fit2")[-1].handle
 
-        params_a = file.get_parameters(handle=handle_a[:10])
+        params_a = file.get_parameters(handle=handle_a[:8])
         vary_x0 = params_a.loc[params_a["name"] == "GLP_01_x0", "vary"].iloc[0]
         assert bool(vary_x0) is True
-        file.plot_fit(handle=handle_a[:10], show_plot=False)
+        file.plot_fit(handle=handle_a[:8], show_plot=False)
 
         with pytest.raises(ValueError, match="belongs to file"):
-            file.get_parameters(handle=handle_2[:10])
+            file.get_parameters(handle=handle_2[:8])
         with pytest.raises(ValueError, match="belongs to file"):
-            file.plot_fit(handle=handle_2[:10], show_plot=False)
-        assert not file_2.get_parameters(handle=handle_2[:10]).empty
+            file.plot_fit(handle=handle_2[:8], show_plot=False)
+        assert not file_2.get_parameters(handle=handle_2[:8]).empty
 
 
 #

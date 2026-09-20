@@ -28,7 +28,7 @@ import datetime
 import hashlib
 import json
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, NamedTuple, cast
@@ -940,8 +940,9 @@ def compute_slot_handle(*, optimization_hash: str, file_name: str) -> str:
     """
     Stored slot handle: ``sha256(optimization_hash + file_name)``, tagged.
 
-    Full 64-hex is authoritative on disk; display abbreviates to 8 and
-    lookup prefix-matches (query layer). Joint siblings share the
+    Full 64-hex is authoritative on disk; display abbreviates to
+    ``HANDLE_DISPLAY_LEN`` characters and lookup accepts exactly that form
+    or the full digest (query layer). Joint siblings share the
     ``optimization_hash`` and differ here by file name.
     """
 
@@ -1944,13 +1945,13 @@ def collapse_history_to_snapshot(
                 raise FileExistsError(
                     f"Two fits of file {slot.file_name!r} (model "
                     f"{slot.model_name!r}, fit_type {slot.fit_type!r}) share "
-                    f"handle {slot.handle[:8]} but differ in fitted values — "
+                    f"handle {short_id(slot.handle)} but differ in fitted values — "
                     f"the optimizer configuration is not deterministic "
                     f"(identical inputs produced different optima). "
                     + _divergence_remedy(slot.fit_settings)
                 )
             warnings.warn(
-                f"Divergent re-runs under handle {slot.handle[:8]} (file "
+                f"Divergent re-runs under handle {short_id(slot.handle)} (file "
                 f"{slot.file_name!r}): keeping the latest (timestamp "
                 f"{slot.timestamp}) and dropping the earlier result from "
                 f"this save. Every run remains in the in-session history.",
@@ -1984,14 +1985,14 @@ def collapse_joint_history_to_snapshot(
             if not overwrite:
                 raise FileExistsError(
                     f"Two joint fits of model {jr.model_name!r} share "
-                    f"optimization hash {jr.optimization_hash[:8]} but "
+                    f"optimization hash {short_id(jr.optimization_hash)} but "
                     f"differ in fitted values — the optimizer configuration "
                     f"is not deterministic (identical inputs produced "
                     f"different optima). " + _divergence_remedy(jr.fit_settings)
                 )
             warnings.warn(
                 f"Divergent joint re-runs under optimization hash "
-                f"{jr.optimization_hash[:8]} (model {jr.model_name!r}): "
+                f"{short_id(jr.optimization_hash)} (model {jr.model_name!r}): "
                 f"keeping the latest (timestamp {jr.timestamp}) and "
                 f"dropping the earlier result from this save. Every run "
                 f"remains in the in-session history.",
@@ -2002,9 +2003,33 @@ def collapse_joint_history_to_snapshot(
     return list(latest.values())
 
 
-# ``select=`` keywords on save_fits / export_fits — a label may not shadow
+# ``select=`` keywords on save_fits — a label may not shadow
 # them, and resolve_fit_reference never receives them (callers intercept).
 SELECT_RESERVED: frozenset[str] = frozenset({"all", "latest", "best"})
+
+# A hash reference has exactly the shape of a display handle (as every table
+# shows it) or of the full digest. Shorter fragments are not prefixes: a prefix
+# unique today can name a different fit once runs are added or dropped
+# (fit_archive_principles.md §"Slot handles").
+HANDLE_DISPLAY_LEN = 8
+_HANDLE_FULL_LEN = 64
+_HEX_CHARS = frozenset("0123456789abcdef")
+
+
+#
+def _is_hash_reference(ref: str) -> bool:
+    """True when ``ref`` has the exact shape of a display or full handle."""
+
+    return len(ref) in (HANDLE_DISPLAY_LEN, _HANDLE_FULL_LEN) and (
+        set(ref.lower()) <= _HEX_CHARS
+    )
+
+
+#
+def short_id(digest: str) -> str:
+    """Display form of a handle, hash or digest: its first 8 characters."""
+
+    return digest[:HANDLE_DISPLAY_LEN]
 
 
 #
@@ -2017,54 +2042,62 @@ def resolve_fit_reference(
     """
     Resolve a user-supplied fit reference to one slot or joint record.
 
-    ``ref`` matches a slot by ``handle`` prefix or exact ``label``, and a
-    joint record by ``optimization_hash`` prefix or exact ``label``
-    (git-style: any unambiguous prefix works; tables display the first 8
-    hex chars). Matching is case-insensitive for hex prefixes, exact for
-    labels. Several history entries sharing one handle (exact re-runs)
-    count as a single target and resolve to the latest entry.
+    ``ref`` takes exactly three forms: the 8-character display form of a
+    slot handle or joint optimization hash, the full 64-character digest
+    (both case-insensitive), or an exact label. Nothing else matches — in
+    particular a shorter hex fragment is not a prefix. Several history
+    entries sharing one handle (exact re-runs) count as a single target
+    and resolve to the latest entry.
 
     Raises
     ------
     LookupError
-        If nothing matches, or the reference is ambiguous — the message
-        lists every distinct candidate with its short id and context.
+        If nothing matches, or the reference is ambiguous. Labels are
+        unique by construction and an 8-character collision is
+        astronomically unlikely, so ambiguity is a defensive backstop; the
+        message lists every candidate with its short id and context.
     """
 
-    prefix = ref.lower()
     by_handle: dict[str, SavedFitSlot] = {}
-    for slot in slots:
-        if slot.handle.startswith(prefix) or (
-            slot.label is not None and slot.label == ref
-        ):
-            by_handle[slot.handle] = slot  # latest entry per handle wins
     by_hash: dict[str, JointFitResult] = {}
+    if _is_hash_reference(ref):
+        key = ref.lower()
+        n = len(key)
+        for slot in slots:
+            if slot.handle[:n] == key:
+                by_handle[slot.handle] = slot  # latest entry per handle wins
+        for jr in joint_records:
+            if jr.optimization_hash[:n] == key:
+                by_hash[jr.optimization_hash] = jr
+    for slot in slots:
+        if slot.label is not None and slot.label == ref:
+            by_handle[slot.handle] = slot
     for jr in joint_records:
-        if jr.optimization_hash.startswith(prefix) or (
-            jr.label is not None and jr.label == ref
-        ):
+        if jr.label is not None and jr.label == ref:
             by_hash[jr.optimization_hash] = jr
 
     n_targets = len(by_handle) + len(by_hash)
     if n_targets == 0:
         raise LookupError(
-            f"No fit matches reference {ref!r} — expected a slot-handle "
-            f"prefix, a joint-optimization-hash prefix, or an exact label."
+            f"No fit matches reference {ref!r} — expected the 8-character "
+            f"handle shown in the tables, the full 64-character handle, or "
+            f"an exact label."
         )
     if n_targets > 1:
         candidates = [
-            f"slot {s.handle[:8]} (file={s.file_name!r}, "
+            f"slot {short_id(s.handle)} (file={s.file_name!r}, "
             f"model={s.model_name!r}, fit_type={s.fit_type!r})"
             for s in by_handle.values()
         ] + [
-            f"joint {jr.optimization_hash[:8]} (model={jr.model_name!r}, "
+            f"joint {short_id(jr.optimization_hash)} "
+            f"(model={jr.model_name!r}, "
             f"files={list(jr.files)})"
             for jr in by_hash.values()
         ]
         raise LookupError(
             f"Reference {ref!r} is ambiguous — {n_targets} fits match: "
             + "; ".join(candidates)
-            + ". Use a longer prefix."
+            + ". Pass the full 64-character handle."
         )
     if by_handle:
         return next(iter(by_handle.values()))
@@ -2081,14 +2114,21 @@ def set_fit_label(target: SavedFitSlot | JointFitResult, label: str) -> None:
     archive collision rules) — this is its sanctioned in-session mutator,
     used by ``FitResults.set_label``. Every live view sees the change, since
     ``Project._fit_history`` and ``FitResults`` share the record objects.
+    Uniqueness (project-wide, across slots and joint records) is the
+    callers' job: ``FitResults.set_label`` in session, ``write_archive`` on
+    append. This mutator itself only validates the value.
     """
 
     if not isinstance(label, str) or not label:
         raise ValueError("label must be a non-empty string")
     if label in SELECT_RESERVED:
         raise ValueError(
-            f"label {label!r} is reserved by select= on save_fits / "
-            f"export_fits; pick another label."
+            f"label {label!r} is reserved by select= on save_fits; pick another label."
+        )
+    if _is_hash_reference(label):
+        raise ValueError(
+            f"label {label!r} has the shape of a handle (8 or 64 hex characters); "
+            f"pick another label so a reference can never mean two fits."
         )
     object.__setattr__(target, "label", label)
 
@@ -2593,6 +2633,13 @@ def write_archive(
       ``label`` is mutable and rewritten whenever the incoming record
       carries one. All collisions are detected before any mutation, so a
       conflicting append leaves the archive byte-untouched.
+    - **Labels are unique project-wide.** Incoming labels are overlaid on
+      the stored ones (a record re-saved under its own identity rewrites
+      its label, so an in-session relabel never conflicts with itself); a
+      label the archive would then hold twice raises ``ValueError`` before
+      any mutation. With ``overwrite=True`` the incoming holder wins and
+      the stored holder's ``label`` attr is deleted — the only way to move
+      a label to a newer run from a later session.
     """
 
     path = Path(filepath)
@@ -2601,6 +2648,9 @@ def write_archive(
     with h5py.File(path, "a") as archive:
         is_new = _classify_archive_for_write(archive, project, path=path)
         _precheck_bundle_integrity(archive, project, archive_is_new=is_new)
+        label_holders_to_strip = _precheck_labels(
+            archive, project, archive_is_new=is_new, overwrite=overwrite
+        )
         if not is_new:
             _precheck_file_content(archive, project, path=path)
             if not overwrite:
@@ -2610,6 +2660,7 @@ def write_archive(
         if is_new:
             project_group.attrs["name"] = project.name
         project_group.attrs["plot_config"] = project.plot_config.to_json()
+        _strip_stored_labels(archive, label_holders_to_strip)
         files_group = project_group.require_group("files")
         for sf in project.files:
             file_group = _find_file_by_name(project_group, sf.name)
@@ -2719,7 +2770,7 @@ def _precheck_bundle_integrity(
             if (scope == "project") != (slot.joint_ref is not None):
                 joint_ref_state = "set" if slot.joint_ref is not None else "absent"
                 raise ValueError(
-                    f"Slot {slot.handle[:8]} on file {slot.file_name!r} "
+                    f"Slot {short_id(slot.handle)} on file {slot.file_name!r} "
                     f"violates the joint-reference invariant: input_files "
                     f"scope is {scope!r} but joint_ref is {joint_ref_state}."
                 )
@@ -2729,8 +2780,8 @@ def _precheck_bundle_integrity(
                 and slot.joint_ref not in stored_joint
             ):
                 raise ValueError(
-                    f"Slot {slot.handle[:8]} on file {slot.file_name!r} "
-                    f"references joint record {slot.joint_ref[:8]}, which is "
+                    f"Slot {short_id(slot.handle)} on file {slot.file_name!r} "
+                    f"references joint record {short_id(slot.joint_ref)}, which is "
                     f"neither part of this save nor stored in the archive — "
                     f"a joint bundle must be saved whole."
                 )
@@ -2739,7 +2790,7 @@ def _precheck_bundle_integrity(
         scope = _input_files_scope(jr.input_files)
         if scope != "project":
             raise ValueError(
-                f"Joint record {jr.optimization_hash[:8]} has input_files "
+                f"Joint record {short_id(jr.optimization_hash)} has input_files "
                 f"scope {scope!r}; joint optimizations are always "
                 f"project-scoped."
             )
@@ -2747,24 +2798,24 @@ def _precheck_bundle_integrity(
         for proj in jr.projections:
             slot = proj.slot
             if slot.joint_ref != jr.optimization_hash:
+                shown = "absent" if slot.joint_ref is None else short_id(slot.joint_ref)
                 raise ValueError(
-                    f"Joint record {jr.optimization_hash[:8]}: projection "
-                    f"slot {slot.handle[:8]} (file {slot.file_name!r}) "
-                    f"carries joint_ref "
-                    f"{'absent' if slot.joint_ref is None else slot.joint_ref[:8]} "
-                    f"instead of its record's optimization_hash."
+                    f"Joint record {short_id(jr.optimization_hash)}: projection "
+                    f"slot {short_id(slot.handle)} (file {slot.file_name!r}) "
+                    f"carries joint_ref {shown} instead of its record's "
+                    f"optimization_hash."
                 )
             if slot.handle not in written_handles and slot.handle not in stored_handles:
                 raise ValueError(
-                    f"Joint record {jr.optimization_hash[:8]} declares "
-                    f"projection slot {slot.handle[:8]} (file "
+                    f"Joint record {short_id(jr.optimization_hash)} declares "
+                    f"projection slot {short_id(slot.handle)} (file "
                     f"{slot.file_name!r}), which is neither part of this "
                     f"save nor stored in the archive — a joint bundle must "
                     f"be saved whole."
                 )
             pairs.append((slot.file_name, proj.parameter_map, slot.params))
         _assert_parameter_maps_consistent(
-            context=f"Joint record {jr.optimization_hash[:8]}",
+            context=f"Joint record {short_id(jr.optimization_hash)}",
             combined_params=jr.params,
             projections=pairs,
         )
@@ -2841,38 +2892,181 @@ def _assert_parameter_maps_consistent(
 
 
 #
-def _stored_identity_sets(
+def _iter_stored_metadata(
     archive: h5py.File,
-    archive_is_new: bool,
-) -> tuple[set[str], set[str]]:
-    """All stored slot handles and joint optimization hashes."""
+) -> Iterator[tuple[str, h5py.Group, str]]:
+    """
+    Yield ``(kind, metadata_group, file_name)`` for every stored record.
 
-    stored_handles: set[str] = set()
-    stored_joint: set[str] = set()
-    if archive_is_new:
-        return stored_handles, stored_joint
+    ``kind`` is ``"slot"`` (``file_name`` set) or ``"joint"`` (``file_name``
+    empty). Attrs-only: nothing is rehydrated. The one walk behind the
+    identity, label, and label-strip passes of ``write_archive``.
+    """
+
     project_group = require_group(archive["project"], "project")
     files_obj = project_group.get("files")
     if files_obj is not None:
         files_group = require_group(files_obj, "files")
         for fkey in files_group.keys():
             fg = require_group(files_group[fkey], f"files/{fkey}")
+            file_name = _attr_str(fg.attrs.get("name", ""))
             slots_obj = fg.get("slots")
             if slots_obj is None:
                 continue
             slots_group = require_group(slots_obj, f"files/{fkey}/slots")
             for skey in slots_group.keys():
                 sg = require_group(slots_group[skey], f"slots/{skey}")
-                smeta = require_group(sg["metadata"], f"slots/{skey}/metadata")
-                stored_handles.add(str(smeta.attrs.get("handle", "")))
+                yield (
+                    "slot",
+                    require_group(sg["metadata"], f"slots/{skey}/metadata"),
+                    file_name,
+                )
     joint_obj = project_group.get("joint")
     if joint_obj is not None:
         joint_group = require_group(joint_obj, "joint")
         for jkey in joint_group.keys():
             jg = require_group(joint_group[jkey], f"joint/{jkey}")
-            jmeta = require_group(jg["metadata"], f"joint/{jkey}/metadata")
-            stored_joint.add(str(jmeta.attrs.get("optimization_hash", "")))
+            yield (
+                "joint",
+                require_group(jg["metadata"], f"joint/{jkey}/metadata"),
+                "",
+            )
+
+
+#
+def _stored_identity_sets(
+    archive: h5py.File,
+    archive_is_new: bool,
+) -> tuple[set[str], set[str]]:
+    """Stored slot handles and joint optimization hashes (attrs only)."""
+
+    stored_handles: set[str] = set()
+    stored_joint: set[str] = set()
+    if archive_is_new:
+        return stored_handles, stored_joint
+    for kind, meta, _file_name in _iter_stored_metadata(archive):
+        if kind == "slot":
+            stored_handles.add(_attr_str(meta.attrs.get("handle", "")))
+        else:
+            stored_joint.add(_attr_str(meta.attrs.get("optimization_hash", "")))
     return stored_handles, stored_joint
+
+
+#
+def _stored_label_holders(
+    archive: h5py.File,
+    archive_is_new: bool,
+) -> dict[str, tuple[str, str]]:
+    """
+    ``identity -> (label, context)`` for every stored slot and joint record
+    carrying a label. Identity is the slot handle or the joint optimization
+    hash. Attrs only — nothing is rehydrated.
+    """
+
+    out: dict[str, tuple[str, str]] = {}
+    if archive_is_new:
+        return out
+    for kind, meta, file_name in _iter_stored_metadata(archive):
+        if "label" not in meta.attrs:
+            continue
+        label = _attr_str(meta.attrs["label"])
+        if kind == "slot":
+            handle = _attr_str(meta.attrs.get("handle", ""))
+            out[handle] = (
+                label,
+                f"slot {short_id(handle)} (file={file_name!r})",
+            )
+        else:
+            opt_hash = _attr_str(meta.attrs.get("optimization_hash", ""))
+            model_name = _attr_str(meta.attrs.get("model_name", ""))
+            out[opt_hash] = (
+                label,
+                f"joint {short_id(opt_hash)} (model={model_name!r})",
+            )
+    return out
+
+
+#
+def _precheck_labels(
+    archive: h5py.File,
+    project: SavedProject,
+    *,
+    archive_is_new: bool,
+    overwrite: bool,
+) -> set[str]:
+    """
+    Enforce project-wide label uniqueness over the archive *after* this
+    write, before any mutation.
+
+    The incoming records' labels are overlaid on the stored ones — a record
+    re-saved under its own identity rewrites its label, so an in-session
+    relabel never conflicts with itself — and any label the result would
+    hold twice is a conflict. Two incoming records sharing a label raise
+    regardless of ``overwrite`` (``FitResults.set_label`` prevents it; this
+    is the invariant check). A stored holder outside this write raises
+    unless ``overwrite`` — then its identity is returned so the caller
+    strips the stored ``label`` attr first: replace what conflicts.
+    Duplicates already on disk that this write does not touch are left
+    alone.
+    """
+
+    effective = _stored_label_holders(archive, archive_is_new)
+    incoming: dict[str, tuple[str, str]] = {}
+    for sf in project.files:
+        for slot in sf.slots:
+            if slot.label is not None:
+                incoming[slot.handle] = (
+                    slot.label,
+                    f"slot {short_id(slot.handle)} (file={slot.file_name!r})",
+                )
+    for jr in project.joint:
+        if jr.label is not None:
+            incoming[jr.optimization_hash] = (
+                jr.label,
+                f"joint {short_id(jr.optimization_hash)} (model={jr.model_name!r})",
+            )
+    effective.update(incoming)
+
+    by_label: dict[str, list[str]] = {}
+    for identity, (label, _context) in effective.items():
+        by_label.setdefault(label, []).append(identity)
+
+    to_strip: set[str] = set()
+    for label, identities in sorted(by_label.items()):
+        if len(identities) < 2:
+            continue
+        in_write = [i for i in identities if i in incoming]
+        stored_only = [i for i in identities if i not in incoming]
+        if not in_write:
+            continue
+        if len(in_write) > 1:
+            raise ValueError(
+                f"label {label!r} is carried by {len(in_write)} records in "
+                f"this write ({'; '.join(effective[i][1] for i in in_write)}); "
+                f"labels are unique project-wide."
+            )
+        if not overwrite:
+            raise ValueError(
+                f"label {label!r} is already held in the archive by "
+                f"{'; '.join(effective[i][1] for i in stored_only)} and this "
+                f"write assigns it to {effective[in_write[0]][1]}. Pass "
+                f"overwrite=True to move the label, or relabel the incoming "
+                f"fit."
+            )
+        to_strip.update(stored_only)
+    return to_strip
+
+
+#
+def _strip_stored_labels(archive: h5py.File, identities: set[str]) -> None:
+    """Delete the ``label`` attr of the stored records named by identity."""
+
+    if not identities:
+        return
+    for kind, meta, _file_name in _iter_stored_metadata(archive):
+        key = "handle" if kind == "slot" else "optimization_hash"
+        if _attr_str(meta.attrs.get(key, "")) in identities:
+            meta.attrs.pop("label", None)
 
 
 #
@@ -2936,7 +3130,7 @@ def _precheck_collisions(archive: h5py.File, project: SavedProject) -> None:
                 differ,
                 both,
                 context=(
-                    f"Slot {slot.handle[:8]} (file={slot.file_name!r}, "
+                    f"Slot {short_id(slot.handle)} (file={slot.file_name!r}, "
                     f"model={slot.model_name!r}, fit_type={slot.fit_type!r})"
                 ),
             )
@@ -2955,7 +3149,7 @@ def _precheck_collisions(archive: h5py.File, project: SavedProject) -> None:
             attachments=_joint_attachments(jr),
         )
         _raise_for_conflicts(
-            differ, both, context=f"Joint record {jr.optimization_hash[:8]}"
+            differ, both, context=f"Joint record {short_id(jr.optimization_hash)}"
         )
 
 
@@ -3248,7 +3442,7 @@ def _write_slot(
                 both=both,
                 label=slot.label,
                 overwrite=overwrite,
-                context=f"Slot {slot.handle[:8]} (file={slot.file_name!r})",
+                context=f"Slot {short_id(slot.handle)} (file={slot.file_name!r})",
                 fit_settings=slot.fit_settings,
             )
             return
@@ -3258,7 +3452,7 @@ def _write_slot(
             _raise_for_conflicts(
                 differ,
                 both,
-                context=f"Slot {slot.handle[:8]} (file={slot.file_name!r})",
+                context=f"Slot {short_id(slot.handle)} (file={slot.file_name!r})",
             )
         existing_name = cast(str | None, existing.name)
         assert existing_name is not None  # type guard
@@ -3409,7 +3603,7 @@ def _write_joint(
                 both=both,
                 label=jr.label,
                 overwrite=overwrite,
-                context=f"Joint record {jr.optimization_hash[:8]}",
+                context=f"Joint record {short_id(jr.optimization_hash)}",
                 fit_settings=jr.fit_settings,
             )
             return
@@ -3419,7 +3613,7 @@ def _write_joint(
             _raise_for_conflicts(
                 differ,
                 both,
-                context=f"Joint record {jr.optimization_hash[:8]}",
+                context=f"Joint record {short_id(jr.optimization_hash)}",
             )
         existing_name = cast(str | None, existing.name)
         assert existing_name is not None  # type guard
@@ -3739,7 +3933,7 @@ def _selection_json_for(input_files: str, *, file_name: str, handle: str) -> str
         if name == file_name:
             return str(selection_json)
     raise ValueError(
-        f"Slot {handle[:8]} on file {file_name!r}: input_files has no "
+        f"Slot {short_id(handle)} on file {file_name!r}: input_files has no "
         f"entry for its own file — corrupt archive."
     )
 
@@ -3964,7 +4158,7 @@ def _read_joint_records(
         meta = require_group(jg["metadata"], f"joint/{key}/metadata")
         a = meta.attrs
         optimization_hash = _attr_str(a["optimization_hash"])
-        context = f"Joint record {optimization_hash[:8]}"
+        context = f"Joint record {short_id(optimization_hash)}"
 
         params = _decode_dataframe(require_dataset(jg["params"], "params"))
         _restore_long_params_nones(params)
@@ -3983,16 +4177,16 @@ def _read_joint_records(
             slot = slots_by_handle.get(handle)
             if slot is None:
                 raise ValueError(
-                    f"{context} declares projection slot {handle[:8]} "
+                    f"{context} declares projection slot {short_id(handle)} "
                     f"(file {rec['file_name']!r}), which is not stored in "
                     f"the archive — corrupt bundle."
                 )
             if slot.joint_ref != optimization_hash:
+                shown = "absent" if slot.joint_ref is None else short_id(slot.joint_ref)
                 raise ValueError(
-                    f"{context}: projection slot {handle[:8]} (file "
-                    f"{slot.file_name!r}) carries joint_ref "
-                    f"{'absent' if slot.joint_ref is None else slot.joint_ref[:8]} "
-                    f"instead of its record's optimization_hash."
+                    f"{context}: projection slot {short_id(handle)} (file "
+                    f"{slot.file_name!r}) carries joint_ref {shown} instead of "
+                    f"its record's optimization_hash."
                 )
             projections.append(
                 JointFitProjection(parameter_map=dict(rec["parameter_map"]), slot=slot)
@@ -4036,15 +4230,15 @@ def _read_joint_records(
             if (scope == "project") != (slot.joint_ref is not None):
                 joint_ref_state = "set" if slot.joint_ref is not None else "absent"
                 raise ValueError(
-                    f"Slot {slot.handle[:8]} on file {slot.file_name!r} "
+                    f"Slot {short_id(slot.handle)} on file {slot.file_name!r} "
                     f"violates the joint-reference invariant: input_files "
                     f"scope is {scope!r} but joint_ref is {joint_ref_state} "
                     f"— corrupt bundle."
                 )
             if slot.joint_ref is not None and slot.joint_ref not in known_joint:
                 raise ValueError(
-                    f"Slot {slot.handle[:8]} on file {slot.file_name!r} "
-                    f"references joint record {slot.joint_ref[:8]}, which "
+                    f"Slot {short_id(slot.handle)} on file {slot.file_name!r} "
+                    f"references joint record {short_id(slot.joint_ref)}, which "
                     f"is not stored in the archive — corrupt bundle."
                 )
     return tuple(records)
@@ -4132,102 +4326,6 @@ def _slot_axes(
         if t_lim:
             time = time[int(t_lim[0]) : int(t_lim[1])]
     return energy, time
-
-
-#
-def _slot_dir_name(slot: SavedFitSlot, suffix_with_hash: bool) -> str:
-    """
-    Output-directory name for one slot.
-
-    Default form is ``{model_name}__{fit_type}``. When the same
-    ``(file, model, fit_type)`` triple appears more than once in the
-    snapshot (different selections), all of its slots get an
-    ``__{handle[:8]}`` suffix so each lands in a distinct directory.
-    """
-
-    base = f"{slot.model_name}__{slot.fit_type}"
-    if suffix_with_hash:
-        base = f"{base}__{slot.handle[:8]}"
-    return base
-
-
-#
-def _resolve_export_dirs(
-    saved_files: Sequence[SavedFile],
-    root: Path,
-) -> dict[int, Path]:
-    """
-    Map ``id(slot) -> output directory`` for every slot in ``saved_files``.
-
-    Two-tier disambiguation:
-
-    1. **Across files:** when two or more ``SavedFile`` records share a
-       ``name``, every entry in the colliding group gets a positional
-       ordinal suffix (``__000``, ``__001``, ...) keyed by its position
-       within ``saved_files``. Ordinals are unique even for byte-identical
-       ``SavedFile`` records, so a content-hash suffix would not be
-       sufficient — two records with identical ``file_content_hash`` *and*
-       ``original_path`` would still collide.
-    2. **Within a file:** ``(model_name, fit_type)`` collisions get the
-       slot's ``handle[:8]`` suffix on the slot directory.
-
-    Together these guarantee every slot resolves to a unique path, so the
-    pre-check / overwrite logic can rely on path identity == slot identity.
-    """
-
-    name_indices: dict[str, list[int]] = {}
-    for i, sf in enumerate(saved_files):
-        name_indices.setdefault(sf.name, []).append(i)
-
-    file_dir_for: dict[int, Path] = {}
-    for indices in name_indices.values():
-        if len(indices) == 1:
-            i = indices[0]
-            file_dir_for[i] = root / saved_files[i].name
-        else:
-            for ordinal, i in enumerate(indices):
-                file_dir_for[i] = root / f"{saved_files[i].name}__{ordinal:03d}"
-
-    out: dict[int, Path] = {}
-    for i, sf in enumerate(saved_files):
-        file_dir = file_dir_for[i]
-        groups: dict[tuple[str, str], list[SavedFitSlot]] = {}
-        for slot in sf.slots:
-            groups.setdefault((slot.model_name, slot.fit_type), []).append(slot)
-        for slots in groups.values():
-            need_hash = len(slots) > 1
-            for slot in slots:
-                out[id(slot)] = file_dir / _slot_dir_name(slot, need_hash)
-    return out
-
-
-#
-def _precheck_export_collisions(
-    slot_dirs: dict[int, Path],
-    overwrite: bool,
-) -> None:
-    """
-    Refuse to start the export if any target directory already has content.
-
-    Mirrors the pre-check in ``write_archive``: collect every conflict
-    before mutating the filesystem so a single blocker does not leave a
-    half-written tree. Empty directories are tolerated.
-    """
-
-    if overwrite:
-        return
-    conflicts: list[Path] = []
-    for path in slot_dirs.values():
-        if path.exists() and any(path.iterdir()):
-            conflicts.append(path)
-    if conflicts:
-        joined = "\n  ".join(str(p) for p in conflicts)
-        raise FileExistsError(
-            f"export_fits: {len(conflicts)} target director"
-            f"{'y' if len(conflicts) == 1 else 'ies'} already exist and are "
-            f"non-empty. Pass overwrite=True to replace, or choose a fresh "
-            f"root path. Conflicts:\n  {joined}"
-        )
 
 
 #
@@ -4424,21 +4522,14 @@ def _export_slot(
     _write_csv_dataframe(
         slot_dir / metrics_filename, metrics_df, num_fmt=num_fmt, delim=delim
     )
-    if slot.conf_ci is not None and not slot.conf_ci.empty:
-        _write_csv_dataframe(
-            slot_dir / "conf_ci.csv", slot.conf_ci, num_fmt=num_fmt, delim=delim
-        )
-    if slot.mcmc is not None:
-        mcmc_dir = slot_dir / "mcmc"
-        mcmc_dir.mkdir(parents=True, exist_ok=True)
-        flatchain = slot.mcmc.get("flatchain")
-        if isinstance(flatchain, pd.DataFrame) and not flatchain.empty:
-            _write_csv_dataframe(
-                mcmc_dir / "flatchain.csv", flatchain, num_fmt=num_fmt, delim=delim
-            )
-        ci = slot.mcmc.get("ci")
-        if isinstance(ci, pd.DataFrame) and not ci.empty:
-            _write_csv_dataframe(mcmc_dir / "ci.csv", ci, num_fmt=num_fmt, delim=delim)
+    _export_result_attachments(
+        slot_dir,
+        conf_ci=slot.conf_ci,
+        correl=slot.correl,
+        mcmc=slot.mcmc,
+        num_fmt=num_fmt,
+        delim=delim,
+    )
 
     if slot.fit_type in ("baseline", "spectrum"):
         _export_1d_slot(slot, saved_file, slot_dir, num_fmt=num_fmt, delim=delim)
@@ -4473,96 +4564,198 @@ def _export_slot(
 
 
 #
-def write_csv_export(
-    root: PathLike | str,
+def _export_result_attachments(
+    out_dir: Path,
     *,
-    project: SavedProject,
-    num_fmt: str = "%.6e",
-    delim: str = ",",
-    plot_config: PlotConfig | None = None,
-    overwrite: bool = False,
-) -> int:
-    """
-    Serialize a ``SavedProject`` to a CSV/PNG export tree.
+    conf_ci: pd.DataFrame | None,
+    correl: pd.DataFrame | None,
+    mcmc: Mapping[str, Any] | None,
+    num_fmt: str,
+    delim: str,
+) -> None:
+    """``conf_ci.csv`` / ``correl.csv`` / ``mcmc/`` for whatever is present."""
 
-    Layout: ``<root>/<file_name>/<model_name>__<fit_type>[__<hash>]/``.
-    The ``__<hash>`` suffix appears only when more than one slot shares
-    the ``(file, model, fit_type)`` triple (i.e. multiple selections in
-    the snapshot); the suffix is the first 8 chars of ``handle``.
-    When two ``SavedFile`` records share a ``name``, every entry in the
-    colliding group gets a positional ordinal suffix (``__000``,
-    ``__001``, ...) so byte-identical records (same content hash *and*
-    ``original_path``) still resolve to distinct directories.
-
-    Parameters
-    ----------
-    root : path
-        Output directory; created if missing.
-    project : SavedProject
-        Already filtered + collapsed by the caller (see
-        ``Project.export_fits``).
-    num_fmt, delim : str
-        Number format and delimiter for ``np.savetxt`` /
-        ``DataFrame.to_csv``.
-    plot_config : PlotConfig | None
-        Drives PNG styling; one config for every file (presentation is
-        project-owned). ``Project.export_fits`` passes the project's
-        config; ``None`` falls back to default ``PlotConfig()``.
-    overwrite : bool, default False
-        Per-slot directory: a non-empty target dir raises
-        ``FileExistsError`` unless True. Pre-checked across all slots
-        before any writes.
-
-    Returns
-    -------
-    int
-        Number of slot directories written.
-    """
-
-    if plot_config is not None and not isinstance(plot_config, PlotConfig):
-        # Fail before any filesystem mutation (mkdir / overwrite clearing) —
-        # a partial export after a destructive clear is the worst outcome.
-        raise TypeError(
-            f"plot_config must be a PlotConfig or None, got "
-            f"{type(plot_config).__name__}. Per-file config dicts were "
-            f"removed in v0.14.0 — presentation is project-owned (one "
-            f"config for every file)."
+    if conf_ci is not None and not conf_ci.empty:
+        _write_csv_dataframe(
+            out_dir / "conf_ci.csv", conf_ci, num_fmt=num_fmt, delim=delim
         )
-
-    root_path = Path(root)
-    root_path.mkdir(parents=True, exist_ok=True)
-
-    slot_dirs = _resolve_export_dirs(project.files, root_path)
-    _precheck_export_collisions(slot_dirs, overwrite=overwrite)
-
-    written_paths: set[Path] = set()
-    n_written = 0
-    for sf in project.files:
-        sf_plot_config = plot_config if plot_config is not None else PlotConfig()
-        for slot in sf.slots:
-            slot_dir = slot_dirs[id(slot)]
-            if slot_dir in written_paths:
-                # _resolve_export_dirs is supposed to return a unique path
-                # per slot; this asserts the invariant rather than silently
-                # overwriting earlier slots' output (the bug fixed by the
-                # SavedFile-name disambiguation above).
-                raise RuntimeError(
-                    f"export_fits internal error: two slots resolved to the "
-                    f"same output directory {slot_dir!s}. Please report."
-                )
-            written_paths.add(slot_dir)
-            if slot_dir.exists() and any(slot_dir.iterdir()):
-                # overwrite=True path; pre-check has already ruled out the
-                # overwrite=False case.
-                _clear_directory(slot_dir)
-            slot_dir.mkdir(parents=True, exist_ok=True)
-            _export_slot(
-                slot,
-                sf,
-                slot_dir,
-                num_fmt=num_fmt,
-                delim=delim,
-                plot_config=sf_plot_config,
+    if correl is not None and not correl.empty:
+        _write_csv_dataframe(
+            out_dir / "correl.csv", correl, num_fmt=num_fmt, delim=delim
+        )
+    if mcmc is not None:
+        mcmc_dir = out_dir / "mcmc"
+        mcmc_dir.mkdir(parents=True, exist_ok=True)
+        flatchain = mcmc.get("flatchain")
+        if isinstance(flatchain, pd.DataFrame) and not flatchain.empty:
+            _write_csv_dataframe(
+                mcmc_dir / "flatchain.csv", flatchain, num_fmt=num_fmt, delim=delim
             )
-            n_written += 1
-    return n_written
+        ci = mcmc.get("ci")
+        if isinstance(ci, pd.DataFrame) and not ci.empty:
+            _write_csv_dataframe(mcmc_dir / "ci.csv", ci, num_fmt=num_fmt, delim=delim)
+
+
+#
+def _write_fit_info(out_dir: Path, rows: list[tuple[str, str]], *, delim: str) -> None:
+    """``fit_info.csv``: two columns, ``field`` and ``value``."""
+
+    pd.DataFrame(rows, columns=["field", "value"]).to_csv(
+        out_dir / "fit_info.csv", index=False, sep=delim
+    )
+
+
+#
+def _slot_info(slot: SavedFitSlot, trspecfit_version: str) -> list[tuple[str, str]]:
+    """``fit_info.csv`` rows for a slot (``None`` fields written as empty)."""
+
+    return [
+        ("handle", slot.handle),
+        ("file", slot.file_name),
+        ("model", slot.model_name),
+        ("fit_type", slot.fit_type),
+        ("label", slot.label or ""),
+        ("joint_ref", slot.joint_ref or ""),
+        ("timestamp", slot.timestamp),
+        ("trspecfit_version", trspecfit_version),
+    ]
+
+
+#
+def _require_saved_file(files: Mapping[str, SavedFile], name: str) -> SavedFile:
+    """The captured payload for ``name``; a clear error when it is absent."""
+
+    saved_file = files.get(name)
+    if saved_file is None:
+        raise ValueError(
+            f"File {name!r} has no captured payload in this session, so its "
+            f"fit cannot be exported here. Export runs from the session that "
+            f"produced the fit; a loaded archive is read through FitResults."
+        )
+    return saved_file
+
+
+#
+def export_target_dir(root: Path, target: SavedFitSlot | JointFitResult) -> Path:
+    """
+    Output directory of one fit below ``root``.
+
+    ``<root>/files/<file_name>/<model_name>/<handle[:8]>/`` for a slot,
+    ``<root>/joint/<model_name>/<hash[:8]>/`` for a joint record (its
+    projections under ``files/<file_name>/``). Every user-named segment sits
+    under a fixed ``files/`` or ``joint/`` node — the archive's own top-level
+    split — so no file or model name is ever reserved. The fit
+    type is not a path segment: it is part of the optimization hash, so
+    the handle already separates a baseline from a spectrum fit of one
+    model.
+    """
+
+    if isinstance(target, SavedFitSlot):
+        return (
+            root
+            / "files"
+            / target.file_name
+            / target.model_name
+            / short_id(target.handle)
+        )
+    return root / "joint" / target.model_name / short_id(target.optimization_hash)
+
+
+#
+def write_fit_export(
+    out_dir: Path,
+    target: SavedFitSlot | JointFitResult,
+    *,
+    files: Mapping[str, SavedFile],
+    num_fmt: str,
+    delim: str,
+    plot_config: PlotConfig,
+    overwrite: bool,
+    trspecfit_version: str,
+) -> None:
+    """
+    Write one fit — a slot, or a joint record with every projection — into
+    ``out_dir``.
+
+    ``files`` maps file names to the captured ``SavedFile`` payloads whose
+    axes the CSVs and PNGs need; every payload is resolved before anything
+    is touched. A non-empty ``out_dir`` raises ``FileExistsError`` unless
+    ``overwrite``, which clears it first. Every directory written gets a
+    ``fit_info.csv``. Layout: ``Project.export_fit``.
+    """
+
+    # Resolve every payload before touching the filesystem: a missing one
+    # must never cost an existing export its contents under overwrite=True.
+    slots = (
+        [target]
+        if isinstance(target, SavedFitSlot)
+        else [proj.slot for proj in target.projections]
+    )
+    saved_files = {s.file_name: _require_saved_file(files, s.file_name) for s in slots}
+
+    if out_dir.exists() and any(out_dir.iterdir()):
+        if not overwrite:
+            raise FileExistsError(
+                f"Export target {out_dir} already exists and is not empty. "
+                f"Pass overwrite=True to replace it, or choose another root."
+            )
+        _clear_directory(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if isinstance(target, SavedFitSlot):
+        _export_slot(
+            target,
+            saved_files[target.file_name],
+            out_dir,
+            num_fmt=num_fmt,
+            delim=delim,
+            plot_config=plot_config,
+        )
+        _write_fit_info(out_dir, _slot_info(target, trspecfit_version), delim=delim)
+        return
+
+    _write_csv_dataframe(
+        out_dir / "params.csv", target.params, num_fmt=num_fmt, delim=delim
+    )
+    _write_csv_dataframe(
+        out_dir / "metrics.csv",
+        _metrics_to_dataframe(dict(target.metrics)),
+        num_fmt=num_fmt,
+        delim=delim,
+    )
+    _export_result_attachments(
+        out_dir,
+        conf_ci=target.conf_ci,
+        correl=target.correl,
+        mcmc=(
+            _payload_from_mcmc_result(target.mcmc) if target.mcmc is not None else None
+        ),
+        num_fmt=num_fmt,
+        delim=delim,
+    )
+    _write_fit_info(
+        out_dir,
+        [
+            ("optimization_hash", target.optimization_hash),
+            ("files", ";".join(target.files)),
+            ("model", target.model_name),
+            ("fit_type", "joint"),
+            ("label", target.label or ""),
+            ("timestamp", target.timestamp),
+            ("trspecfit_version", trspecfit_version),
+        ],
+        delim=delim,
+    )
+    for proj in target.projections:
+        slot = proj.slot
+        sub_dir = out_dir / "files" / slot.file_name
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        _export_slot(
+            slot,
+            saved_files[slot.file_name],
+            sub_dir,
+            num_fmt=num_fmt,
+            delim=delim,
+            plot_config=plot_config,
+        )
+        _write_fit_info(sub_dir, _slot_info(slot, trspecfit_version), delim=delim)

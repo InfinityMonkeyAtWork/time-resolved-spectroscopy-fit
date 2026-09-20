@@ -211,7 +211,7 @@ class Project:
     name : str, default='my_project'
         Name for this analysis run. Names the default output paths of
         ``save_fits`` (``./fit_results/<name>.fit.h5``) and
-        ``export_fits`` (``./fit_results/<name>/``).
+        ``export_fit`` (``./fit_results/<name>/``).
     config_file : str or Path, optional
         YAML configuration file name (located in path directory).
         If None, uses default settings only.
@@ -419,6 +419,7 @@ class Project:
             files=providers,
             joint=list(self._joint_fit_history),
             config=self.plot_config,
+            history=(self._fit_history, self._joint_fit_history),
         )
 
     #
@@ -463,8 +464,8 @@ class Project:
             configuration — the archive is the complete record.
             ``"latest"`` keeps the newest run per ``(file, model,
             fit_type)`` group; ``"best"`` keeps the group winner ranked by
-            ``by=``. Any other string is a slot-handle prefix, a
-            joint-optimization-hash prefix, or a label naming exact fits
+            ``by=``. Any other string is an 8-character slot handle or
+            joint-optimization hash (or full digest), or a label naming exact fits
             (mutually exclusive with the ``file``/``model``/``fit_type``
             filters). Whatever the selection, touching any slot of a
             joint bundle pulls in the whole bundle — partial bundles are
@@ -496,7 +497,6 @@ class Project:
             file=file,
             model=model,
             fit_type=fit_type,
-            expand_joint_bundles=True,
             overwrite=overwrite,
             select=select,
             by=by,
@@ -519,130 +519,147 @@ class Project:
             )
 
     #
-    def export_fits(
+    def export_fit(
         self,
-        filepath: PathLike | str | None = None,
+        ref: str,
         *,
-        format: Literal["csv"] = "csv",
-        file: "int | str | File | Sequence[int | str | File] | None" = None,
-        model: str | Sequence[str] | None = None,
-        fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
-        select: str = "latest",
-        by: str | None = None,
+        filepath: PathLike | str | None = None,
         overwrite: bool = False,
         show_output: int = 1,
-    ) -> None:
+    ) -> pathlib.Path:
         """
-        Export filtered fit slots from ``_fit_history`` as a CSV/PNG tree.
+        Export one fit as a directory of CSV files and PNGs.
 
-        Same filter + snapshot-collapse + ``select=`` pipeline as
-        :meth:`save_fits`, but the output is a directory of human-readable
-        artifacts rather than an HDF5 archive. One-way export — there is
-        no ``load`` counterpart; round-tripping fits to disk is HDF5's job
-        (use ``save_fits`` / ``load_fits`` for that). Unlike
-        ``save_fits``, a filter touching one slot of a joint bundle does
-        **not** pull in the sibling files' projections: per-file trees
-        have no whole-bundle invariant, and ``File.export_fit`` must
-        never write another file's directories.
+        ``ref`` is the 8-character handle shown in every table, the full
+        handle, or a label — the same reference the accessors, ``diff``
+        and ``drop_fits`` take. Exactly one fit is written per call; to
+        export several, loop over references. One-way: round-tripping
+        fits to disk is ``save_fits`` / ``load_fits``.
 
         Parameters
         ----------
+        ref : str
+            Handle (8 or 64 hex characters) or label of a slot or joint
+            record. A projection's handle exports its whole bundle.
         filepath : path, optional
-            Output directory. Default: ``./fit_results/<project_name>``.
-            Created if missing.
-        format : {"csv"}, default ``"csv"``
-            Reserved kwarg; only CSV is implemented in v1.
-        file : int | str | File | sequence, optional
-            Restrict to slots whose live ``Project.files`` entry matches;
-            same semantics as :meth:`save_fits`.
-        model : str | sequence, optional
-            String filter on ``slot.model_name``.
-        fit_type : str | sequence, optional
-            String filter on ``slot.fit_type``.
-        select : str, default "latest"
-            Which variants to export. Defaults to the newest run per
-            ``(file, model, fit_type)`` group — the export tree is a
-            human-readable summary, not the record (that is
-            ``save_fits``, whose default is ``"all"``). Pass ``"all"``
-            for every variant, ``"best"`` + ``by=`` for group winners, or
-            a handle prefix / joint-hash prefix / label for exact fits
-            (mutually exclusive with the ``file``/``model``/``fit_type``
-            filters).
-        by : str, optional
-            Ranking metric for ``select="best"``; see :meth:`save_fits`.
+            Output root; the fit's directory is created below it. Default
+            ``./fit_results/<project_name>/``, next to the archive default.
         overwrite : bool, default False
-            Per-slot directory: a non-empty target dir raises
-            ``FileExistsError`` unless True. Pre-checked across all slots
-            before any writes (single conflict aborts the entire export).
-            Like ``save_fits``, the same flag resolves an in-session
-            divergence at collapse (two re-runs of one configuration
-            with differing results keep the latest under
-            ``overwrite=True``) — one flag, one meaning: replace what
-            conflicts.
+            A non-empty target directory raises ``FileExistsError``; True
+            clears it first.
         show_output : int, default 1
-            ``0`` to silence the per-call summary line.
+            ``0`` silences the summary line.
+
+        Returns
+        -------
+        pathlib.Path
+            The directory written.
 
         Output layout
         -------------
-        Exports are grouped by output directory, file name, model name, and
-        fit type. The model and fit-type parts are joined with two underscores;
-        when multiple slots share the same file, model, and fit type, an
-        additional two-underscore hash suffix is appended.
-
-        Each slot contains params.csv, metrics.csv (or metrics_per_slice.csv
-        for SbS), conf_ci.csv / mcmc/flatchain.csv when present, plus
-        per-fit-type artifacts:
-
-        - baseline / spectrum: fit_1d.csv (energy, observed, fit, residual).
-        - 2d / sbs: fit_2d.csv, observed_2d.csv, energy.csv, time.csv,
-          2D_data_fit_res.png.
-        - sbs only: fit_pars.csv (per-slice param values) and one PNG per
-          parameter from utils.plot.plot_par_series.
-
-        The optional hash directory suffix appears only when more than one
-        slot in the snapshot shares the same file, model, and fit type (i.e.
-        different selections); the hash is the first 8 chars of the slot
-        handle.
+        A slot writes to ``<root>/files/<file_name>/<model_name>/<handle[:8]>/``:
+        ``params.csv``, ``metrics.csv`` (``metrics_per_slice.csv`` for
+        SbS), ``conf_ci.csv`` / ``correl.csv`` / ``mcmc/`` when present,
+        and per fit type ``fit_1d.csv`` (baseline, spectrum) or
+        ``fit_2d.csv``, ``observed_2d.csv``, ``energy.csv``, ``time.csv``
+        and ``2D_data_fit_res.png`` (2D, SbS), plus ``fit_pars.csv`` and
+        one PNG per parameter for SbS. A joint record writes to
+        ``<root>/joint/<model_name>/<hash[:8]>/``: the joint
+        ``params.csv``, ``metrics.csv``, ``conf_ci.csv`` / ``correl.csv``
+        / ``mcmc/``, and one ``files/<file_name>/`` subdirectory per projection
+        with the slot payload above. Every directory carries a
+        ``fit_info.csv`` (full handle, file, model, fit type, label, joint
+        reference, timestamp, package version) so a reader without
+        trspecfit knows what they hold. The fit type is not in the path:
+        it is part of the handle. Every user-named segment sits under a
+        fixed ``files/`` or ``joint/`` node, mirroring the archive, so no
+        file or model name is reserved.
         """
 
-        if format != "csv":
-            raise ValueError(
-                f"Unsupported export format: {format!r}. Only 'csv' is "
-                f"implemented in v1."
-            )
-
-        project = self._build_saved_project_from_history(
-            file=file,
-            model=model,
-            fit_type=fit_type,
-            expand_joint_bundles=False,
-            overwrite=overwrite,
-            select=select,
-            by=by,
+        target = fit_io.resolve_fit_reference(
+            ref, slots=self._fit_history, joint_records=self._joint_fit_history
         )
-        if project is None:
-            if show_output:
-                print("No fit slots match the filter; nothing to export.")
-            return
-
-        if filepath is None:
-            root = pathlib.Path("fit_results") / self.name
-        else:
-            root = pathlib.Path(filepath)
-
-        n_written = fit_io.write_csv_export(
-            root,
-            project=project,
+        if isinstance(target, fit_io.SavedFitSlot) and target.joint_ref is not None:
+            target = self._latest_joint_record(target.joint_ref)
+        root = (
+            pathlib.Path(filepath)
+            if filepath is not None
+            else pathlib.Path("fit_results") / self.name
+        )
+        out_dir = fit_io.export_target_dir(root, target)
+        fit_io.write_fit_export(
+            out_dir,
+            target,
+            files=self._captured_files,
             num_fmt=self.num_fmt,
             delim=self.delim,
             plot_config=self.plot_config,
             overwrite=overwrite,
+            trspecfit_version=_trspecfit_version(),
         )
         if show_output:
-            print(
-                f"Exported {n_written} slot(s) across {len(project.files)} "
-                f"file(s) to {root}"
+            what = (
+                f"slot {fit_io.short_id(target.handle)}"
+                if isinstance(target, fit_io.SavedFitSlot)
+                else f"joint bundle {fit_io.short_id(target.optimization_hash)} "
+                f"({len(target.projections)} files)"
             )
+            print(f"Exported {what} to {out_dir}")
+        return out_dir
+
+    #
+    def _latest_joint_record(self, optimization_hash: str) -> fit_io.JointFitResult:
+        """The newest history entry of one joint bundle."""
+
+        for jr in reversed(self._joint_fit_history):
+            if jr.optimization_hash == optimization_hash:
+                return jr
+        raise LookupError(
+            f"Joint record {fit_io.short_id(optimization_hash)} is "
+            f"not in the session history."
+        )
+
+    #
+    def _record_slot(self, slot: fit_io.SavedFitSlot) -> None:
+        """
+        Append a captured slot to the history.
+
+        A label belongs to the handle — the configuration, not the
+        execution — so an exact re-run inherits the label of the entry it
+        supersedes; otherwise the snapshot collapse, which keeps the newest
+        entry per handle, would silently drop it.
+        """
+
+        if slot.label is None:
+            inherited = next(
+                (
+                    previous.label
+                    for previous in reversed(self._fit_history)
+                    if previous.handle == slot.handle and previous.label is not None
+                ),
+                None,
+            )
+            if inherited is not None:
+                fit_io.set_fit_label(slot, inherited)
+        self._fit_history.append(slot)
+
+    #
+    def _record_joint(self, record: fit_io.JointFitResult) -> None:
+        """Append a joint record; an exact re-run inherits its label."""
+
+        if record.label is None:
+            inherited = next(
+                (
+                    previous.label
+                    for previous in reversed(self._joint_fit_history)
+                    if previous.optimization_hash == record.optimization_hash
+                    and previous.label is not None
+                ),
+                None,
+            )
+            if inherited is not None:
+                fit_io.set_fit_label(record, inherited)
+        self._joint_fit_history.append(record)
 
     #
     def drop_fits(self, ref: str, *, show_output: int = 1) -> None:
@@ -651,9 +668,10 @@ class Project:
         history.
 
         Explicit pruning for junk runs, so they never reach
-        :meth:`save_fits` / :meth:`export_fits`. ``ref`` is a slot-handle
-        prefix, a joint-optimization-hash prefix, or a label (read them
-        off ``results.compare_models()`` / ``results.variants()``).
+        :meth:`save_fits` / :meth:`export_fit`. ``ref`` is an 8-character
+        slot handle or joint-optimization hash (or full digest), or a
+        label (read them off ``results.compare_models()`` /
+        ``results.variants()``).
         Dropping a slot removes every history entry sharing its handle
         (exact re-runs). A projection of a joint bundle cannot be dropped
         alone — the bundle is one optimization; pass its joint hash to
@@ -685,10 +703,10 @@ class Project:
                 )
                 n_files = len(record.projections) if record is not None else "?"
                 raise ValueError(
-                    f"Slot {target.handle[:8]} is a projection of joint "
-                    f"bundle {target.joint_ref[:8]} ({n_files} files) — a "
+                    f"Slot {fit_io.short_id(target.handle)} is a projection of joint "
+                    f"bundle {fit_io.short_id(target.joint_ref)} ({n_files} files) — a "
                     f"bundle is one optimization and drops whole: "
-                    f"drop_fits('{target.joint_ref[:8]}')."
+                    f"drop_fits('{fit_io.short_id(target.joint_ref)}')."
                 )
             n_runs = sum(1 for s in self._fit_history if s.handle == target.handle)
             self._fit_history[:] = [
@@ -696,7 +714,7 @@ class Project:
             ]
             if show_output:
                 print(
-                    f"Dropped slot {target.handle[:8]} (file "
+                    f"Dropped slot {fit_io.short_id(target.handle)} (file "
                     f"{target.file_name!r}, model {target.model_name!r}, "
                     f"{target.fit_type}): {n_runs} run(s) removed from the "
                     f"in-session history."
@@ -713,7 +731,7 @@ class Project:
         self._fit_history[:] = [s for s in self._fit_history if s.joint_ref != ref_hash]
         if show_output:
             print(
-                f"Dropped joint bundle {ref_hash[:8]} (model "
+                f"Dropped joint bundle {fit_io.short_id(ref_hash)} (model "
                 f"{target.model_name!r}): {n_records} record(s) and "
                 f"{n_proj} projection slot(s) removed from the in-session "
                 f"history."
@@ -726,7 +744,6 @@ class Project:
         file: "int | str | File | Sequence[int | str | File] | None",
         model: str | Sequence[str] | None,
         fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None,
-        expand_joint_bundles: bool,
         overwrite: bool,
         select: str = "all",
         by: str | None = None,
@@ -737,13 +754,14 @@ class Project:
 
         Returns ``None`` when no slots survive, so callers can emit a
         "nothing to do" message and short-circuit. Used by
-        :meth:`save_fits` and :meth:`export_fits` so both go through the
-        identical filter / collapse / selection / file-grouping logic.
+        :meth:`save_fits`; ``export_fit`` takes one reference and does not
+        select, so the filter / collapse / selection / file-grouping logic
+        has this single home.
 
         ``select`` keywords (``"all"`` / ``"latest"`` / ``"best"`` +
         ``by=``) apply after the collapse, per ``(file, model, fit_type)``
         group (``fit_io.select_snapshot_slots``). Any other value is a
-        reference — handle prefix, joint-hash prefix, or label — resolved
+        reference — 8-character handle, joint hash, or label — resolved
         against the whole history and mutually exclusive with the filter
         trio (one names exact fits, the other describes a group).
 
@@ -754,17 +772,12 @@ class Project:
         and the same flag as the archive-boundary collision
         (fit_archive_principles.md §"One rule, both boundaries").
 
-        With ``expand_joint_bundles=True`` (the archive path), a selection
-        that touches any slot of a joint bundle silently expands to the
-        whole bundle — its joint record plus every sibling projection
-        slot — because partial bundles are not representable in the
-        archive (the writer would raise). The expansion runs *after*
-        ``select=``, so the bundle invariant wins over a per-group
-        selection that would have split a bundle. The CSV export passes
-        ``False``: per-file trees have no bundle invariant, and a
-        per-file ``export_fit`` must not write a sibling file's
-        directories; the returned project then carries no joint records
-        at all (the CSV writer does not render them).
+        A selection that touches any slot of a joint bundle silently
+        expands to the whole bundle — its joint record plus every sibling
+        projection slot — because partial bundles are not representable
+        in the archive (the writer would raise). The expansion runs
+        *after* ``select=``, so the bundle invariant wins over a per-group
+        selection that would have split a bundle.
 
         File payloads come from the first-slot capture
         (``_captured_files``); nothing is read from live state at save
@@ -817,23 +830,17 @@ class Project:
         # Expand to whole joint bundles: latest record per optimization
         # hash (divergence rule applied to the bundles this save touches),
         # then every sibling projection of each touched bundle.
-        joint_records: list[fit_io.JointFitResult] = []
-        if expand_joint_bundles:
-            touched = {s.joint_ref for s in snapshot if s.joint_ref is not None}
-            joint_records = fit_io.collapse_joint_history_to_snapshot(
-                [
-                    jr
-                    for jr in self._joint_fit_history
-                    if jr.optimization_hash in touched
-                ],
-                overwrite=overwrite,
-            )
-            selected_handles = {s.handle for s in snapshot}
-            for jr in joint_records:
-                for proj in jr.projections:
-                    if proj.slot.handle not in selected_handles:
-                        snapshot.append(proj.slot)
-                        selected_handles.add(proj.slot.handle)
+        touched = {s.joint_ref for s in snapshot if s.joint_ref is not None}
+        joint_records = fit_io.collapse_joint_history_to_snapshot(
+            [jr for jr in self._joint_fit_history if jr.optimization_hash in touched],
+            overwrite=overwrite,
+        )
+        selected_handles = {s.handle for s in snapshot}
+        for jr in joint_records:
+            for proj in jr.projections:
+                if proj.slot.handle not in selected_handles:
+                    snapshot.append(proj.slot)
+                    selected_handles.add(proj.slot.handle)
 
         # Group slots by file identity — the guarded, unique File.name
         # (fit_archive_principles.md, Principle 1).
@@ -1086,11 +1093,11 @@ class Project:
                 _removed_keys = {
                     "auto_export": (
                         "fits no longer write to disk; use "
-                        "save_fits()/export_fits() to persist results"
+                        "save_fits()/export_fit() to persist results"
                     ),
                     "path_results": (
                         "the fit-time output tree is gone; save_fits()/"
-                        "export_fits() take an explicit path (defaults "
+                        "export_fit() take an explicit path (defaults "
                         "./fit_results/<name>.fit.h5 and ./fit_results/<name>/)"
                     ),
                     "ext": "unused, never wired to any export path; remove it",
@@ -1878,7 +1885,7 @@ class Project:
             fit_settings=joint_fit_settings,
         )
         self._fit_history.extend(slots_2d)
-        self._joint_fit_history.append(joint_record)
+        self._record_joint(joint_record)
 
         if self.show_output >= 1:
             fitlib.time_display(
@@ -3350,35 +3357,39 @@ class File:
     #
     def export_fit(
         self,
-        filepath: PathLike | str | None = None,
+        ref: str,
         *,
-        format: Literal["csv"] = "csv",
-        model: str | Sequence[str] | None = None,
-        fit_type: fit_io.FitType | Sequence[fit_io.FitType] | None = None,
-        select: str = "latest",
-        by: str | None = None,
+        filepath: PathLike | str | None = None,
         overwrite: bool = False,
         show_output: int = 1,
-    ) -> None:
+    ) -> pathlib.Path:
         """
-        Export this file's fit slots as a CSV/PNG tree.
+        Export one of this file's fits; see :meth:`Project.export_fit`.
 
-        One-line delegate to ``self.p.export_fits(file=self, ...)``. See
-        :meth:`Project.export_fits` for full semantics (including
-        ``select=`` — reference-style values are project-wide and cannot
-        be combined with this per-file filter) and output layout.
+        ``ref`` must name a fit of this file — a slot of this file, or a
+        joint bundle this file is a projection of (the whole bundle is
+        written). Anything else raises ``ValueError``: a File accessor
+        silently answering for another file's fit would be worse than
+        requiring ``project.export_fit``.
         """
 
-        self.p.export_fits(
-            filepath,
-            format=format,
-            file=self,
-            model=model,
-            fit_type=fit_type,
-            select=select,
-            by=by,
-            overwrite=overwrite,
-            show_output=show_output,
+        target = fit_io.resolve_fit_reference(
+            ref, slots=self.p._fit_history, joint_records=self.p._joint_fit_history
+        )
+        if isinstance(target, fit_io.SavedFitSlot):
+            owned = target.file_name == self.name
+            owner = f"file {target.file_name!r}"
+        else:
+            owned = self.name in target.files
+            owner = f"files {list(target.files)}"
+        if not owned:
+            raise ValueError(
+                f"Reference {ref!r} names a fit of {owner}, not of file "
+                f"{self.name!r} — export it via project.export_fit or the "
+                f"owning File."
+            )
+        return self.p.export_fit(
+            ref, filepath=filepath, overwrite=overwrite, show_output=show_output
         )
 
     #
@@ -3916,7 +3927,7 @@ class File:
             component_names=component_names,
             fit_ini=fit_ini_arr,
         )
-        self.p._fit_history.append(slot)
+        self.p._record_slot(slot)
         return slot
 
     #
@@ -4033,7 +4044,7 @@ class File:
             component_names=component_names,
             fit_ini=fit_ini_arr,
         )
-        self.p._fit_history.append(slot)
+        self.p._record_slot(slot)
         return slot
 
     #
@@ -4176,7 +4187,7 @@ class File:
             fit_ini=fit_ini,
             params_init=params_init,
         )
-        self.p._fit_history.append(slot)
+        self.p._record_slot(slot)
         return slot
 
     #
@@ -4195,7 +4206,7 @@ class File:
             fit_settings=fit_settings,
         )
         if slot is not None:
-            self.p._fit_history.append(slot)
+            self.p._record_slot(slot)
         return slot
 
     #
@@ -4711,7 +4722,7 @@ class File:
         slot = self.p.results.get(handle=handle)
         if slot.file_name != self.name:
             raise ValueError(
-                f"Slot {slot.handle[:8]} belongs to file "
+                f"Slot {fit_io.short_id(slot.handle)} belongs to file "
                 f"{slot.file_name!r}, not {self.name!r} — read it via "
                 f"project.results or the owning File."
             )
@@ -4745,7 +4756,7 @@ class File:
             - '2d': 2D global fit (from ``fit_2d``)
 
         handle : str, optional
-            Slot-handle prefix or exact label pinning one exact run of **this file**;
+            Slot handle or exact label pinning one exact run of **this file**;
             mutually exclusive with the ``model``/``fit_type`` filters. A
             handle naming another file's slot raises.
 
@@ -4793,7 +4804,7 @@ class File:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to read (see :meth:`get_parameters`).
         handle : str, optional
-            Slot-handle prefix or exact label pinning one exact run of this file;
+            Slot handle or exact label pinning one exact run of this file;
             mutually exclusive with the ``model``/``fit_type`` filters.
 
         Returns
@@ -4842,7 +4853,7 @@ class File:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to read.
         handle : str, optional
-            Slot-handle prefix or exact label pinning one exact run of this file;
+            Slot handle or exact label pinning one exact run of this file;
             mutually exclusive with the ``model``/``fit_type`` filters.
 
         Returns
@@ -4888,7 +4899,7 @@ class File:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to read.
         handle : str, optional
-            Slot-handle prefix or exact label pinning one exact run of this file;
+            Slot handle or exact label pinning one exact run of this file;
             mutually exclusive with the ``model``/``fit_type`` filters.
 
         Returns
@@ -4938,7 +4949,7 @@ class File:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to plot.
         handle : str, optional
-            Slot-handle prefix or exact label pinning one exact run of this file;
+            Slot handle or exact label pinning one exact run of this file;
             mutually exclusive with the ``model``/``fit_type`` filters.
         config : PlotConfig, optional
             Styling override; defaults to the project's ``plot_config``.
@@ -4997,7 +5008,7 @@ class File:
         model : str, optional
             Restrict to a single model name.
         handle : str, optional
-            Slot-handle prefix or exact label pinning one exact SbS run of this file;
+            Slot handle or exact label pinning one exact SbS run of this file;
             mutually exclusive with the ``model`` filter.
         params : sequence of str, optional
             Which parameters to plot (default: varied parameters).
@@ -5049,7 +5060,7 @@ class File:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit to plot. For SbS fits the payload is slice 0's.
         handle : str, optional
-            Slot-handle prefix or exact label pinning one exact run of this file;
+            Slot handle or exact label pinning one exact run of this file;
             mutually exclusive with the ``model``/``fit_type`` filters.
         show_plot : bool, default True
             Set ``False`` to build without displaying.
@@ -5095,7 +5106,7 @@ class File:
         model : str, optional
             Restrict to a single model name.
         handle : str, optional
-            Slot-handle prefix or exact label pinning one exact SbS run of this file;
+            Slot handle or exact label pinning one exact SbS run of this file;
             mutually exclusive with the ``model`` filter.
         slices : sequence of int, optional
             Slice indices to render. Default: all slices.
