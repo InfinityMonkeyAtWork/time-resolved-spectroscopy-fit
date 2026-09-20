@@ -4,11 +4,11 @@
 # vary field uses "project" / "file" / "static" strings
 # - "project": shared across all files in project.fit_2d (fitted once)
 # - "file": independent per file (fitted separately)
-# - "static": fixed (not fitted), set from the baseline fit
+# - "static": fixed (not fitted); energy-model parameters are set from the baseline fit
 MonoExpPosIRF:
     gaussCONV:
         SD: [5, project, 1.0E-6, 10]
     expFun:
         A: [5, file, 0, 15]
         tau: [10, project, 1, 100]
-        t0: [0, False]
+        t0: [0, static]
