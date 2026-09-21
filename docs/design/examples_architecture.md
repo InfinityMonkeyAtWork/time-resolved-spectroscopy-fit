@@ -63,7 +63,7 @@ external tools. Entry: `01_basic_fitting`.
 ```python
 file.fit_baseline(...); file.fit_2d(...)
 file.get_parameters(fit_type="2d")
-file.export_fit()     # one-way CSV + PNG, Origin-friendly
+file.export_fit(ref)  # one fit → CSV + PNG directory, Origin-friendly
 file.save_fit()       # HDF5 archive snapshot for this file
 ```
 
@@ -75,7 +75,7 @@ shared setup and a summary view. Entry: `20_multi_file_independent_fit`.
 
 ```python
 for f in files: f.fit_baseline(...); f.fit_2d(...)
-project.export_fits()                 # one coherent tree across files
+project.export_fit(ref)               # one fit per call; loop for a tree
 project.save_fits()                   # one portable HDF5 for the batch
 project.results.compare_models(...)   # cross-file survey (no file= filter)
 ```
@@ -113,7 +113,7 @@ section is framed as data generation, not a fitting tutorial.
   - `11_save_load_export` re-runs `10_model_comparison` in-kernel via a
     `%%capture` + `%cd -q ../10_model_comparison` + `%run example.ipynb` +
     `%cd -q -` preamble, so all of 10's fitted state (`file`, `project`,
-    baseline/SbS/2D slots, σ snapshot, conf_ci) is in scope. A short heartbeat
+    baseline/SbS/2D slots, σ snapshot, conf_ci) is in scope. A short sanity-check
     cell then prints file/model/slot counts. Notebook 10 keeps `show_output: 1`
     so it stays interactive when opened on its own; `%%capture` suppresses that
     output during the `%run`.
@@ -127,13 +127,13 @@ section is framed as data generation, not a fitting tutorial.
   narrows to `"latest"` / `"best"` / an exact handle or label).
 - **Fits never write to disk** (v0.14.0), so notebooks leave no surprise
   files by construction; on-disk artifacts come only from explicit
-  `save_fits` / `export_fits` calls, taught where persistence is the topic.
+  `save_fits` / `export_fit` calls, taught where persistence is the topic.
 - **`pathlib.Path.cwd()`** for `Project(path=...)`, not `import os`.
 
 ## Save / export / load language
 
 - **export** = one-way CSV/PNG for humans and tools like Origin
-  (`file.export_fit()`, `project.export_fits()`).
+  (`file.export_fit(ref)`, `project.export_fit(ref)`).
 - **save/load** = round-trippable HDF5 archive (`file.save_fit()`,
   `project.save_fits()`, `FitResults.load(...)`, `project.load_fits(...)`).
 - `FitResults` is the result browser/comparison object, not something a casual

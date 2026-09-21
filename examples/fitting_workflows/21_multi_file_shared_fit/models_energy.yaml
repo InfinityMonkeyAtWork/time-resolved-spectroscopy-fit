@@ -20,8 +20,8 @@ base:
     LinBack:
       m: [1E-2, static]
       b: [0, static]
-      xStart: [0, False]
-      xStop: [20, False]
+      xStart: [0, static]
+      xStop: [20, static]
     GLP:
       A: [12, static]
       x0: [8, static]

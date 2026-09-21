@@ -357,7 +357,11 @@ provenance; every other key is fixed by the handle and stays as stored.
 
 `label` is the one **mutable** field: rewritten whenever the incoming
 record carries one, with no `overwrite` required, and never deleted by
-an incoming `None`.
+an incoming `None`. Labels are unique project-wide across slots and joint
+records (v0.16.0): an incoming label the archive already holds under a
+different handle or joint hash refuses the write before any mutation, and
+`overwrite=True` moves it — the stored holder's `label` attr is deleted,
+the one way a stored label goes away.
 
 ## `params` dataset
 

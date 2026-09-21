@@ -53,16 +53,15 @@ def parse_docstring_params(docstring: str) -> list[str]:
             ):
                 break
             # Parameter line: valid Python identifier (letter or _) at base indent,
-            # followed by " : ". Allows leading ** for **kwargs.
+            # followed by " : ". Starred entries (*args, **kwargs) are skipped.
             indent = len(line) - len(line.lstrip()) if line.strip() else -1
             if indent == base_indent:
                 m = re.match(r"^\s*(\*{0,2}[a-zA-Z_]\w*)\s*:", line)
                 if m:
                     raw = m.group(1)
-                    if raw.startswith("**"):
-                        continue  # skip **kwargs
-                    name = raw.lstrip("*")
-                    params.append(name)
+                    if raw.startswith("*"):
+                        continue  # skip *args / **kwargs (not in the signature list)
+                    params.append(raw)
     return params
 
 

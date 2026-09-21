@@ -9,10 +9,13 @@ with pass/fail per check and any items that need fixing.
 ## 1. Sphinx build (zero warnings)
 
 ```bash
-make -C docs html 2>&1 | grep -E "WARNING|ERROR"
+.venv/bin/python -m sphinx -b html -W --keep-going docs docs/_build/html
 ```
 
-If any warnings or errors appear, report them with file and line number.
+`-W` turns every warning into a failing exit code and `--keep-going` still
+reports all of them. This build also covers broken toctree entries, missing
+autodoc targets and dead MyST links in `.md` pages, so those need no separate
+check. Report any warnings or errors with file and line number.
 
 ## 2. Docstring style consistency
 
@@ -31,8 +34,11 @@ Report any matches with file and line number.
 
 Check every public (no leading `_`) function, method, and class in
 `src/trspecfit/` for a triple-quoted docstring immediately after the
-definition. `@overload` definitions are excluded since they conventionally
-omit docstrings.
+definition. Only module- and class-level definitions count, so local
+closures inside function bodies are not treated as public API. `@overload`
+definitions and `@<name>.setter` / `.deleter` accessors are excluded: the
+former conventionally omit docstrings, the latter are documented on the
+getter (NumPy convention).
 
 ```bash
 python .claude/skills/check-docs/check_missing_docstrings.py
@@ -59,14 +65,17 @@ python .claude/skills/check-docs/check_stale_docstrings.py
 Report any mismatches (missing, extra, or renamed parameters) with file and
 line number.
 
-## 5. Broken cross-references
+## 5. Broken relative links in RST pages
 
-- Verify all toctree entries in `docs/index.rst` and `docs/api/index.rst` point
-  to existing files.
-- Verify all `automodule` / `autoclass` / `automethod` targets in
-  `docs/api/*.rst` exist in the source.
-- Verify relative links in `docs/examples/index.rst` and `docs/quickstart.md`
-  point to existing files.
+Sphinx does not check external-style relative links in RST
+(`` `text <../../examples/.../example.ipynb>`_ ``): a dead target builds
+clean. Verify every such target under `docs/**/*.rst` exists.
+
+```bash
+python .claude/skills/check-docs/check_rst_links.py
+```
+
+Report any dead targets with file and line number.
 
 ## 6. Exports match docs
 
@@ -74,6 +83,12 @@ Compare `src/trspecfit/__init__.py` exports (`__all__` / top-level imports)
 against import statements shown in documentation code examples
 (`README.md`, `docs/quickstart.md`, `docs/api/plot_config.rst`).
 Flag anything the docs say users can import that is not actually exported.
+The script executes every import line shown in `README.md`, `llms.txt` and
+`docs/**/*.{md,rst}`:
+
+```bash
+python .claude/skills/check-docs/check_doc_imports.py
+```
 
 ## Summary
 
@@ -85,5 +100,5 @@ Print a table:
 | Docstring style | PASS / FAIL |
 | Missing docstrings | PASS / FAIL |
 | Stale docstrings | PASS / FAIL |
-| Cross-references | PASS / FAIL |
+| RST relative links | PASS / FAIL |
 | Exports match docs | PASS / FAIL |

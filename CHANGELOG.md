@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [0.16.0] - 2026-09-21
+
+### Added
+
+- **`Project.export_fit(ref)` / `File.export_fit(ref)`.** One reference, one fit: a slot writes to `<root>/files/<file>/<model>/<handle>/`, a joint bundle (or any of its projections) to `<root>/joint/<model>/<hash>/` with its projections under `files/<file>/`, mirroring the archive's `files/` and `joint/` split — the first export of joint records; every directory carries a `fit_info.csv`, and `correl.csv` when a correlation table exists.
+
+### Changed
+
+- **Breaking: references are exact.** Every `handle=` / `select=` / `ref` argument takes the 8-character handle shown in the tables, the full 64-character handle, or a label; shorter prefixes no longer match.
+- **Breaking: labels are unique project-wide** across slots and joint records, belong to the handle (an exact re-run inherits its label), and may not have the shape of a handle. `set_label` refuses a label another fit holds, and `save_fits` refuses to append a label the archive already holds under another fit unless `overwrite=True`, which moves it.
+- **Example notebooks 10, 11, 20 and 21 follow the export and reference changes** and were re-audited against their executed output. Notebooks 20 and 21 advertise only the `project` / `file` / `static` vary levels, and the peak-position dynamics are called a "shift" throughout (01, 10, 20, 21).
+
+### Removed
+
+- **Breaking: `Project.export_fits` and the filter / `select=` form of `File.export_fit`.** Use `export_fit(ref)` and loop over references to export several fits; the `<model>__<fit_type>` directory names and their hash / ordinal suffixes are gone.
+
 ## [0.15.0] - 2026-09-16
 
 ### Added

@@ -2,7 +2,7 @@
 
 fit_baseline / fit_spectrum / fit_slice_by_slice / fit_2d compute, display
 (per ``show_output``), and capture fit slots — persistence is only ever
-the explicit ``save_fits`` (HDF5) / ``export_fits`` (CSV/PNG) calls. The
+the explicit ``save_fits`` (HDF5) / ``export_fit`` (CSV/PNG) calls. The
 write-nothing tests run each fit with the working directory pointed at an
 empty ``tmp_path`` so any accidental relative-path write is caught. The
 display/silent guardrail matrix (plot helpers skipped when silent, shown
@@ -188,15 +188,16 @@ class TestFitsWriteNothing:
 
 #
 class TestExplicitPathsStillWrite:
-    """``save_fits`` / ``export_fits`` are the only persistence paths."""
+    """``save_fits`` / ``export_fit`` are the only persistence paths."""
 
     #
-    def test_export_fits_writes(self, tmp_path, monkeypatch):
+    def test_export_fit_writes(self, tmp_path, monkeypatch):
         project, file = _baseline_setup(tmp_path, monkeypatch)
         file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
 
         explicit_root = tmp_path / "explicit_csv"
-        project.export_fits(explicit_root, show_output=0)
+        handle = project.results.find(file=file.name)[-1].handle
+        project.export_fit(handle, filepath=explicit_root, show_output=0)
         assert _list_files(explicit_root)
 
     #

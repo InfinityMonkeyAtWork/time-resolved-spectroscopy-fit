@@ -43,6 +43,7 @@ from trspecfit.utils.fit_io import (
     read_archive,
     resolve_fit_reference,
     set_fit_label,
+    short_id,
 )
 from trspecfit.utils.lmfit import MCMCResult
 
@@ -159,7 +160,7 @@ def _array_digest(arr: np.ndarray | None) -> str | None:
     if arr is None:
         return None
     a = np.ascontiguousarray(arr)
-    return hashlib.sha256(a.tobytes()).hexdigest()[:8]
+    return short_id(hashlib.sha256(a.tobytes()).hexdigest())
 
 
 #
@@ -277,9 +278,16 @@ class FitResults:
         files: Sequence[Any] | None = None,
         joint: Sequence[JointFitResult] | None = None,
         config: PlotConfig | None = None,
+        history: tuple[Sequence[SavedFitSlot], Sequence[JointFitResult]] | None = None,
     ) -> None:
         self._slots: tuple[SavedFitSlot, ...] = tuple(slots)
         self._joint: tuple[JointFitResult, ...] = tuple(joint or ())
+        # The live project logs behind this snapshot (``Project.results``
+        # passes its own history lists). Only ``set_label`` reads them: a
+        # label is project-wide state, so the uniqueness check and the
+        # relabel of exact re-runs must see fits made after the snapshot.
+        # ``None`` for a loaded archive, whose view is all there is.
+        self._history = history
         # The resolving presentation config: a PlotConfig, never a Project
         # (this module is deliberately a leaf in the import graph).
         # Project.results passes the live project-owned config;
@@ -586,8 +594,8 @@ class FitResults:
 
         - ``get(file=..., model=..., fit_type=...)`` — all three required;
           raises ``LookupError`` if 0 or >1 slots match.
-        - ``get(handle=...)`` — an unambiguous slot-handle prefix or an
-          exact label (read them off :meth:`compare_models` /
+        - ``get(handle=...)`` — an 8-character slot handle (or the full
+          digest) or an exact label (read them off :meth:`compare_models` /
           :meth:`variants`); raises ``LookupError`` if it matches nothing
           or more than one fit.
 
@@ -711,7 +719,7 @@ class FitResults:
 
     #
     def _resolve_ref(self, ref: str) -> SavedFitSlot | JointFitResult:
-        """Resolve a handle/hash prefix or exact label against this view."""
+        """Resolve an exact handle/hash form or label against this view."""
 
         return resolve_fit_reference(ref, slots=self._slots, joint_records=self._joint)
 
@@ -746,12 +754,24 @@ class FitResults:
         """
         Set the user-facing label of one fit, post-hoc.
 
-        ``ref`` is a slot-handle prefix, a joint-optimization-hash prefix,
-        or the fit's current label. Labels are optional, settable at any
-        time, and never required — they make a durable, human-readable
-        pointer to a chosen fit, usable anywhere a handle prefix is
-        (``select=``, :meth:`diff`, ``Project.drop_fits``) and persisted
-        by ``save_fits`` as the archive's one mutable slot attr.
+        ``ref`` is an 8-character slot handle or joint-optimization hash
+        (or the full digest), or the fit's current label. Labels are
+        optional, settable at any time, and never required — they make a
+        durable, human-readable pointer to a chosen fit, usable anywhere a
+        handle is (``select=``, :meth:`diff`, ``Project.drop_fits``) and
+        persisted by ``save_fits`` as the archive's one mutable slot attr.
+
+        Labels are unique project-wide across slots and joint records — a
+        label is the human-readable twin of the handle, and like the handle
+        it names the configuration: every history entry sharing the
+        target's handle (exact re-runs) takes the label, and a later exact
+        re-run inherits it. Setting a label another fit holds raises
+        ``ValueError`` naming the holder; relabel that fit first. Both the
+        check and the relabel run against the project's live history when
+        this view came from ``Project.results`` — a view is a snapshot, so
+        fits made after it are still seen; a loaded archive's view checks
+        itself. ``save_fits`` enforces the same rule against the archive
+        on append.
 
         A reference to a projection of a joint bundle labels the **joint
         record** — the bundle is one optimization, and its label is
@@ -766,8 +786,9 @@ class FitResults:
         LookupError
             If ``ref`` matches nothing or is ambiguous.
         ValueError
-            If ``label`` is empty or a reserved ``select=`` keyword
-            (``"all"`` / ``"latest"`` / ``"best"``).
+            If ``label`` is empty, a reserved ``select=`` keyword
+            (``"all"`` / ``"latest"`` / ``"best"``), or already held by
+            another fit.
         """
 
         target = self._resolve_ref(ref)
@@ -775,13 +796,94 @@ class FitResults:
             record = self._joint_for(target)
             if record is None:
                 raise LookupError(
-                    f"Slot {target.handle[:8]} is a projection of joint "
-                    f"bundle {target.joint_ref[:8]}, which is not part of "
+                    f"Slot {short_id(target.handle)} is a projection of joint "
+                    f"bundle {short_id(target.joint_ref)}, which is not part of "
                     f"this FitResults view — labels live on the joint "
                     f"record."
                 )
             target = record
-        set_fit_label(target, label)
+        live_slots, live_joint = self._live_records()
+        holder = self._label_holder(label, live_slots, live_joint)
+        if holder is not None and not self._same_record(holder, target):
+            raise ValueError(
+                f"label {label!r} is already held by "
+                f"{self._describe_record(holder)}; labels are unique "
+                f"project-wide across slots and joint records — relabel that "
+                f"fit first or pick another label."
+            )
+        entries = self._same_identity_records(target, live_slots, live_joint)
+        if not any(entry is target for entry in entries):
+            entries.append(target)
+        for entry in entries:
+            set_fit_label(entry, label)
+
+    #
+    def _live_records(
+        self,
+    ) -> tuple[Sequence[SavedFitSlot], Sequence[JointFitResult]]:
+        """The project's live history when attached, else this view."""
+
+        if self._history is not None:
+            return self._history
+        return self._slots, self._joint
+
+    #
+    @staticmethod
+    def _same_identity_records(
+        target: SavedFitSlot | JointFitResult,
+        slots: Sequence[SavedFitSlot],
+        joint: Sequence[JointFitResult],
+    ) -> list[SavedFitSlot | JointFitResult]:
+        """Every entry with the target's handle or joint hash."""
+
+        if isinstance(target, SavedFitSlot):
+            return [s for s in slots if s.handle == target.handle]
+        return [jr for jr in joint if jr.optimization_hash == target.optimization_hash]
+
+    #
+    @staticmethod
+    def _label_holder(
+        label: str,
+        slots: Sequence[SavedFitSlot],
+        joint: Sequence[JointFitResult],
+    ) -> SavedFitSlot | JointFitResult | None:
+        """The record currently carrying ``label``, if any."""
+
+        for slot in slots:
+            if slot.label == label:
+                return slot
+        for jr in joint:
+            if jr.label == label:
+                return jr
+        return None
+
+    #
+    @staticmethod
+    def _same_record(
+        a: SavedFitSlot | JointFitResult, b: SavedFitSlot | JointFitResult
+    ) -> bool:
+        """Same identity: one handle (exact re-runs) or one joint hash."""
+
+        if isinstance(a, SavedFitSlot) and isinstance(b, SavedFitSlot):
+            return a.handle == b.handle
+        if isinstance(a, JointFitResult) and isinstance(b, JointFitResult):
+            return a.optimization_hash == b.optimization_hash
+        return False
+
+    #
+    @staticmethod
+    def _describe_record(record: SavedFitSlot | JointFitResult) -> str:
+        """Short id plus file/model/fit-type context, for error messages."""
+
+        if isinstance(record, SavedFitSlot):
+            return (
+                f"slot {short_id(record.handle)} "
+                f"(file={record.file_name!r}, model={record.model_name!r}, "
+                f"fit_type={record.fit_type!r})"
+            )
+        return (
+            f"joint {short_id(record.optimization_hash)} (model={record.model_name!r})"
+        )
 
     #
     @staticmethod
@@ -816,9 +918,9 @@ class FitResults:
         # table's contract is that every identity-changing input shows.
         rec["dark"] = _array_digest(slot.dark)
         rec["calibration"] = _array_digest(slot.calibration)
-        rec["model_structure"] = hashlib.sha256(
-            slot.model_structure.encode()
-        ).hexdigest()[:8]
+        rec["model_structure"] = short_id(
+            hashlib.sha256(slot.model_structure.encode()).hexdigest()
+        )
         meta = slot.params if slot.fit_type != "sbs" else slot.params_meta
         if meta is not None and "name" in meta.columns:
             fields = [
@@ -911,7 +1013,7 @@ class FitResults:
         labels = [self._display_label(s) for s in matched]
         with_label = any(lbl is not None for lbl in labels)
         for slot, rec, lbl in zip(matched, records, labels, strict=True):
-            row: dict[str, Any] = {"handle": slot.handle[:8]}
+            row: dict[str, Any] = {"handle": short_id(slot.handle)}
             if with_label:
                 row["label"] = lbl
             row["timestamp"] = slot.timestamp
@@ -963,8 +1065,8 @@ class FitResults:
         """
         Pairwise difference of two fits: inputs and outputs, side by side.
 
-        ``a`` / ``b`` are handle prefixes, joint-optimization-hash
-        prefixes, or labels (read them off :meth:`compare_models` /
+        ``a`` / ``b`` are 8-character handles or joint-optimization hashes
+        (or full digests), or labels (read them off :meth:`compare_models` /
         :meth:`variants`). Returns a DataFrame with columns ``section``,
         ``field``, and one value column per side (named by the short id);
         only differing rows appear. Sections:
@@ -1015,11 +1117,11 @@ class FitResults:
                 f"tables live in different spaces."
             )
         if isinstance(ta, SavedFitSlot) and isinstance(tb, SavedFitSlot):
-            id_a, id_b = ta.handle[:8], tb.handle[:8]
+            id_a, id_b = short_id(ta.handle), short_id(tb.handle)
             rows = self._diff_slot_rows(ta, tb)
         else:
             ja, jb = cast(JointFitResult, ta), cast(JointFitResult, tb)
-            id_a, id_b = ja.optimization_hash[:8], jb.optimization_hash[:8]
+            id_a, id_b = short_id(ja.optimization_hash), short_id(jb.optimization_hash)
             rows = self._diff_joint_rows(ja, jb)
         return pd.DataFrame(rows, columns=["section", "field", id_a, id_b])
 
@@ -1033,8 +1135,8 @@ class FitResults:
             record = self._joint_for(target)
             if record is None:
                 raise LookupError(
-                    f"Slot {target.handle[:8]} is a projection of joint "
-                    f"bundle {target.joint_ref[:8]}, which is not part of "
+                    f"Slot {short_id(target.handle)} is a projection of joint "
+                    f"bundle {short_id(target.joint_ref)}, which is not part of "
                     f"this FitResults view — joint fits diff at the bundle "
                     f"level."
                 )
@@ -1085,15 +1187,15 @@ class FitResults:
                 str(k): tuple(v) if isinstance(v, list) else v
                 for k, v in jr.fit_settings.items()
             }
-            rec["model_structure"] = hashlib.sha256(
-                jr.model_structure.encode()
-            ).hexdigest()[:8]
+            rec["model_structure"] = short_id(
+                hashlib.sha256(jr.model_structure.encode()).hexdigest()
+            )
             # Decode the canonical input_files JSON so per-file selection
             # and version-stamp (correction/content state) differences are
             # visible — every identity-changing input shows in a diff.
             _, entries = json.loads(jr.input_files)
             for name, stamp, selection in entries:
-                rec[f"{name}.version_stamp"] = str(stamp)[:8]
+                rec[f"{name}.version_stamp"] = short_id(str(stamp))
                 rec[f"{name}.selection"] = selection
             fields = [
                 c
@@ -1118,8 +1220,8 @@ class FitResults:
 
         ca, cb = joint_comparability(ja), joint_comparability(jb)
         if ca != cb:
-            short_a = tuple((f, v[:8]) for f, v in ca)
-            short_b = tuple((f, v[:8]) for f, v in cb)
+            short_a = tuple((f, short_id(v)) for f, v in ca)
+            short_b = tuple((f, short_id(v)) for f, v in cb)
             rows.append(("comparability", "fit_views", short_a, short_b))
         else:
             rows.extend(
@@ -1209,7 +1311,7 @@ class FitResults:
         """
         One slot for an accessor call: exact pin or latest-matching filter.
 
-        ``handle=`` names one exact slot by handle prefix or exact label,
+        ``handle=`` names one exact slot by its handle or exact label,
         mutually exclusive with the ``file``/``model``/``fit_type`` trio —
         one names a run, the other describes a group, and mixing them has
         no coherent meaning. Without it, the existing latest-matching-wins
@@ -1230,7 +1332,7 @@ class FitResults:
             )
             if required_fit_type is not None and slot.fit_type != required_fit_type:
                 raise ValueError(
-                    f"Slot {slot.handle[:8]} is a {slot.fit_type!r} fit; "
+                    f"Slot {short_id(slot.handle)} is a {slot.fit_type!r} fit; "
                     f"this method reads {required_fit_type!r} fits."
                 )
             return slot
@@ -1267,7 +1369,7 @@ class FitResults:
             Which fit type to read. When several slots match, the most
             recent fit wins.
         handle : str, optional
-            Slot-handle prefix or exact label pinning one exact run; mutually exclusive
+            Slot handle or exact label pinning one exact run; mutually exclusive
             with the ``file``/``model``/``fit_type`` filters.
 
         Returns
@@ -1314,7 +1416,7 @@ class FitResults:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit type to read (latest matching fit wins).
         handle : str, optional
-            Slot-handle prefix or exact label pinning one exact run; mutually exclusive
+            Slot handle or exact label pinning one exact run; mutually exclusive
             with the ``file``/``model``/``fit_type`` filters.
 
         Returns
@@ -1370,7 +1472,7 @@ class FitResults:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit type to read (latest matching fit wins).
         handle : str, optional
-            Slot-handle prefix or exact label pinning one exact run; mutually exclusive
+            Slot handle or exact label pinning one exact run; mutually exclusive
             with the ``file``/``model``/``fit_type`` filters.
 
         Returns
@@ -1418,7 +1520,7 @@ class FitResults:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit type to read (latest matching fit wins).
         handle : str, optional
-            Slot-handle prefix or exact label pinning one exact run; mutually exclusive
+            Slot handle or exact label pinning one exact run; mutually exclusive
             with the ``file``/``model``/``fit_type`` filters.
 
         Returns
@@ -1477,7 +1579,7 @@ class FitResults:
         fit_type : {'baseline', 'spectrum', 'sbs', '2d'}, default 'baseline'
             Which fit type to plot (latest matching fit wins).
         handle : str, optional
-            Slot-handle prefix or exact label pinning one exact run; mutually exclusive
+            Slot handle or exact label pinning one exact run; mutually exclusive
             with the ``file``/``model``/``fit_type`` filters.
         config : PlotConfig, optional
             Styling override. Default: the project-owned ``plot_config``
@@ -1679,7 +1781,7 @@ class FitResults:
         model : str, optional
             Filter to a single model name.
         handle : str, optional
-            Slot-handle prefix or exact label pinning one exact SbS run; mutually
+            Slot handle or exact label pinning one exact SbS run; mutually
             exclusive with the ``file``/``model`` filters.
         slices : sequence of int, optional
             Slice indices to render. Default: all slices.
@@ -1774,7 +1876,7 @@ class FitResults:
             Which fit to plot (latest matching fit wins). For SbS fits the
             payload is slice 0's.
         handle : str, optional
-            Slot-handle prefix or exact label pinning one exact run; mutually exclusive
+            Slot handle or exact label pinning one exact run; mutually exclusive
             with the ``file``/``model``/``fit_type`` filters.
         show_plot : bool, default True
             Set ``False`` to build without displaying (tests / batch use).
@@ -1866,7 +1968,7 @@ class FitResults:
         model : str, optional
             Filter to a single model name.
         handle : str, optional
-            Slot-handle prefix or exact label pinning one exact SbS run; mutually
+            Slot handle or exact label pinning one exact SbS run; mutually
             exclusive with the ``file``/``model`` filters.
         params : sequence of str, optional
             Which parameters to plot. Default: the varied parameters (from
@@ -2210,7 +2312,7 @@ class FitResults:
                 "file": slot.file_name,
                 "model": slot.model_name,
                 "fit_type": slot.fit_type,
-                "handle": slot.handle[:8],
+                "handle": short_id(slot.handle),
                 "selection_json": slot.selection_json,
             }
             for key in metric_keys:
@@ -2436,7 +2538,7 @@ class FitResults:
                 "file": slot.file_name,
                 "model": slot.model_name,
                 "fit_type": slot.fit_type,
-                "handle": slot.handle[:8],
+                "handle": short_id(slot.handle),
                 "selection_json": slot.selection_json,
             }
             if slot.fit_type == "sbs":
