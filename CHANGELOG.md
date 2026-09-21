@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
-## [0.16.0] - 2026-09-19
+## [0.16.0] - 2026-09-21
 
 ### Added
 

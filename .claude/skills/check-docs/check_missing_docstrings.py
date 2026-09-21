@@ -19,6 +19,34 @@ def has_overload(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 
 
 #
+def is_property_accessor(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Return True for ``@<name>.setter`` / ``@<name>.deleter`` definitions.
+
+    NumPy convention documents a property on its getter only.
+    """
+
+    return any(
+        isinstance(d, ast.Attribute) and d.attr in ("setter", "deleter")
+        for d in node.decorator_list
+    )
+
+
+#
+def public_definitions(body: list[ast.stmt]):
+    """Yield the function and class definitions at module or class level.
+
+    Descends into class bodies (methods, nested classes) but not into
+    function bodies, so local closures never count as public API.
+    """
+
+    for node in body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            yield node
+            if isinstance(node, ast.ClassDef):
+                yield from public_definitions(node.body)
+
+
+#
 def check_file(path: Path) -> list[tuple[Path, int, str, str]]:
     """Return list of (path, lineno, kind, name) for missing docstrings."""
 
@@ -26,11 +54,11 @@ def check_file(path: Path) -> list[tuple[Path, int, str, str]]:
     tree = ast.parse(source, filename=str(path))
     missing: list[tuple[Path, int, str, str]] = []
 
-    for node in ast.walk(tree):
+    for node in public_definitions(tree.body):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if node.name.startswith("_"):
                 continue
-            if has_overload(node):
+            if has_overload(node) or is_property_accessor(node):
                 continue
             if not ast.get_docstring(node):
                 missing.append((path, node.lineno, "def", node.name))
