@@ -208,17 +208,29 @@ the end.
       mixing `unknown` with a declared model.
 
 ### D. MCMC and CI
-- [ ] D1 `MC.resolve(..., noise_kind)`: declared noise forces `is_weighted`,
-      rejects σ knobs; `is_weighted=True` under `unknown` raises.
-- [ ] D2 `conf_interval(prob_func=χ² threshold)` under declared noise.
-      Seen in C: with a declared σ on near-noiseless data lmfit's default
-      F-test bracketing raises (`f(a)` and `f(b)` have the same sign); the
-      χ² threshold must not, and D3/D4 cover that case.
-- [ ] D3 Tests in `test_mc_settings.py`: forced/raised cases; seeded short
-      chain on Poisson data: posterior widths vs `stderr` within tolerance.
-- [ ] D4 CI test on a two-parameter model (`conf_interval` refuses fewer
-      than two varying parameters): constant σ declared 2× too small →
-      χ²-threshold CI halves while the F-test CI would not move.
+- [x] D1 `MC.resolve(..., weighted)`: declared noise forces `is_weighted`,
+      rejects σ knobs; `is_weighted=True` under `unknown` raises (at
+      sampling time, like the `nwalkers` check). A bool, not the planned
+      `noise_kind`: a joint `SegmentedNoise` has no single kind and
+      `fit_wrapper` already derives `weighted` for `scale_covar`.
+- [x] D2 `conf_interval(prob_func=χ² threshold)` under declared noise.
+      lmfit 1.3.4's `prob_func(best_fit, new_fit)` takes the two results,
+      so `fitlib._chi2_compare` derives `nfix` from their `nvarys`. The
+      phase-C bracketing failure (`f(a)` and `f(b)` have the same sign)
+      reproduces with a misspecified model on near-noiseless data and a
+      constant σ: the F-test ratio is not monotonic along the profile
+      there; the χ² threshold completes. Pinned in D4.
+- [x] D3 Tests in `test_mc_settings.py`: forced/raised cases; seeded short
+      chain on Poisson data: posterior widths / `stderr` measured 0.93–1.11
+      over 200–800 steps, asserted 0.85–1.15.
+- [x] D4 CI tests in `test_noise_ci.py` (`conf_interval` refuses fewer than
+      two varying parameters): constant σ declared 2× too small halves the
+      χ²-threshold CI (measured 1.96–2.04; the F-test ratio stays at 1.00);
+      near-noiseless data with a declared σ gives half-widths equal to
+      `stderr` (F-test: 2–9% of it); Poisson counts give half-widths within
+      7% of `stderr` (the 20% band holds from ~90 peak counts upward; below
+      that the profile asymmetry is the interval's real shape); the phase-C
+      misspecified-model case completes.
 
 ### E. Verification against the bound
 - [ ] E1 Deterministic, noiseless `d = m` (limit branch): `JᵀJ` from the
@@ -256,7 +268,10 @@ the end.
 - [ ] H3 CHANGELOG 0.17.0 (incl. behaviour changes since B: `set_sigma`
       now weights the fit; corrections refuse to run under declared noise;
       a project default `sigma_data` without `noise_type: gaussian` raises;
-      `noise_type` / `sigma_data` / `sigma_type` are read-only properties);
+      `noise_type` / `sigma_data` / `sigma_type` are read-only properties;
+      declared noise forces weighted MCMC and its σ knobs raise,
+      `MC(is_weighted=True)` under `unknown` raises; `conf_interval` uses
+      the χ² threshold under declared noise);
       TODO.md: retire the two noise items, note the
       simulator snapshot fix, add follow-ups (noise estimation helpers,
       compound likelihood, σ through corrections, other counting notebooks

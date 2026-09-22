@@ -8,7 +8,7 @@ as ``FitOutput.mc_settings`` and recorded in the slot's ``fit_settings["mc"]``.
 import numpy as np
 import pandas as pd
 import pytest
-from _utils import make_project, simulate_noisy
+from _utils import make_project, simulate_clean, simulate_noisy
 
 from trspecfit import File
 from trspecfit.utils.lmfit import MC
@@ -49,6 +49,27 @@ def _baseline_ready_file():
     )
     file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
     file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
+    return project, file
+
+
+#
+def _poisson_ready_file(*, scale=200.0, seed=3):
+    """(project, file) with Poisson counts, a baseline and declared noise."""
+
+    truth = _make_truth_file(make_project(name="truth"))
+    rng = np.random.default_rng(seed)
+    data = rng.poisson(scale * simulate_clean(truth.model_active)) / scale
+    project = make_project(name="fit")
+    file = File(
+        parent_project=project,
+        name="fit",
+        data=data,
+        energy=truth.energy.copy(),
+        time=truth.time.copy(),
+    )
+    file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+    file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
+    file.set_noise("poisson", scale=scale)
     return project, file
 
 
@@ -110,7 +131,7 @@ class TestMCConstruction:
 class TestMCResolve:
     #
     def test_derives_sigma_bounds_and_walker_floor(self):
-        ran = MC(use_mc=1).resolve(sigma_fit=0.3, n_dim=4)
+        ran = MC(use_mc=1).resolve(sigma_fit=0.3, n_dim=4, weighted=False)
         assert ran.sigma_ini == 0.3
         assert ran.sigma_min == pytest.approx(0.003)
         assert ran.sigma_max == pytest.approx(30.0)
@@ -118,12 +139,14 @@ class TestMCResolve:
 
     #
     def test_walkers_follow_the_dimension_count(self):
-        assert MC(use_mc=1).resolve(sigma_fit=0.3, n_dim=15).nwalkers == 30
+        assert (
+            MC(use_mc=1).resolve(sigma_fit=0.3, n_dim=15, weighted=False).nwalkers == 30
+        )
 
     #
     def test_explicit_values_are_kept_and_the_request_is_untouched(self):
         mc = MC(use_mc=1, nwalkers=50, sigma_ini=0.5, sigma_min=0.01, sigma_max=5.0)
-        ran = mc.resolve(sigma_fit=0.3, n_dim=4)
+        ran = mc.resolve(sigma_fit=0.3, n_dim=4, weighted=False)
         assert ran is not mc
         assert (ran.nwalkers, ran.sigma_ini) == (50, 0.5)
         assert (ran.sigma_min, ran.sigma_max) == (0.01, 5.0)
@@ -132,27 +155,74 @@ class TestMCResolve:
     #
     def test_derived_start_is_checked_against_explicit_bounds(self):
         mc = MC(use_mc=1, sigma_min=0.01, sigma_max=1.0)
-        assert mc.resolve(sigma_fit=0.3, n_dim=2).sigma_ini == 0.3
+        assert mc.resolve(sigma_fit=0.3, n_dim=2, weighted=False).sigma_ini == 0.3
         with pytest.raises(ValueError, match="derived from the fit"):
-            mc.resolve(sigma_fit=5.0, n_dim=2)
+            mc.resolve(sigma_fit=5.0, n_dim=2, weighted=False)
 
     #
     def test_explicit_walkers_below_the_emcee_minimum_raise(self):
         with pytest.raises(ValueError, match=r"2 \* n_dim = 6"):
-            MC(use_mc=1, nwalkers=4).resolve(sigma_fit=0.3, n_dim=3)
+            MC(use_mc=1, nwalkers=4).resolve(sigma_fit=0.3, n_dim=3, weighted=False)
 
     #
-    def test_weighted_sampling_carries_no_sigma(self):
-        ran = MC(use_mc=1, is_weighted=True, sigma_ini=0.5).resolve(
-            sigma_fit=0.3, n_dim=4
-        )
+    def test_declared_noise_forces_weighted_sampling(self):
+        ran = MC(use_mc=1).resolve(sigma_fit=0.3, n_dim=4, weighted=True)
+        assert ran.is_weighted is True
         assert (ran.sigma_ini, ran.sigma_min, ran.sigma_max) == (None, None, None)
         assert ran.nwalkers == 20
 
     #
+    @pytest.mark.parametrize("knob", ["sigma_ini", "sigma_min", "sigma_max"])
+    def test_sigma_knobs_are_rejected_under_declared_noise(self, knob):
+        mc = MC(use_mc=1, **{knob: 0.5})
+        with pytest.raises(ValueError, match="__lnsigma nuisance"):
+            mc.resolve(sigma_fit=0.3, n_dim=4, weighted=True)
+
+    #
+    def test_weighted_request_without_declared_noise_raises(self):
+        mc = MC(use_mc=1, is_weighted=True)
+        with pytest.raises(ValueError, match="needs a declared noise model"):
+            mc.resolve(sigma_fit=0.3, n_dim=4, weighted=False)
+
+    #
+    def test_forcing_the_weighting_leaves_the_request_untouched(self):
+        mc = MC(use_mc=1)
+        ran = mc.resolve(sigma_fit=0.3, n_dim=4, weighted=True)
+        assert ran.is_weighted is True
+        assert mc.is_weighted is False
+        assert mc.sigma_ini is None
+
+    #
     def test_zero_residual_cannot_seed_the_noise_scale(self):
         with pytest.raises(ValueError, match="noiseless"):
-            MC(use_mc=1).resolve(sigma_fit=0.0, n_dim=2)
+            MC(use_mc=1).resolve(sigma_fit=0.0, n_dim=2, weighted=False)
+
+
+#
+#
+class TestWeightedPosteriorWidth:
+    """A declared noise model puts the residual in units of sigma, so emcee
+    samples the exact posterior and its widths must match the optimizer's
+    ``stderr`` -- no ``__lnsigma`` rescaling in between."""
+
+    #
+    def test_poisson_chain_widths_match_stderr(self):
+        _, file = _poisson_ready_file()
+        mc = MC(use_mc=1, steps=400, burn=100, thin=1, workers=1, seed=7)
+        file.fit_baseline(model_name="single_glp", stages=2, try_ci=0, mc_settings=mc)
+
+        out = _fit_output(file)
+        assert out.emcee_fin is not None  # type guard
+        chain = out.emcee_fin.flatchain
+        pars = file.get_parameters().set_index("name")
+        assert set(chain.columns) == set(pars.index)
+        for par_name in chain.columns:
+            width = float(np.std(chain[par_name]))
+            stderr = float(pars.loc[par_name, "stderr"])
+            # measured 0.93-1.11 over 200-800 steps and two sampler seeds
+            assert 0.85 < width / stderr < 1.15, (
+                f"{par_name}: chain width / stderr = {width / stderr:.3f}"
+            )
 
 
 #
@@ -210,20 +280,35 @@ class TestResolutionInFit:
         assert "seed" not in {k for k in slot.fit_settings if k != "mc"}
 
     #
-    def test_weighted_run_omits_sigma_from_provenance(self):
-        project, file = _baseline_ready_file()
-        mc = MC(use_mc=1, is_weighted=True, nwalkers=32, **_CHAIN)
+    def test_declared_noise_run_omits_sigma_from_provenance(self):
+        project, file = _poisson_ready_file()
+        mc = MC(use_mc=1, nwalkers=32, **_CHAIN)
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0, mc_settings=mc)
 
         ran = _fit_output(file).mc_settings
         assert ran is not None  # type guard
+        assert ran.is_weighted is True
         assert ran.sigma_ini is None
+        out = _fit_output(file)
+        assert out.emcee_fin is not None  # type guard
+        assert "__lnsigma" not in out.emcee_fin.var_names
+        assert "__lnsigma" not in out.emcee_fin.params
+        assert "__lnsigma" not in list(out.emcee_ci.iloc[:, 0])
         slot = project._fit_history[0]
         assert slot.fit_settings is not None  # type guard
         block = slot.fit_settings["mc"]
         assert block["nwalkers"] == 32
         assert block["is_weighted"] is True
         assert not {"sigma_ini", "sigma_min", "sigma_max", "seed"} & set(block)
+
+    #
+    def test_weighted_request_without_declared_noise_raises_at_fit_time(self):
+        _, file = _baseline_ready_file()
+        mc = MC(use_mc=1, is_weighted=True, **_CHAIN)
+        with pytest.raises(ValueError, match="needs a declared noise model"):
+            file.fit_baseline(
+                model_name="single_glp", stages=1, try_ci=0, mc_settings=mc
+            )
 
     #
     def test_seed_makes_the_chain_reproducible(self):

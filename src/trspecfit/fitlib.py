@@ -32,6 +32,7 @@ import pandas as pd
 from IPython.display import display
 from lmfit.minimizer import MinimizerResult
 from numpy.typing import ArrayLike
+from scipy.stats import chi2 as chi2_dist
 
 from trspecfit import spectra
 from trspecfit.config.plot import PlotConfig
@@ -64,6 +65,37 @@ def _result_errorbars(result: MinimizerResult) -> bool:
     """Safely read MinimizerResult.errorbars with fallback."""
 
     return bool(getattr(result, "errorbars", False))
+
+
+#
+def _chi2_compare(best_fit: MinimizerResult, new_fit: MinimizerResult) -> float:
+    """
+    Confidence level of a profiled point from its chi-square increase.
+
+    ``lmfit.conf_interval``'s default ``f_compare`` runs an F-test on the
+    *ratio* ``new_chi / best_chi - 1``, which profiles out a noise scale a
+    declared noise model already fixes — and being a ratio it cannot see
+    that scale at all, so the two thresholds agree only at
+    ``chi2_red ~ 1``. Under a declared noise model the residual is in units
+    of sigma, so both ``chisqr`` values here are weighted chi-squares and
+    their difference follows a chi-square distribution with as many degrees
+    of freedom as the profiling fixed parameters.
+
+    Parameters
+    ----------
+    best_fit : lmfit.minimizer.MinimizerResult
+        Result of the unconstrained fit.
+    new_fit : lmfit.minimizer.MinimizerResult
+        Result of the fit with the profiled parameter(s) held fixed.
+
+    Returns
+    -------
+    float
+        Probability that the increase is not a fluctuation.
+    """
+
+    nfix = int(best_fit.nvarys) - int(new_fit.nvarys)
+    return float(chi2_dist.cdf(new_fit.chisqr - best_fit.chisqr, nfix))
 
 
 #
@@ -737,6 +769,9 @@ def fit_wrapper(
         - 0: Skip CI calculation
         - 1: Calculate CI if error bars available (result.errorbars=True)
 
+        A declared *noise* switches the threshold to the chi-square one
+        (:func:`_chi2_compare`); ``'unknown'`` keeps lmfit's F-test.
+
     mc_settings : ulmfit.MC, default=ulmfit.MC()
         MCMC configuration (``use_mc``: 0 skip, 1 always, 2 if CI fails).
         Knobs left at None are resolved from the optimizer result into a
@@ -997,7 +1032,11 @@ def fit_wrapper(
     if try_ci == 1:
         if _result_errorbars(par_fin):
             ci_fin, _trace_fin = lmfit.conf_interval(
-                mini, par_fin, sigmas=ci_sigmas, trace=True
+                mini,
+                par_fin,
+                sigmas=ci_sigmas,
+                trace=True,
+                prob_func=_chi2_compare if weighted else None,
             )
             if show_output >= 1:
                 print()
@@ -1025,12 +1064,15 @@ def fit_wrapper(
         # emcee gets the copy.
         par_fin_params = copy.deepcopy(_result_params(par_fin))
         # Resolve the derivable MC knobs from the optimizer result into a
-        # copy: sigma from the RMS residual (the MLE sigma of the unweighted
-        # Gaussian model on the data view this fit saw), walkers from the
-        # sampled dimension count. The caller's MC is left untouched.
-        n_dim = int(par_fin.nvarys) + (0 if mc_settings.is_weighted else 1)
+        # copy: the weighting from the declared noise model, sigma from the
+        # RMS residual (the MLE sigma of the unweighted Gaussian model on the
+        # data view this fit saw), walkers from the sampled dimension count.
+        # The caller's MC is left untouched.
+        n_dim = int(par_fin.nvarys) + (0 if weighted else 1)
         sigma_fit = float(np.sqrt(par_fin.chisqr / par_fin.ndata))
-        mc_run = mc_settings.resolve(sigma_fit=sigma_fit, n_dim=n_dim)
+        mc_run = mc_settings.resolve(
+            sigma_fit=sigma_fit, n_dim=n_dim, weighted=weighted
+        )
         if not mc_run.is_weighted:
             # __lnsigma only enters lmfit's log-probability for unweighted
             # sampling; adding it to a weighted run would sample a flat,

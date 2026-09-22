@@ -983,8 +983,8 @@ class TestMcmcPayload:
     @pytest.mark.slow
     def test_weighted_mcmc_has_no_lnsigma(self):
         """__lnsigma only enters lmfit's log-probability for unweighted
-        sampling — a weighted run (is_weighted=True) must not add and sample
-        a likelihood-free nuisance dimension."""
+        sampling — a declared noise model forces weighted sampling, which
+        must not add and sample a likelihood-free nuisance dimension."""
 
         from trspecfit.utils.lmfit import MC
 
@@ -997,15 +997,9 @@ class TestMcmcPayload:
         file.define_baseline(
             time_start=0, time_stop=3, time_type="ind", show_plot=False
         )
-        mc = MC(
-            use_mc=1,
-            steps=20,
-            nwalkers=32,
-            burn=5,
-            thin=1,
-            workers=1,
-            is_weighted=True,
-        )
+        # the analog simulator's sigma: noise_level times the signal maximum
+        file.set_noise("gaussian", sigma=0.01 * np.max(np.abs(data)))
+        mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1, workers=1)
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0, mc_settings=mc)
 
         slot = project._fit_history[0]
