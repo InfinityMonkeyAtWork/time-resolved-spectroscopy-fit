@@ -53,7 +53,10 @@ The deviance term is `scipy.special.kl_div(d, m)`, exact at `d = 0`.
 analytic limit `−sqrt(scale/m)` on the branch `|m − d| ≤ 1e-6·m` (covers
 `d = m` exactly, hence noiseless data; the closed form loses digits there).
 Gaussian: `−1/σ`. Below the floor (`d > 0`) the factor is its value at the
-floor. The factor multiplies the model Jacobian `∂m/∂θ`; `jacobian_fun` and
+floor. At `d = 0` the residual has no floor (the deviance is finite at
+`m = 0`), so the factor is the exact `−sqrt(scale/(2m))` for `m > 0` and `0`
+on the `m ≤ 0` plateau; flooring it there would make `JᵀJ` claim
+information from bins whose residual is flat (review, 2026-09-21). The factor multiplies the model Jacobian `∂m/∂θ`; `jacobian_fun` and
 `jacobian_fun_project` already return `−∂m/∂θ` (the unweighted residual
 Jacobian), so their output is multiplied by `−∂r/∂m`, i.e. `1/σ` for
 Gaussian. Applied in numpy after one forward evaluation of `m`; no JAX code

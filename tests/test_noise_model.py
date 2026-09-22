@@ -197,7 +197,7 @@ def test_poisson_residual_below_floor_is_linear_with_floor_slope():
 
 #
 def test_poisson_residual_at_zero_data_plateaus_for_negative_model():
-    """``d = 0`` scores ``m <= 0`` like ``m = 0``, without warnings."""
+    """``d = 0`` scores ``m <= 0`` like ``m = 0``, with a zero slope there."""
 
     noise = NoiseModel(kind="poisson", scale=2.0)
     with warnings.catch_warnings():
@@ -205,11 +205,21 @@ def test_poisson_residual_at_zero_data_plateaus_for_negative_model():
         residual = noise.apply(np.zeros(3), np.array([-5.0, -1e-9, 0.0]))
         factor = noise.jacobian_factor(np.zeros(3), np.array([-5.0, -1e-9, 0.0]))
     assert np.all(residual == 0.0)
-    assert np.all(np.isfinite(factor))
-    # the factor is taken at the floor, so the gradient stays finite and
-    # pushes a negative model back up
-    m_floor = EPS_COUNTS / 2.0
-    np.testing.assert_allclose(factor, -np.sqrt(2.0 / (2.0 * m_floor)), rtol=1e-12)
+    assert np.all(factor == 0.0)
+
+
+#
+def test_poisson_factor_at_zero_data_is_exact_below_the_floor():
+    """``d = 0`` has no floor: the factor is ``-sqrt(scale / (2 m))`` down to 0+."""
+
+    scale = 2.0
+    noise = NoiseModel(kind="poisson", scale=scale)
+    m_floor = EPS_COUNTS / scale
+    m = np.array([0.5 * m_floor, 0.01 * m_floor, 3.0 * m_floor])
+    factor = noise.jacobian_factor(np.zeros(3), m)
+    np.testing.assert_allclose(factor, -np.sqrt(scale / (2.0 * m)), rtol=1e-12)
+    fd = _factor_fd(noise, np.zeros(3), m, step=1e-9 * m_floor)
+    np.testing.assert_allclose(factor, fd, rtol=1e-5)
 
 
 # ---------------------------------------------------------------------------

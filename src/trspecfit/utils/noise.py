@@ -292,9 +292,12 @@ class NoiseModel:
             ``-sqrt(scale / 2) * |m - d| / (m * sqrt(D))`` with
             ``D = kl_div(d, m)`` (``'poisson'``), the latter replaced by its
             analytic limit ``-sqrt(scale / m)`` on the ``|m - d| <=
-            LIMIT_REL_TOL * m`` branch and evaluated at the floor
-            ``EPS_COUNTS / scale`` below it. Broadcast to the common shape of
-            *data* and *model*.
+            LIMIT_REL_TOL * m`` branch. Where ``d > 0`` the factor is
+            evaluated at the floor ``EPS_COUNTS / scale`` below it, the
+            slope of the residual's linear extension. Where ``d = 0`` the
+            residual has no floor, so neither has its derivative: the exact
+            ``-sqrt(scale / (2 m))`` for ``m > 0`` and ``0`` on the ``m <= 0``
+            plateau. Broadcast to the common shape of *data* and *model*.
         """
 
         d = np.asarray(data, dtype=float)
@@ -306,7 +309,11 @@ class NoiseModel:
         if self.kind == NOISE_TYPE_POISSON:
             assert self.scale is not None  # type guard
             m_floor = EPS_COUNTS / self.scale
-            return _poisson_slope(d, np.maximum(m, m_floor), self.scale)
+            # the floor belongs to d > 0 only; d = 0 differentiates the exact
+            # residual, whose plateau at m <= 0 has zero slope
+            m_eval = np.where(d > 0.0, np.maximum(m, m_floor), m)
+            slope = _poisson_slope(d, m_eval, self.scale)
+            return np.where((d == 0.0) & (m <= 0.0), 0.0, slope)
         return np.broadcast_to(-1.0, np.broadcast_shapes(d.shape, m.shape))
 
 
