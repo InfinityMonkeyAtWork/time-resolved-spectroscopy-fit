@@ -72,19 +72,23 @@ def compute_fit_metrics(
     observed: np.ndarray,
     fit: np.ndarray,
     n_free_pars: int | None,
-    sigma_eff: float | None = None,
+    noise: NoiseLike | None = None,
 ) -> dict[str, float]:
     """
     Compute fit-quality metrics from observed and fitted arrays.
 
-    Always emits the raw (unweighted) diagnostics ``chi2_raw`` and
-    ``chi2_red_raw`` — these match lmfit's ``MinimizerResult.chisqr / .redchi``
-    for unweighted fits. When ``sigma_eff`` is provided, also emits the
-    σ-calibrated ``chi2`` and ``chi2_red`` (``≈ 1`` for a fit at the noise
-    floor); without ``sigma_eff`` both calibrated values are ``NaN``.
-    ``r2``, ``aic``, ``bic`` are unaffected by σ (R² is dimensionless;
-    AIC/BIC depend on raw χ² but their *differences* are invariant under
-    constant rescaling).
+    ``chi2_raw``, ``chi2_red_raw`` and ``r2`` are always the unweighted
+    diagnostics — they match lmfit's ``MinimizerResult.chisqr / .redchi``
+    for an unweighted fit and stay comparable across noise models.
+
+    With a weighted *noise* model the objective itself is in likelihood
+    units, and the remaining metrics follow it: ``chi2`` is the sum of
+    squared weighted residuals (Gaussian) or the Poisson deviance,
+    ``chi2_red = chi2 / dof``, ``aic = chi2 + 2k`` and
+    ``bic = chi2 + k·ln(n)``. Without one (``None`` or ``'unknown'``)
+    ``chi2`` / ``chi2_red`` are ``NaN`` and AIC/BIC keep the profiled
+    Gaussian form ``n·ln(chi2_raw/n) + penalty``, which estimates the
+    unknown variance from the residual.
 
     Parameters
     ----------
@@ -100,20 +104,23 @@ def compute_fit_metrics(
         per-file projections of a project-level joint fit, where the joint
         count does not decompose by file — and every count-dependent metric
         (``chi2_red_raw``, ``chi2_red``, ``aic``, ``bic``) is ``NaN``.
-    sigma_eff : float, optional
-        Effective noise σ on the fit's data view (per-pixel for SbS/2D,
-        ``σ_pixel / √N_avg`` for baseline). When ``None`` / ``NaN`` /
-        non-positive, the calibrated ``chi2``/``chi2_red`` fields are
-        ``NaN``. Caller is responsible for any view-specific scaling.
+        ``chi2`` is unaffected: it needs no parameter count and sums
+        cleanly across the projections of one joint objective.
+    noise : NoiseModel or SegmentedNoise, optional
+        Declared noise **already reduced to this data view** (see
+        ``utils.noise.NoiseModel.for_view``), or the per-segment model of a
+        concatenated joint residual. ``None`` and ``'unknown'`` are the
+        unweighted path.
 
     Returns
     -------
     dict
         ``{"chi2_raw", "chi2_red_raw", "chi2", "chi2_red", "r2", "aic",
-        "bic"}``. ``chi2_red_raw``, ``aic``, ``bic`` are ``NaN`` when
-        ``n_free_pars`` is ``None``, ``ndata <= n_free_pars``, or
-        ``chi2_raw == 0`` (degenerate fits); ``chi2`` / ``chi2_red`` are
-        additionally ``NaN`` when ``sigma_eff`` is missing or invalid.
+        "bic"}``. ``chi2_red_raw``, ``chi2_red``, ``aic``, ``bic`` are
+        ``NaN`` when ``n_free_pars`` is ``None`` or ``ndata <=
+        n_free_pars``; the unweighted ``aic`` / ``bic`` additionally when
+        ``chi2_raw == 0`` (a degenerate fit the profiled form cannot
+        score); ``chi2`` / ``chi2_red`` when no weighted *noise* is given.
     """
 
     residual = np.asarray(observed) - np.asarray(fit)
@@ -124,6 +131,14 @@ def compute_fit_metrics(
     ss_tot = float(np.sum((obs_flat - obs_flat.mean()) ** 2))
     r2 = float("nan") if ss_tot == 0.0 else 1.0 - chi2_raw / ss_tot
 
+    weighted = noise is not None and noise.is_weighted
+    if weighted:
+        assert noise is not None  # type guard
+        chi2 = float(np.sum(np.asarray(noise.apply(observed, fit)) ** 2))
+    else:
+        chi2 = float("nan")
+
+    chi2_red = float("nan")
     if n_free_pars is None:
         chi2_red_raw = float("nan")
         aic = float("nan")
@@ -131,24 +146,17 @@ def compute_fit_metrics(
     else:
         dof = ndata - n_free_pars
         chi2_red_raw = chi2_raw / dof if dof > 0 else float("nan")
-
-        if chi2_raw > 0 and ndata > 0:
+        if weighted:
+            chi2_red = chi2 / dof if dof > 0 else float("nan")
+            aic = chi2 + 2 * n_free_pars
+            bic = chi2 + math.log(ndata) * n_free_pars if ndata > 0 else float("nan")
+        elif chi2_raw > 0 and ndata > 0:
             log_chi2_per_n = math.log(chi2_raw / ndata)
             aic = ndata * log_chi2_per_n + 2 * n_free_pars
             bic = ndata * log_chi2_per_n + math.log(ndata) * n_free_pars
         else:
             aic = float("nan")
             bic = float("nan")
-
-    if sigma_eff is None or not np.isfinite(sigma_eff) or sigma_eff <= 0:
-        chi2 = float("nan")
-        chi2_red = float("nan")
-    else:
-        sigma_sq = float(sigma_eff) ** 2
-        chi2 = chi2_raw / sigma_sq
-        chi2_red = (
-            chi2_red_raw / sigma_sq if np.isfinite(chi2_red_raw) else float("nan")
-        )
 
     return {
         "chi2_raw": chi2_raw,

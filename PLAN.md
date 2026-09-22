@@ -175,19 +175,19 @@ the end.
       `SegmentedNoise` vs finite differences (untested after A).
 
 ### C. Identity, metrics, archive
-- [ ] C1 `compute_fit_metrics(noise=)`: `chi2` from the weighted residual,
+- [x] C1 `compute_fit_metrics(noise=)`: `chi2` from the weighted residual,
       AIC/BIC forms, `sigma_eff` as the constant-Gaussian view reduction (NaN
       otherwise); SbS per-slice and joint callers. The joint helper today
       computes profiled AIC/BIC from the concatenated raw residual and only
       then overwrites `chi2`: replace those with the summed-objective forms.
-- [ ] C2 `SavedFitSlot` + builders: `noise_scale`, `sigma` array, `sigma_data`
+- [x] C2 `SavedFitSlot` + builders: `noise_scale`, `sigma` array, `sigma_data`
       NaN for arrays; `_has_any_sigma` and other presence signals key on
       `noise_type`.
-- [ ] C3 `encode_input_files` 4th element; `compute_optimization_hash`
+- [x] C3 `encode_input_files` 4th element; `compute_optimization_hash`
       unchanged in signature; reader fallback for 3-element entries; check
       `variants()` / `diff()` parsing.
-- [ ] C4 Writer/reader: `noise_scale` attr, optional `sigma` dataset.
-- [ ] C5 Noise-model key for `select='best'` (`chi2_red`, `aic`, `bic`) and
+- [x] C4 Writer/reader: `noise_scale` attr, optional `sigma` dataset.
+- [x] C5 Noise-model key for `select='best'` (`chi2_red`, `aic`, `bic`) and
       for `compare_models` conflict detection (`_sigma_conflicts` and the
       σ-scaled column drop), replacing the finite-`sigma_eff` tests. Docs:
       `fit_archive_principles.md` amend the "σ is post-hoc" rule and the
@@ -197,7 +197,7 @@ the end.
       value sets `noise_type ∈ {unknown, gaussian, poisson}` /
       `sigma_type ∈ {constant, per_point}` that `validate_noise_metadata`
       accepts since B; `compare_models` docstring.
-- [ ] C6 Tests: hash changes with any declared noise (incl. constant σ) and
+- [x] C6 Tests: hash changes with any declared noise (incl. constant σ) and
       not with `unknown`; roundtrip with per-point σ and Poisson scale;
       3-element `input_files` reads; `sigma_eff` finite only for constant
       Gaussian and the identity pinned there; `select='best'` by `aic` and
@@ -208,6 +208,9 @@ the end.
 - [ ] D1 `MC.resolve(..., noise_kind)`: declared noise forces `is_weighted`,
       rejects σ knobs; `is_weighted=True` under `unknown` raises.
 - [ ] D2 `conf_interval(prob_func=χ² threshold)` under declared noise.
+      Seen in C: with a declared σ on near-noiseless data lmfit's default
+      F-test bracketing raises (`f(a)` and `f(b)` have the same sign); the
+      χ² threshold must not, and D3/D4 cover that case.
 - [ ] D3 Tests in `test_mc_settings.py`: forced/raised cases; seeded short
       chain on Poisson data: posterior widths vs `stderr` within tolerance.
 - [ ] D4 CI test on a two-parameter model (`conf_interval` refuses fewer

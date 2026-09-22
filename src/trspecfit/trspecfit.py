@@ -1905,7 +1905,7 @@ class Project:
         # carries its version stamp (correction state) and its 2d-window
         # selection; the parameter table and initial state are the
         # combined optimizer's.
-        input_entries: list[tuple[str, str, str]] = []
+        input_entries: list[tuple[str, str, str, unoise.NoiseModel | None]] = []
         structure_entries = []
         for f, model in zip(self.files, models, strict=True):
             version_stamp, _, _ = f._capture_file_identity()
@@ -1914,7 +1914,9 @@ class Project:
                 e_lim=list(f.e_lim) if f.e_lim else None,
                 t_lim=list(f.t_lim) if f.t_lim else None,
             )
-            input_entries.append((f.name, version_stamp, selection_json))
+            # The declared File-level model, not its 2d-window view: the
+            # window is already keyed through the selection.
+            input_entries.append((f.name, version_stamp, selection_json, f.noise))
             assert model is not None  # type guard
             structure_entries.append(f._model_structure_entry(model))
         input_files_joint = fit_io.encode_input_files(
@@ -1934,11 +1936,12 @@ class Project:
             ),
         )
         slots_2d: list[fit_io.SavedFitSlot] = []
-        for f in self.files:
+        for f, file_noise in zip(self.files, noise_models, strict=True):
             slot = f._build_2d_slot(
                 model_name=model_name,
                 fit_fun_str="fit_model_mcp",
                 fit_settings=joint_fit_settings,
+                noise=file_noise,
                 joint_identity=(joint_hash, input_files_joint),
                 joint_model_structure=model_structure_joint,
             )
@@ -1953,6 +1956,7 @@ class Project:
             slots=slots_2d,
             fit_output=result,
             fit_settings=joint_fit_settings,
+            noise=noise_joint,
         )
         self._fit_history.extend(slots_2d)
         self._record_joint(joint_record)
@@ -3357,6 +3361,7 @@ class File:
                     fit_wrapper_kwargs=lmfit_wrapper_kwargs,
                     mc_settings=fit_out.mc_settings,
                 ),
+                noise=noise_view,
             )
 
         if self.p.show_output >= 1:
@@ -3571,6 +3576,7 @@ class File:
                     fit_wrapper_kwargs=lmfit_wrapper_kwargs,
                     mc_settings=fit_out.mc_settings,
                 ),
+                noise=noise_view,
             )
 
         if show_plot and self.p.show_output >= 1:
@@ -3827,6 +3833,9 @@ class File:
         n_slices = len(self.data)
         # each slice fit sees one row of data on the e_lim window
         (_e_slice,) = fitlib._fit_window_slices(1, self.e_lim, [])
+        noise_views = [
+            self._noise_view(rows=s_i, e_window=_e_slice) for s_i in range(n_slices)
+        ]
 
         # resolve worker count: None -> auto, otherwise honour user.
         if n_workers is None:
@@ -3874,7 +3883,7 @@ class File:
                     par=self.model_sbs.lmfit_pars,
                     stages=stages,
                     show_output=0,
-                    noise=self._noise_view(rows=s_i, e_window=_e_slice),
+                    noise=noise_views[s_i],
                     **fit_wrapper_kwargs,
                 )
                 self.results_sbs.append(result_sbs)
@@ -3908,7 +3917,7 @@ class File:
                         stages=stages,
                         fit_wrapper_kwargs={
                             **fit_wrapper_kwargs,
-                            "noise": self._noise_view(rows=s_i, e_window=_e_slice),
+                            "noise": noise_views[s_i],
                         },
                     ): s_i
                     for s_i in range(n_slices)
@@ -3965,6 +3974,7 @@ class File:
                         else None
                     ),
                 ),
+                noise=noise_views,
             )
             if self.p.show_output >= 1 and slot_sbs is not None:
                 # Inline display via the explicit plot API (reads the slot
@@ -4065,7 +4075,12 @@ class File:
         return (self.name, energy_names, model.dynamics_entries())
 
     #
-    def _slot_capture_meta(self, result_fin: Any) -> dict[str, Any]:
+    def _slot_capture_meta(
+        self,
+        result_fin: Any,
+        *,
+        noise: fit_io.ViewNoise,
+    ) -> dict[str, Any]:
         """
         File-level metadata shared by every slot-capture site.
 
@@ -4077,6 +4092,13 @@ class File:
         no ``nvarys`` (the minimal per-file result of a project-level
         joint fit — the joint count does not decompose by file), which
         makes the count-dependent metrics NaN.
+
+        ``noise`` is the view-reduced model the fit path handed to
+        ``fitlib.fit_wrapper`` (one per slice for SbS) — passed down from
+        the fit, never re-derived here, so the σ that weighted the
+        residual is the σ the slot records. ``File.noise`` rides along as
+        the declared model: it is frozen, so it crosses the capture
+        boundary as a snapshot like the arrays around it.
         """
 
         nvarys = getattr(result_fin, "nvarys", None)
@@ -4085,10 +4107,9 @@ class File:
             "file_name": self.name,
             "fit_alg": str(getattr(result_fin, "method", "unknown")),
             "n_free_pars": int(nvarys) if nvarys is not None else None,
-            "noise_type": self.noise_type,
+            "noise_declared": self.noise,
+            "noise": noise,
             "sigma_source": self.sigma_source,
-            "sigma_type": self.sigma_type,
-            "sigma_data": self.sigma_data,
             "version_stamp": version_stamp,
             "dark": dark,
             "calibration": calibration,
@@ -4102,6 +4123,7 @@ class File:
         model_name: str,
         fit_fun_str: str,
         fit_settings: dict[str, Any],
+        noise: unoise.NoiseModel | None,
     ) -> fit_io.SavedFitSlot | None:
         """
         Build a SavedFitSlot from the just-completed baseline fit and append
@@ -4190,7 +4212,7 @@ class File:
             else None
         )
         slot = fit_io._slot_from_baseline(
-            **self._slot_capture_meta(result_fin),
+            **self._slot_capture_meta(result_fin, noise=noise),
             model_name=model_name,
             model_structure=fit_io.encode_model_structure(
                 [self._model_structure_entry(self.model_base)]
@@ -4226,6 +4248,7 @@ class File:
         time_range: list[float] | None,
         time_type: str,
         fit_settings: dict[str, Any],
+        noise: unoise.NoiseModel | None,
     ) -> fit_io.SavedFitSlot | None:
         """Build and append a SavedFitSlot for a completed spectrum fit."""
 
@@ -4305,7 +4328,7 @@ class File:
             else None
         )
         slot = fit_io._slot_from_spectrum(
-            **self._slot_capture_meta(result_fin),
+            **self._slot_capture_meta(result_fin, noise=noise),
             model_name=model_name,
             model_structure=fit_io.encode_model_structure(
                 [self._model_structure_entry(self.model_spec)]
@@ -4340,6 +4363,7 @@ class File:
         model_name: str,
         fit_fun_str: str,
         fit_settings: dict[str, Any],
+        noise: Sequence[unoise.NoiseModel | None],
     ) -> fit_io.SavedFitSlot | None:
         """
         Build and append a SavedFitSlot for a completed slice-by-slice fit.
@@ -4447,7 +4471,7 @@ class File:
         parameter_metadata, _ = fit_io.params_identity(self.results_sbs[0].par_ini)
         initial_state = [fit_io.params_identity(r.par_ini)[1] for r in self.results_sbs]
         slot = fit_io._slot_from_sbs(
-            **self._slot_capture_meta(slice0_result),
+            **self._slot_capture_meta(slice0_result, noise=list(noise)),
             model_name=model_name,
             model_structure=fit_io.encode_model_structure(
                 [self._model_structure_entry(self.model_sbs)]
@@ -4483,6 +4507,7 @@ class File:
         model_name: str,
         fit_fun_str: str,
         fit_settings: dict[str, Any],
+        noise: unoise.NoiseModel | None,
     ) -> fit_io.SavedFitSlot | None:
         """Build and append a SavedFitSlot for a completed 2D global fit."""
 
@@ -4490,6 +4515,7 @@ class File:
             model_name=model_name,
             fit_fun_str=fit_fun_str,
             fit_settings=fit_settings,
+            noise=noise,
         )
         if slot is not None:
             self.p._record_slot(slot)
@@ -4502,6 +4528,7 @@ class File:
         model_name: str,
         fit_fun_str: str,
         fit_settings: dict[str, Any],
+        noise: unoise.NoiseModel | None,
         joint_identity: tuple[str, str] | None = None,
         joint_model_structure: str | None = None,
     ) -> fit_io.SavedFitSlot | None:
@@ -4594,7 +4621,7 @@ class File:
         if self.time is not None:
             time_view = self.time[t_lim[0] : t_lim[1]] if t_lim else self.time
         slot = fit_io._slot_from_2d(
-            **self._slot_capture_meta(result_fin),
+            **self._slot_capture_meta(result_fin, noise=noise),
             model_name=model_name,
             model_structure=model_structure,
             model_yaml=_model_yaml_records(self.model_2d),
@@ -4984,6 +5011,7 @@ class File:
                     fit_wrapper_kwargs=fit_wrapper_kwargs,
                     mc_settings=fit_out.mc_settings,
                 ),
+                noise=noise_view,
             )
 
         if stages >= 1:

@@ -39,6 +39,28 @@ What the break bought, in one pass:
   effective evaluator backend, and the Jacobian's qualified name.
 - **Compression.** Array datasets are gzip + shuffle.
 
+### Amendment 2026-09-21 — declared noise (additive, still schema 7)
+
+Three additions, all optional on read, so a slot written before them loads
+unchanged. What stays put for an `unknown` slot is its identity: `input_files`
+and `optimization_hash` are unchanged, because the fourth element is omitted
+for `unknown`. The slot group itself is not byte-identical — the writer always
+emits `metadata.noise_scale` (NaN for `unknown`), which older slots lack and
+the reader defaults to NaN:
+
+- slot `metadata.noise_scale` (missing → `NaN`),
+- an optional per-slot `sigma` dataset (missing → `None`),
+- a fourth element on an `input_files` entry holding that file's declared
+  noise model — `{"kind": "poisson", "scale": "<exact decimal>"}`,
+  `{"kind": "gaussian", "sigma": "<exact decimal>"}`, or `{"kind":
+  "gaussian", "sigma": [dtype, shape, sha256]}` for a per-point σ. An
+  `unknown` entry keeps its three elements, so `optimization_hash` is
+  unchanged for every fit without a declared noise model.
+
+`validate_noise_metadata` accepts `noise_type ∈ {"unknown", "gaussian",
+"poisson"}`, `sigma_source == "user_supplied"` and `sigma_type ∈
+{"constant", "per_point"}`.
+
 ## Conventions
 
 - **Group-path components are positional, zero-padded six-digit keys**
@@ -206,7 +228,9 @@ project/files/000000/slots/000000/
 │       # --- identity ---
 │       handle             : str     # 64 hex; sha256(optimization_hash + file_name)
 │       optimization_hash  : str     # 64 hex; shared by all joint siblings
-│       input_files        : str     # JSON: [scope, [[name, version_stamp, selection], ...]]
+│       input_files        : str     # JSON: [scope, [[name, version_stamp, selection
+│                                  #                  (, noise)], ...]]; the 4th
+│                                  #  element only when noise_type != "unknown"
 │       model_structure    : str     # JSON: canonical per-file structure encoding
 │       fit_view_sha256    : str     # comparability hash; see below
 │       fit_type           : str     # "baseline" | "spectrum" | "sbs" | "2d"
@@ -219,11 +243,13 @@ project/files/000000/slots/000000/
 │       joint_ref          : str  (opt)  # owning joint record's optimization_hash
 │       #                              present iff input_files scope == "project"
 │       # --- noise (snapshot at fit time) ---
-│       noise_type         : str
-│       sigma_source       : str
-│       sigma_type         : str
-│       sigma_data         : float64  # NaN when no σ was set
-│       sigma_eff          : float64  # NaN when no σ was set
+│       noise_type         : str      # "unknown" | "gaussian" | "poisson"
+│       sigma_source       : str      # "user_supplied"
+│       sigma_type         : str      # "constant" | "per_point"
+│       sigma_data         : float64  # declared constant σ; NaN otherwise
+│       sigma_eff          : float64  # constant σ of the fit view; NaN otherwise
+│       noise_scale        : float64  # Poisson counts/unit on the fit view;
+│                                  #  NaN unless noise_type == "poisson"
 │       # --- metrics (non-sbs only) ---
 │       chi2_raw, chi2, r2                : float64  # always
 │       chi2_red_raw, chi2_red, aic, bic  : float64  # omitted for joint projections
@@ -233,6 +259,8 @@ project/files/000000/slots/000000/
 ├── params_init              (opt)  # sbs only
 ├── observed                        # 1D or 2D; source dtype
 ├── fit                             # same shape as observed; source dtype
+├── sigma                    (opt)  # per-point σ on the fit view, shape of
+│                                   #  observed; only when sigma_type == "per_point"
 ├── fit_ini                  (opt)  # same shape as fit
 ├── dark                     (opt)  # correction in force for this fit
 ├── calibration              (opt)  # correction in force for this fit
@@ -623,7 +651,8 @@ Per slot, the reader produces a `SavedFitSlot` with:
 | `model_name`, `fit_type`, `fit_alg`, `timestamp` | slot `metadata` attrs |
 | `selection` / `selection_json` | the `input_files` entry matching the slot's file name |
 | `label`, `joint_ref` | slot `metadata` attrs (`None` if absent) |
-| `noise_type`, `sigma_source`, `sigma_type`, `sigma_data`, `sigma_eff` | slot `metadata` attrs |
+| `noise_type`, `sigma_source`, `sigma_type`, `sigma_data`, `sigma_eff`, `noise_scale` | slot `metadata` attrs (`noise_scale` → NaN if absent) |
+| `sigma` | dataset → read-only ndarray (`None` if absent) |
 | `params` (+ `params_meta` / `params_stderr` / `params_init`) | datasets → DataFrames; long-form `""`/NaN ↔ `None` restored |
 | `fit_settings` | `metadata.fit_settings` JSON → dict (`None` if absent) |
 | `metrics` | scalar attrs (non-sbs; omitted attrs → NaN) or `metrics_per_slice` (sbs) |

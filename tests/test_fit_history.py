@@ -36,7 +36,6 @@ from trspecfit.utils.fit_io import (
     JointFitResult,
     SavedFile,
     SavedFitSlot,
-    _compute_sigma_eff,
     build_selection_json,
     capture_saved_file,
     collapse_history_to_snapshot,
@@ -1311,10 +1310,13 @@ def _slot_stub(
     )
     sigma_data_f = float(sigma_data)
     is_unset = not np.isfinite(sigma_data_f)
+    # Mirror the live baseline reduction (σ / √N_avg over the averaged
+    # slices); every other fit type sees per-pixel data.
+    n_avg = 1
+    if fit_type == "baseline" and len(selection.get("base_t_ind") or []) == 2:
+        n_avg = int(selection["base_t_ind"][1]) - int(selection["base_t_ind"][0])
     sigma_eff = (
-        float("nan")
-        if is_unset
-        else _compute_sigma_eff(fit_type, selection, sigma_data_f)
+        float("nan") if is_unset else sigma_data_f / float(np.sqrt(max(n_avg, 1)))
     )
     if noise_type is None:
         noise_type = "unknown" if is_unset else "gaussian"
@@ -2067,9 +2069,9 @@ class TestFitResultsCompareModelsSigmaColumns:
             selection={"e_lim": None, "t_lim": None},
             metrics=self._scalar_metrics(chi2_red_raw=0.05),
         )
-        with pytest.raises(KeyError, match="file.set_sigma"):
+        with pytest.raises(KeyError, match="file.set_noise"):
             FitResults(slots=[slot]).compare_models(metrics=["chi2_red"])
-        with pytest.raises(KeyError, match="file.set_sigma"):
+        with pytest.raises(KeyError, match="file.set_noise"):
             FitResults(slots=[slot]).compare_models(metrics=["chi2"])
 
     #
@@ -2480,7 +2482,7 @@ class TestSelectSnapshotSlots:
             ),
             sigma_data=10.0,
         )
-        with pytest.raises(ValueError, match="sigma_eff values"):
+        with pytest.raises(ValueError, match="mixes noise models"):
             select_snapshot_slots([a, b], select="best", by="chi2_red")
         # The raw ranking stays available and picks the true winner.
         got = select_snapshot_slots([a, b], select="best", by="chi2_red_raw")
@@ -2578,12 +2580,18 @@ class TestCompareModelsSigmaTiers:
         assert list(df["chi2_raw"]) == [100.0, 120.0]
 
     #
-    def test_finite_sigma_next_to_unset_is_not_a_conflict(self):
+    def test_declared_noise_next_to_unknown_is_a_conflict(self):
+        """``unknown`` is a noise model of its own: its AIC/BIC use the
+        profiled form and its ``chi2_red`` is NaN, so the noise-scaled
+        columns are withheld rather than half-filled."""
+
         a, _ = self._mixed_sigma_pair()
-        c = _slot_stub(model_name="m3")  # no sigma set
+        c = _slot_stub(model_name="m3")  # no noise model declared
         df = FitResults(slots=[a, c]).compare_models()
-        assert "chi2_red" in df.columns
-        assert np.isnan(df["chi2_red"].iloc[1])
+        assert "chi2_red" not in df.columns
+        assert "sigma_eff" in df.columns  # the mix stays visible
+        with pytest.raises(ValueError, match="unknown"):
+            FitResults(slots=[a, c]).compare_models(metrics=["chi2_red"])
 
 
 #
@@ -2653,7 +2661,8 @@ class TestJointComparabilityKey:
         # Both stub projections share fit_view_sha256 "z"; a set of view
         # hashes would collapse them into one entry and make the two-file
         # joint fit look one-file.
-        assert key == (("f1", "z"), ("f2", "z"))
+        unknown = ("unknown", "nan", "nan")
+        assert key == (("f1", "z", unknown), ("f2", "z", unknown))
 
 
 #

@@ -229,8 +229,12 @@ plus an initial-state matrix.
 file_content_hash  = sha256(dtype + shape + data_raw + energy + time + aux_axis)
 file_version_stamp = sha256(file_content_hash + dark + calibration)
 
-input_files = (scope, sorted tuple of (file_name, file_version_stamp, selection))
+input_files = (scope, sorted tuple of (file_name, file_version_stamp, selection
+                                       [, declared noise model]))
                scope ∈ {"file", "project"}
+               the noise element is present iff noise_type != "unknown"
+               (2026-09-21; an "unknown" entry stays a triple, so pre-amendment
+                hashes are unchanged)
 
 optimization_hash = sha256(
     input_files                  # which data, which corrections, which windows
@@ -918,21 +922,35 @@ The key covers everything that determines the **fitted parameter values**.
 Analyses layered on an unchanged optimum are **attachments** to a fit, not
 distinct fits.
 
-σ is purely post-hoc: `compute_fit_metrics` divides `chi2_raw` by
-`sigma_eff²` ([fitlib.py:132-139](../../src/trspecfit/fitlib.py#L132)) and
-nothing passes weights to the minimizer. Setting σ and refitting therefore
-produces byte-identical `fit`, `params`, and `components`, differing only by
-a scalar divisor — and `chi2_raw` / `chi2_red_raw` are stored
-unconditionally, so not keying on σ loses nothing. `try_ci` and MCMC are the
-same shape: keying on them would produce sibling slots where one is strictly
-a superset of the other, and would fork a slot every time MCMC is re-run with
-a different random draw.
+σ was purely post-hoc through schema 7: `compute_fit_metrics` divided
+`chi2_raw` by `sigma_eff²` and nothing passed weights to the minimizer.
+Setting σ and refitting therefore produced byte-identical `fit`, `params`,
+and `components`, differing only by a scalar divisor — and `chi2_raw` /
+`chi2_red_raw` are stored unconditionally, so not keying on σ lost nothing.
+`try_ci` and MCMC are the same shape: keying on them would produce sibling
+slots where one is strictly a superset of the other, and would fork a slot
+every time MCMC is re-run with a different random draw.
+
+**Amendment (2026-09-21) — a declared noise model is a keyed input.**
+`File.set_noise` / `set_sigma` now weight the residual the optimizer
+minimizes (`(d − m)/σ` for Gaussian, the counting deviance for Poisson) and
+hold the covariance to the declared noise, so the fitted values, `stderr`,
+confidence intervals and MCMC widths all move with the declaration. Keying
+it is therefore forced for the weighted kinds, and it is keyed for a
+*constant* σ too, where the fitted values happen not to move: a same-hash
+append compares fitted values, finds them equal, and returns without
+refreshing the stored `stderr`, so an unkeyed σ would leave stale error bars
+in the archive. `noise_type = "unknown"` keeps the unweighted residual and
+adds nothing to the hash, so archives written before this amendment keep
+their hashes. σ's *reduction to the fit view* stays unkeyed — the view is
+already implied by the selection.
 
 | Keyed | Attachment (supplements an existing slot) |
 |---|---|
-| file version stamp (data + dark + calibration) | σ / noise metadata |
-| `fit_type` + selection / fit limits | `try_ci` → `conf_ci` |
-| shared parameter metadata + initial-state matrix | MCMC (chain, CI, acceptance) |
+| file version stamp (data + dark + calibration) | `try_ci` → `conf_ci` |
+| `fit_type` + selection / fit limits | MCMC (chain, CI, acceptance) |
+| shared parameter metadata + initial-state matrix | |
+| declared noise model (kind, `scale`, σ) — 2026-09-21 | |
 | `model_structure` (per-attachment records, incl. each `frequency`) | |
 | optimizer settings actually in force | |
 
@@ -1040,7 +1058,7 @@ fitting are not interesting.
 |---|---|---|
 | `data_raw`, `energy`, `time`, `aux_axis` | immutable after construction | file, one copy |
 | `dark`, `calibration` | mutable, entered the numbers | **slot**, per fit |
-| σ (`sigma_data`, `sigma_eff`, noise metadata) | mutable, entered the numbers | **slot**, per fit (already the case) |
+| σ (`sigma_data`, `sigma_eff`, `noise_scale`, `sigma`, noise metadata) | mutable, entered the numbers | **slot**, per fit (already the case); keyed into the hash since 2026-09-21 |
 | `data` (corrected) | derived *and* mutable | **nowhere** — reconstructed on demand |
 
 Cost is negligible: `dark` and `calibration` are 1D of length `n_energy`
@@ -1358,21 +1376,23 @@ landed with the identity guards (2026-08-03). What remains for schema 7 is
 identity, discriminate by view. Collapse and prune operations must respect
 the same grouping.
 
-**σ does not enter the grouping key.** It gates which *metrics* may be compared
-within a group:
+**The noise model does not enter the grouping key.** It gates which *metrics*
+may be compared within a group (table amended 2026-09-21: the noise model
+replaces `sigma_eff`, and `aic` / `bic` join the withheld set because a
+weighted fit scores them as `chi2 + penalty` while `unknown` profiles the
+variance out of the residual):
 
 | Condition | Comparable |
 |---|---|
-| same `fit_view_sha256` | raw metrics — `chi2_raw`, `r2` |
-| same view **and** same `sigma_eff` | additionally `chi2`, `chi2_red` |
-| same view, differing `sigma_eff` | raw only; σ-scaled withheld |
+| same `fit_view_sha256` | raw metrics — `chi2_raw`, `chi2_red_raw`, `r2` |
+| same view **and** same noise key (kind, `noise_scale`, σ) | additionally `chi2`, `chi2_red`, `aic`, `bic` |
+| same view, differing noise key (`unknown` is a key of its own) | raw only; noise-scaled withheld |
 
-Two distinct slots can share a view and differ in σ precisely because σ is an
-attachment rather than a keyed input: fit M1 at σ=1, call `set_sigma(10)`, fit
-M2. Ranking those by `chi2` (100 vs 1.2) makes M2 look far better while
-`chi2_raw` (100 vs 120) says it is worse. Adding σ to the grouping key would be
-the wrong fix — it would split the group and block the raw comparison, which is
-perfectly valid.
+Two distinct slots can share a view and differ in noise model: fit M1 at σ=1,
+call `set_sigma(10)`, fit M2. Ranking those by `chi2` (100 vs 1.2) makes M2
+look far better while `chi2_raw` (100 vs 120) says it is worse. Adding the
+noise model to the grouping key would be the wrong fix — it would split the
+group and block the raw comparison, which is perfectly valid.
 
 ### Pruning and selection
 
@@ -1476,7 +1496,7 @@ Empirical checks run against the working tree on 2026-07-25 (branch
 | `SavedFile.e_lim` / `t_lim` have no readers | Confirmed — written and read back into the dataclass, consumed nowhere |
 | Fingerprint is never used to match an archive to a live project | Confirmed — all uses are archive-internal or in-session |
 | Parameters are never edited programmatically in examples | Confirmed — the example workflow is entirely YAML-driven |
-| σ never reaches the minimizer | Confirmed — `compute_fit_metrics` divides `chi2_raw` by `sigma_eff²`; no weights are passed |
+| σ never reaches the minimizer | Was confirmed at the time — `compute_fit_metrics` divided `chi2_raw` by `sigma_eff²` and no weights were passed. Superseded 2026-09-21: a declared noise model weights the residual and is keyed (see §Keyed inputs vs post-hoc attachments) |
 | Optimizer choice is unrestricted | Confirmed — `fit_alg_1` / `fit_alg_2` are free-form strings; stochastic global optimizers are reachable |
 | No seed reaches any optimizer | Confirmed — `_method_kws` returns `{}` except `Dfun` on `leastsq`; `build_fit_settings` has no seed |
 | SciPy rejects `seed` on methods that do not accept it | Confirmed against lmfit 1.3.4 / SciPy 1.17.0 — `leastsq` and `nelder` raise `TypeError`, `differential_evolution` accepts |

@@ -35,6 +35,7 @@ from trspecfit.utils.arrays import apply_corrections, resolve_time_selection
 from trspecfit.utils.fit_io import (
     _PARAMS_EQUIV_ATOL,
     _PARAMS_EQUIV_RTOL,
+    NOISE_TYPE_UNKNOWN,
     JointFitResult,
     SavedFile,
     SavedFitSlot,
@@ -44,6 +45,8 @@ from trspecfit.utils.fit_io import (
     resolve_fit_reference,
     set_fit_label,
     short_id,
+    slot_noise_key,
+    slot_noise_label,
 )
 from trspecfit.utils.lmfit import MCMCResult
 
@@ -60,10 +63,10 @@ _FIT_METHOD_BY_TYPE: dict[str, str] = {
 }
 
 # Default columns. Dynamic: which set is used depends on whether any matched
-# slot carries a finite ``sigma_data``. ``chi2_red_raw`` is the lmfit-unweighted
-# diagnostic; ``chi2_red`` is the σ-calibrated value (≈ 1 for a fit at the
-# noise floor) and is only meaningful when a sigma was set on the File at fit
-# time. Count-dependent metrics (``chi2_red_raw``, ``chi2_red``, ``aic``,
+# slot declared a noise model. ``chi2_red_raw`` is the lmfit-unweighted
+# diagnostic; ``chi2_red`` is the noise-calibrated value (≈ 1 for a fit at the
+# noise floor) and is only meaningful when a noise model was declared on the
+# File at fit time. Count-dependent metrics (``chi2_red_raw``, ``chi2_red``, ``aic``,
 # ``bic``) are structurally NaN on the per-file projections of a project-level
 # joint fit — the joint parameter count does not decompose by file.
 DEFAULT_METRICS_NO_SIGMA: tuple[str, ...] = ("chi2_red_raw", "r2", "aic", "bic")
@@ -75,11 +78,16 @@ DEFAULT_METRICS_WITH_SIGMA: tuple[str, ...] = (
     "aic",
     "bic",
 )
-# Calibrated columns are only available when a sigma was supplied at fit time.
-# Explicit requests for these in ``metrics=[...]`` raise a clear KeyError when
-# the matched slot set has no sigma, pointing the user at the raw alternative.
+# Calibrated columns are only available when a noise model was declared at fit
+# time. Explicit requests for these in ``metrics=[...]`` raise a clear KeyError
+# when no matched slot declared one, pointing the user at the raw alternative.
 _CALIBRATED_KEYS: frozenset[str] = frozenset({"chi2", "chi2_red"})
 _CALIBRATED_TO_RAW: dict[str, str] = {"chi2": "chi2_raw", "chi2_red": "chi2_red_raw"}
+# Metrics expressed in the declared noise's units: chi2 / chi2_red directly,
+# aic / bic through the summed-objective form (chi2 + penalty) a weighted fit
+# uses, where 'unknown' profiles the variance instead. Comparable only between
+# slots sharing one noise key; withheld when a compared group mixes keys.
+_NOISE_SCALED_KEYS: frozenset[str] = frozenset({"chi2", "chi2_red", "aic", "bic"})
 
 
 #
@@ -141,10 +149,10 @@ def _slot_title(slot: SavedFitSlot) -> str:
 
 
 #
-def _has_any_sigma(slots: Sequence[SavedFitSlot]) -> bool:
-    """True if at least one slot carries a finite ``sigma_data``."""
+def _has_any_noise_model(slots: Sequence[SavedFitSlot]) -> bool:
+    """True if at least one slot was fit under a declared noise model."""
 
-    return any(np.isfinite(s.sigma_data) for s in slots)
+    return any(s.noise_type != NOISE_TYPE_UNKNOWN for s in slots)
 
 
 #
@@ -164,82 +172,88 @@ def _array_digest(arr: np.ndarray | None) -> str | None:
 
 
 #
-def _sigma_conflicts(
+def _noise_conflicts(
     slots: Sequence[SavedFitSlot],
-) -> dict[tuple[str, str], list[float]]:
+) -> dict[tuple[str, str], list[str]]:
     """
-    Per comparability group, the distinct finite ``sigma_eff`` values —
-    only groups with more than one (the σ-tier conflict cases).
+    Per comparability group, the distinct noise models it mixes — only
+    groups with more than one (the noise-tier conflict cases).
 
     Groups are ``(file_name, fit_type)``, same as the fit-view
-    consistency check. σ is an attachment, not part of fit identity, so
-    two slots can share a fit view yet carry different σ; their σ-scaled
-    metrics (``chi2``, ``chi2_red``) are scaled by different constants
-    and must not be ranked against each other. A finite σ next to an
-    unset one (NaN) is not a conflict — the σ-less slot's calibrated
-    cells are NaN, absent rather than misleading.
+    consistency check; the key is ``fit_io.slot_noise_key`` and the
+    values its readable labels. Declaring a noise model changes the fit,
+    so two slots of one group can only differ here across re-declarations
+    — and then their noise-scaled metrics (``chi2``, ``chi2_red``) are
+    expressed in different units and must not be ranked against each
+    other. ``unknown`` is a model of its own: its ``chi2_red`` is NaN, so
+    a group mixing it with a declared model has nothing to compare.
     """
 
-    groups: dict[tuple[str, str], set[float]] = {}
+    groups: dict[tuple[str, str], dict[tuple[str, str, str], str]] = {}
     for s in slots:
-        if np.isfinite(s.sigma_eff):
-            groups.setdefault((s.file_name, s.fit_type), set()).add(float(s.sigma_eff))
-    return {k: sorted(v) for k, v in groups.items() if len(v) > 1}
+        groups.setdefault((s.file_name, s.fit_type), {})[slot_noise_key(s)] = (
+            slot_noise_label(s)
+        )
+    return {k: sorted(v.values()) for k, v in groups.items() if len(v) > 1}
 
 
 #
 def _resolve_metric_keys(
     metrics: Sequence[str] | None,
     slots: list[SavedFitSlot],
-    sigma_conflicts: dict[tuple[str, str], list[float]] | None = None,
+    noise_conflicts: dict[tuple[str, str], list[str]] | None = None,
 ) -> tuple[str, ...]:
     """
     Pick the metric columns for a ``compare_models()`` call.
 
-    ``metrics=None`` → dynamic defaults: ``DEFAULT_METRICS_WITH_SIGMA`` when at
-    least one matched slot has a sigma, ``DEFAULT_METRICS_NO_SIGMA`` otherwise.
-    When ``sigma_conflicts`` is non-empty (a compared group mixes finite
-    ``sigma_eff`` values), the σ-scaled columns are dropped from the
+    ``metrics=None`` → dynamic defaults: ``DEFAULT_METRICS_WITH_SIGMA`` when
+    at least one matched slot declared a noise model,
+    ``DEFAULT_METRICS_NO_SIGMA`` otherwise. When ``noise_conflicts`` is
+    non-empty (a compared group mixes noise models), the noise-scaled
+    columns (``chi2``, ``chi2_red``, ``aic``, ``bic``) are dropped from the
     defaults — ``sigma_eff`` itself stays, so the mix is visible.
 
     ``metrics=[...]`` → explicit. If the request includes a calibrated metric
-    (``chi2`` / ``chi2_red``) and no matched slot has a sigma, raise a clear
-    ``KeyError`` pointing the user at ``file.set_sigma()`` or the raw
-    alternative — neither silently-NaN columns nor renamed-raw columns. If a
-    compared group mixes σ values, the same explicit request raises a
-    ``ValueError`` naming the group and the conflicting σ values.
+    (``chi2`` / ``chi2_red``) and no matched slot declared a noise model,
+    raise a clear ``KeyError`` pointing the user at ``file.set_noise()`` or
+    the raw alternative — neither silently-NaN columns nor renamed-raw
+    columns. If a compared group mixes noise models, an explicit request for
+    any noise-scaled metric (those two plus ``aic`` / ``bic``) raises a
+    ``ValueError`` naming the group and the models.
     """
 
-    has_sigma = _has_any_sigma(slots)
-    conflicts = sigma_conflicts or {}
+    has_noise_model = _has_any_noise_model(slots)
+    conflicts = noise_conflicts or {}
     if metrics is None:
-        if not has_sigma:
+        if not has_noise_model:
             return DEFAULT_METRICS_NO_SIGMA
         if conflicts:
             return tuple(
-                k for k in DEFAULT_METRICS_WITH_SIGMA if k not in _CALIBRATED_KEYS
+                k for k in DEFAULT_METRICS_WITH_SIGMA if k not in _NOISE_SCALED_KEYS
             )
         return DEFAULT_METRICS_WITH_SIGMA
     metric_keys = tuple(metrics)
     bad = next((k for k in metric_keys if k in _CALIBRATED_KEYS), None)
-    if bad is not None:
-        if not has_sigma:
-            raise KeyError(
-                f"Metric {bad!r} requires sigma_data, but none of the matched "
-                f"slots carry a sigma. Call file.set_sigma(...) on the live "
-                f"file and re-run the fit, or request "
-                f"{_CALIBRATED_TO_RAW[bad]!r} for the raw (uncalibrated) "
-                f"value."
-            )
-        if conflicts:
-            (file_name, ft), sigmas = next(iter(conflicts.items()))
-            raise ValueError(
-                f"Metric {bad!r} is σ-scaled, but the compared group "
-                f"file={file_name!r}, fit_type={ft!r} mixes sigma_eff "
-                f"values {sigmas} — values scaled by different σ are not "
-                f"comparable. Request {_CALIBRATED_TO_RAW[bad]!r} instead, "
-                f"or narrow the filter to slots sharing one σ."
-            )
+    if bad is not None and not has_noise_model:
+        raise KeyError(
+            f"Metric {bad!r} requires a declared noise model, but none "
+            f"of the matched slots carry one. Call file.set_noise(...) "
+            f"on the live file and re-run the fit, or request "
+            f"{_CALIBRATED_TO_RAW[bad]!r} for the raw (uncalibrated) "
+            f"value."
+        )
+    bad = next((k for k in metric_keys if k in _NOISE_SCALED_KEYS), None)
+    if bad is not None and conflicts:
+        (file_name, ft), labels = next(iter(conflicts.items()))
+        raw = _CALIBRATED_TO_RAW.get(bad)
+        remedy = f"Request {raw!r} instead, or narrow" if raw else "Narrow"
+        raise ValueError(
+            f"Metric {bad!r} is noise-scaled, but the compared group "
+            f"file={file_name!r}, fit_type={ft!r} mixes noise models "
+            f"{labels} — values expressed in different noise units are "
+            f"not comparable. {remedy} the filter to slots sharing one "
+            f"noise model."
+        )
     return metric_keys
 
 
@@ -1194,9 +1208,12 @@ class FitResults:
             # and version-stamp (correction/content state) differences are
             # visible — every identity-changing input shows in a diff.
             _, entries = json.loads(jr.input_files)
-            for name, stamp, selection in entries:
+            for entry in entries:
+                name, stamp, selection = entry[0], entry[1], entry[2]
                 rec[f"{name}.version_stamp"] = short_id(str(stamp))
                 rec[f"{name}.selection"] = selection
+                if len(entry) > 3:
+                    rec[f"{name}.noise"] = json.dumps(entry[3], sort_keys=True)
             fields = [
                 c
                 for c in ("init_value", "min", "max", "vary", "expr")
@@ -1220,9 +1237,9 @@ class FitResults:
 
         ca, cb = joint_comparability(ja), joint_comparability(jb)
         if ca != cb:
-            short_a = tuple((f, short_id(v)) for f, v in ca)
-            short_b = tuple((f, short_id(v)) for f, v in cb)
-            rows.append(("comparability", "fit_views", short_a, short_b))
+            short_a = tuple((f, short_id(v), n) for f, v, n in ca)
+            short_b = tuple((f, short_id(v), n) for f, v, n in cb)
+            rows.append(("comparability", "fit_views_noise", short_a, short_b))
         else:
             rows.extend(
                 self._diff_value_rows("metric", dict(ja.metrics), dict(jb.metrics))
@@ -2052,13 +2069,14 @@ class FitResults:
         mode) and one column per metric.
 
         Default column set is **dynamic** based on whether any matched
-        slot carries a sigma (set via ``File.set_sigma()`` before the fit):
+        slot declared a noise model (via ``File.set_noise()`` /
+        ``File.set_sigma()`` before the fit):
 
-        - no sigma:  ``chi2_red_raw, r2, aic, bic``
-        - with sigma: ``chi2_red_raw, sigma_eff, chi2_red, r2, aic, bic``
+        - no noise model:  ``chi2_red_raw, r2, aic, bic``
+        - with one: ``chi2_red_raw, sigma_eff, chi2_red, r2, aic, bic``
 
         ``chi2_red_raw`` is the lmfit-unweighted diagnostic; ``chi2_red`` is
-        the σ-calibrated value (≈ 1 for a fit at the noise floor). Cells that
+        the noise-calibrated value (≈ 1 for a fit at the noise floor). Cells that
         are structurally undefined for a slot are ``NaN`` — on the per-file
         projections of a project-level joint fit that is every
         count-dependent metric (``chi2_red_raw``, ``chi2_red``, ``aic``,
@@ -2070,17 +2088,21 @@ class FitResults:
         Names are stable — the same column always carries the same kind of
         value across calls, sessions, and loaded archives. There is no
         per-call ``sigma=`` kwarg by design; persistent state on the File
-        is the only sigma source.
+        is the only noise source.
 
-        **σ tiers**: σ is an attachment, not part of fit identity, so two
-        slots can share a fit view but carry different ``sigma_eff`` (fit,
-        ``set_sigma``, refit). Their raw metrics stay comparable; their
-        σ-scaled ones do not — values scaled by different constants rank
-        wrong. When a compared ``(file, fit_type)`` group mixes finite σ
-        values, the σ-scaled columns are dropped from the dynamic defaults
-        (``sigma_eff`` stays, so the mix is visible), and an explicit
-        ``metrics=["chi2_red"]`` request raises naming the conflicting σ
-        values.
+        **Noise tiers**: two slots can share a fit view and still have been
+        fit under different noise models (fit, ``set_noise``, refit). Their
+        raw metrics stay comparable; their noise-scaled ones do not —
+        ``chi2`` and ``chi2_red`` are expressed in different units, and
+        ``unknown`` does not even score them. When a compared ``(file,
+        fit_type)`` group mixes noise keys — two σ, two Poisson scales, or
+        a declared model next to ``unknown`` — the noise-scaled columns
+        (``chi2``, ``chi2_red``, ``aic``, ``bic``) are dropped from the
+        dynamic defaults (``sigma_eff`` stays where it is defined, so the
+        mix is visible), and an explicit request for any of them raises
+        naming the models. ``aic`` / ``bic`` belong to that set because a
+        weighted fit scores them as ``chi2 + penalty`` while ``unknown``
+        profiles the variance out of the residual.
 
         Parameters
         ----------
@@ -2096,9 +2118,9 @@ class FitResults:
             Metric keys to include as columns. Defaults to the dynamic set
             above. Valid keys: ``chi2_raw``, ``chi2_red_raw``, ``chi2``,
             ``chi2_red``, ``r2``, ``aic``, ``bic``, ``sigma_eff``. Requesting
-            ``chi2`` or ``chi2_red`` when no matched slot has a sigma raises
-            ``KeyError`` with a pointer to ``File.set_sigma()`` or the raw
-            alternative.
+            ``chi2`` or ``chi2_red`` when no matched slot declared a noise
+            model raises ``KeyError`` with a pointer to ``File.set_noise()``
+            or the raw alternative.
         sbs_aggregation : {"median", "mean", "sum", "long"}, default "median"
             How to collapse per-slice SbS metrics to a comparable value:
 
@@ -2138,12 +2160,12 @@ class FitResults:
             meaningful — typically this happens when the user mixes refits
             with different ``e_lim`` / ``t_lim`` / ``base_t_ind`` /
             ``time_point`` or a changed correction state. Also if
-            ``metrics`` explicitly requests a σ-scaled metric while a
-            compared group mixes ``sigma_eff`` values (see σ tiers above).
+            ``metrics`` explicitly requests a noise-scaled metric while a
+            compared group mixes noise models (see noise tiers above).
         KeyError
             If ``metrics`` requests ``chi2`` / ``chi2_red`` when no matched
-            slot has a sigma, or any other unknown metric key for at least
-            one slot.
+            slot declared a noise model, or any other unknown metric key
+            for at least one slot.
         """
 
         file_name = _resolve_file_arg(file)
@@ -2161,7 +2183,7 @@ class FitResults:
             matched.append(slot)
 
         self._check_observed_consistency(matched)
-        metric_keys = _resolve_metric_keys(metrics, matched, _sigma_conflicts(matched))
+        metric_keys = _resolve_metric_keys(metrics, matched, _noise_conflicts(matched))
 
         if sbs_aggregation == "long":
             df = self._compare_rows_long(matched, metric_keys)

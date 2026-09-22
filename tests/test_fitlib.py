@@ -10,6 +10,7 @@ import pytest
 from _utils import make_project
 
 from trspecfit import File, fitlib
+from trspecfit.utils.noise import NoiseModel
 
 
 #
@@ -34,13 +35,14 @@ class TestComputeFitMetricsUndefinedCount:
     def test_count_dependent_metrics_nan_others_unchanged(self):
         observed = np.array([1.0, 2.0, 3.0, 4.0])
         fit = np.array([1.1, 1.9, 3.2, 3.8])
+        noise = NoiseModel(kind="gaussian", sigma=0.5)
         m_none = fitlib.compute_fit_metrics(
-            observed=observed, fit=fit, n_free_pars=None, sigma_eff=0.5
+            observed=observed, fit=fit, n_free_pars=None, noise=noise
         )
         for key in ("chi2_red_raw", "chi2_red", "aic", "bic"):
             assert np.isnan(m_none[key]), key
         m_two = fitlib.compute_fit_metrics(
-            observed=observed, fit=fit, n_free_pars=2, sigma_eff=0.5
+            observed=observed, fit=fit, n_free_pars=2, noise=noise
         )
         for key in ("chi2_raw", "chi2", "r2"):
             assert np.isfinite(m_none[key]), key
