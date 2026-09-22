@@ -301,14 +301,20 @@ fallback cell in 13. The generators store data in model units, so the
 counting scale is `counts_per_delay / mean row total` of the data (0.07%
 from the truth total); raw counts take the default `scale=1`.
 
-- [ ] H1 Notebook 12 rewrite, the correct path: §0 re-run 01; §1 one
+- [x] H1 Notebook 12 rewrite, the correct path: §0 re-run 01; §1 one
       `set_noise('poisson', scale=...)` line (comment: why the scale, and
       that raw counts need none) and the χ²_red ≈ 1 gate; §2 one fit, three
       tiers (`stderr`, χ²-threshold CI, weighted MCMC with no nuisance);
       §3 side by side against the truth and against the Cramér-Rao bound
       (`sensitivity.crb` at the budget); §4 the 2D chain and how to read
-      its convergence (the off-scale demo moves to 13); tips. Shorter than
-      today. `/check-example`.
+      its convergence (the off-scale demo moves to 13); tips. 35 → 32
+      cells, executes in 1 min 52 s (2D chain 85 s). `stderr`/CRB 0.99–1.00
+      on four parameters, 0.91/1.08 on `F`/`m` from evaluating the bound at
+      the truth instead of the fitted point (1.000 at the fitted point).
+      The gate reads the slot's `chi2_red` via `results.find(...)[-1]`:
+      01's slots are `unknown`, so `compare_models` withholds the calibrated
+      columns for the mixed group (13's lesson). `/check-example` passes
+      except the three forward links to 13 until H1b lands.
 - [ ] H1b New notebook 13, when the noise model is missing: `%run` 12 under
       `%%capture` (as 12 runs 01) so 12's fits are live and no number is
       copied; open with the warning that `unknown` is the default; refit

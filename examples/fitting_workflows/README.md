@@ -24,7 +24,7 @@ The numbering restarts at the next block boundary as new notebooks are added.
 | [`04_parameter_profiles`](04_parameter_profiles/)             | Depth-dependent parameters with profile functions (single or combined with time-dependence). |
 | [`10_model_comparison`](10_model_comparison/)                 | Compare two models on the same file (baseline, slice-by-slice, 2D). |
 | [`11_save_load_export`](11_save_load_export/)                 | `FitResults` HDF5 round-trip, CSV/PNG export, "ship just the winners". |
-| [`12_uncertainty_mcmc`](12_uncertainty_mcmc/)                 | Three tiers of parameter uncertainty — `stderr`, profiled CIs, and MCMC — checked against truth. |
+| [`12_uncertainty_mcmc`](12_uncertainty_mcmc/)                 | Declare the noise model, then three tiers of parameter uncertainty — `stderr`, profiled CIs, and MCMC — checked against truth and the Cramér-Rao bound. |
 | [`20_multi_file_independent_fit`](20_multi_file_independent_fit/)           | Multi-file workspace, **per-file independent** fits (bridge to shared-parameter fitting). |
 | [`21_multi_file_shared_fit`](21_multi_file_shared_fit/) | Multi-file workspace, **shared-parameter** fits across files. |
 

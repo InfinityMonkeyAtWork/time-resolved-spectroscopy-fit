@@ -31,7 +31,7 @@ Fitting workflow examples — **0x = single-file skills, 1x = post-fit work, 2x 
 | 04_parameter_profiles | Depth-dependent parameters with profile functions |
 | 10_model_comparison | Compare two models on the same file (baseline / SbS / 2D) |
 | 11_save_load_export | `FitResults` HDF5 round-trip, CSV/PNG export, ship just the winners |
-| 12_uncertainty_mcmc | Three tiers of parameter uncertainty (`stderr`, profiled CIs, MCMC), checked against truth |
+| 12_uncertainty_mcmc | Declare the noise model, then three tiers of parameter uncertainty (`stderr`, profiled CIs, MCMC) checked against truth and the Cramér-Rao bound |
 | 20_multi_file_independent_fit | Multi-file workspace, per-file independent fits |
 | 21_multi_file_shared_fit | Multi-file workspace, shared-parameter fits across files |
 
@@ -57,6 +57,11 @@ Every fitting workflow follows the same pattern:
 8. file.fit_2d(...)                     # global 2D fit
 9. file.get_parameters(fit_type='2d')  # extract results as DataFrame
 ```
+
+Optional extension after step 2:
+`file.set_noise('poisson', scale=...)` for counting data, or
+`file.set_sigma(...)` for a known Gaussian σ — declare the noise model so
+`stderr`, confidence intervals and MCMC are calibrated (see `12_uncertainty_mcmc`)
 
 Optional extension after step 6:
 `file.add_par_profile(...)` — make a parameter vary over an auxiliary axis

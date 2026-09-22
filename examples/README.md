@@ -20,7 +20,7 @@ notebook list and the 0x / 1x / 2x numeric-block legend.
 | [04_parameter_profiles](fitting_workflows/04_parameter_profiles/)   | Depth-dependent parameters via profile functions (with optional time-dependence). |
 | [10_model_comparison](fitting_workflows/10_model_comparison/)       | Compare two models on the same file (baseline / SbS / 2D). |
 | [11_save_load_export](fitting_workflows/11_save_load_export/)       | `FitResults` HDF5 round-trip, CSV/PNG export, "ship just the winners". |
-| [12_uncertainty_mcmc](fitting_workflows/12_uncertainty_mcmc/)       | Three tiers of parameter uncertainty — `stderr`, profiled CIs, and MCMC — checked against truth. |
+| [12_uncertainty_mcmc](fitting_workflows/12_uncertainty_mcmc/)       | Declare the noise model, then three tiers of parameter uncertainty — `stderr`, profiled CIs, and MCMC — checked against truth and the Cramér-Rao bound. |
 | [20_multi_file_independent_fit](fitting_workflows/20_multi_file_independent_fit/) | Multi-file workspace, per-file independent fits (bridge to shared-parameter fitting). |
 | [21_multi_file_shared_fit](fitting_workflows/21_multi_file_shared_fit/) | Multi-file workspace, shared-parameter fits across files. |
 

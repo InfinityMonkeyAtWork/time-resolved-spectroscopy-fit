@@ -26,8 +26,9 @@ Post-fit work (block 1x):
 - ``examples/fitting_workflows/11_save_load_export/``
   ``FitResults`` HDF5 round-trip, CSV/PNG export, "ship just the winners".
 - ``examples/fitting_workflows/12_uncertainty_mcmc/``
-  Three tiers of parameter uncertainty (``stderr``, profiled CIs, MCMC),
-  checked against truth.
+  Declare the noise model, then three tiers of parameter uncertainty
+  (``stderr``, profiled CIs, MCMC) checked against truth and the Cramér-Rao
+  bound.
 
 Multi-file workflows (block 2x):
 
