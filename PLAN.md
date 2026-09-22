@@ -292,13 +292,45 @@ the end.
 - [x] G2 `sphinx -W` clean build succeeds with `docs/api/sensitivity.rst`.
 
 ### H. Examples and docs
-- [ ] H1 Notebook 12: keep §1–§3 under `unknown` (the off-scale MC demo needs
-      `__lnsigma`); add a section that declares `poisson` from the simulator
-      snapshot, refits, and compares `stderr` with and without the noise
-      model and against `sensitivity_report`. `/check-example`.
-- [ ] H2 Notebook 03: `set_noise('poisson', ...)` before the fits; verdict
-      prose updated. `/check-example`. Notebook 10 calls `set_sigma` before
-      its fits, which are weighted since B: re-execute and `/check-example`.
+Teaching split (decided 2026-09-22): 01–04 stay about fit mechanics and
+declare no noise; 12 is the correct path in one line; a new 13 shows what
+the `unknown` default gets wrong on the same data, with every comparison
+computed live. No separate Gaussian notebook: 10 already declares a known
+Gaussian σ where the noise is Gaussian, and the model-free σ estimate is one
+fallback cell in 13. The generators store data in model units, so the
+counting scale is `counts_per_delay / mean row total` of the data (0.07%
+from the truth total); raw counts take the default `scale=1`.
+
+- [ ] H1 Notebook 12 rewrite, the correct path: §0 re-run 01; §1 one
+      `set_noise('poisson', scale=...)` line (comment: why the scale, and
+      that raw counts need none) and the χ²_red ≈ 1 gate; §2 one fit, three
+      tiers (`stderr`, χ²-threshold CI, weighted MCMC with no nuisance);
+      §3 side by side against the truth and against the Cramér-Rao bound
+      (`sensitivity.crb` at the budget); §4 the 2D chain and how to read
+      its convergence (the off-scale demo moves to 13); tips. Shorter than
+      today. `/check-example`.
+- [ ] H1b New notebook 13, when the noise model is missing: `%run` 12 under
+      `%%capture` (as 12 runs 01) so 12's fits are live and no number is
+      copied; open with the warning that `unknown` is the default; refit
+      under `set_noise('unknown')` with 12's settings and table the three
+      tiers next to 12's (consistently too small on the peak, too large on
+      the background, and why: one variance spread over a window whose
+      counting noise peaks with the signal); `compare_models` refusing to
+      rank across noise models; the `__lnsigma` nuisance and the off-scale
+      unconverged chain; the baseline-block σ estimate as the fallback for
+      non-counting data, one cell, with the gate flagging a wrong σ. Mirrors
+      12 section for section. Register in the examples README and the docs
+      examples index. `/check-example`.
+- [x] H2 Notebook 01: one sentence at the first fit report (error bars are
+      lmfit's default; 12 makes them right). Notebook 10 re-executed (its
+      `set_sigma` weights the fits since B): no quoted number changed (the
+      prose quotes inputs and verdicts only), no conclusion flipped; AIC/BIC
+      printouts moved from the profiled to the weighted form and the
+      misfitting models' `stderr` lost their redchi inflation; three prose
+      edits (`set_sigma` weights the residual; `chi2_red_raw` is the
+      unweighted diagnostic; σ is File state, `set_sigma` is no longer the
+      only entry point) and the YAML comments say shift-and-decay like the
+      notebook. `/check-example` both. 02/03/04 unchanged.
 - [ ] H3 CHANGELOG 0.17.0 (incl. behaviour changes since B: `set_sigma`
       now weights the fit; corrections refuse to run under declared noise;
       a project default `sigma_data` without `noise_type: gaussian` raises;
@@ -306,10 +338,10 @@ the end.
       declared noise forces weighted MCMC and its σ knobs raise,
       `MC(is_weighted=True)` under `unknown` raises; `conf_interval` uses
       the χ² threshold under declared noise);
-      TODO.md: retire the two noise items, note the
+      notebooks 12 and 13; TODO.md: retire the two noise items, note the
       simulator snapshot fix, add follow-ups (noise estimation helpers,
-      compound likelihood, σ through corrections, other counting notebooks
-      01/04/20/21).
+      compound likelihood, σ through corrections, declaring noise in the
+      counting notebooks 01/02/03/04/20/21 once uncertainties enter them).
 - [ ] H4 `pyproject.toml` version 0.17.0 at commit time.
 
 ### I. Verify pass
