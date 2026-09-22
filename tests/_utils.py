@@ -10,11 +10,12 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import copy
 from typing import Any
 
 import numpy as np
 
-from trspecfit import Project, Simulator
+from trspecfit import Project, Simulator, fitlib
 
 
 #
@@ -119,3 +120,39 @@ def assert_recovery_within(
         assert rel_err < rel_tol, (
             f"{name}: true={true_val:.4f}, fit={fit_val:.4f}, rel_err={rel_err:.1%}"
         )
+
+
+#
+def capture_fit_wrapper(monkeypatch):
+    """Record every ``fitlib.fit_wrapper`` call and run the real one."""
+
+    calls: list[dict] = []
+    real = fitlib.fit_wrapper
+
+    def _recording(**kwargs):
+        calls.append(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(fitlib, "fit_wrapper", _recording)
+    return calls
+
+
+#
+def residual_jacobian_fd(par, *, const, args, noise, rel_step: float = 1e-6):
+    """Central-difference residual Jacobian, columns in lmfit vary order."""
+
+    columns = []
+    for name in [name for name in par if par[name].vary]:
+        perturbed = copy.deepcopy(par)
+        value = perturbed[name].value
+        step = rel_step * max(1.0, abs(value))
+        perturbed[name].value = value + step
+        res_plus = np.asarray(
+            fitlib.residual_fun(perturbed, *const, "lmfit", args, noise=noise)
+        )
+        perturbed[name].value = value - step
+        res_minus = np.asarray(
+            fitlib.residual_fun(perturbed, *const, "lmfit", args, noise=noise)
+        )
+        columns.append((res_plus - res_minus) / (2 * step))
+    return np.stack(columns, axis=1)

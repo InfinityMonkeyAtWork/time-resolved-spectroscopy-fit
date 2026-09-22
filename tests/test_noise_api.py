@@ -9,12 +9,10 @@ point at which σ and the fitted data view must still line up element for
 element.
 """
 
-import copy
-
 import matplotlib
 import numpy as np
 import pytest
-from _utils import make_project
+from _utils import capture_fit_wrapper, make_project, residual_jacobian_fd
 
 matplotlib.use("Agg")
 
@@ -72,46 +70,10 @@ def _plain_file(*, data=None, project=None, name="plain"):
 
 
 #
-def _capture_fit_wrapper(monkeypatch):
-    """Record every ``fitlib.fit_wrapper`` call and run the real one."""
-
-    calls: list[dict] = []
-    real = fitlib.fit_wrapper
-
-    def _recording(**kwargs):
-        calls.append(kwargs)
-        return real(**kwargs)
-
-    monkeypatch.setattr(fitlib, "fit_wrapper", _recording)
-    return calls
-
-
-#
 def _e_slice(file):
     """The ``e_lim`` window as the residual applies it."""
 
     return slice(file.e_lim[0], file.e_lim[1])
-
-
-#
-def _residual_jacobian_fd(par, *, const, args, noise):
-    """Central-difference residual Jacobian, columns in lmfit vary order."""
-
-    columns = []
-    for name in [name for name in par if par[name].vary]:
-        perturbed = copy.deepcopy(par)
-        value = perturbed[name].value
-        step = 1e-6 * max(1.0, abs(value))
-        perturbed[name].value = value + step
-        res_plus = np.asarray(
-            fitlib.residual_fun(perturbed, *const, "lmfit", args, noise=noise)
-        )
-        perturbed[name].value = value - step
-        res_minus = np.asarray(
-            fitlib.residual_fun(perturbed, *const, "lmfit", args, noise=noise)
-        )
-        columns.append((res_plus - res_minus) / (2 * step))
-    return np.stack(columns, axis=1)
 
 
 #
@@ -374,7 +336,7 @@ class TestViewReductions:
     #
     def test_unknown_passes_no_noise(self, monkeypatch):
         file = _fit_ready_file()
-        calls = _capture_fit_wrapper(monkeypatch)
+        calls = capture_fit_wrapper(monkeypatch)
         file.fit_baseline(model_name=_MODEL, stages=1, try_ci=0)
         assert len(calls) == 1
         assert calls[0]["noise"] is None
@@ -385,7 +347,7 @@ class TestViewReductions:
         file.set_sigma(0.4)
         n_avg = file.base_t_ind[1] - file.base_t_ind[0]
         assert n_avg > 1
-        calls = _capture_fit_wrapper(monkeypatch)
+        calls = capture_fit_wrapper(monkeypatch)
         file.fit_baseline(model_name=_MODEL, stages=1, try_ci=0)
         noise = calls[0]["noise"]
         assert noise.kind == "gaussian"
@@ -399,7 +361,7 @@ class TestViewReductions:
         file.set_noise("gaussian", sigma=sigma_full)
         lo, hi = file.base_t_ind
         n_avg = hi - lo
-        calls = _capture_fit_wrapper(monkeypatch)
+        calls = capture_fit_wrapper(monkeypatch)
         file.fit_baseline(model_name=_MODEL, stages=1, try_ci=0)
         expected = (
             np.sqrt(np.sum(sigma_full[lo:hi, _e_slice(file)] ** 2, axis=0)) / n_avg
@@ -411,7 +373,7 @@ class TestViewReductions:
         file = _fit_ready_file()
         file.set_noise("poisson", scale=2.0)
         n_avg = file.base_t_ind[1] - file.base_t_ind[0]
-        calls = _capture_fit_wrapper(monkeypatch)
+        calls = capture_fit_wrapper(monkeypatch)
         file.fit_baseline(model_name=_MODEL, stages=1, try_ci=0)
         noise = calls[0]["noise"]
         assert noise.kind == "poisson"
@@ -421,7 +383,7 @@ class TestViewReductions:
     def test_spectrum_time_range_reduces_like_the_baseline(self, monkeypatch):
         file = _fit_ready_file()
         file.set_sigma(0.4)
-        calls = _capture_fit_wrapper(monkeypatch)
+        calls = capture_fit_wrapper(monkeypatch)
         file.fit_spectrum(
             _MODEL,
             time_range=(0, 2),
@@ -440,7 +402,7 @@ class TestViewReductions:
         rng = np.random.default_rng(5)
         sigma_full = 0.2 + 0.3 * rng.random(file.data.shape)
         file.set_noise("gaussian", sigma=sigma_full)
-        calls = _capture_fit_wrapper(monkeypatch)
+        calls = capture_fit_wrapper(monkeypatch)
         file.fit_spectrum(
             _MODEL, time_point=3, time_type="ind", stages=1, try_ci=0, show_plot=False
         )
@@ -455,7 +417,7 @@ class TestViewReductions:
         rng = np.random.default_rng(9)
         sigma_full = 0.2 + 0.3 * rng.random(file.data.shape)
         file.set_noise("gaussian", sigma=sigma_full)
-        calls = _capture_fit_wrapper(monkeypatch)
+        calls = capture_fit_wrapper(monkeypatch)
         file.fit_slice_by_slice(
             _MODEL, n_workers=1, seed_source="model", seed_adapt=None, try_ci=0
         )
@@ -509,7 +471,7 @@ class TestViewReductions:
         rng = np.random.default_rng(13)
         sigma_full = 0.2 + 0.3 * rng.random(file.data.shape)
         file.set_noise("gaussian", sigma=sigma_full)
-        calls = _capture_fit_wrapper(monkeypatch)
+        calls = capture_fit_wrapper(monkeypatch)
         file.fit_2d(_MODEL, stages=1, try_ci=0)
         t_slice = slice(file.t_lim[0], file.t_lim[1])
         expected = sigma_full[t_slice, _e_slice(file)]
@@ -583,7 +545,7 @@ class TestJointNoise:
     def test_mixed_unknown_and_weighted_raises_before_fitting(self, monkeypatch):
         project = self._joint_project()
         project.files[0].set_sigma(0.3)
-        calls = _capture_fit_wrapper(monkeypatch)
+        calls = capture_fit_wrapper(monkeypatch)
         with pytest.raises(ValueError, match="cannot mix 'unknown'"):
             project.fit_2d(model_name="project_glp", stages=1, try_ci=0)
         assert calls == []
@@ -593,7 +555,7 @@ class TestJointNoise:
         project = self._joint_project()
         project.files[0].set_sigma(0.3)
         project.files[1].set_noise("poisson", scale=2.0)
-        calls = _capture_fit_wrapper(monkeypatch)
+        calls = capture_fit_wrapper(monkeypatch)
         project.fit_2d(model_name="project_glp", stages=1, try_ci=0)
         noise = calls[0]["noise"]
         assert isinstance(noise, SegmentedNoise)
@@ -606,14 +568,14 @@ class TestJointNoise:
         project = self._joint_project(spec_fun_str="fit_model_jax")
         project.files[0].set_sigma(0.3)
         project.files[1].set_noise("poisson", scale=2.0)
-        calls = _capture_fit_wrapper(monkeypatch)
+        calls = capture_fit_wrapper(monkeypatch)
         project.fit_2d(model_name="project_glp", stages=1, try_ci=0)
         call = calls[0]
         assert call["jac_fun"] is fitlib.jacobian_fun_project
         jac = call["jac_fun"](
             call["par"], *call["const"], "lmfit", call["args"], noise=call["noise"]
         )
-        fd = _residual_jacobian_fd(
+        fd = residual_jacobian_fd(
             call["par"], const=call["const"], args=call["args"], noise=call["noise"]
         )
         assert jac.shape == fd.shape

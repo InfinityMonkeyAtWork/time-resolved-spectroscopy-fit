@@ -233,13 +233,25 @@ the end.
       misspecified-model case completes.
 
 ### E. Verification against the bound
-- [ ] E1 Deterministic, noiseless `d = m` (limit branch): `JᵀJ` from the
+- [x] E1 Deterministic, noiseless `d = m` (limit branch): `JᵀJ` from the
       noise-weighted Jacobian equals `sensitivity.fisher_matrix(model,
-      counts=scale·Σm)` to tight relative tolerance, 1D and 2D.
-- [ ] E2 Seeded noisy fit: `stderr` within ~10% of the CRB.
-- [ ] E3 Slow test reproducing the 2026-09-15 control: seed scatter /
-      `stderr` in a band around 1 under `poisson`, vs the known ~1.6 under
-      `unknown`.
+      counts=scale·Σm)`: 2D analytic Jacobian to 4.4e-7 (entries scaled by
+      the diagonals), 1D finite-difference Jacobian to 2e-6 on the diagonal.
+      `d = m` must hold bit for bit: `kl_div` evaluates with absolute error
+      ~eps·m at `d ≈ m` and the square root turns that into a residual
+      floor ~sqrt(scale·eps·m) ≈ 4e-7 σ per point; irrelevant for data
+      (residuals are O(1)), so the tests feed the backend's own curve back
+      as data.
+- [x] E2 Seeded noisy fit: `stderr` within 10% of the CRB at 1.4e6 counts
+      (one-seed spot check; measured max deviation 2–9% over five seeds,
+      the scatter almost all in `tau`). The population statement lives in
+      E3: the 256-seed mean of `stderr` within 2% of the CRB (measured
+      1.000–1.009).
+- [x] E3 Slow test reproducing the 2026-09-15 control: 256 seeds, seed
+      scatter / `stderr` 0.93–1.06 under `poisson` (band 0.85–1.15);
+      1.39–1.79 on the peak parameters under `unknown` and 0.60 on the
+      background offset (one misweighting, not a missing global factor;
+      both bounds belong to this peak-to-background contrast). 23 s.
 
 ### F. Simulator
 - [ ] F1 Snapshot the applied scale factor and σ at `add_noise` time;
