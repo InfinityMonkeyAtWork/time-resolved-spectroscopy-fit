@@ -40,6 +40,7 @@ import pandas as pd
 from trspecfit.config.plot import PlotConfig
 from trspecfit.fitlib import compute_fit_metrics
 from trspecfit.utils import lmfit as ulmfit
+from trspecfit.utils import noise as unoise
 from trspecfit.utils.hdf5 import require_dataset, require_group
 from trspecfit.utils.lmfit import MCMCResult
 from trspecfit.utils.plot import plot_fit_res_2d, plot_par_series
@@ -52,13 +53,16 @@ SCHEMA_VERSION = "7"
 # readable — re-fit and re-save. See docs/design/fit_archive_schema.md.
 SUPPORTED_READ_VERSIONS = ("7",)
 
-# Default noise metadata used when no σ has been set on the File. Mirrors the
-# project.yaml defaults defined in ``Project._set_defaults``; if you change one,
-# change the other.
-NOISE_TYPE_UNKNOWN = "unknown"
-NOISE_TYPE_GAUSSIAN = "gaussian"
+# Default noise metadata used when no noise model has been declared on the
+# File. Mirrors the project.yaml defaults defined in ``Project._set_defaults``;
+# if you change one, change the other. The noise kinds alias ``utils.noise``,
+# which owns the residual semantics behind them.
+NOISE_TYPE_UNKNOWN = unoise.NOISE_TYPE_UNKNOWN
+NOISE_TYPE_GAUSSIAN = unoise.NOISE_TYPE_GAUSSIAN
+NOISE_TYPE_POISSON = unoise.NOISE_TYPE_POISSON
 SIGMA_SOURCE_USER = "user_supplied"
 SIGMA_TYPE_CONSTANT = "constant"
+SIGMA_TYPE_PER_POINT = "per_point"
 
 
 #
@@ -100,24 +104,24 @@ def validate_noise_metadata(
     sigma_type: str,
 ) -> None:
     """
-    Validate the noise-schema discriminator fields against v1's strict subset.
+    Validate the noise-schema discriminator fields against the supported set.
 
-    v1 supports ``noise_type ∈ {"gaussian", "unknown"}``, ``sigma_source ==
-    "user_supplied"``, and ``sigma_type == "constant"``. Future passes will
-    relax these (Poisson-derived σ, per-spectrum σ, etc.), but every value
-    on disk now must round-trip cleanly through this check.
+    Supported: ``noise_type ∈ {"gaussian", "poisson", "unknown"}`` (the
+    declared-noise kinds of ``utils.noise``), ``sigma_source ==
+    "user_supplied"`` and ``sigma_type ∈ {"constant", "per_point"}``. Every
+    value on disk must round-trip cleanly through this check.
     """
 
-    if noise_type not in (NOISE_TYPE_GAUSSIAN, NOISE_TYPE_UNKNOWN):
+    if noise_type not in unoise.NOISE_TYPES:
         raise ValueError(
-            f"noise_type must be 'gaussian' or 'unknown'; got {noise_type!r}"
+            f"noise_type must be one of {unoise.NOISE_TYPES}; got {noise_type!r}"
         )
     if sigma_source != SIGMA_SOURCE_USER:
+        raise ValueError(f"sigma_source must be 'user_supplied'; got {sigma_source!r}")
+    if sigma_type not in (SIGMA_TYPE_CONSTANT, SIGMA_TYPE_PER_POINT):
         raise ValueError(
-            f"sigma_source must be 'user_supplied' (v1); got {sigma_source!r}"
+            f"sigma_type must be 'constant' or 'per_point'; got {sigma_type!r}"
         )
-    if sigma_type != SIGMA_TYPE_CONSTANT:
-        raise ValueError(f"sigma_type must be 'constant' (v1); got {sigma_type!r}")
 
 
 #

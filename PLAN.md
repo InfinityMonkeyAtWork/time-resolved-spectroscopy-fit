@@ -157,17 +157,19 @@ the end.
       the limit branch and below the floor, segment concatenation.
 
 ### B. File API and reductions
-- [ ] B1 `File.set_noise`, `set_sigma` delegating, `File.noise` attribute with
+- [x] B1 `File.set_noise`, `set_sigma` delegating, `File.noise` attribute with
       `noise_type` / `sigma_data` read-only properties for existing callers.
-- [ ] B2 Project defaults `noise_type` / `sigma_data` / `noise_scale` in
+- [x] B2 Project defaults `noise_type` / `sigma_data` / `noise_scale` in
       `_set_defaults` + project.yaml key handling.
-- [ ] B3 Corrections raise while a weighted model is declared.
-- [ ] B4 Wire view reductions into `fit_baseline`, `fit_spectrum`, `fit_sbs`,
-      `fit_2d`; pass `noise=` to `fit_wrapper`; capture into the slot dict.
-- [ ] B5 `Project.fit_2d`: per-file view noise list in `Project.files`
+- [x] B3 Corrections raise while a weighted model is declared.
+- [x] B4 Wire view reductions into `fit_baseline`, `fit_spectrum`, `fit_sbs`,
+      `fit_2d`; pass `noise=` to `fit_wrapper`. The slot dict keeps reporting
+      the File-level noise through the new properties; threading the view
+      noise into slots and metrics is C.
+- [x] B5 `Project.fit_2d`: per-file view noise list in `Project.files`
       order (the order of `concat_data`, not the sorted `input_files`); mixed
       `unknown`/weighted raises.
-- [ ] B6 Tests: validation and domain errors, corrections raise, reductions
+- [x] B6 Tests: validation and domain errors, corrections raise, reductions
       pinned (constant, per-point, Poisson baseline), joint mixed-unknown
       raises, joint Gaussian+Poisson runs, `jacobian_fun_project` with
       `SegmentedNoise` vs finite differences (untested after A).
@@ -191,8 +193,10 @@ the end.
       `fit_archive_principles.md` amend the "σ is post-hoc" rule and the
       attachment table (dated; the noise model is keyed because the writer
       does not refresh stored `stderr` on a same-hash append);
-      `fit_archive_schema.md` slot attrs/dataset and the additive note;
-      `compare_models` docstring.
+      `fit_archive_schema.md` slot attrs/dataset, the additive note and the
+      value sets `noise_type ∈ {unknown, gaussian, poisson}` /
+      `sigma_type ∈ {constant, per_point}` that `validate_noise_metadata`
+      accepts since B; `compare_models` docstring.
 - [ ] C6 Tests: hash changes with any declared noise (incl. constant σ) and
       not with `unknown`; roundtrip with per-point σ and Poisson scale;
       3-element `input_files` reads; `sigma_eff` finite only for constant
@@ -241,8 +245,13 @@ the end.
       snapshot, refits, and compares `stderr` with and without the noise
       model and against `sensitivity_report`. `/check-example`.
 - [ ] H2 Notebook 03: `set_noise('poisson', ...)` before the fits; verdict
-      prose updated. `/check-example`.
-- [ ] H3 CHANGELOG 0.17.0; TODO.md: retire the two noise items, note the
+      prose updated. `/check-example`. Notebook 10 calls `set_sigma` before
+      its fits, which are weighted since B: re-execute and `/check-example`.
+- [ ] H3 CHANGELOG 0.17.0 (incl. behaviour changes since B: `set_sigma`
+      now weights the fit; corrections refuse to run under declared noise;
+      a project default `sigma_data` without `noise_type: gaussian` raises;
+      `noise_type` / `sigma_data` / `sigma_type` are read-only properties);
+      TODO.md: retire the two noise items, note the
       simulator snapshot fix, add follow-ups (noise estimation helpers,
       compound likelihood, σ through corrections, other counting notebooks
       01/04/20/21).
