@@ -37,6 +37,11 @@ from trspecfit import spectra
 from trspecfit.config.plot import PlotConfig
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import spawn as uspawn
+from trspecfit.utils.noise import NoiseModel, SegmentedNoise
+
+# Declared noise of a fitted view: one model, or one per segment of a
+# concatenated joint residual.
+NoiseLike = NoiseModel | SegmentedNoise
 
 # Define a type alias for file paths
 type PathLike = str | pathlib.Path
@@ -186,6 +191,8 @@ def residual_fun(
     t_lim: list[int] | None = None,
     res_type: str = "lmfit",
     args: Sequence[Any] | None = None,
+    *,
+    noise: NoiseLike | None = None,
 ) -> np.ndarray | float:
     """
     Compute residual (data - fit) for optimization and analysis.
@@ -237,6 +244,13 @@ def residual_fun(
 
     args : tuple, default=()
         Additional arguments for fit function, passed via ``*args``
+    noise : NoiseModel or SegmentedNoise, optional
+        Declared noise of the fitted view. ``None`` or an ``'unknown'``
+        model leaves the residual unweighted (``data - fit``); a weighted
+        model returns the residual in likelihood units — ``(d - m) / σ``
+        for Gaussian, the signed Poisson deviance for Poisson. Pass a
+        ``SegmentedNoise`` for the concatenated residual of a joint fit,
+        one model per file segment.
 
     Returns
     -------
@@ -275,7 +289,10 @@ def residual_fun(
 
     # select user-defined region to consider for residual computation
     window = _fit_window_slices(data_arr.ndim, e_lim, t_lim)
-    residual = data_arr[window] - fit_arr[window]
+    if noise is not None and noise.is_weighted:
+        residual = noise.apply(data_arr[window], fit_arr[window])
+    else:
+        residual = data_arr[window] - fit_arr[window]
 
     # type of residual to return
     if res_type == "RSS":
@@ -295,6 +312,36 @@ def residual_fun(
 
 
 #
+def _jacobian_noise_weight(
+    *,
+    noise: NoiseLike,
+    par: Any,
+    x: ArrayLike,
+    data: np.ndarray,
+    fit_fun_str: str,
+    unpack: int,
+    e_lim: list[int] | None,
+    t_lim: list[int] | None,
+    args: Sequence[Any] | None,
+    window: tuple[slice, ...],
+) -> np.ndarray:
+    """Column vector ``-dr/dm`` on the fit window, for a weighted *noise*.
+
+    Multiplying the unweighted residual Jacobian ``-dm/dtheta`` by this
+    column gives the weighted residual Jacobian ``(dr/dm)(dm/dtheta)``
+    (``1/sigma`` per row for Gaussian noise). Costs one extra forward
+    evaluation of the model, which the Poisson factor needs.
+    """
+
+    fit_arr = np.asarray(
+        residual_fun(par, x, data, fit_fun_str, unpack, e_lim, t_lim, "fit", args)
+    )
+    data_view = np.asarray(data, dtype=float)[window]
+    factor = noise.jacobian_factor(data_view, fit_arr[window])
+    return -np.ravel(np.broadcast_to(factor, data_view.shape))[:, None]
+
+
+#
 def jacobian_fun(
     par: Any,
     x: ArrayLike,
@@ -305,6 +352,8 @@ def jacobian_fun(
     t_lim: list[int] | None = None,
     res_type: str = "lmfit",
     args: Sequence[Any] | None = None,
+    *,
+    noise: NoiseLike | None = None,
 ) -> np.ndarray:
     """Analytic Jacobian of :func:`residual_fun` for lmfit's ``Dfun``.
 
@@ -314,13 +363,22 @@ def jacobian_fun(
     ``args = (evaluator, jacobian, theta_indices, model, dim)`` with
     *jacobian* from ``eval_jax.make_jacobian_2d_jax``.
 
+    Parameters
+    ----------
+    noise : NoiseModel or SegmentedNoise, optional
+        Declared noise of the fitted view, forwarded by lmfit from
+        ``fcn_kws`` exactly as to :func:`residual_fun`. A weighted model
+        multiplies every row by ``-dr/dm``, at the cost of one extra
+        forward evaluation of the model.
+
     Returns
     -------
     ndarray
         ``d(residual)/d(varying params)``, shape
         ``(n_residuals, n_varys)``, columns in lmfit varying-parameter
-        order (``col_deriv=0``).  Residual is ``data - fit``, so this
-        is the negated model Jacobian over the fit window.
+        order (``col_deriv=0``).  The unweighted residual is
+        ``data - fit``, so this is the negated model Jacobian over the
+        fit window.
     """
 
     if e_lim is None:
@@ -346,6 +404,20 @@ def jacobian_fun(
     n_opt = jac.shape[-1]
     d_res = -jac[window].reshape(-1, n_opt)
 
+    if noise is not None and noise.is_weighted:
+        d_res = d_res * _jacobian_noise_weight(
+            noise=noise,
+            par=par,
+            x=x,
+            data=data,
+            fit_fun_str=fit_fun_str,
+            unpack=unpack,
+            e_lim=e_lim,
+            t_lim=t_lim,
+            args=args,
+            window=window,
+        )
+
     # Column order: plan opt order -> lmfit varying-parameter order.
     opt_names = [model.parameter_names[int(i)] for i in theta_indices]
     var_names = [name for name in par if par[name].vary]
@@ -369,6 +441,8 @@ def jacobian_fun_project(
     t_lim: list[int] | None = None,
     res_type: str = "lmfit",
     args: Sequence[Any] | None = None,
+    *,
+    noise: NoiseLike | None = None,
 ) -> np.ndarray:
     """Analytic joint Jacobian for project-level fits (lmfit ``Dfun``).
 
@@ -380,13 +454,21 @@ def jacobian_fun_project(
     window slicing happens here (``e_lim``/``t_lim`` are empty for
     project fits).
 
+    Parameters
+    ----------
+    noise : NoiseModel or SegmentedNoise, optional
+        Declared noise of the concatenated view, forwarded by lmfit from
+        ``fcn_kws``. A weighted model multiplies every row by ``-dr/dm``;
+        a ``SegmentedNoise`` does so per file segment.
+
     Returns
     -------
     ndarray
         ``d(residual)/d(varying params)``, shape
         ``(n_residuals_total, n_varys)``, columns in lmfit
-        varying-parameter order (``col_deriv=0``). Residual is
-        ``data - fit``, so this is the negated fused model Jacobian.
+        varying-parameter order (``col_deriv=0``). The unweighted
+        residual is ``data - fit``, so this is the negated fused model
+        Jacobian.
     """
 
     if args is None or not callable(args[1]):
@@ -404,6 +486,20 @@ def jacobian_fun_project(
     # (n_residuals_total, n_opt), columns in theta_c order
     jac = np.asarray(jacobian(par_values[theta_c_indices]), dtype=np.float64)
     d_res = -jac
+
+    if noise is not None and noise.is_weighted:
+        d_res = d_res * _jacobian_noise_weight(
+            noise=noise,
+            par=par,
+            x=x,
+            data=data,
+            fit_fun_str=fit_fun_str,
+            unpack=unpack,
+            e_lim=e_lim,
+            t_lim=t_lim,
+            args=args,
+            window=(slice(None),),
+        )
 
     # Column order: theta_c order -> lmfit varying-parameter order.
     var_names = [name for name in par if par[name].vary]
@@ -584,6 +680,8 @@ def fit_wrapper(
     jac_fun: Callable[..., np.ndarray] | None = None,
     seed: int | None = None,
     show_output: int = 0,
+    *,
+    noise: NoiseLike | None = None,
 ) -> ulmfit.FitOutput:
     """
     Comprehensive fitting wrapper with optimization, CI, and MCMC.
@@ -675,6 +773,16 @@ def fit_wrapper(
           call ``FitResults.plot_mcmc()`` (each of
           ``File.fit_baseline``/``fit_spectrum``/``fit_2d`` does so
           right after appending the fit slot).
+
+    noise : NoiseModel or SegmentedNoise, optional
+        Declared noise of the fitted view (``utils.noise``), reaching
+        both the objective and the analytic Jacobian through lmfit's
+        ``fcn_kws``. A weighted model turns the residual into likelihood
+        units and switches ``scale_covar`` off, so the covariance — and
+        with it ``stderr``, the confidence intervals and the MCMC
+        posterior — follows the declared noise instead of the fitted
+        residual scatter. ``None`` or an ``'unknown'`` model keeps the
+        unweighted residual and lmfit's redchi scaling.
 
     Returns
     -------
@@ -797,8 +905,18 @@ def fit_wrapper(
     if show_output >= 1:
         t_0 = time.time()  # start time
 
-    # construct lmfit minimizer
-    mini = lmfit.Minimizer(residual_fun, par_ini, fcn_args=(*const, "lmfit", args))
+    # construct lmfit minimizer. A declared noise model already carries the
+    # data scale, so lmfit must not rescale the covariance by redchi
+    # (scale_covar); lmfit forwards fcn_kws to the objective and to Dfun
+    # alike, so the Jacobian sees the same weighting.
+    weighted = noise is not None and noise.is_weighted
+    mini = lmfit.Minimizer(
+        residual_fun,
+        par_ini,
+        fcn_args=(*const, "lmfit", args),
+        fcn_kws=None if noise is None else {"noise": noise},
+        scale_covar=not weighted,
+    )
 
     # analytic Jacobian: only lmfit's leastsq accepts a Dfun. The optimizer
     # seed goes to the stage-1 method only — the two-stage contract

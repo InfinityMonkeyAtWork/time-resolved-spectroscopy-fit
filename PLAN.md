@@ -145,12 +145,12 @@ the end.
 ## Steps
 
 ### A. Noise model core
-- [ ] A1 `utils/noise.py`: `NoiseModel`, `for_view()`, `apply()`,
+- [x] A1 `utils/noise.py`: `NoiseModel`, `for_view()`, `apply()`,
       `jacobian_factor()`, `data >= 0` validation, per-segment application.
-- [ ] A2 `fitlib.residual_fun(noise=)`, `fit_wrapper(noise=)` → `fcn_kws`,
+- [x] A2 `fitlib.residual_fun(noise=)`, `fit_wrapper(noise=)` → `fcn_kws`,
       `scale_covar=False` when weighted; `jacobian_fun` /
       `jacobian_fun_project` apply the factor.
-- [ ] A3 Tests `tests/test_noise_model.py`: deviance limits (`d=0`, `d=m`),
+- [x] A3 Tests `tests/test_noise_model.py`: deviance limits (`d=0`, `d=m`),
       sum equals the deviance formula, floor policy (`d > 0`: linear below
       the floor with nonzero slope; `d = 0`: equals `m = 0`), Gaussian
       broadcasting, full residual Jacobian vs finite differences (sign) incl.
@@ -169,7 +169,8 @@ the end.
       `unknown`/weighted raises.
 - [ ] B6 Tests: validation and domain errors, corrections raise, reductions
       pinned (constant, per-point, Poisson baseline), joint mixed-unknown
-      raises, joint Gaussian+Poisson runs.
+      raises, joint Gaussian+Poisson runs, `jacobian_fun_project` with
+      `SegmentedNoise` vs finite differences (untested after A).
 
 ### C. Identity, metrics, archive
 - [ ] C1 `compute_fit_metrics(noise=)`: `chi2` from the weighted residual,
