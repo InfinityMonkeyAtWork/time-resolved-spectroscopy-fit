@@ -56,8 +56,9 @@ See examples/simulator/ directory for complete workflows.
 
 import json
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import h5py
 import numpy as np
@@ -67,6 +68,115 @@ from trspecfit.mcp import Model
 from trspecfit.utils import plot as uplt
 from trspecfit.utils.hdf5 import require_group
 from trspecfit.utils.sweep import ParameterSweep
+
+# guard of the analog-poisson count scale against noise_level = 0
+_POISSON_LEVEL_EPS = 1e-10
+
+
+#
+def _counting_reference(clean_data: np.ndarray, *, dim: int) -> float:
+    """
+    Signal total the photon sampler normalizes to counts_per_delay.
+
+    The 1D sampler spends the count budget on one spectrum, the 2D sampler
+    on the average time slice, so the reference is the summed signal in 1D
+    and the mean row total in 2D.
+    """
+
+    signal_positive = np.abs(clean_data)
+    if dim == 1:
+        return float(np.sum(signal_positive))
+    return float(np.mean(np.sum(signal_positive, axis=1)))
+
+
+#
+#
+@dataclass(frozen=True)
+class _NoiseSnapshot:
+    """
+    What a noise draw with a given set of detection settings applies.
+
+    Derived from the detection settings and the clean array alone, so the
+    same derivation recovers the declaration of a stored simulation from
+    its detection metadata and its ``clean_data``.
+
+    Attributes
+    ----------
+    kind : {'gaussian', 'poisson', 'none'}
+        Distribution actually drawn from: 'poisson' covers both counting
+        detection and the analog poisson pathway, 'none' covers
+        ``noise_type='none'`` and a clean array with no signal at all.
+    clean_data : ndarray
+        The array the draw was applied to, held by reference (the
+        simulation methods rebind ``data_clean`` instead of mutating it).
+    scale : float or None
+        Counts per data unit of the poisson draw; None for the other kinds.
+    sigma : float or None
+        Constant sigma of the gaussian draw; None for the other kinds.
+    """
+
+    kind: str
+    clean_data: np.ndarray
+    scale: float | None = None
+    sigma: float | None = None
+
+    #
+    def declaration(self) -> dict[str, Any] | None:
+        """``File.set_noise`` keyword arguments describing this draw."""
+
+        if self.kind == "gaussian":
+            return {"noise_type": "gaussian", "sigma": self.sigma}
+        if self.kind == "poisson":
+            assert self.scale is not None  # type guard
+            if bool(np.all(self.clean_data >= 0)):
+                return {"noise_type": "poisson", "scale": self.scale}
+            sigma = np.sqrt(np.abs(self.clean_data) / self.scale)
+            return {"noise_type": "gaussian", "sigma": sigma}
+        return None
+
+
+#
+def _snapshot_noise(
+    *,
+    detection: str,
+    noise_type: str,
+    noise_level: float,
+    counts_per_delay: int | None,
+    clean_data: np.ndarray,
+    dim: int,
+) -> _NoiseSnapshot:
+    """
+    Describe the noise a draw with these settings applies to *clean_data*.
+
+    Mirrors the three pathways of ``Simulator.add_noise``: photon counting
+    (scale set by the count budget), analog gaussian (constant sigma) and
+    analog poisson (scale set by the noise level). A counting draw without
+    a count budget or without any signal adds nothing, so it snapshots as
+    'none'.
+    """
+
+    if detection == "photon_counting":
+        reference = _counting_reference(clean_data, dim=dim)
+        if reference == 0 or counts_per_delay is None:
+            return _NoiseSnapshot(kind="none", clean_data=clean_data)
+        return _NoiseSnapshot(
+            kind="poisson",
+            clean_data=clean_data,
+            scale=counts_per_delay / reference,
+        )
+    if noise_type == "gaussian":
+        return _NoiseSnapshot(
+            kind="gaussian",
+            clean_data=clean_data,
+            sigma=float(noise_level * np.max(np.abs(clean_data))),
+        )
+    if noise_type == "poisson":
+        return _NoiseSnapshot(
+            kind="poisson",
+            clean_data=clean_data,
+            scale=1.0 / (noise_level + _POISSON_LEVEL_EPS),
+        )
+    return _NoiseSnapshot(kind="none", clean_data=clean_data)
 
 
 #
@@ -305,6 +415,9 @@ class Simulator:
         self.data_noisy: np.ndarray | None = None  # With noise
         self.noise: np.ndarray | None = None  # Just the noise component
 
+        # What the most recent add_noise call applied (None: nothing yet)
+        self._noise_applied: _NoiseSnapshot | None = None
+
     #
     @staticmethod
     def _validated_noise_type(noise_type: str) -> str:
@@ -437,6 +550,11 @@ class Simulator:
         -------
         tuple of (ndarray, ndarray)
             Tuple of (noisy_data, noise).
+
+        Notes
+        -----
+        Records what was applied, which ``sigma_data`` and ``noise_model``
+        report until the next noise draw.
         """
 
         if self.detection == "analog":
@@ -458,6 +576,15 @@ class Simulator:
             noise = noisy_data - clean_data
         else:
             raise ValueError(f"Unknown detection type: {self.detection}")
+
+        self._noise_applied = _snapshot_noise(
+            detection=self.detection,
+            noise_type=self.noise_type,
+            noise_level=self.noise_level,
+            counts_per_delay=self.counts_per_delay,
+            clean_data=clean_data,
+            dim=dim,
+        )
 
         return noisy_data, noise
 
@@ -823,7 +950,7 @@ class Simulator:
             signal_positive = np.abs(signal)
 
             # Scale signal to photon counts (higher = less relative noise)
-            scale_factor = 1.0 / (self.noise_level + 1e-10)  # Avoid division by zero
+            scale_factor = 1.0 / (self.noise_level + _POISSON_LEVEL_EPS)
             signal_scaled = signal_positive * scale_factor
 
             # Generate Poisson noise
@@ -863,7 +990,7 @@ class Simulator:
         """
 
         signal_positive = np.abs(signal)
-        total_signal = np.sum(signal_positive)
+        total_signal = _counting_reference(signal, dim=1)
 
         if total_signal == 0:
             return np.zeros_like(signal)
@@ -911,8 +1038,7 @@ class Simulator:
         signal_positive = np.abs(signal)
 
         # Average total signal per time step
-        row_totals = np.sum(signal_positive, axis=1)
-        mean_row_total = np.mean(row_totals)
+        mean_row_total = _counting_reference(signal, dim=2)
 
         if mean_row_total == 0:
             return np.zeros_like(signal)
@@ -1025,36 +1151,99 @@ class Simulator:
             )
 
     #
-    def _constant_sigma(self, clean_data: np.ndarray) -> float | None:
-        """
-        Constant per-pixel sigma for clean_data under the current noise
-        settings: noise_level * max(abs(clean_data)) for analog gaussian
-        noise, None otherwise (poisson and photon-counting sigmas are
-        signal-dependent; 'none' has no noise).
-        """
-
-        if self.detection != "analog" or self.noise_type != "gaussian":
-            return None
-        return float(self.noise_level * np.max(np.abs(clean_data)))
-
-    #
     @property
     def sigma_data(self) -> float | None:
         """
-        Constant noise sigma implied by the most recent simulation.
+        Constant noise sigma of the most recent simulation.
 
         Only analog detection with ``noise_type='gaussian'`` has a constant
         per-pixel sigma: ``noise_level * max(abs(data_clean))``. Returns
-        None for other noise settings or before any data was simulated.
-        Pass the value to ``File.set_sigma`` when fitting simulated data so
-        chi-square and derived uncertainties use the true noise scale.
-        Evaluated from the current noise settings, so re-simulate (or
-        re-read) after changing ``noise_level``.
+        None for the other noise settings and before any data was
+        simulated.
+
+        Notes
+        -----
+        Set when the noise was drawn, not when it is read: later
+        ``set_noise_level`` / ``set_noise_type`` calls leave it at the
+        value the simulated data actually carry, until the next simulation
+        replaces it. Prefer ``noise_model`` for declaring the noise of
+        simulated data to a ``File``; it covers the counting pathways too.
         """
 
-        if self.data_clean is None:
+        if self._noise_applied is None:
             return None
-        return self._constant_sigma(self.data_clean)
+        return self._noise_applied.sigma
+
+    #
+    @property
+    def noise_model(self) -> dict[str, Any] | None:
+        """
+        ``File.set_noise`` keyword arguments for the most recent simulation.
+
+        Describes the noise the simulator actually drew, so a fit of the
+        simulated data can be weighted by the truth instead of an estimate:
+
+        >>> clean, noisy, _noise = sim.simulate_2d()
+        >>> file = File(parent_project=project, name="sim", data=noisy,
+        ...             energy=sim.model.energy, time=sim.model.time)
+        >>> file.set_noise(**sim.noise_model)
+
+        Returns
+        -------
+        dict or None
+            One of three forms, or None when the most recent draw added no
+            noise (``noise_type='none'``, a count budget spent on a clean
+            array with no signal) and before the first simulation:
+
+            - ``{'noise_type': 'poisson', 'scale': float}`` — a poisson
+              draw on a clean array that is non-negative everywhere, so the
+              noisy data are counts divided by *scale*. Covers photon
+              counting and the analog poisson pathway.
+            - ``{'noise_type': 'gaussian', 'sigma': float}`` — the analog
+              gaussian pathway, whose sigma is constant across the array
+              (the same value as ``sigma_data``).
+            - ``{'noise_type': 'gaussian', 'sigma': ndarray}`` — a poisson
+              draw on a clean array that is negative somewhere (a bleach).
+              The sampler draws counts from ``abs(clean)`` and restores the
+              sign, which no counting likelihood describes, so the poisson
+              variance is declared point by point instead:
+              ``sigma = sqrt(abs(clean) / scale)``, of ``data_clean.shape``.
+
+        Notes
+        -----
+        **Counting scale.** *scale* is the factor the sampler applied,
+        i.e. counts per data unit. In 1D the budget buys one spectrum, so
+        ``scale = counts_per_delay / sum(abs(clean))``. In 2D the mean time
+        slice carries ``counts_per_delay``, so
+        ``scale = counts_per_delay / mean(row totals of abs(clean))`` and
+        the total over the window is ``counts_per_delay * n_time``. Under
+        the analog poisson pathway the scale is
+        ``1 / (noise_level + 1e-10)``.
+
+        **Snapshot semantics.** Like ``sigma_data``, the declaration is
+        taken when the noise is drawn; changing the noise settings
+        afterwards does not change it, and ``simulate_n`` reports the draw
+        settings shared by all of its realizations.
+
+        **Sign test.** Which of the two poisson forms is returned follows
+        the clean array, not one realization: a realization of a negative
+        pixel can come out at zero counts and look non-negative, but the
+        data are still not counts.
+
+        **Zero-signal pixels.** ``File.set_noise`` requires a positive
+        sigma everywhere, and a pixel whose clean signal is exactly zero
+        gets ``sigma = 0`` in the per-point form, which it rejects. Give
+        the model a background so that no pixel is empty.
+
+        See Also
+        --------
+        sigma_data : the constant sigma of an analog gaussian simulation
+        trspecfit.trspecfit.File.set_noise : consumer of these arguments
+        """
+
+        if self._noise_applied is None:
+            return None
+        return self._noise_applied.declaration()
 
     #
     def set_seed(self, seed: int | None) -> None:
@@ -1991,8 +2180,9 @@ class Simulator:
         config_group.attrs["all_parameter_values"] = json.dumps(param_values)
 
         # Constant noise sigma for this config (analog gaussian only) —
-        # per config because it derives from each config's clean data
-        if (sigma_data := self._constant_sigma(clean)) is not None:
+        # per config because it derives from each config's clean data,
+        # snapshotted by the simulate_n call this append follows
+        if (sigma_data := self.sigma_data) is not None:
             config_group.attrs["sigma_data"] = sigma_data
 
         # Save clean data for this configuration

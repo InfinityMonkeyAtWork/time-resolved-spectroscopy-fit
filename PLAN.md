@@ -119,6 +119,14 @@ kwargs: `poisson` when the noisy output is non-negative, else per-point
 `gaussian` with `σ = sqrt(|clean|/scale)` (signed bleach output).
 `save_data` writes `noise_type` / `noise_scale` next to the `clean_data` it
 already stores, which together determine that σ map; no σ dataset.
+Deferred (2026-09-22): the file-format half moves to the simulator
+schema-compliance work (TODO item 1), so no field is added to a layout about
+to be redesigned; the declaration is derivable from the stored detection
+metadata and `clean_data` (counting: `counts_per_delay / mean row total`;
+analog gaussian: `noise_level · max|clean|`; analog poisson:
+`1/(noise_level + 1e-10)`), so nothing a 0.17.0 file stores is lost. The
+snapshot helper computes the declaration from exactly those inputs, so the
+compliance work reuses it for writing and for reading older files.
 
 **Scope kept out.** Noise estimation helpers (temporal-RMS σ, photon-transfer
 `scale`; notebook 12 takes `scale` from the simulator snapshot); automatic
@@ -254,13 +262,24 @@ the end.
       both bounds belong to this peak-to-background contrast). 23 s.
 
 ### F. Simulator
-- [ ] F1 Snapshot the applied scale factor and σ at `add_noise` time;
-      `Simulator.noise_model`; `sigma_data` kept.
-- [ ] F2 `save_data` and the ML export write `noise_type` / `noise_scale`
-      (the signed-output σ map follows from these and `clean_data`).
-- [ ] F3 Tests: variance/mean of counting output equals `1/scale`; stale case
-      (`set_noise_level` after `simulate`) no longer changes the snapshot;
-      signed output yields the per-point Gaussian form.
+- [x] F1 Snapshot the applied scale factor and σ at `add_noise` time;
+      `Simulator.noise_model`; `sigma_data` kept (now the recorded value,
+      which also fixes the stale-σ case in `save_data` and the sweep).
+      Module-private `_NoiseSnapshot` built by `_snapshot_noise(detection
+      settings, clean array)`, the derivation the deferred F2 reuses. The
+      poisson-vs-per-point choice keys on the clean array's sign, not on
+      one realization (a negative pixel can draw zero counts).
+- [x] F2 Deferred (2026-09-22) to the simulator schema-compliance work
+      (TODO item 1): `save_data` and the sweep output carry the noise
+      declaration in the compliant form; derivable meanwhile from the
+      stored detection metadata and `clean_data` (see Design, Simulator).
+- [x] F3 Tests (`tests/test_simulator_noise.py`): variance/mean of counting
+      output equals `1/scale` (400 realizations; per-pixel band 5 sd of the
+      variance estimator, pooled band 4 sd/√n_pixels; worst pixel measured
+      3.9 sd over 8 seeds); stale case (`set_noise_level` after `simulate`)
+      no longer changes the snapshot, incl. the saved `sigma_data` attr;
+      signed output yields the per-point Gaussian form (σ = 0 pixels are
+      rejected by `set_noise`, so the bleach model carries a background).
 
 ### G. Sensitivity module
 - [ ] G1 Docstring: fix the `counts` convention for 2D (total over the window
