@@ -22,10 +22,13 @@ Tabulate bounds, correlation penalties and relative precision.
 Notes
 -----
 **Count convention.** ``counts`` always means the *total* expected photon
-count over the evaluated window, background included — the same convention as
-``Simulator(detection='photon_counting', counts_per_delay=...)``. Counts in the
-peaks alone are reported separately as ``counts_in_peaks``; confusing the two
-is the most common way to misread these numbers.
+count over the evaluated window, background included. For data from
+``Simulator(detection='photon_counting', counts_per_delay=...)`` that is
+``counts_per_delay`` in 1D, where the sampler scales the spectrum to that
+total; in 2D it normalises the *mean* row total instead, so the window carries
+``counts_per_delay * n_time``. Counts in the peaks alone are reported
+separately as ``counts_in_peaks``; confusing the two is the most common way to
+misread these numbers.
 
 **Exact scaling.** The Fisher information is linear in the photon budget for a
 fixed model shape, so every bound scales as ``counts**-0.5`` exactly. Bounds at
@@ -35,14 +38,34 @@ searching.
 
 **What the bound does and does not cover.** It is the best any unbiased
 estimator can do given Poisson statistics. It says nothing about a fitter that
-weights its residuals sub-optimally: a least-squares fit on Poisson data
-typically lands 10-20% above the bound. Compare measured scatter against these
-numbers to separate "not enough photons" from "wrong objective function".
+weights its residuals sub-optimally, and such a fit goes wrong in two separate
+ways. Its *scatter* over repeated measurements is the smaller effect: a
+least-squares fit with unweighted residuals is no longer the maximum-likelihood
+estimator, yet on a peak-on-background control its scatter stayed within 25%
+of the bound. Its *quoted* ``stderr`` is the larger one: lmfit rescales the
+covariance by ``redchi``, spreading a single variance over a window whose
+counting noise peaks where the signal does, so on the same control the error
+bars came out 1.4-1.8 times too small on the peak parameters and too large on
+the background offset (``tests/test_noise_crb.py::TestSeedScatterControl``).
+Comparing measured scatter against these numbers separates "not enough
+photons" from "wrong objective function".
+
+Declaring the noise model with ``File.set_noise('poisson', scale=...)`` removes
+both: the fit then minimises the Poisson deviance, which is the
+maximum-likelihood objective, so its scatter reaches the bound and its quoted
+``stderr`` equals it (verified against :func:`fisher_matrix` in
+``tests/test_noise_crb.py``).
 
 **Detector noise.** Pure Poisson statistics are assumed, which holds for true
 single-event counting. Analog detection (e.g. MCP stack into a phosphor and
 CCD) carries an excess-noise factor F > 1 that reduces the effective count to
 roughly ``counts / F``; pass the reduced value for such data.
+
+**API tier.** Every function here takes an ``mcp.Model`` — ``file.model_active``
+after ``File.load_model``, promoted to ``dim=2`` by ``add_time_dependence`` — so
+they sit in the advanced tier next to ``trspecfit.mcp``, not in the user API
+(``Project``, ``File``, ``Simulator``, ``PlotConfig``). See ``docs/stability.md``:
+the stability commitment for that tier is not stated yet.
 """
 
 import warnings

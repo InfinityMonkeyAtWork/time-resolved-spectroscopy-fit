@@ -282,11 +282,14 @@ the end.
       rejected by `set_noise`, so the bleach model carries a background).
 
 ### G. Sensitivity module
-- [ ] G1 Docstring: fix the `counts` convention for 2D (total over the window
+- [x] G1 Docstring: fix the `counts` convention for 2D (total over the window
       = `counts_per_delay × n_time`); separate the two facts about unweighted
-      fits (scatter 10-20% above the bound; quoted `stderr` ~1.6× too small,
-      the 2026-09-15 control); state the advanced tier.
-- [ ] G2 `sphinx -W` build with `docs/api/sensitivity.rst`.
+      fits: measured on the E3 geometry (256 seeds) the unweighted scatter is
+      0.98–1.24× the bound (the old "10–20% above" was the wrong emphasis),
+      while the quoted `stderr` is 1.4–1.8× too small on peak parameters and
+      too large on the background; state the advanced tier (`mcp.Model` in,
+      `docs/stability.md` makes no commitment for it yet).
+- [x] G2 `sphinx -W` clean build succeeds with `docs/api/sensitivity.rst`.
 
 ### H. Examples and docs
 - [ ] H1 Notebook 12: keep §1–§3 under `unknown` (the off-scale MC demo needs
