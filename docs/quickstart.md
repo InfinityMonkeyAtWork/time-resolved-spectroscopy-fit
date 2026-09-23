@@ -32,6 +32,7 @@ Fitting workflow examples — **0x = single-file skills, 1x = post-fit work, 2x 
 | 10_model_comparison | Compare two models on the same file (baseline / SbS / 2D) |
 | 11_save_load_export | `FitResults` HDF5 round-trip, CSV/PNG export, ship just the winners |
 | 12_uncertainty_mcmc | Declare the noise model, then three tiers of parameter uncertainty (`stderr`, profiled CIs, MCMC) checked against truth and the Cramér-Rao bound |
+| 13_missing_noise_model | What the `unknown` default does to `stderr`, profiled CIs and MCMC on the same data as 12, and the Gaussian fallback |
 | 20_multi_file_independent_fit | Multi-file workspace, per-file independent fits |
 | 21_multi_file_shared_fit | Multi-file workspace, shared-parameter fits across files |
 

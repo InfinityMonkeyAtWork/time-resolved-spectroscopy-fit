@@ -25,6 +25,7 @@ The numbering restarts at the next block boundary as new notebooks are added.
 | [`10_model_comparison`](10_model_comparison/)                 | Compare two models on the same file (baseline, slice-by-slice, 2D). |
 | [`11_save_load_export`](11_save_load_export/)                 | `FitResults` HDF5 round-trip, CSV/PNG export, "ship just the winners". |
 | [`12_uncertainty_mcmc`](12_uncertainty_mcmc/)                 | Declare the noise model, then three tiers of parameter uncertainty — `stderr`, profiled CIs, and MCMC — checked against truth and the Cramér-Rao bound. |
+| [`13_missing_noise_model`](13_missing_noise_model/)           | What the `unknown` default does to `stderr`, profiled CIs and MCMC on the same data as 12, and the Gaussian fallback. |
 | [`20_multi_file_independent_fit`](20_multi_file_independent_fit/)           | Multi-file workspace, **per-file independent** fits (bridge to shared-parameter fitting). |
 | [`21_multi_file_shared_fit`](21_multi_file_shared_fit/) | Multi-file workspace, **shared-parameter** fits across files. |
 
@@ -34,6 +35,7 @@ The numbering restarts at the next block boundary as new notebooks are added.
 - **Compare two models on one file:** `10_model_comparison`.
 - **Save / load / export fit results (HDF5 or CSV/PNG):** `11_save_load_export`.
 - **Estimate uncertainties with MCMC:** `12_uncertainty_mcmc`.
+- **No noise model declared — what the default costs:** `13_missing_noise_model`.
 - **Many files, fit each independently:** `20_multi_file_independent_fit`.
 - **Many files, shared parameters across them:** `21_multi_file_shared_fit`.
 - **Synthetic / ML training data:** see [`../synthetic_data/`](../synthetic_data/).
@@ -49,6 +51,7 @@ Each notebook directory contains:
 - `project.yaml` — project-level configuration (display, axis labels,
   plotting, etc.).
 
-**Exception — post-fit notebooks.** `11_save_load_export` and
-`12_uncertainty_mcmc` have no model/`project.yaml` of their own; their preamble
-`%run`s an upstream notebook (11 → 10, 12 → 01) to reuse its fits.
+**Exception — post-fit notebooks.** `11_save_load_export`,
+`12_uncertainty_mcmc` and `13_missing_noise_model` have no model/`project.yaml`
+of their own; their preamble `%run`s an upstream notebook (11 → 10, and the
+chain 13 → 12 → 01) to reuse its fits.

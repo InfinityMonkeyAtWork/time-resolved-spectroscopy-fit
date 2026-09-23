@@ -315,7 +315,7 @@ from the truth total); raw counts take the default `scale=1`.
       01's slots are `unknown`, so `compare_models` withholds the calibrated
       columns for the mixed group (13's lesson). `/check-example` passes
       except the three forward links to 13 until H1b lands.
-- [ ] H1b New notebook 13, when the noise model is missing: `%run` 12 under
+- [x] H1b New notebook 13, when the noise model is missing: `%run` 12 under
       `%%capture` (as 12 runs 01) so 12's fits are live and no number is
       copied; open with the warning that `unknown` is the default; refit
       under `set_noise('unknown')` with 12's settings and table the three
@@ -326,7 +326,13 @@ from the truth total); raw counts take the default `scale=1`.
       unconverged chain; the baseline-block σ estimate as the fallback for
       non-counting data, one cell, with the gate flagging a wrong σ. Mirrors
       12 section for section. Register in the examples README and the docs
-      examples index. `/check-example`.
+      examples index. `/check-example`. Done 2026-09-22: 32 cells, 3 min
+      20 s (12's re-run 112 s; the unweighted 2D chains take 38 s each
+      against 85 s for the Poisson one). The decisive tell is the bound,
+      not the pulls: unweighted `stderr` lands at 0.56–0.86 of the CRB on
+      the four peak parameters and 1.18–1.24 on the background ones, while
+      the largest pull on one realization is 1.25σ. A nested `%run` cannot
+      return with `%cd -` (it lands in 01's directory); 13 returns by name.
 - [x] H2 Notebook 01: one sentence at the first fit report (error bars are
       lmfit's default; 12 makes them right). Notebook 10 re-executed (its
       `set_sigma` weights the fits since B): no quoted number changed (the
