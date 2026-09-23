@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [0.17.0] - 2026-09-23
+
+### Added
+
+- **Noise-model weighting.** `File.set_noise(noise_type, *, sigma=None, scale=None)` declares the noise of a file's data: `poisson` (counts per data unit via `scale`, fitted with the exact deviance), `gaussian` (a scalar or per-point `sigma`), or the `unknown` default (unweighted, as before). A declared model weights every later fit on the file, and lmfit no longer rescales the covariance.
+- **`trspecfit.sensitivity`.** `fisher_matrix`, `crb`, `counts_required` and `sensitivity_report` give the Cramér-Rao bound on every free parameter from the model shape and a photon budget alone; under a declared Poisson model a fit's `stderr` lands on that bound.
+- **`Simulator.noise_model`.** The `set_noise` keyword arguments for the noise the simulator actually drew (`poisson` with the applied scale, a constant or per-point `gaussian`), taken when the noise is added.
+- **Example notebooks 12 and 13.** 12 declares the noise model and checks `stderr`, profiled CIs and MCMC against the truth and the bound; 13 shows what the `unknown` default does to the same three tiers, and the Gaussian fallback.
+
+### Changed
+
+- **`File.set_sigma` now weights the fit.** It declares a Gaussian noise model, so `stderr`, confidence intervals and MCMC widths follow the declared σ instead of the residual scatter; before, σ only labelled the χ² metrics.
+- **Metrics under a declared model.** `chi2` is the weighted sum of squares or the Poisson deviance and `aic`/`bic` are `chi2 + 2k` / `chi2 + k·ln n`; `chi2_raw`, `chi2_red_raw` and `r2` stay unweighted. `select='best'` and `compare_models` refuse to rank fits made under different noise models and withhold `chi2`, `chi2_red`, `aic` and `bic` for a mixed group.
+- **MCMC and CI under a declared model.** `MC.is_weighted` follows the declared noise: the chain samples the weighted likelihood with no `__lnsigma` nuisance and the `sigma_ini`/`sigma_min`/`sigma_max` knobs raise. **`MC(is_weighted=True)` under `unknown` raises.** `conf_interval` profiles with a χ² threshold instead of lmfit's F-test.
+- **Fit archive (schema 7, additive).** A declared noise model enters the optimization hash, slots store `noise_scale` and a `sigma` dataset for per-point σ, and `noise_type`, `sigma_data`, `sigma_type` are read-only `File` properties. See `docs/design/fit_archive_schema.md`.
+- **Corrections refuse to run under a declared weighted model.** `subtract_dark`, `calibrate_data`, `reset_dark` and `reset_calibration` raise while `gaussian` or `poisson` is declared: drop it with `set_noise('unknown')`, correct, re-declare. `fit_baseline` likewise refuses a declared model on a hand-assigned `data_base`.
+- **Project defaults.** `noise_scale` joins `noise_type` and `sigma_data` in `project.yaml`; a default `sigma_data` without `noise_type: gaussian` raises.
+- **`Simulator.sigma_data` is a snapshot** of the last simulation, so changing the noise settings afterwards no longer changes the value `save_data` and the parameter sweep persist.
+- **Examples.** 01 points at the noise declaration, 10 was re-audited under weighted fits, and the quickstart's typical workflow shows the optional noise declaration.
+
 ## [0.16.0] - 2026-09-21
 
 ### Added

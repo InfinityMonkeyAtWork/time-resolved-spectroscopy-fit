@@ -343,7 +343,7 @@ from the truth total); raw counts take the default `scale=1`.
       unweighted diagnostic; σ is File state, `set_sigma` is no longer the
       only entry point) and the YAML comments say shift-and-decay like the
       notebook. `/check-example` both. 02/03/04 unchanged.
-- [ ] H3 CHANGELOG 0.17.0 (incl. behaviour changes since B: `set_sigma`
+- [x] H3 CHANGELOG 0.17.0 (incl. behaviour changes since B: `set_sigma`
       now weights the fit; corrections refuse to run under declared noise;
       a project default `sigma_data` without `noise_type: gaussian` raises;
       `noise_type` / `sigma_data` / `sigma_type` are read-only properties;
@@ -354,7 +354,7 @@ from the truth total); raw counts take the default `scale=1`.
       simulator snapshot fix, add follow-ups (noise estimation helpers,
       compound likelihood, σ through corrections, declaring noise in the
       counting notebooks 01/02/03/04/20/21 once uncertainties enter them).
-- [ ] H4 `pyproject.toml` version 0.17.0 at commit time.
+- [x] H4 `pyproject.toml` version 0.17.0 (bumped in the phase A commit).
 
 ### I. Verify pass
 - [ ] `pytest -q`, `pytest -m slow` for E3, pre-commit (ruff, mypy
