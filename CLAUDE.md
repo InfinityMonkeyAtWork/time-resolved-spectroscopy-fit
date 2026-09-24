@@ -16,7 +16,7 @@
 
 - **TODO.md:** Keep for high-level, long-term project goals. Do not add granular task items here. Mark the actively worked on feature with an `[ACTIVE]` tag.
 - **PLAN.md:** Maintain in the root for active, multi-step feature work. Read at session start and keep updated in real-time as tasks are completed. Small one-off fixes do not need `PLAN.md`.
-- **The Archive:** Once a feature is 100% complete, ask user if (A) the contents of `PLAN.md` warrant being moved into a new renamed file in `docs/design/archive/` or (B) the changelog is enough documentation. In any case clear the root `PLAN.md` and update `TODO.md` (including removing the `[ACTIVE]` tag).
+- **The Archive:** Once a feature is 100% complete, ask user if (A) the contents of `PLAN.md` warrant being moved into a new renamed file in `docs/design/archive/` or (B) the changelog is enough documentation. In any case clear the root `PLAN.md` and update `TODO.md` (including removing the `[ACTIVE]` tag). Under (A), add the new file's line to `docs/design/README.md`.
 
 
 # Architecture guardrails
@@ -55,4 +55,4 @@
 
 - Keep `README.md` minimal (overview and quick-start only). Detailed docs belong in `docs/`.
 - Use NumPy-style docstrings. User-facing API and `functions/` get extensive docstrings; internal modules keep method docstrings minimal.
-- Past, large, impactful design decisions are documented here: `docs/design/archive/`.
+- Design docs live in `docs/design/`, past large design decisions in `docs/design/archive/`; `docs/design/README.md` indexes both, one line per document, and says what each answers.

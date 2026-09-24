@@ -93,6 +93,7 @@ from trspecfit.functions import time as fcts_time
 from trspecfit.utils import arrays as uarrays
 from trspecfit.utils import fit_io
 from trspecfit.utils import lmfit as ulmfit
+from trspecfit.utils import noise as unoise
 from trspecfit.utils import parsing as uparsing
 from trspecfit.utils import plot as uplt
 from trspecfit.utils import sbs as usbs
@@ -352,13 +353,61 @@ class Project:
         self.delim = ","
         # Advanced settings
         self.spec_fun_str = "fit_model_gir"
-        # Noise / sigma defaults — applied to every File at construction time.
-        # Files inherit these values at __init__ and may override them via
-        # File.set_sigma(...).
+        # Noise defaults — applied to every File at construction time.
+        # Files inherit the noise model these describe at __init__ and may
+        # override it via File.set_noise(...) / File.set_sigma(...).
         self.noise_type: str = fit_io.NOISE_TYPE_UNKNOWN
         self.sigma_source: str = fit_io.SIGMA_SOURCE_USER
         self.sigma_type: str = fit_io.SIGMA_TYPE_CONSTANT
         self.sigma_data: float = float("nan")
+        self.noise_scale: float = float("nan")
+
+    #
+    def _default_noise(self) -> unoise.NoiseModel:
+        """
+        Noise model implied by the project-level defaults.
+
+        Built (and validated) from ``noise_type`` plus ``sigma_data`` /
+        ``noise_scale``, so every File inherits a declared model instead of
+        four loosely coupled fields. Raises ``ValueError`` for a
+        combination that has no model: a ``gaussian`` default without σ, a
+        σ or a scale that belongs to the other kind, or a per-point σ,
+        which only ``File.set_noise`` can supply.
+        """
+
+        kind = str(self.noise_type)
+        sigma = fit_io.normalize_sigma_data(self.sigma_data)
+        scale = float("nan") if self.noise_scale is None else float(self.noise_scale)
+        if str(self.sigma_type) == fit_io.SIGMA_TYPE_PER_POINT:
+            raise ValueError(
+                "a per-point sigma cannot be a project default; call "
+                "File.set_noise('gaussian', sigma=array) on the file instead"
+            )
+        if kind == fit_io.NOISE_TYPE_POISSON:
+            if np.isfinite(sigma):
+                raise ValueError(
+                    "noise_type 'poisson' takes noise_scale (counts per data "
+                    "unit), not sigma_data"
+                )
+            return unoise.NoiseModel(
+                kind="poisson", scale=1.0 if not np.isfinite(scale) else scale
+            )
+        if np.isfinite(scale):
+            raise ValueError(
+                f"noise_scale belongs to noise_type 'poisson'; got {kind!r}"
+            )
+        if kind == fit_io.NOISE_TYPE_GAUSSIAN:
+            if not np.isfinite(sigma):
+                raise ValueError(
+                    "noise_type 'gaussian' needs a finite positive sigma_data"
+                )
+            return unoise.NoiseModel(kind="gaussian", sigma=sigma)
+        if np.isfinite(sigma):
+            raise ValueError(
+                f"sigma_data is set but noise_type is {kind!r}; set "
+                "noise_type 'gaussian' to weight the residual with it"
+            )
+        return unoise.NoiseModel(kind=cast("unoise.NoiseKind", kind))
 
     #
     @property
@@ -1137,11 +1186,15 @@ class Project:
             # for sigma_data; normalize to NaN so downstream code can treat
             # the "unset" case as a finite-check, not a None-check.
             self.sigma_data = fit_io.normalize_sigma_data(self.sigma_data)
+            if self.noise_scale is None:  # YAML null
+                self.noise_scale = float("nan")
             fit_io.validate_noise_metadata(
                 noise_type=self.noise_type,
                 sigma_source=self.sigma_source,
                 sigma_type=self.sigma_type,
             )
+            # fail at load time, not at the first File construction
+            self._default_noise()
 
             self._config_file = config_path
 
@@ -1713,6 +1766,22 @@ class Project:
             data_slices.append(f.data[window].flatten())
         concat_data = np.concatenate(data_slices)
 
+        # One noise model per segment, in the concatenation order (not the
+        # sorted input_files order). Mixing 'unknown' with a declared model
+        # raises here, before any fitting starts.
+        noise_models = [
+            f.noise.for_view(rows=window[0], e_window=window[1])
+            for f, window in zip(self.files, windows, strict=True)
+        ]
+        noise_joint = (
+            unoise.SegmentedNoise(
+                models=tuple(noise_models),
+                lengths=tuple(int(d.size) for d in data_slices),
+            )
+            if any(noise.is_weighted for noise in noise_models)
+            else None
+        )
+
         # --- dispatch: fused JAX fast path vs interpreter ---
         fit_fun_str = "fit_project_mcp"
         args: tuple[Any, ...] = (project_fit_info, 2)
@@ -1768,6 +1837,7 @@ class Project:
             par=combined_pars,
             stages=stages,
             show_output=1 if self.show_output >= 1 else 0,
+            noise=noise_joint,
             **fit_wrapper_kwargs,
         )
 
@@ -1835,7 +1905,7 @@ class Project:
         # carries its version stamp (correction state) and its 2d-window
         # selection; the parameter table and initial state are the
         # combined optimizer's.
-        input_entries: list[tuple[str, str, str]] = []
+        input_entries: list[tuple[str, str, str, unoise.NoiseModel | None]] = []
         structure_entries = []
         for f, model in zip(self.files, models, strict=True):
             version_stamp, _, _ = f._capture_file_identity()
@@ -1844,7 +1914,9 @@ class Project:
                 e_lim=list(f.e_lim) if f.e_lim else None,
                 t_lim=list(f.t_lim) if f.t_lim else None,
             )
-            input_entries.append((f.name, version_stamp, selection_json))
+            # The declared File-level model, not its 2d-window view: the
+            # window is already keyed through the selection.
+            input_entries.append((f.name, version_stamp, selection_json, f.noise))
             assert model is not None  # type guard
             structure_entries.append(f._model_structure_entry(model))
         input_files_joint = fit_io.encode_input_files(
@@ -1864,11 +1936,12 @@ class Project:
             ),
         )
         slots_2d: list[fit_io.SavedFitSlot] = []
-        for f in self.files:
+        for f, file_noise in zip(self.files, noise_models, strict=True):
             slot = f._build_2d_slot(
                 model_name=model_name,
                 fit_fun_str="fit_model_mcp",
                 fit_settings=joint_fit_settings,
+                noise=file_noise,
                 joint_identity=(joint_hash, input_files_joint),
                 joint_model_structure=model_structure_joint,
             )
@@ -1883,6 +1956,7 @@ class Project:
             slots=slots_2d,
             fit_output=result,
             fit_settings=joint_fit_settings,
+            noise=noise_joint,
         )
         self._fit_history.extend(slots_2d)
         self._record_joint(joint_record)
@@ -2086,18 +2160,58 @@ class File:
         self.data_spec: np.ndarray | None = None  # extracted 1D spectrum
         self.spec_t_abs: list[float] = []  # time bounds (absolute)
         self.spec_t_ind: list[int] = []  # time bounds (indices)
-        # Noise metadata — inherited from parent Project at construction
-        #                  users override per file via File.set_sigma()
+        # Declared noise — inherited from the parent Project at construction,
+        #                  replaced per file via File.set_noise()/set_sigma(),
         #                  materialized into each saved slot at fit completion
-        self.noise_type: str = getattr(self.p, "noise_type", fit_io.NOISE_TYPE_UNKNOWN)
         self.sigma_source: str = getattr(
             self.p, "sigma_source", fit_io.SIGMA_SOURCE_USER
         )
-        self.sigma_type: str = getattr(self.p, "sigma_type", fit_io.SIGMA_TYPE_CONSTANT)
-        self.sigma_data: float = float(getattr(self.p, "sigma_data", float("nan")))
+        self.noise: unoise.NoiseModel = self.p._default_noise()
+        if self.data is not None:
+            self.noise.validate_data(self.data)
         # default fit limits to entire dataset (energy is None only for bare File())
         if self.energy is not None:
             self.set_fit_limits(energy_limits=None, show_plot=False)
+
+    #
+    @property
+    def noise_type(self) -> str:
+        """Declared noise kind: ``'unknown'``, ``'gaussian'`` or ``'poisson'``.
+
+        Read-only view of ``File.noise``; declare noise with
+        :meth:`set_noise` (or :meth:`set_sigma` for a constant Gaussian σ).
+        """
+
+        return self.noise.kind
+
+    #
+    @property
+    def sigma_type(self) -> str:
+        """``'per_point'`` for a σ array, ``'constant'`` otherwise."""
+
+        return (
+            fit_io.SIGMA_TYPE_PER_POINT
+            if isinstance(self.noise.sigma, np.ndarray)
+            else fit_io.SIGMA_TYPE_CONSTANT
+        )
+
+    #
+    @property
+    def sigma_data(self) -> float:
+        """Constant Gaussian σ in data units; ``NaN`` for every other model."""
+
+        sigma = self.noise.sigma
+        if sigma is None or isinstance(sigma, np.ndarray):
+            return float("nan")
+        return float(sigma)
+
+    #
+    @property
+    def noise_scale(self) -> float:
+        """Poisson counts per data unit; ``NaN`` unless poisson is declared."""
+
+        scale = self.noise.scale
+        return float("nan") if scale is None else float(scale)
 
     #
     @property
@@ -2650,6 +2764,20 @@ class File:
         self.models = []
 
     #
+    def _reject_correction_under_noise(self, action: str) -> None:
+        """Refuse a data correction while a weighted noise model is declared."""
+
+        if not self.noise.is_weighted:
+            return
+        raise ValueError(
+            f"{action}() cannot run while noise_type='{self.noise.kind}' is "
+            f"declared: the noise model describes the current data and is not "
+            f"propagated through corrections. Call set_noise('unknown'), "
+            f"apply the correction, then declare the noise of the corrected "
+            f"data."
+        )
+
+    #
     def _apply_corrections(self) -> None:
         """Rebuild ``data`` from ``data_raw`` by applying dark and calibration."""
 
@@ -2690,6 +2818,7 @@ class File:
 
         if self.data_raw is None or self.energy is None:
             raise ValueError("No data loaded; cannot subtract dark.")
+        self._reject_correction_under_noise("subtract_dark")
         n_energy = self.energy.shape[0]
         if dark.ndim != 1 or dark.shape[0] != n_energy:
             raise ValueError(
@@ -2722,6 +2851,7 @@ class File:
 
         if self.data_raw is None or self.energy is None:
             raise ValueError("No data loaded; cannot calibrate.")
+        self._reject_correction_under_noise("calibrate_data")
         n_energy = self.energy.shape[0]
         if calibration.ndim != 1 or calibration.shape[0] != n_energy:
             raise ValueError(
@@ -2741,6 +2871,7 @@ class File:
 
         if self.data_raw is None or self.energy is None:
             raise ValueError("No data loaded; cannot reset dark.")
+        self._reject_correction_under_noise("reset_dark")
         self.dark = np.zeros(self.energy.shape[0])
         self._apply_corrections()
 
@@ -2750,6 +2881,7 @@ class File:
 
         if self.data_raw is None or self.energy is None:
             raise ValueError("No data loaded; cannot reset calibration.")
+        self._reject_correction_under_noise("reset_calibration")
         self.calibration = np.ones(self.energy.shape[0])
         self._apply_corrections()
 
@@ -2932,6 +3064,85 @@ class File:
                 )
 
     #
+    def set_noise(
+        self,
+        noise_type: str,
+        *,
+        sigma: float | np.ndarray | None = None,
+        scale: float | None = None,
+    ) -> None:
+        """
+        Declare the measurement noise of this file's data.
+
+        The declaration decides what every subsequent fit of this file
+        minimizes and how its uncertainties are scaled: ``'unknown'`` keeps
+        the unweighted residual ``d - m`` and lmfit's redchi-scaled
+        covariance, ``'gaussian'`` minimizes ``(d - m) / σ``, ``'poisson'``
+        the exact counting deviance. Both weighted kinds hold the
+        covariance to the declared noise (``scale_covar=False``), so
+        ``stderr``, confidence intervals and MCMC widths follow the noise
+        instead of the residual scatter. The view reduction each fit needs
+        — a baseline or ``time_range`` mean, one slice, the 2D fit window —
+        is derived at fit time; declare the noise of ``File.data``.
+
+        Parameters
+        ----------
+        noise_type : {'unknown', 'gaussian', 'poisson'}
+            Noise kind. ``'unknown'`` takes neither *sigma* nor *scale*.
+        sigma : float or ndarray, optional
+            Gaussian standard deviation in data units, required for
+            ``'gaussian'`` and rejected otherwise. A scalar declares a
+            constant σ; an array is broadcast to ``data.shape``, copied and
+            frozen, and declares a per-point σ.
+        scale : float, optional
+            Poisson counts per data unit — ``1`` (the default) means the
+            data are counts. Rejected for the other kinds.
+
+        Raises
+        ------
+        ValueError
+            If the arguments do not describe the requested kind, if a
+            per-point σ does not broadcast to the data shape, or if
+            ``'poisson'`` is declared on data that are not loaded, negative
+            or infinite.
+
+        Notes
+        -----
+        Only **future** fits see the declaration; slots already captured
+        keep the noise snapshot taken at their fit completion. Data
+        corrections (``subtract_dark`` and friends) refuse to run while a
+        weighted model is declared — σ describes the current ``data`` and
+        is not propagated — so drop it with ``set_noise('unknown')``,
+        correct, and re-declare.
+        """
+
+        if sigma is not None and np.ndim(sigma) > 0:
+            if self.data is None:
+                raise ValueError(
+                    "a per-point sigma is broadcast against the file's data; "
+                    "load the data first, then declare the noise."
+                )
+            sigma_arr = np.asarray(sigma, dtype=float)
+            try:
+                sigma = np.broadcast_to(sigma_arr, self.data.shape)
+            except ValueError as exc:
+                raise ValueError(
+                    f"sigma of shape {sigma_arr.shape} does not broadcast to "
+                    f"the data shape {self.data.shape}"
+                ) from exc
+        noise = unoise.NoiseModel(
+            kind=cast("unoise.NoiseKind", noise_type), sigma=sigma, scale=scale
+        )
+        if noise.kind == fit_io.NOISE_TYPE_POISSON:
+            if self.data is None:
+                raise ValueError(
+                    "poisson noise is validated against the file's data; load "
+                    "the data first, then declare the noise."
+                )
+            noise.validate_data(self.data)
+        self.noise = noise
+
+    #
     def set_sigma(
         self,
         sigma: float | None,
@@ -2941,11 +3152,15 @@ class File:
         sigma_type: str = fit_io.SIGMA_TYPE_CONSTANT,
     ) -> float | None:
         """
-        Set the per-pixel noise σ for this file.
+        Set the constant per-pixel noise σ for this file.
 
-        Subsequent fits on this file will materialize the σ into their saved
-        slots (chi2 / chi2_red calibrated from chi2_raw / chi2_red_raw). The
-        change is stateful but does **not** retroactively rewrite existing slots.
+        Shortcut for :meth:`set_noise` with a constant Gaussian σ:
+        ``set_sigma(σ)`` is ``set_noise('gaussian', sigma=σ)`` and
+        ``set_sigma(None)`` is ``set_noise('unknown')``. Subsequent fits
+        minimize ``(d - m) / σ`` and materialize the σ into their saved
+        slots (chi2 / chi2_red calibrated from chi2_raw / chi2_red_raw).
+        The change is stateful but does **not** retroactively rewrite
+        existing slots.
 
         Parameters
         ----------
@@ -2955,12 +3170,15 @@ class File:
             σ fields, so calibrated metrics resolve to ``NaN``). Must be
             a finite positive number when not ``None``.
         noise_type : str, optional
-            ``"gaussian"`` or ``"unknown"``. Defaults to ``"gaussian"``
-            when ``sigma`` is set, ``"unknown"`` when ``sigma`` is ``None``.
+            ``"gaussian"`` or ``"unknown"``, and redundant: the σ itself
+            decides which. Kept so existing callers keep working; a value
+            contradicting *sigma* raises, and ``"poisson"`` belongs to
+            :meth:`set_noise`.
         sigma_source : str, default ``"user_supplied"``
-            v1 only supports ``"user_supplied"``.
+            Only ``"user_supplied"`` is supported.
         sigma_type : str, default ``"constant"``
-            v1 only supports ``"constant"``.
+            Only ``"constant"`` is supported here; a per-point σ goes
+            through :meth:`set_noise`.
 
         Returns
         -------
@@ -2984,28 +3202,71 @@ class File:
         ------
         ValueError
             If ``sigma`` is not ``None`` and not a finite positive number,
-            or if any of the discriminator fields is outside v1's supported
-            subset.
+            or if a discriminator field is unsupported or contradicts
+            ``sigma``.
         """
 
         new_sigma_data = fit_io.normalize_sigma_data(sigma)
         is_unset = not np.isfinite(new_sigma_data)
-        new_noise_type = noise_type
-        if new_noise_type is None:
-            new_noise_type = (
-                fit_io.NOISE_TYPE_UNKNOWN if is_unset else fit_io.NOISE_TYPE_GAUSSIAN
-            )
+        implied = fit_io.NOISE_TYPE_UNKNOWN if is_unset else fit_io.NOISE_TYPE_GAUSSIAN
+        new_noise_type = implied if noise_type is None else noise_type
         fit_io.validate_noise_metadata(
             noise_type=new_noise_type,
             sigma_source=sigma_source,
             sigma_type=sigma_type,
         )
+        if new_noise_type != implied:
+            raise ValueError(
+                f"set_sigma({sigma!r}) declares noise_type {implied!r}; "
+                f"{new_noise_type!r} contradicts it. Use set_noise() for any "
+                "model the σ shortcut does not describe."
+            )
+        if sigma_type != fit_io.SIGMA_TYPE_CONSTANT:
+            raise ValueError(
+                f"set_sigma sets a constant σ; got sigma_type {sigma_type!r}. "
+                "Use set_noise('gaussian', sigma=array) for a per-point σ."
+            )
         previous = None if not np.isfinite(self.sigma_data) else float(self.sigma_data)
-        self.sigma_data = new_sigma_data
-        self.noise_type = new_noise_type
         self.sigma_source = sigma_source
-        self.sigma_type = sigma_type
+        if is_unset:
+            self.set_noise(fit_io.NOISE_TYPE_UNKNOWN)
+        else:
+            self.set_noise(fit_io.NOISE_TYPE_GAUSSIAN, sigma=new_sigma_data)
         return previous
+
+    #
+    def _noise_view(
+        self,
+        *,
+        rows: int | slice | Sequence[int] | np.ndarray | None = None,
+        average: int | None = None,
+        e_window: slice | None = None,
+    ) -> unoise.NoiseModel | None:
+        """
+        Declared noise reduced to the view a fit's residual sees.
+
+        ``None`` while no noise is declared, so the unweighted path stays
+        what it was. The arguments describe the same selection the fit
+        applies to ``data`` (see ``utils.noise.NoiseModel.for_view``).
+        """
+
+        if not self.noise.is_weighted:
+            return None
+        return self.noise.for_view(rows=rows, average=average, e_window=e_window)
+
+    #
+    @staticmethod
+    def _mean_rows_view(t_ind: Sequence[int]) -> tuple[int | slice, int | None]:
+        """``(rows, average)`` of a view averaging ``data[t_ind[0]:t_ind[1]]``.
+
+        A single slice is selected as an index, not as a length-1 slice, so
+        the view's σ loses the time axis exactly as the mean does.
+        """
+
+        n_avg = int(t_ind[1]) - int(t_ind[0])
+        if n_avg == 1:
+            return int(t_ind[0]), None
+        return slice(int(t_ind[0]), int(t_ind[1])), n_avg
 
     #
     def fit_baseline(
@@ -3055,6 +3316,22 @@ class File:
         # --- dispatch: GIR fast path vs interpreter ---
         _args = self._build_1d_dispatch_args(self.model_base, _fun_str)
         self.model_base.args = _args
+        # noise of the baseline view: the mean over the base_t_ind slices,
+        # cropped to the same e_lim window the residual applies. A data_base
+        # assigned by hand has no known slice count, so its noise is undefined.
+        if self.noise.is_weighted and len(self.base_t_ind) != 2:
+            raise ValueError(
+                f"noise_type='{self.noise.kind}' needs the baseline from "
+                "define_baseline() to know how many slices it averages, but "
+                "data_base was set by hand. Run define_baseline() or "
+                "set_noise('unknown')."
+            )
+        (_e_slice,) = fitlib._fit_window_slices(1, self.e_lim, [])
+        if len(self.base_t_ind) == 2:
+            _rows, _n_avg = self._mean_rows_view(self.base_t_ind)
+        else:
+            _rows, _n_avg = None, None
+        noise_view = self._noise_view(rows=_rows, average=_n_avg, e_window=_e_slice)
         # fit (optionally) with confidence intervals
         fit_out = fitlib.fit_wrapper(
             const=self.model_base.const,
@@ -3063,6 +3340,7 @@ class File:
             par=self.model_base.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
+            noise=noise_view,
             **lmfit_wrapper_kwargs,
         )
         self.model_base.result = fit_out
@@ -3083,6 +3361,7 @@ class File:
                     fit_wrapper_kwargs=lmfit_wrapper_kwargs,
                     mc_settings=fit_out.mc_settings,
                 ),
+                noise=noise_view,
             )
 
         if self.p.show_output >= 1:
@@ -3262,6 +3541,11 @@ class File:
         # --- dispatch: GIR fast path vs interpreter ---
         _args = self._build_1d_dispatch_args(self.model_spec, _fun_str)
         self.model_spec.args = _args
+        # noise of the extracted spectrum: one slice, or the mean over the
+        # selected time range, on the e_lim window
+        (_e_slice,) = fitlib._fit_window_slices(1, self.e_lim, [])
+        _rows, _n_avg = self._mean_rows_view(self.spec_t_ind)
+        noise_view = self._noise_view(rows=_rows, average=_n_avg, e_window=_e_slice)
         # fit
         fit_out = fitlib.fit_wrapper(
             const=self.model_spec.const,
@@ -3270,6 +3554,7 @@ class File:
             par=self.model_spec.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
+            noise=noise_view,
             **lmfit_wrapper_kwargs,
         )
         self.model_spec.result = fit_out
@@ -3291,6 +3576,7 @@ class File:
                     fit_wrapper_kwargs=lmfit_wrapper_kwargs,
                     mc_settings=fit_out.mc_settings,
                 ),
+                noise=noise_view,
             )
 
         if show_plot and self.p.show_output >= 1:
@@ -3545,6 +3831,11 @@ class File:
         _args_sbs = self._build_1d_dispatch_args(self.model_sbs, _fun_str)
 
         n_slices = len(self.data)
+        # each slice fit sees one row of data on the e_lim window
+        (_e_slice,) = fitlib._fit_window_slices(1, self.e_lim, [])
+        noise_views = [
+            self._noise_view(rows=s_i, e_window=_e_slice) for s_i in range(n_slices)
+        ]
 
         # resolve worker count: None -> auto, otherwise honour user.
         if n_workers is None:
@@ -3562,7 +3853,7 @@ class File:
             # ipywidgets-based tqdm.notebook inside a kernel, and ipywidgets is
             # not a dependency -- it would emit "IProgress not found" warnings.
             self.results_sbs = []
-            for _s_i, s in tqdm(
+            for s_i, s in tqdm(
                 enumerate(self.data),
                 total=n_slices,
                 desc="SbS fit (serial)",
@@ -3592,6 +3883,7 @@ class File:
                     par=self.model_sbs.lmfit_pars,
                     stages=stages,
                     show_output=0,
+                    noise=noise_views[s_i],
                     **fit_wrapper_kwargs,
                 )
                 self.results_sbs.append(result_sbs)
@@ -3623,7 +3915,10 @@ class File:
                         data_base_argmax_energy=data_base_argmax_energy,
                         fit_fun_str=_fun_str,
                         stages=stages,
-                        fit_wrapper_kwargs=fit_wrapper_kwargs,
+                        fit_wrapper_kwargs={
+                            **fit_wrapper_kwargs,
+                            "noise": noise_views[s_i],
+                        },
                     ): s_i
                     for s_i in range(n_slices)
                 }
@@ -3679,6 +3974,7 @@ class File:
                         else None
                     ),
                 ),
+                noise=noise_views,
             )
             if self.p.show_output >= 1 and slot_sbs is not None:
                 # Inline display via the explicit plot API (reads the slot
@@ -3779,7 +4075,12 @@ class File:
         return (self.name, energy_names, model.dynamics_entries())
 
     #
-    def _slot_capture_meta(self, result_fin: Any) -> dict[str, Any]:
+    def _slot_capture_meta(
+        self,
+        result_fin: Any,
+        *,
+        noise: fit_io.ViewNoise,
+    ) -> dict[str, Any]:
         """
         File-level metadata shared by every slot-capture site.
 
@@ -3791,6 +4092,13 @@ class File:
         no ``nvarys`` (the minimal per-file result of a project-level
         joint fit — the joint count does not decompose by file), which
         makes the count-dependent metrics NaN.
+
+        ``noise`` is the view-reduced model the fit path handed to
+        ``fitlib.fit_wrapper`` (one per slice for SbS) — passed down from
+        the fit, never re-derived here, so the σ that weighted the
+        residual is the σ the slot records. ``File.noise`` rides along as
+        the declared model: it is frozen, so it crosses the capture
+        boundary as a snapshot like the arrays around it.
         """
 
         nvarys = getattr(result_fin, "nvarys", None)
@@ -3799,10 +4107,9 @@ class File:
             "file_name": self.name,
             "fit_alg": str(getattr(result_fin, "method", "unknown")),
             "n_free_pars": int(nvarys) if nvarys is not None else None,
-            "noise_type": self.noise_type,
+            "noise_declared": self.noise,
+            "noise": noise,
             "sigma_source": self.sigma_source,
-            "sigma_type": self.sigma_type,
-            "sigma_data": self.sigma_data,
             "version_stamp": version_stamp,
             "dark": dark,
             "calibration": calibration,
@@ -3816,6 +4123,7 @@ class File:
         model_name: str,
         fit_fun_str: str,
         fit_settings: dict[str, Any],
+        noise: unoise.NoiseModel | None,
     ) -> fit_io.SavedFitSlot | None:
         """
         Build a SavedFitSlot from the just-completed baseline fit and append
@@ -3904,7 +4212,7 @@ class File:
             else None
         )
         slot = fit_io._slot_from_baseline(
-            **self._slot_capture_meta(result_fin),
+            **self._slot_capture_meta(result_fin, noise=noise),
             model_name=model_name,
             model_structure=fit_io.encode_model_structure(
                 [self._model_structure_entry(self.model_base)]
@@ -3940,6 +4248,7 @@ class File:
         time_range: list[float] | None,
         time_type: str,
         fit_settings: dict[str, Any],
+        noise: unoise.NoiseModel | None,
     ) -> fit_io.SavedFitSlot | None:
         """Build and append a SavedFitSlot for a completed spectrum fit."""
 
@@ -4019,7 +4328,7 @@ class File:
             else None
         )
         slot = fit_io._slot_from_spectrum(
-            **self._slot_capture_meta(result_fin),
+            **self._slot_capture_meta(result_fin, noise=noise),
             model_name=model_name,
             model_structure=fit_io.encode_model_structure(
                 [self._model_structure_entry(self.model_spec)]
@@ -4054,6 +4363,7 @@ class File:
         model_name: str,
         fit_fun_str: str,
         fit_settings: dict[str, Any],
+        noise: Sequence[unoise.NoiseModel | None],
     ) -> fit_io.SavedFitSlot | None:
         """
         Build and append a SavedFitSlot for a completed slice-by-slice fit.
@@ -4161,7 +4471,7 @@ class File:
         parameter_metadata, _ = fit_io.params_identity(self.results_sbs[0].par_ini)
         initial_state = [fit_io.params_identity(r.par_ini)[1] for r in self.results_sbs]
         slot = fit_io._slot_from_sbs(
-            **self._slot_capture_meta(slice0_result),
+            **self._slot_capture_meta(slice0_result, noise=list(noise)),
             model_name=model_name,
             model_structure=fit_io.encode_model_structure(
                 [self._model_structure_entry(self.model_sbs)]
@@ -4197,6 +4507,7 @@ class File:
         model_name: str,
         fit_fun_str: str,
         fit_settings: dict[str, Any],
+        noise: unoise.NoiseModel | None,
     ) -> fit_io.SavedFitSlot | None:
         """Build and append a SavedFitSlot for a completed 2D global fit."""
 
@@ -4204,6 +4515,7 @@ class File:
             model_name=model_name,
             fit_fun_str=fit_fun_str,
             fit_settings=fit_settings,
+            noise=noise,
         )
         if slot is not None:
             self.p._record_slot(slot)
@@ -4216,6 +4528,7 @@ class File:
         model_name: str,
         fit_fun_str: str,
         fit_settings: dict[str, Any],
+        noise: unoise.NoiseModel | None,
         joint_identity: tuple[str, str] | None = None,
         joint_model_structure: str | None = None,
     ) -> fit_io.SavedFitSlot | None:
@@ -4308,7 +4621,7 @@ class File:
         if self.time is not None:
             time_view = self.time[t_lim[0] : t_lim[1]] if t_lim else self.time
         slot = fit_io._slot_from_2d(
-            **self._slot_capture_meta(result_fin),
+            **self._slot_capture_meta(result_fin, noise=noise),
             model_name=model_name,
             model_structure=model_structure,
             model_yaml=_model_yaml_records(self.model_2d),
@@ -4664,6 +4977,9 @@ class File:
             self.t_lim,
         )
         self.model_2d.args = _args
+        # noise on the 2D fit window, shaped like data[t_lim, e_lim]
+        _t_slice, _e_slice = fitlib._fit_window_slices(2, self.e_lim, self.t_lim)
+        noise_view = self._noise_view(rows=_t_slice, e_window=_e_slice)
 
         # fit (with confidence intervals)
         fit_out = fitlib.fit_wrapper(
@@ -4673,6 +4989,7 @@ class File:
             par=self.model_2d.lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
+            noise=noise_view,
             **fit_wrapper_kwargs,
         )
         self.model_2d.result = fit_out
@@ -4694,6 +5011,7 @@ class File:
                     fit_wrapper_kwargs=fit_wrapper_kwargs,
                     mc_settings=fit_out.mc_settings,
                 ),
+                noise=noise_view,
             )
 
         if stages >= 1:

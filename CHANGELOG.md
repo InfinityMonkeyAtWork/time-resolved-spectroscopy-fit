@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [0.17.0] - 2026-09-23
+
+### Added
+
+- **Noise-model weighting.** `File.set_noise(noise_type, *, sigma=None, scale=None)` declares the noise of a file's data: `poisson` (counts per data unit via `scale`, fitted with the exact deviance), `gaussian` (a scalar or per-point `sigma`), or the `unknown` default (unweighted, as before). A declared model weights every later fit on the file, and lmfit no longer rescales the covariance.
+- **`trspecfit.sensitivity`.** `fisher_matrix`, `crb`, `counts_required` and `sensitivity_report` give the Cramér-Rao bound on every free parameter from the model shape and a photon budget alone; under a declared Poisson model a fit's `stderr` lands on that bound.
+- **`Simulator.noise_model`.** The `set_noise` keyword arguments for the noise the simulator actually drew (`poisson` with the applied scale, a constant or per-point `gaussian`), taken when the noise is added.
+- **Example notebooks 12 and 13.** 12 declares the noise model and checks `stderr`, profiled CIs and MCMC against the truth and the bound; 13 shows what the `unknown` default does to the same three tiers, and the Gaussian fallback.
+
+### Changed
+
+- **`File.set_sigma` now weights the fit.** It declares a Gaussian noise model, so `stderr`, confidence intervals and MCMC widths follow the declared σ instead of the residual scatter; before, σ only labelled the χ² metrics.
+- **Metrics under a declared model.** `chi2` is the weighted sum of squares or the Poisson deviance and `aic`/`bic` are `chi2 + 2k` / `chi2 + k·ln n`; `chi2_raw`, `chi2_red_raw` and `r2` stay unweighted. `select='best'` and `compare_models` refuse to rank fits made under different noise models and withhold `chi2`, `chi2_red`, `aic` and `bic` for a mixed group.
+- **MCMC and CI under a declared model.** `MC.is_weighted` follows the declared noise: the chain samples the weighted likelihood with no `__lnsigma` nuisance and the `sigma_ini`/`sigma_min`/`sigma_max` knobs raise. **`MC(is_weighted=True)` under `unknown` raises.** `conf_interval` profiles with a χ² threshold instead of lmfit's F-test.
+- **Fit archive (schema 7, additive).** A declared noise model enters the optimization hash, slots store `noise_scale` and a `sigma` dataset for per-point σ, and `noise_type`, `sigma_data`, `sigma_type` are read-only `File` properties. See `docs/design/fit_archive_schema.md`.
+- **Corrections refuse to run under a declared weighted model.** `subtract_dark`, `calibrate_data`, `reset_dark` and `reset_calibration` raise while `gaussian` or `poisson` is declared: drop it with `set_noise('unknown')`, correct, re-declare. `fit_baseline` likewise refuses a declared model on a hand-assigned `data_base`.
+- **Project defaults.** `noise_scale` joins `noise_type` and `sigma_data` in `project.yaml`; a default `sigma_data` without `noise_type: gaussian` raises.
+- **`Simulator.sigma_data` is a snapshot** of the last simulation, so changing the noise settings afterwards no longer changes the value `save_data` and the parameter sweep persist.
+- **Examples.** 01 points at the noise declaration, 10 was re-audited under weighted fits, and the quickstart's typical workflow shows the optional noise declaration.
+
 ## [0.16.0] - 2026-09-21
 
 ### Added
@@ -58,7 +78,7 @@ This file is maintained using the shared changelog workflow in
 - **Fit-archive query layer.** Every fit slot has a stored `handle` (any unambiguous prefix names one run); `FitResults.variants()` tabulates how a group's runs differ in their inputs, `diff(a, b)` compares two runs, `set_label(ref, label)` names one, and every single-fit accessor and plot method accepts `handle=`.
 - **Fit selection and pruning.** `save_fits` / `export_fits` gain `select=` (`"all"`, `"latest"`, `"best"` + `by=`, or a handle prefix / label; joint bundles always save whole), and `Project.drop_fits(ref)` removes a run or a joint bundle from the session history.
 - **`seed=`** on `fit_wrapper` and every fit method: a passthrough to stochastic stage-1 optimizers, recorded in `fit_settings` and part of fit identity when supplied.
-- **Project-level joint fits are first-class records** (`docs/design/archive/joint_fit_result.md`). `Project.fit_2d` returns a `JointFitResult` with the combined parameter table, per-file parameter maps, joint `conf_ci` / `correl` / MCMC (the chain is no longer discarded), and whole-objective metrics; query it via `FitResults.find_joint` / `get_joint` / `plot_joint_mcmc`.
+- **Project-level joint fits are first-class records** (`docs/design/archive/joint_fit_result_plan.md`). `Project.fit_2d` returns a `JointFitResult` with the combined parameter table, per-file parameter maps, joint `conf_ci` / `correl` / MCMC (the chain is no longer discarded), and whole-objective metrics; query it via `FitResults.find_joint` / `get_joint` / `plot_joint_mcmc`.
 - **Results accessors live on `FitResults`**: `get_parameters` / `get_correlations` / `get_confidence_intervals` / `get_mcmc` read the latest matching persisted slot (`file=` / `model=` / `fit_type=` filters), so they also work for SbS fits and loaded archives; the `File.get_*` methods delegate.
 - **Explicit plotting API**: `FitResults.plot_fit`, `plot_param_evolution`, `plot_mcmc`, and `plot_sbs_slices` (with `File.*` sugar) render any persisted fit with real axes, on live sessions and loaded archives alike; the fit methods' inline display uses the same API. `plot_sbs_slices(model=...)` can pick an older SbS fit by model name.
 - `PlotConfig.full_range` (default `True`): `plot_fit` shows the full data range with fit / residual / components only inside the fit window. `PlotConfig.show_init` (default `True`) overlays the initial guess.

@@ -7,7 +7,7 @@ orphan: true
 > Archived on 2026-04-17 after the backend decision closed.
 > Keep [../lowered_evaluator.md](../lowered_evaluator.md) as the long-lived
 > design/spec and see
-> [lowered_evaluator_implementation.md](lowered_evaluator_implementation.md)
+> [lowered_evaluator_implementation_plan.md](lowered_evaluator_implementation_plan.md)
 > for the archived implementation history. This file preserves the
 > benchmark data and tradeoff analysis behind the decision.
 

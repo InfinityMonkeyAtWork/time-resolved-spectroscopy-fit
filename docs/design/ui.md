@@ -67,7 +67,7 @@ parallelization models:
   a **batched least-squares solver** (a JAX-native LM stepping all
   slices simultaneously until each converges) — i.e., the Phase E
   "replace lmfit" decision from
-  [archive/jax-planning.md](archive/jax-planning.md), scoped to the SbS inner loop.
+  [archive/jax_backend_note.md](archive/jax_backend_note.md), scoped to the SbS inner loop.
 
 Notably, SbS is the one workload where lmfit itself plausibly *is* the
 bottleneck (per-eval cost is tens of microseconds, so per-iteration

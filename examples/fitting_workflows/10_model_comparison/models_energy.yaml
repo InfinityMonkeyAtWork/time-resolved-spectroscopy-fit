@@ -67,9 +67,9 @@ sbs_x0_A:
 # m2d_w_IRF / m2d_wo_IRF share an identical energy model (LinBack + GLP, all
 # pinned from baseline). They differ only in which dynamics model gets
 # attached to x0 via `file.add_time_dependence(...)`:
-#   m2d_w_IRF -> MonoExpPosIRF  (step-and-decay convolved with a Gaussian IRF)
-#   m2d_wo_IRF -> MonoExpPos     (sharp step-and-decay, no IRF)
-# The simulated data was generated with an IRF-smeared step-and-decay, so we
+#   m2d_w_IRF -> MonoExpPosIRF  (shift-and-decay convolved with a Gaussian IRF)
+#   m2d_wo_IRF -> MonoExpPos     (sharp shift-and-decay, no IRF)
+# The simulated data was generated with an IRF-smeared shift-and-decay, so we
 # expect m2d_w_IRF to win even after AIC/BIC penalize its extra free
 # parameter (the IRF σ).
 m2d_w_IRF:

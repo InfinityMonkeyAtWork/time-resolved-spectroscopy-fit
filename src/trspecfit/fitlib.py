@@ -32,11 +32,17 @@ import pandas as pd
 from IPython.display import display
 from lmfit.minimizer import MinimizerResult
 from numpy.typing import ArrayLike
+from scipy.stats import chi2 as chi2_dist
 
 from trspecfit import spectra
 from trspecfit.config.plot import PlotConfig
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import spawn as uspawn
+from trspecfit.utils.noise import NoiseModel, SegmentedNoise
+
+# Declared noise of a fitted view: one model, or one per segment of a
+# concatenated joint residual.
+NoiseLike = NoiseModel | SegmentedNoise
 
 # Define a type alias for file paths
 type PathLike = str | pathlib.Path
@@ -62,24 +68,59 @@ def _result_errorbars(result: MinimizerResult) -> bool:
 
 
 #
+def _chi2_compare(best_fit: MinimizerResult, new_fit: MinimizerResult) -> float:
+    """
+    Confidence level of a profiled point from its chi-square increase.
+
+    ``lmfit.conf_interval``'s default ``f_compare`` runs an F-test on the
+    *ratio* ``new_chi / best_chi - 1``, which profiles out a noise scale a
+    declared noise model already fixes — and being a ratio it cannot see
+    that scale at all, so the two thresholds agree only at
+    ``chi2_red ~ 1``. Under a declared noise model the residual is in units
+    of sigma, so both ``chisqr`` values here are weighted chi-squares and
+    their difference follows a chi-square distribution with as many degrees
+    of freedom as the profiling fixed parameters.
+
+    Parameters
+    ----------
+    best_fit : lmfit.minimizer.MinimizerResult
+        Result of the unconstrained fit.
+    new_fit : lmfit.minimizer.MinimizerResult
+        Result of the fit with the profiled parameter(s) held fixed.
+
+    Returns
+    -------
+    float
+        Probability that the increase is not a fluctuation.
+    """
+
+    nfix = int(best_fit.nvarys) - int(new_fit.nvarys)
+    return float(chi2_dist.cdf(new_fit.chisqr - best_fit.chisqr, nfix))
+
+
+#
 def compute_fit_metrics(
     *,
     observed: np.ndarray,
     fit: np.ndarray,
     n_free_pars: int | None,
-    sigma_eff: float | None = None,
+    noise: NoiseLike | None = None,
 ) -> dict[str, float]:
     """
     Compute fit-quality metrics from observed and fitted arrays.
 
-    Always emits the raw (unweighted) diagnostics ``chi2_raw`` and
-    ``chi2_red_raw`` — these match lmfit's ``MinimizerResult.chisqr / .redchi``
-    for unweighted fits. When ``sigma_eff`` is provided, also emits the
-    σ-calibrated ``chi2`` and ``chi2_red`` (``≈ 1`` for a fit at the noise
-    floor); without ``sigma_eff`` both calibrated values are ``NaN``.
-    ``r2``, ``aic``, ``bic`` are unaffected by σ (R² is dimensionless;
-    AIC/BIC depend on raw χ² but their *differences* are invariant under
-    constant rescaling).
+    ``chi2_raw``, ``chi2_red_raw`` and ``r2`` are always the unweighted
+    diagnostics — they match lmfit's ``MinimizerResult.chisqr / .redchi``
+    for an unweighted fit and stay comparable across noise models.
+
+    With a weighted *noise* model the objective itself is in likelihood
+    units, and the remaining metrics follow it: ``chi2`` is the sum of
+    squared weighted residuals (Gaussian) or the Poisson deviance,
+    ``chi2_red = chi2 / dof``, ``aic = chi2 + 2k`` and
+    ``bic = chi2 + k·ln(n)``. Without one (``None`` or ``'unknown'``)
+    ``chi2`` / ``chi2_red`` are ``NaN`` and AIC/BIC keep the profiled
+    Gaussian form ``n·ln(chi2_raw/n) + penalty``, which estimates the
+    unknown variance from the residual.
 
     Parameters
     ----------
@@ -95,20 +136,23 @@ def compute_fit_metrics(
         per-file projections of a project-level joint fit, where the joint
         count does not decompose by file — and every count-dependent metric
         (``chi2_red_raw``, ``chi2_red``, ``aic``, ``bic``) is ``NaN``.
-    sigma_eff : float, optional
-        Effective noise σ on the fit's data view (per-pixel for SbS/2D,
-        ``σ_pixel / √N_avg`` for baseline). When ``None`` / ``NaN`` /
-        non-positive, the calibrated ``chi2``/``chi2_red`` fields are
-        ``NaN``. Caller is responsible for any view-specific scaling.
+        ``chi2`` is unaffected: it needs no parameter count and sums
+        cleanly across the projections of one joint objective.
+    noise : NoiseModel or SegmentedNoise, optional
+        Declared noise **already reduced to this data view** (see
+        ``utils.noise.NoiseModel.for_view``), or the per-segment model of a
+        concatenated joint residual. ``None`` and ``'unknown'`` are the
+        unweighted path.
 
     Returns
     -------
     dict
         ``{"chi2_raw", "chi2_red_raw", "chi2", "chi2_red", "r2", "aic",
-        "bic"}``. ``chi2_red_raw``, ``aic``, ``bic`` are ``NaN`` when
-        ``n_free_pars`` is ``None``, ``ndata <= n_free_pars``, or
-        ``chi2_raw == 0`` (degenerate fits); ``chi2`` / ``chi2_red`` are
-        additionally ``NaN`` when ``sigma_eff`` is missing or invalid.
+        "bic"}``. ``chi2_red_raw``, ``chi2_red``, ``aic``, ``bic`` are
+        ``NaN`` when ``n_free_pars`` is ``None`` or ``ndata <=
+        n_free_pars``; the unweighted ``aic`` / ``bic`` additionally when
+        ``chi2_raw == 0`` (a degenerate fit the profiled form cannot
+        score); ``chi2`` / ``chi2_red`` when no weighted *noise* is given.
     """
 
     residual = np.asarray(observed) - np.asarray(fit)
@@ -119,6 +163,14 @@ def compute_fit_metrics(
     ss_tot = float(np.sum((obs_flat - obs_flat.mean()) ** 2))
     r2 = float("nan") if ss_tot == 0.0 else 1.0 - chi2_raw / ss_tot
 
+    weighted = noise is not None and noise.is_weighted
+    if weighted:
+        assert noise is not None  # type guard
+        chi2 = float(np.sum(np.asarray(noise.apply(observed, fit)) ** 2))
+    else:
+        chi2 = float("nan")
+
+    chi2_red = float("nan")
     if n_free_pars is None:
         chi2_red_raw = float("nan")
         aic = float("nan")
@@ -126,24 +178,17 @@ def compute_fit_metrics(
     else:
         dof = ndata - n_free_pars
         chi2_red_raw = chi2_raw / dof if dof > 0 else float("nan")
-
-        if chi2_raw > 0 and ndata > 0:
+        if weighted:
+            chi2_red = chi2 / dof if dof > 0 else float("nan")
+            aic = chi2 + 2 * n_free_pars
+            bic = chi2 + math.log(ndata) * n_free_pars if ndata > 0 else float("nan")
+        elif chi2_raw > 0 and ndata > 0:
             log_chi2_per_n = math.log(chi2_raw / ndata)
             aic = ndata * log_chi2_per_n + 2 * n_free_pars
             bic = ndata * log_chi2_per_n + math.log(ndata) * n_free_pars
         else:
             aic = float("nan")
             bic = float("nan")
-
-    if sigma_eff is None or not np.isfinite(sigma_eff) or sigma_eff <= 0:
-        chi2 = float("nan")
-        chi2_red = float("nan")
-    else:
-        sigma_sq = float(sigma_eff) ** 2
-        chi2 = chi2_raw / sigma_sq
-        chi2_red = (
-            chi2_red_raw / sigma_sq if np.isfinite(chi2_red_raw) else float("nan")
-        )
 
     return {
         "chi2_raw": chi2_raw,
@@ -186,6 +231,8 @@ def residual_fun(
     t_lim: list[int] | None = None,
     res_type: str = "lmfit",
     args: Sequence[Any] | None = None,
+    *,
+    noise: NoiseLike | None = None,
 ) -> np.ndarray | float:
     """
     Compute residual (data - fit) for optimization and analysis.
@@ -237,6 +284,13 @@ def residual_fun(
 
     args : tuple, default=()
         Additional arguments for fit function, passed via ``*args``
+    noise : NoiseModel or SegmentedNoise, optional
+        Declared noise of the fitted view. ``None`` or an ``'unknown'``
+        model leaves the residual unweighted (``data - fit``); a weighted
+        model returns the residual in likelihood units — ``(d - m) / σ``
+        for Gaussian, the signed Poisson deviance for Poisson. Pass a
+        ``SegmentedNoise`` for the concatenated residual of a joint fit,
+        one model per file segment.
 
     Returns
     -------
@@ -275,7 +329,10 @@ def residual_fun(
 
     # select user-defined region to consider for residual computation
     window = _fit_window_slices(data_arr.ndim, e_lim, t_lim)
-    residual = data_arr[window] - fit_arr[window]
+    if noise is not None and noise.is_weighted:
+        residual = noise.apply(data_arr[window], fit_arr[window])
+    else:
+        residual = data_arr[window] - fit_arr[window]
 
     # type of residual to return
     if res_type == "RSS":
@@ -295,6 +352,36 @@ def residual_fun(
 
 
 #
+def _jacobian_noise_weight(
+    *,
+    noise: NoiseLike,
+    par: Any,
+    x: ArrayLike,
+    data: np.ndarray,
+    fit_fun_str: str,
+    unpack: int,
+    e_lim: list[int] | None,
+    t_lim: list[int] | None,
+    args: Sequence[Any] | None,
+    window: tuple[slice, ...],
+) -> np.ndarray:
+    """Column vector ``-dr/dm`` on the fit window, for a weighted *noise*.
+
+    Multiplying the unweighted residual Jacobian ``-dm/dtheta`` by this
+    column gives the weighted residual Jacobian ``(dr/dm)(dm/dtheta)``
+    (``1/sigma`` per row for Gaussian noise). Costs one extra forward
+    evaluation of the model, which the Poisson factor needs.
+    """
+
+    fit_arr = np.asarray(
+        residual_fun(par, x, data, fit_fun_str, unpack, e_lim, t_lim, "fit", args)
+    )
+    data_view = np.asarray(data, dtype=float)[window]
+    factor = noise.jacobian_factor(data_view, fit_arr[window])
+    return -np.ravel(np.broadcast_to(factor, data_view.shape))[:, None]
+
+
+#
 def jacobian_fun(
     par: Any,
     x: ArrayLike,
@@ -305,6 +392,8 @@ def jacobian_fun(
     t_lim: list[int] | None = None,
     res_type: str = "lmfit",
     args: Sequence[Any] | None = None,
+    *,
+    noise: NoiseLike | None = None,
 ) -> np.ndarray:
     """Analytic Jacobian of :func:`residual_fun` for lmfit's ``Dfun``.
 
@@ -314,13 +403,22 @@ def jacobian_fun(
     ``args = (evaluator, jacobian, theta_indices, model, dim)`` with
     *jacobian* from ``eval_jax.make_jacobian_2d_jax``.
 
+    Parameters
+    ----------
+    noise : NoiseModel or SegmentedNoise, optional
+        Declared noise of the fitted view, forwarded by lmfit from
+        ``fcn_kws`` exactly as to :func:`residual_fun`. A weighted model
+        multiplies every row by ``-dr/dm``, at the cost of one extra
+        forward evaluation of the model.
+
     Returns
     -------
     ndarray
         ``d(residual)/d(varying params)``, shape
         ``(n_residuals, n_varys)``, columns in lmfit varying-parameter
-        order (``col_deriv=0``).  Residual is ``data - fit``, so this
-        is the negated model Jacobian over the fit window.
+        order (``col_deriv=0``).  The unweighted residual is
+        ``data - fit``, so this is the negated model Jacobian over the
+        fit window.
     """
 
     if e_lim is None:
@@ -346,6 +444,20 @@ def jacobian_fun(
     n_opt = jac.shape[-1]
     d_res = -jac[window].reshape(-1, n_opt)
 
+    if noise is not None and noise.is_weighted:
+        d_res = d_res * _jacobian_noise_weight(
+            noise=noise,
+            par=par,
+            x=x,
+            data=data,
+            fit_fun_str=fit_fun_str,
+            unpack=unpack,
+            e_lim=e_lim,
+            t_lim=t_lim,
+            args=args,
+            window=window,
+        )
+
     # Column order: plan opt order -> lmfit varying-parameter order.
     opt_names = [model.parameter_names[int(i)] for i in theta_indices]
     var_names = [name for name in par if par[name].vary]
@@ -369,6 +481,8 @@ def jacobian_fun_project(
     t_lim: list[int] | None = None,
     res_type: str = "lmfit",
     args: Sequence[Any] | None = None,
+    *,
+    noise: NoiseLike | None = None,
 ) -> np.ndarray:
     """Analytic joint Jacobian for project-level fits (lmfit ``Dfun``).
 
@@ -380,13 +494,21 @@ def jacobian_fun_project(
     window slicing happens here (``e_lim``/``t_lim`` are empty for
     project fits).
 
+    Parameters
+    ----------
+    noise : NoiseModel or SegmentedNoise, optional
+        Declared noise of the concatenated view, forwarded by lmfit from
+        ``fcn_kws``. A weighted model multiplies every row by ``-dr/dm``;
+        a ``SegmentedNoise`` does so per file segment.
+
     Returns
     -------
     ndarray
         ``d(residual)/d(varying params)``, shape
         ``(n_residuals_total, n_varys)``, columns in lmfit
-        varying-parameter order (``col_deriv=0``). Residual is
-        ``data - fit``, so this is the negated fused model Jacobian.
+        varying-parameter order (``col_deriv=0``). The unweighted
+        residual is ``data - fit``, so this is the negated fused model
+        Jacobian.
     """
 
     if args is None or not callable(args[1]):
@@ -404,6 +526,20 @@ def jacobian_fun_project(
     # (n_residuals_total, n_opt), columns in theta_c order
     jac = np.asarray(jacobian(par_values[theta_c_indices]), dtype=np.float64)
     d_res = -jac
+
+    if noise is not None and noise.is_weighted:
+        d_res = d_res * _jacobian_noise_weight(
+            noise=noise,
+            par=par,
+            x=x,
+            data=data,
+            fit_fun_str=fit_fun_str,
+            unpack=unpack,
+            e_lim=e_lim,
+            t_lim=t_lim,
+            args=args,
+            window=(slice(None),),
+        )
 
     # Column order: theta_c order -> lmfit varying-parameter order.
     var_names = [name for name in par if par[name].vary]
@@ -584,6 +720,8 @@ def fit_wrapper(
     jac_fun: Callable[..., np.ndarray] | None = None,
     seed: int | None = None,
     show_output: int = 0,
+    *,
+    noise: NoiseLike | None = None,
 ) -> ulmfit.FitOutput:
     """
     Comprehensive fitting wrapper with optimization, CI, and MCMC.
@@ -631,6 +769,9 @@ def fit_wrapper(
         - 0: Skip CI calculation
         - 1: Calculate CI if error bars available (result.errorbars=True)
 
+        A declared *noise* switches the threshold to the chi-square one
+        (:func:`_chi2_compare`); ``'unknown'`` keeps lmfit's F-test.
+
     mc_settings : ulmfit.MC, default=ulmfit.MC()
         MCMC configuration (``use_mc``: 0 skip, 1 always, 2 if CI fails).
         Knobs left at None are resolved from the optimizer result into a
@@ -675,6 +816,16 @@ def fit_wrapper(
           call ``FitResults.plot_mcmc()`` (each of
           ``File.fit_baseline``/``fit_spectrum``/``fit_2d`` does so
           right after appending the fit slot).
+
+    noise : NoiseModel or SegmentedNoise, optional
+        Declared noise of the fitted view (``utils.noise``), reaching
+        both the objective and the analytic Jacobian through lmfit's
+        ``fcn_kws``. A weighted model turns the residual into likelihood
+        units and switches ``scale_covar`` off, so the covariance — and
+        with it ``stderr``, the confidence intervals and the MCMC
+        posterior — follows the declared noise instead of the fitted
+        residual scatter. ``None`` or an ``'unknown'`` model keeps the
+        unweighted residual and lmfit's redchi scaling.
 
     Returns
     -------
@@ -797,8 +948,18 @@ def fit_wrapper(
     if show_output >= 1:
         t_0 = time.time()  # start time
 
-    # construct lmfit minimizer
-    mini = lmfit.Minimizer(residual_fun, par_ini, fcn_args=(*const, "lmfit", args))
+    # construct lmfit minimizer. A declared noise model already carries the
+    # data scale, so lmfit must not rescale the covariance by redchi
+    # (scale_covar); lmfit forwards fcn_kws to the objective and to Dfun
+    # alike, so the Jacobian sees the same weighting.
+    weighted = noise is not None and noise.is_weighted
+    mini = lmfit.Minimizer(
+        residual_fun,
+        par_ini,
+        fcn_args=(*const, "lmfit", args),
+        fcn_kws=None if noise is None else {"noise": noise},
+        scale_covar=not weighted,
+    )
 
     # analytic Jacobian: only lmfit's leastsq accepts a Dfun. The optimizer
     # seed goes to the stage-1 method only — the two-stage contract
@@ -871,7 +1032,11 @@ def fit_wrapper(
     if try_ci == 1:
         if _result_errorbars(par_fin):
             ci_fin, _trace_fin = lmfit.conf_interval(
-                mini, par_fin, sigmas=ci_sigmas, trace=True
+                mini,
+                par_fin,
+                sigmas=ci_sigmas,
+                trace=True,
+                prob_func=_chi2_compare if weighted else None,
             )
             if show_output >= 1:
                 print()
@@ -899,12 +1064,15 @@ def fit_wrapper(
         # emcee gets the copy.
         par_fin_params = copy.deepcopy(_result_params(par_fin))
         # Resolve the derivable MC knobs from the optimizer result into a
-        # copy: sigma from the RMS residual (the MLE sigma of the unweighted
-        # Gaussian model on the data view this fit saw), walkers from the
-        # sampled dimension count. The caller's MC is left untouched.
-        n_dim = int(par_fin.nvarys) + (0 if mc_settings.is_weighted else 1)
+        # copy: the weighting from the declared noise model, sigma from the
+        # RMS residual (the MLE sigma of the unweighted Gaussian model on the
+        # data view this fit saw), walkers from the sampled dimension count.
+        # The caller's MC is left untouched.
+        n_dim = int(par_fin.nvarys) + (0 if weighted else 1)
         sigma_fit = float(np.sqrt(par_fin.chisqr / par_fin.ndata))
-        mc_run = mc_settings.resolve(sigma_fit=sigma_fit, n_dim=n_dim)
+        mc_run = mc_settings.resolve(
+            sigma_fit=sigma_fit, n_dim=n_dim, weighted=weighted
+        )
         if not mc_run.is_weighted:
             # __lnsigma only enters lmfit's log-probability for unweighted
             # sampling; adding it to a weighted run would sample a flat,

@@ -208,7 +208,7 @@ optimization (combined parameter table, per-file parameter maps, joint
 `conf_ci`/`correl`/MCMC, whole-objective metrics) into the parallel
 append-only `Project._joint_fit_history`, published together with its
 per-file projection slots as one bundle — a capture failure publishes
-neither. Decisions in [joint_fit_result.md](archive/joint_fit_result.md).
+neither. Decisions in [joint_fit_result_plan.md](archive/joint_fit_result_plan.md).
 
 ### The fit-to-slot capture boundary
 

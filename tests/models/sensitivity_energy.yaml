@@ -1,0 +1,35 @@
+# Energy models for tests/test_sensitivity.py
+# Kept separate from file_energy.yaml so the Fisher-information tests can rely
+# on free, non-zero amplitudes without constraining the shared fixtures.
+
+# Single Gauss, all three parameters free. The one case with a closed-form
+# Cramer-Rao bound: sigma(x0) = SD / sqrt(N).
+gauss_free:
+    Gauss:
+      A: [1.0, True, 0.1, 10.0]
+      x0: [85.0, True, 82.0, 88.0]
+      SD: [0.34, True, 0.1, 2.0]
+
+# Same peak with an offset + Shirley background, to exercise the
+# counts_in_peaks split and background-component skipping.
+gauss_with_background:
+    Offset:
+      y0: [0.02, True, 0.0, 1.0]
+    Shirley:
+        pShirley: [4.0E-3, True, 1.0E-9, 1.0]
+    Gauss:
+      A: [1.0, True, 0.1, 10.0]
+      x0: [85.0, True, 82.0, 88.0]
+      SD: [0.34, True, 0.1, 2.0]
+
+# Spin-orbit doublet: the second peak is fully derived from the first, so it
+# contributes information without adding free parameters.
+gauss_doublet:
+    Gauss:
+      A: [1.0, True, 0.1, 10.0]
+      x0: [84.0, True, 82.0, 86.0]
+      SD: [0.34, True, 0.1, 2.0]
+    Gauss:
+      A: ["3/4*Gauss_01_A"]
+      x0: ["Gauss_01_x0 + 3.67"]
+      SD: ["Gauss_01_SD"]

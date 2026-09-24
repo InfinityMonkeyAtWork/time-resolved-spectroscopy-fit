@@ -26,8 +26,12 @@ Post-fit work (block 1x):
 - ``examples/fitting_workflows/11_save_load_export/``
   ``FitResults`` HDF5 round-trip, CSV/PNG export, "ship just the winners".
 - ``examples/fitting_workflows/12_uncertainty_mcmc/``
-  Three tiers of parameter uncertainty (``stderr``, profiled CIs, MCMC),
-  checked against truth.
+  Declare the noise model, then three tiers of parameter uncertainty
+  (``stderr``, profiled CIs, MCMC) checked against truth and the Cramér-Rao
+  bound.
+- ``examples/fitting_workflows/13_missing_noise_model/``
+  What the ``unknown`` default does to ``stderr``, profiled CIs and MCMC on
+  the same data as 12, and the Gaussian fallback.
 
 Multi-file workflows (block 2x):
 
@@ -55,6 +59,8 @@ Choose Your Track
   `11 save / load / export notebook <../../examples/fitting_workflows/11_save_load_export/example.ipynb>`_.
 - Estimating uncertainties with MCMC:
   `12 uncertainty (MCMC) notebook <../../examples/fitting_workflows/12_uncertainty_mcmc/example.ipynb>`_.
+- No noise model declared, and what the default costs:
+  `13 missing noise model notebook <../../examples/fitting_workflows/13_missing_noise_model/example.ipynb>`_.
 - Many files, fit each independently:
   `20 multi-file independent fit notebook <../../examples/fitting_workflows/20_multi_file_independent_fit/example.ipynb>`_.
 - Many files, shared-parameter fit:
@@ -73,6 +79,7 @@ All Notebooks
 - `10 model comparison <../../examples/fitting_workflows/10_model_comparison/example.ipynb>`_
 - `11 save / load / export <../../examples/fitting_workflows/11_save_load_export/example.ipynb>`_
 - `12 uncertainty (MCMC) <../../examples/fitting_workflows/12_uncertainty_mcmc/example.ipynb>`_
+- `13 missing noise model <../../examples/fitting_workflows/13_missing_noise_model/example.ipynb>`_
 - `20 multi-file independent fit <../../examples/fitting_workflows/20_multi_file_independent_fit/example.ipynb>`_
 - `21 multi-file shared fit <../../examples/fitting_workflows/21_multi_file_shared_fit/example.ipynb>`_
 - `Simulator data generation <../../examples/synthetic_data/01_simulator/example.ipynb>`_

@@ -82,7 +82,7 @@ useful cleanup before or during a JAX port:
 - **Kernel-matrix convolution has landed** (2026-07): the lowered
   convolution path now evaluates registry kernels elementwise on a
   precomputed dt matrix and applies a quadrature-weighted matmul
-  ([kernel-matrix-convolution.md](kernel-matrix-convolution.md)). All
+  ([kernel_matrix_convolution_plan.md](kernel_matrix_convolution_plan.md)). All
   array shapes in the convolution path are theta-independent, so the
   former jit blocker (per-theta kernel support lengths) is gone.
 
@@ -106,7 +106,7 @@ The main technical work is in the evaluator itself:
   the compiled path.
 - **SciPy-dependent kernels need JAX-compatible replacements.** The
   kernel-matrix change
-  ([kernel-matrix-convolution.md](kernel-matrix-convolution.md)) retired
+  ([kernel_matrix_convolution_plan.md](kernel_matrix_convolution_plan.md)) retired
   the SciPy convolution utilities from the lowered path, and the removal
   of `voigtCONV`/`lorentzCONV` (2026-07) retired `wofz` from
   `functions/time.py` entirely — the conv path is now JAX-expressible
@@ -192,7 +192,7 @@ Add the remaining lowered features incrementally:
 - profile-varying parameters,
 - subcycle-aware dynamics,
 - resolved-trace convolution (kernel-matrix form; see
-  [kernel-matrix-convolution.md](kernel-matrix-convolution.md)),
+  [kernel_matrix_convolution_plan.md](kernel_matrix_convolution_plan.md)),
 - Voigt / special-function support.
 
 Each widening step should ship with direct parity tests against the existing

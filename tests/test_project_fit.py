@@ -843,7 +843,7 @@ def _make_shared_tau_project(
 #
 class TestJointFitResult:
     """Project.fit_2d captures one JointFitResult plus one projection slot
-    per file, published as one bundle (docs/design/archive/joint_fit_result.md)."""
+    per file, published as one bundle (docs/design/archive/joint_fit_result_plan.md)."""
 
     #
     @pytest.mark.slow
@@ -1028,22 +1028,17 @@ class TestJointFitResult:
     #
     @pytest.mark.slow
     def test_weighted_joint_mcmc_has_no_lnsigma(self):
-        """is_weighted=True: the joint chain samples only the combined model
-        parameters — no likelihood-free __lnsigma dimension (it only enters
-        lmfit's log-probability for unweighted sampling)."""
+        """A declared noise model forces weighted sampling: the joint chain
+        samples only the combined model parameters — no likelihood-free
+        __lnsigma dimension (it only enters lmfit's log-probability for
+        unweighted sampling)."""
 
         from trspecfit.utils.lmfit import MC
 
         project = _make_shared_tau_project(spec_fun_str="fit_model_gir")
-        mc = MC(
-            use_mc=1,
-            steps=20,
-            nwalkers=32,
-            burn=5,
-            thin=1,
-            workers=1,
-            is_weighted=True,
-        )
+        for file in project.files:
+            file.set_noise("gaussian", sigma=0.05)
+        mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1, workers=1)
         record = project.fit_2d(
             model_name="project_glp", stages=1, try_ci=0, mc_settings=mc
         )

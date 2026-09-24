@@ -16,7 +16,7 @@ lowered evaluator.
 
 - Long-lived design/spec: [../lowered_evaluator.md](../lowered_evaluator.md)
 - Supported-model ground truth: [../supported_models.md](../supported_models.md)
-- Closed backend decision / benchmarks: [numba_vs_jax.md](numba_vs_jax.md)
+- Closed backend decision / benchmarks: [numba_vs_jax_decision.md](numba_vs_jax_decision.md)
 
 ## Final status
 

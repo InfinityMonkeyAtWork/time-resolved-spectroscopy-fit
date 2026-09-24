@@ -40,6 +40,7 @@ import pandas as pd
 from trspecfit.config.plot import PlotConfig
 from trspecfit.fitlib import compute_fit_metrics
 from trspecfit.utils import lmfit as ulmfit
+from trspecfit.utils import noise as unoise
 from trspecfit.utils.hdf5 import require_dataset, require_group
 from trspecfit.utils.lmfit import MCMCResult
 from trspecfit.utils.plot import plot_fit_res_2d, plot_par_series
@@ -52,13 +53,16 @@ SCHEMA_VERSION = "7"
 # readable — re-fit and re-save. See docs/design/fit_archive_schema.md.
 SUPPORTED_READ_VERSIONS = ("7",)
 
-# Default noise metadata used when no σ has been set on the File. Mirrors the
-# project.yaml defaults defined in ``Project._set_defaults``; if you change one,
-# change the other.
-NOISE_TYPE_UNKNOWN = "unknown"
-NOISE_TYPE_GAUSSIAN = "gaussian"
+# Default noise metadata used when no noise model has been declared on the
+# File. Mirrors the project.yaml defaults defined in ``Project._set_defaults``;
+# if you change one, change the other. The noise kinds alias ``utils.noise``,
+# which owns the residual semantics behind them.
+NOISE_TYPE_UNKNOWN = unoise.NOISE_TYPE_UNKNOWN
+NOISE_TYPE_GAUSSIAN = unoise.NOISE_TYPE_GAUSSIAN
+NOISE_TYPE_POISSON = unoise.NOISE_TYPE_POISSON
 SIGMA_SOURCE_USER = "user_supplied"
 SIGMA_TYPE_CONSTANT = "constant"
+SIGMA_TYPE_PER_POINT = "per_point"
 
 
 #
@@ -100,52 +104,110 @@ def validate_noise_metadata(
     sigma_type: str,
 ) -> None:
     """
-    Validate the noise-schema discriminator fields against v1's strict subset.
+    Validate the noise-schema discriminator fields against the supported set.
 
-    v1 supports ``noise_type ∈ {"gaussian", "unknown"}``, ``sigma_source ==
-    "user_supplied"``, and ``sigma_type == "constant"``. Future passes will
-    relax these (Poisson-derived σ, per-spectrum σ, etc.), but every value
-    on disk now must round-trip cleanly through this check.
+    Supported: ``noise_type ∈ {"gaussian", "poisson", "unknown"}`` (the
+    declared-noise kinds of ``utils.noise``), ``sigma_source ==
+    "user_supplied"`` and ``sigma_type ∈ {"constant", "per_point"}``. Every
+    value on disk must round-trip cleanly through this check.
     """
 
-    if noise_type not in (NOISE_TYPE_GAUSSIAN, NOISE_TYPE_UNKNOWN):
+    if noise_type not in unoise.NOISE_TYPES:
         raise ValueError(
-            f"noise_type must be 'gaussian' or 'unknown'; got {noise_type!r}"
+            f"noise_type must be one of {unoise.NOISE_TYPES}; got {noise_type!r}"
         )
     if sigma_source != SIGMA_SOURCE_USER:
+        raise ValueError(f"sigma_source must be 'user_supplied'; got {sigma_source!r}")
+    if sigma_type not in (SIGMA_TYPE_CONSTANT, SIGMA_TYPE_PER_POINT):
         raise ValueError(
-            f"sigma_source must be 'user_supplied' (v1); got {sigma_source!r}"
+            f"sigma_type must be 'constant' or 'per_point'; got {sigma_type!r}"
         )
-    if sigma_type != SIGMA_TYPE_CONSTANT:
-        raise ValueError(f"sigma_type must be 'constant' (v1); got {sigma_type!r}")
+
+
+# Declared noise of a fitted view, or one model per SbS slice. The slot
+# builders accept either shape and reduce it to the stored noise fields.
+ViewNoise = unoise.NoiseModel | Sequence["unoise.NoiseModel | None"] | None
 
 
 #
-def _compute_sigma_eff(
-    fit_type: FitType,
-    selection: dict[str, Any],
-    sigma_data: float,
-) -> float:
-    """
-    Effective σ on a slot's fit data view, given the File's per-pixel σ.
+def _weighted_views(noise: ViewNoise) -> list[unoise.NoiseModel]:
+    """The weighted view models in *noise*, dropping unweighted entries."""
 
-    Baseline fits average ``base_t_ind[1] - base_t_ind[0]`` time slices, so
-    the per-row noise on ``data_base`` is ``σ_data / √N_avg``. SbS, 2D, and
-    spectrum fits operate on per-pixel data → no scaling. ``time_range``
-    averaging in ``spectrum`` is *not* auto-corrected in v1 (users
-    averaging a spectrum must pre-scale the σ they pass to
-    ``File.set_sigma()``).
+    if isinstance(noise, (list, tuple)):
+        models: Sequence[unoise.NoiseModel | None] = noise
+    else:
+        models = [cast("unoise.NoiseModel | None", noise)]
+    return [m for m in models if m is not None and m.is_weighted]
+
+
+#
+def _view_noise_fields(
+    noise: ViewNoise,
+) -> tuple[str, float, float, np.ndarray | None]:
+    """
+    ``(sigma_type, sigma_eff, noise_scale, sigma)`` of a slot's fit view.
+
+    *noise* is the view-reduced model the residual was weighted with (one
+    per slice for SbS, whose per-slice σ arrays stack into the 2D view σ).
+    Only a constant Gaussian has a scalar ``sigma_eff``; a per-point σ
+    lands in ``sigma``, a Poisson view in ``noise_scale``, and each of the
+    three leaves the other two ``NaN`` / ``None``.
     """
 
-    if not np.isfinite(sigma_data) or sigma_data <= 0:
+    weighted = _weighted_views(noise)
+    if not weighted:
+        return SIGMA_TYPE_CONSTANT, float("nan"), float("nan"), None
+    first = weighted[0]
+    if first.kind == NOISE_TYPE_POISSON:
+        assert first.scale is not None  # type guard
+        return SIGMA_TYPE_CONSTANT, float("nan"), float(first.scale), None
+    if not isinstance(first.sigma, np.ndarray):
+        assert first.sigma is not None  # type guard
+        return SIGMA_TYPE_CONSTANT, float(first.sigma), float("nan"), None
+    rows = [np.asarray(m.sigma, dtype=float) for m in weighted]
+    sigma = rows[0] if len(rows) == 1 else np.stack(rows, axis=0)
+    return SIGMA_TYPE_PER_POINT, float("nan"), float("nan"), _frozen_copy(sigma)
+
+
+#
+def _single_view(noise: ViewNoise) -> unoise.NoiseModel | None:
+    """The one weighted view model of a scalar-metric slot, or ``None``."""
+
+    weighted = _weighted_views(noise)
+    return weighted[0] if weighted else None
+
+
+#
+def _check_view_noise(
+    noise_declared: unoise.NoiseModel,
+    noise: ViewNoise,
+    *,
+    file_name: str,
+) -> None:
+    """
+    Guard the fit-path → capture threading of the view noise.
+
+    A declared model whose view never reached the builder would silently
+    produce a slot claiming ``noise_type`` while every derived field is
+    ``NaN`` and the metrics are unweighted.
+    """
+
+    if noise_declared.is_weighted and not _weighted_views(noise):
+        raise ValueError(
+            f"Slot capture for file {file_name!r}: noise_type "
+            f"{noise_declared.kind!r} is declared but the fit path passed no "
+            f"view-reduced noise model to the slot builder."
+        )
+
+
+#
+def _declared_sigma_data(noise: unoise.NoiseModel) -> float:
+    """File-level constant Gaussian σ; ``NaN`` for every other model."""
+
+    sigma = noise.sigma
+    if sigma is None or isinstance(sigma, np.ndarray):
         return float("nan")
-    if fit_type == "baseline":
-        base_t_ind = selection.get("base_t_ind")
-        if base_t_ind is not None and len(base_t_ind) == 2:
-            n_avg = int(base_t_ind[1]) - int(base_t_ind[0])
-            if n_avg > 1:
-                return float(sigma_data / np.sqrt(n_avg))
-    return float(sigma_data)
+    return float(sigma)
 
 
 #
@@ -270,24 +332,34 @@ class SavedFitSlot:
     timestamp : str
         ISO 8601 UTC timestamp of slot construction.
     noise_type : str
-        Statistical noise assumption captured from the File at fit time —
-        ``"gaussian"`` or ``"unknown"``. v1 only supports those two values;
-        ``"unknown"`` records "no σ was supplied" without claiming a
-        distribution.
+        Noise model declared on the File at fit time — ``"unknown"``,
+        ``"gaussian"`` or ``"poisson"``. ``"unknown"`` records "no noise
+        model was declared" without claiming a distribution, and is the
+        one kind whose residual stayed unweighted.
     sigma_source : str
         How ``sigma_data`` was obtained. v1 supports ``"user_supplied"``
         only; future passes will add ``"estimated_from_data"`` etc.
     sigma_type : str
-        Shape/layout of ``sigma_data``. v1 supports ``"constant"`` only;
-        ``"per_spectrum"`` / ``"per_point"`` are reserved for future work.
+        Shape of the declared σ: ``"constant"`` for a scalar (and for
+        every non-Gaussian model), ``"per_point"`` for a σ array.
     sigma_data : float
-        File-level per-pixel noise σ at fit time. ``NaN`` when no sigma
-        was set on the File (``noise_type == "unknown"``).
+        File-level per-pixel constant σ at fit time. ``NaN`` for a
+        per-point σ, for ``"poisson"``, and for ``"unknown"``.
     sigma_eff : float
-        Effective σ on this slot's fit data view. Equals ``sigma_data``
-        for SbS / 2D / spectrum; equals ``sigma_data / √N_avg`` for
-        baseline (``N_avg`` = number of time slices averaged into
-        ``data_base``). ``NaN`` when ``sigma_data`` is ``NaN``.
+        Constant σ **of this slot's fit view** — the divisor the stored
+        ``chi2`` is calibrated by. Equals ``sigma_data`` for SbS / 2D /
+        spectrum on a single slice; equals ``sigma_data / √N_avg`` for a
+        baseline or ``time_range`` mean (``N_avg`` = averaged slices).
+        ``NaN`` whenever ``sigma_data`` is.
+    noise_scale : float
+        Poisson counts per data unit **on this slot's fit view** (the
+        counterpart of ``sigma_eff``: a mean over ``N_avg`` slices sums
+        ``N_avg`` Poisson draws, so the view scale is ``N_avg`` times the
+        declared one). ``NaN`` unless ``noise_type == "poisson"``.
+    sigma : np.ndarray | None
+        Per-point σ aligned with ``observed`` (frozen copy); ``None``
+        unless ``sigma_type == "per_point"``. Reduced to the fit view the
+        same way ``observed`` is, so the two index alike.
     dark : np.ndarray | None
         Dark/background spectrum in force on the file at fit time, shape
         ``(n_energy,)``; ``None`` when no dark correction was applied.
@@ -394,6 +466,8 @@ class SavedFitSlot:
     sigma_type: str
     sigma_data: float
     sigma_eff: float
+    noise_scale: float = float("nan")
+    sigma: np.ndarray | None = None
     dark: np.ndarray | None = None
     calibration: np.ndarray | None = None
     model_yaml: tuple[ModelYamlRecord, ...] | None = None
@@ -776,19 +850,49 @@ def compute_file_version_stamp(
 
 
 #
+def encode_noise_model(noise: unoise.NoiseModel | None) -> dict[str, Any] | None:
+    """
+    Keyed encoding of one file's declared noise; ``None`` for ``'unknown'``.
+
+    ``{"kind": ..., "scale": text}`` for Poisson, ``{"kind": ...,
+    "sigma": text}`` for a constant Gaussian σ, and ``{"kind": ...,
+    "sigma": [dtype, shape, sha256]}`` for a per-point σ — floats as exact
+    decimal text and arrays through ``_array_record``, the same rules the
+    rest of the identity chain uses.
+    """
+
+    if noise is None or not noise.is_weighted:
+        return None
+    if noise.kind == NOISE_TYPE_POISSON:
+        assert noise.scale is not None  # type guard
+        return {"kind": noise.kind, "scale": _exact_float_text(noise.scale)}
+    sigma = noise.sigma
+    assert sigma is not None  # type guard
+    if isinstance(sigma, np.ndarray):
+        return {"kind": noise.kind, "sigma": _array_record(sigma)}
+    return {"kind": noise.kind, "sigma": _exact_float_text(sigma)}
+
+
+#
 def encode_input_files(
     *,
     scope: str,
-    entries: Sequence[tuple[str, str, str]],
+    entries: Sequence[
+        tuple[str, str, str] | tuple[str, str, str, unoise.NoiseModel | None]
+    ],
 ) -> str:
     """
     Canonical ``input_files`` JSON: ``[scope, [[name, stamp, selection]..]]``.
 
-    ``entries`` are ``(file_name, version_stamp, selection_json)`` tuples;
-    they are sorted by file name (canonical order, principles §Composite
-    keys). Duplicate file names raise — file identity is the unique name.
-    Stored verbatim as the slot attr and consumed by
-    ``compute_optimization_hash``.
+    ``entries`` are ``(file_name, version_stamp, selection_json)`` tuples,
+    optionally with that file's **declared** noise model as a fourth
+    element; they are sorted by file name (canonical order, principles
+    §Composite keys). Duplicate file names raise — file identity is the
+    unique name. A declared noise model appends a fourth element to its
+    entry (``encode_noise_model``); ``'unknown'`` and an omitted model
+    leave the historical three-element entry untouched, so archives
+    written without a noise model keep their hashes. Stored verbatim as
+    the slot attr and consumed by ``compute_optimization_hash``.
     """
 
     if scope not in _INPUT_FILE_SCOPES:
@@ -796,11 +900,18 @@ def encode_input_files(
             f"input_files scope must be one of {_INPUT_FILE_SCOPES}, got {scope!r}"
         )
     ordered = sorted(entries, key=lambda e: e[0])
-    names = [name for name, _, _ in ordered]
+    names = [entry[0] for entry in ordered]
     if len(set(names)) != len(names):
         raise ValueError(f"input_files entries contain duplicate file names: {names}")
-    payload = [scope, [[name, stamp, selection] for name, stamp, selection in ordered]]
-    return json.dumps(payload, separators=(",", ":"))
+    encoded_entries: list[list[Any]] = []
+    for entry in ordered:
+        row: list[Any] = [entry[0], entry[1], entry[2]]
+        noise_record = encode_noise_model(entry[3] if len(entry) > 3 else None)
+        if noise_record is not None:
+            row.append(noise_record)
+        encoded_entries.append(row)
+    payload = [scope, encoded_entries]
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
 
 #
@@ -1249,10 +1360,9 @@ def _slot_from_baseline(
     dark: np.ndarray | None,
     calibration: np.ndarray | None,
     model_yaml: tuple[ModelYamlRecord, ...] | None,
-    noise_type: str,
+    noise_declared: unoise.NoiseModel,
+    noise: ViewNoise,
     sigma_source: str,
-    sigma_type: str,
-    sigma_data: float,
     conf_ci: pd.DataFrame | None = None,
     correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
@@ -1265,8 +1375,8 @@ def _slot_from_baseline(
 
     Caller passes already-copied snapshot args (no live Model references) so
     the helper is invariant to post-fit cleanup. The noise metadata is also
-    a snapshot of the File's σ state at fit completion — subsequent calls
-    to ``File.set_sigma`` do not retroactively rewrite the slot. ``energy``
+    a snapshot of the File's declared model at fit completion — a later
+    ``File.set_noise`` does not retroactively rewrite the slot. ``energy``
     / ``time`` are the **selected** view coordinates (here: e_lim-cropped
     energy and the time slices averaged into the baseline), feeding
     ``compute_fit_view_sha256``.
@@ -1301,10 +1411,9 @@ def _slot_from_baseline(
         correl=correl,
         mcmc=mcmc,
         fit_settings=fit_settings,
-        noise_type=noise_type,
+        noise_declared=noise_declared,
+        noise=noise,
         sigma_source=sigma_source,
-        sigma_type=sigma_type,
-        sigma_data=sigma_data,
         components=components,
         component_names=component_names,
         fit_ini=fit_ini,
@@ -1336,10 +1445,9 @@ def _slot_from_spectrum(
     dark: np.ndarray | None,
     calibration: np.ndarray | None,
     model_yaml: tuple[ModelYamlRecord, ...] | None,
-    noise_type: str,
+    noise_declared: unoise.NoiseModel,
+    noise: ViewNoise,
     sigma_source: str,
-    sigma_type: str,
-    sigma_data: float,
     conf_ci: pd.DataFrame | None = None,
     correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
@@ -1349,10 +1457,10 @@ def _slot_from_spectrum(
 ) -> SavedFitSlot:
     """Build a SavedFitSlot for a completed spectrum fit.
 
-    v1 does not auto-correct σ for ``time_range`` averaging — users fitting
-    an averaged spectrum should pre-scale the σ they pass to
-    ``File.set_sigma()``. ``energy`` / ``time`` are the **selected** view
-    coordinates (e_lim-cropped energy; the selected time point/range).
+    A ``time_range`` mean reduces the declared noise the same way a baseline
+    mean does; the fit path hands the reduced model in as ``noise``.
+    ``energy`` / ``time`` are the **selected** view coordinates (e_lim-cropped
+    energy; the selected time point/range).
     """
 
     selection = {
@@ -1386,10 +1494,9 @@ def _slot_from_spectrum(
         correl=correl,
         mcmc=mcmc,
         fit_settings=fit_settings,
-        noise_type=noise_type,
+        noise_declared=noise_declared,
+        noise=noise,
         sigma_source=sigma_source,
-        sigma_type=sigma_type,
-        sigma_data=sigma_data,
         components=components,
         component_names=component_names,
         fit_ini=fit_ini,
@@ -1419,10 +1526,9 @@ def _slot_from_sbs(
     dark: np.ndarray | None,
     calibration: np.ndarray | None,
     model_yaml: tuple[ModelYamlRecord, ...] | None,
-    noise_type: str,
+    noise_declared: unoise.NoiseModel,
+    noise: ViewNoise,
     sigma_source: str,
-    sigma_type: str,
-    sigma_data: float,
     conf_ci: pd.DataFrame | None = None,
     correl: pd.DataFrame | None = None,
     mcmc: dict[str, Any] | None = None,
@@ -1448,17 +1554,19 @@ def _slot_from_sbs(
         "e_lim": list(e_lim) if e_lim else None,
         "t_lim": list(t_lim) if t_lim else None,
     }
-    sigma_eff = _compute_sigma_eff("sbs", selection, sigma_data)
+    _check_view_noise(noise_declared, noise, file_name=file_name)
+    sigma_type, sigma_eff, noise_scale, sigma = _view_noise_fields(noise)
     metrics = _per_slice_metrics(
         observed=observed,
         fit=fit,
         n_free_pars=n_free_pars,
-        sigma_eff=sigma_eff if np.isfinite(sigma_eff) else None,
+        noise=noise,
     )
     selection_json = build_selection_json("sbs", **selection)
     input_files, optimization_hash, handle, joint_ref = _slot_identity(
         file_name=file_name,
         fit_type="sbs",
+        noise_declared=noise_declared,
         selection_json=selection_json,
         version_stamp=version_stamp,
         model_structure=model_structure,
@@ -1486,11 +1594,13 @@ def _slot_from_sbs(
         fit=_frozen_copy(np.asarray(fit)),
         fit_alg=fit_alg,
         timestamp=_now_iso(),
-        noise_type=noise_type,
+        noise_type=noise_declared.kind,
         sigma_source=sigma_source,
         sigma_type=sigma_type,
-        sigma_data=float(sigma_data),
-        sigma_eff=float(sigma_eff),
+        sigma_data=_declared_sigma_data(noise_declared),
+        sigma_eff=sigma_eff,
+        noise_scale=noise_scale,
+        sigma=sigma,
         dark=_frozen_copy(dark) if dark is not None else None,
         calibration=_frozen_copy(calibration) if calibration is not None else None,
         model_yaml=model_yaml or None,
@@ -1528,10 +1638,9 @@ def _slot_from_2d(
     dark: np.ndarray | None,
     calibration: np.ndarray | None,
     model_yaml: tuple[ModelYamlRecord, ...] | None,
-    noise_type: str,
+    noise_declared: unoise.NoiseModel,
+    noise: ViewNoise,
     sigma_source: str,
-    sigma_type: str,
-    sigma_data: float,
     version_stamp: str | None = None,
     parameter_metadata: Sequence[tuple[str, float, float, bool, str | None]]
     | None = None,
@@ -1584,10 +1693,9 @@ def _slot_from_2d(
         correl=correl,
         mcmc=mcmc,
         fit_settings=fit_settings,
-        noise_type=noise_type,
+        noise_declared=noise_declared,
+        noise=noise,
         sigma_source=sigma_source,
-        sigma_type=sigma_type,
-        sigma_data=sigma_data,
         fit_ini=fit_ini,
     )
 
@@ -1603,6 +1711,7 @@ def _joint_result_from_project_fit(
     slots: Sequence[SavedFitSlot],
     fit_output: ulmfit.FitOutput,
     fit_settings: dict[str, Any] | None,
+    noise: unoise.SegmentedNoise | None = None,
 ) -> JointFitResult:
     """
     Build the ``JointFitResult`` for a completed ``Project.fit_2d``.
@@ -1618,12 +1727,13 @@ def _joint_result_from_project_fit(
 
     Whole-objective metrics come from ``compute_fit_metrics`` over the
     concatenated prediction (not lmfit's ``aic``/``bic``), so joint and
-    per-file numbers stay comparable by construction. ``chi2`` is the sum
-    of the projections' σ-calibrated values (it sums cleanly across
-    heterogeneous per-file noise scales; NaN unless every file's σ is
-    valid), ``chi2_red`` divides it by the joint DoF, and ``r2`` is NaN —
-    it would depend on an arbitrary global mean across separate
-    measurements.
+    per-file numbers stay comparable by construction. *noise* is the
+    per-segment model the joint residual was weighted with, in ``slots``
+    order: ``chi2`` is then the weighted objective over the concatenated
+    vector, which equals the sum of the projections' ``chi2`` because the
+    segments partition it, and AIC/BIC follow the same summed-objective
+    form as a single-file weighted fit. ``r2`` is NaN — it would depend on
+    an arbitrary global mean across separate measurements.
     """
 
     par_fin = fit_output.par_fin
@@ -1667,11 +1777,8 @@ def _joint_result_from_project_fit(
         observed=concat_observed,
         fit=concat_fit,
         n_free_pars=joint_nvarys,
+        noise=noise,
     )
-    chi2 = float(sum(float(s.metrics["chi2"]) for s in slots))
-    dof = concat_observed.size - joint_nvarys
-    metrics["chi2"] = chi2
-    metrics["chi2_red"] = chi2 / dof if dof > 0 else float("nan")
     metrics["r2"] = float("nan")
 
     conf_ci = fit_output.conf_ci
@@ -1705,6 +1812,7 @@ def _slot_identity(
     *,
     file_name: str,
     fit_type: FitType,
+    noise_declared: unoise.NoiseModel,
     selection_json: str,
     version_stamp: str | None,
     model_structure: str,
@@ -1717,10 +1825,11 @@ def _slot_identity(
     ``(input_files, optimization_hash, handle, joint_ref)`` for one slot.
 
     File scope: the local identity chain is computed here from the
-    captured primitives. Joint scope: ``joint_identity`` is the bundle's
-    ``(optimization_hash, input_files_json)``, computed once by
-    ``Project.fit_2d`` — the slot inherits it, and ``joint_ref`` points
-    back at it.
+    captured primitives, including the File's **declared** noise model —
+    the view reduction is already implied by the selection. Joint scope:
+    ``joint_identity`` is the bundle's ``(optimization_hash,
+    input_files_json)``, computed once by ``Project.fit_2d`` — the slot
+    inherits it, and ``joint_ref`` points back at it.
     """
 
     if joint_identity is not None:
@@ -1734,7 +1843,8 @@ def _slot_identity(
                 "projection may omit them, via joint_identity)"
             )
         input_files = encode_input_files(
-            scope="file", entries=[(file_name, version_stamp, selection_json)]
+            scope="file",
+            entries=[(file_name, version_stamp, selection_json, noise_declared)],
         )
         optimization_hash = compute_optimization_hash(
             input_files_json=input_files,
@@ -1778,27 +1888,28 @@ def _build_slot(
     correl: pd.DataFrame | None,
     mcmc: dict[str, Any] | None,
     fit_settings: dict[str, Any],
-    noise_type: str,
+    noise_declared: unoise.NoiseModel,
+    noise: ViewNoise,
     sigma_source: str,
-    sigma_type: str,
-    sigma_data: float,
     components: np.ndarray | None = None,
     component_names: list[str] | None = None,
     fit_ini: np.ndarray | None = None,
 ) -> SavedFitSlot:
     """Shared scalar-metric path for baseline / spectrum / 2d."""
 
-    sigma_eff = _compute_sigma_eff(fit_type, selection, sigma_data)
+    _check_view_noise(noise_declared, noise, file_name=file_name)
+    sigma_type, sigma_eff, noise_scale, sigma = _view_noise_fields(noise)
     metrics = compute_fit_metrics(
         observed=observed,
         fit=fit,
         n_free_pars=n_free_pars,
-        sigma_eff=sigma_eff if np.isfinite(sigma_eff) else None,
+        noise=_single_view(noise),
     )
     selection_json = build_selection_json(fit_type, **selection)
     input_files, optimization_hash, handle, joint_ref = _slot_identity(
         file_name=file_name,
         fit_type=fit_type,
+        noise_declared=noise_declared,
         selection_json=selection_json,
         version_stamp=version_stamp,
         model_structure=model_structure,
@@ -1826,11 +1937,13 @@ def _build_slot(
         fit=_frozen_copy(np.asarray(fit)),
         fit_alg=fit_alg,
         timestamp=_now_iso(),
-        noise_type=noise_type,
+        noise_type=noise_declared.kind,
         sigma_source=sigma_source,
         sigma_type=sigma_type,
-        sigma_data=float(sigma_data),
-        sigma_eff=float(sigma_eff),
+        sigma_data=_declared_sigma_data(noise_declared),
+        sigma_eff=sigma_eff,
+        noise_scale=noise_scale,
+        sigma=sigma,
         dark=_frozen_copy(dark) if dark is not None else None,
         calibration=_frozen_copy(calibration) if calibration is not None else None,
         model_yaml=model_yaml or None,
@@ -1851,9 +1964,14 @@ def _per_slice_metrics(
     observed: np.ndarray,
     fit: np.ndarray,
     n_free_pars: int | None,
-    sigma_eff: float | None = None,
+    noise: ViewNoise = None,
 ) -> dict[str, np.ndarray]:
-    """Compute per-slice metrics for SbS (one row per time slice)."""
+    """
+    Compute per-slice metrics for SbS (one row per time slice).
+
+    *noise* is one view-reduced model per slice; a single model (or
+    ``None``) applies to every slice.
+    """
 
     obs = np.asarray(observed)
     fit_arr = np.asarray(fit)
@@ -1863,13 +1981,23 @@ def _per_slice_metrics(
             f"got observed{obs.shape}, fit{fit_arr.shape}"
         )
     n_slices = obs.shape[0]
+    if isinstance(noise, (list, tuple)):
+        if len(noise) != n_slices:
+            raise ValueError(
+                f"SbS capture: {len(noise)} view noise model(s) for {n_slices} slice(s)"
+            )
+        per_slice: list[unoise.NoiseModel | None] = [
+            m if m is not None and m.is_weighted else None for m in noise
+        ]
+    else:
+        per_slice = [_single_view(noise)] * n_slices
     out: dict[str, list[float]] = {k: [] for k in _METRICS_KEYS}
     for i in range(n_slices):
         m = compute_fit_metrics(
             observed=obs[i],
             fit=fit_arr[i],
             n_free_pars=n_free_pars,
-            sigma_eff=sigma_eff,
+            noise=per_slice[i],
         )
         for k in out:
             out[k].append(m[k])
@@ -2142,6 +2270,53 @@ def set_fit_label(target: SavedFitSlot | JointFitResult, label: str) -> None:
 _BEST_BY_KEYS: frozenset[str] = frozenset({"aic", "bic", "chi2_red", "chi2_red_raw"})
 
 
+# Metrics whose value is expressed in the declared noise's units — only
+# comparable between slots that were weighted by the same noise model.
+_NOISE_SCALED_BY_KEYS: frozenset[str] = frozenset({"aic", "bic", "chi2_red"})
+
+
+#
+def slot_noise_key(slot: SavedFitSlot) -> tuple[str, str, str]:
+    """
+    Comparability key of the noise model a slot's metrics are scaled by.
+
+    ``(noise_type, noise_scale, σ)`` as canonical text, with the σ field
+    holding the constant ``sigma_eff`` or a tagged digest of the
+    per-point ``sigma`` array. ``"unknown"`` is a key of its own: its
+    ``chi2_red`` is NaN and its AIC/BIC use the profiled form, so it
+    ranks against nothing else.
+    """
+
+    if slot.sigma is not None:
+        sigma_text = json.dumps(_array_record(slot.sigma), separators=(",", ":"))
+    else:
+        sigma_text = _exact_float_text(slot.sigma_eff)
+    return (
+        str(slot.noise_type),
+        _exact_float_text(slot.noise_scale),
+        sigma_text,
+    )
+
+
+#
+def slot_noise_label(slot: SavedFitSlot) -> str:
+    """
+    Readable form of ``slot_noise_key`` for error messages.
+
+    Scalars render as exact decimal text; a per-point σ renders as the
+    abbreviated digest of its bytes.
+    """
+
+    if slot.noise_type == NOISE_TYPE_UNKNOWN:
+        return NOISE_TYPE_UNKNOWN
+    if slot.noise_type == NOISE_TYPE_POISSON:
+        return f"poisson(scale={_exact_float_text(slot.noise_scale)})"
+    if slot.sigma is not None:
+        digest = hashlib.sha256(np.ascontiguousarray(slot.sigma).tobytes()).hexdigest()
+        return f"gaussian(sigma={short_id(digest)})"
+    return f"gaussian(sigma={_exact_float_text(slot.sigma_eff)})"
+
+
 #
 def _slot_metric_scalar(slot: SavedFitSlot, key: str) -> float:
     """
@@ -2192,17 +2367,19 @@ def select_snapshot_slots(
     ``history_order``, the pre-collapse filtered history — more robust
     than timestamp strings). ``"best"`` requires ``by=``, one of the
     offered criteria (principles §"Pruning and selection"): ``aic``,
-    ``bic``, ``chi2_red_raw`` minimize; ``chi2_red`` ranks by ``|x − 1|``
-    and requires a σ consistent across the group. Raw χ² and r² are not
-    offered — they reward extra free parameters.
+    ``bic``, ``chi2_red_raw`` minimize; ``chi2_red`` ranks by ``|x − 1|``.
+    All three of ``aic`` / ``bic`` / ``chi2_red`` are expressed in the
+    declared noise's units and require one noise model across the group.
+    Raw χ² and r² are not offered — they reward extra free parameters.
 
     Three rankings are refused because each would silently pick a wrong
     winner: a group spanning more than one ``fit_view_sha256`` (metrics
     of different fit views must never be ranked against one another —
-    the same rule ``compare_models`` enforces), ``chi2_red`` over a
-    group mixing finite ``sigma_eff`` values, and any ``by=`` undefined
-    on every slot of a group. Reference-style ``select`` values never
-    reach this function — callers resolve them via
+    the same rule ``compare_models`` enforces), a noise-scaled ``by=``
+    over a group mixing ``slot_noise_key`` values (two σ, two Poisson
+    scales, or a declared model next to ``unknown``), and any ``by=``
+    undefined on every slot of a group. Reference-style ``select``
+    values never reach this function — callers resolve them via
     ``resolve_fit_reference`` first.
     """
 
@@ -2245,19 +2422,18 @@ def select_snapshot_slots(
                     f"another. Narrow the filter, pick an explicit "
                     f"handle/label, or use select='latest'."
                 )
-            if by == "chi2_red":
-                sigmas = sorted(
-                    {float(s.sigma_eff) for s in group if np.isfinite(s.sigma_eff)}
-                )
-                if len(sigmas) > 1:
+            if by in _NOISE_SCALED_BY_KEYS:
+                labels = {slot_noise_key(s): slot_noise_label(s) for s in group}
+                if len(labels) > 1:
                     raise ValueError(
-                        f"select='best' by='chi2_red' over group "
+                        f"select='best' by={by!r} over group "
                         f"(file={gkey[0]!r}, model={gkey[1]!r}, "
-                        f"fit_type={gkey[2]!r}) mixes sigma_eff values "
-                        f"{sigmas} — values scaled by different σ are not "
-                        f"comparable, and a ranking would silently pick a "
-                        f"wrong winner. Rank by 'chi2_red_raw' instead, or "
-                        f"narrow the filter to one σ."
+                        f"fit_type={gkey[2]!r}) mixes noise models "
+                        f"{sorted(labels.values())} — metrics expressed in "
+                        f"different noise units are not comparable, and a "
+                        f"ranking would silently pick a wrong winner. Rank "
+                        f"by 'chi2_red_raw' instead, or narrow the filter to "
+                        f"one noise model."
                     )
             scored = [
                 (s, _best_score(s, by))
@@ -2270,8 +2446,8 @@ def select_snapshot_slots(
                     f"every slot of group (file={gkey[0]!r}, "
                     f"model={gkey[1]!r}, fit_type={gkey[2]!r})"
                     + (
-                        " — σ-scaled metrics need a sigma set at fit time "
-                        "(File.set_sigma)."
+                        " — noise-scaled metrics need a noise model declared "
+                        "at fit time (File.set_noise)."
                         if by == "chi2_red"
                         else "."
                     )
@@ -2282,20 +2458,28 @@ def select_snapshot_slots(
 
 
 #
-def joint_comparability(record: JointFitResult) -> tuple[tuple[str, str], ...]:
+def joint_comparability(
+    record: JointFitResult,
+) -> tuple[tuple[str, str, tuple[str, str, str]], ...]:
     """
     Comparability key of a joint fit: sorted ``(file_name,
-    fit_view_sha256)`` pairs over the projections.
+    fit_view_sha256, noise_key)`` triples over the projections.
 
-    A canonical *tuple of pairs*, never a set of view hashes — a set
-    would discard association and multiplicity, collapsing two
-    byte-identical files under different names into one entry and making
-    a two-file joint fit look like a one-file one. Computed on read from
-    the projections; there is no stored field.
+    A canonical *tuple of triples*, never a set — a set would discard
+    association and multiplicity, collapsing two byte-identical files
+    under different names into one entry and making a two-file joint fit
+    look like a one-file one. The per-file ``slot_noise_key`` rides along
+    because the record's ``chi2`` / ``chi2_red`` / ``aic`` / ``bic`` are
+    the weighted objective: two joint fits over the same views but
+    different noise models have metrics in different units. Computed on
+    read from the projections; there is no stored field.
     """
 
     return tuple(
-        sorted((p.slot.file_name, p.slot.fit_view_sha256) for p in record.projections)
+        sorted(
+            (p.slot.file_name, p.slot.fit_view_sha256, slot_noise_key(p.slot))
+            for p in record.projections
+        )
     )
 
 
@@ -3472,6 +3656,8 @@ def _write_slot(
         _create_array_dataset(slot_group, "dark", slot.dark)
     if slot.calibration is not None:
         _create_array_dataset(slot_group, "calibration", slot.calibration)
+    if slot.sigma is not None:
+        _create_array_dataset(slot_group, "sigma", slot.sigma)
     if slot.fit_type == "sbs":
         _write_metrics_per_slice(slot_group, slot.metrics)
     if slot.params_meta is not None:
@@ -3538,6 +3724,7 @@ def _write_slot_metadata(slot_group: h5py.Group, slot: SavedFitSlot) -> None:
     meta.attrs["sigma_type"] = slot.sigma_type
     meta.attrs["sigma_data"] = float(slot.sigma_data)
     meta.attrs["sigma_eff"] = float(slot.sigma_eff)
+    meta.attrs["noise_scale"] = float(slot.noise_scale)
     if slot.fit_type != "sbs":
         for k in _METRICS_RESIDUAL_ONLY:
             meta.attrs[k] = float(slot.metrics[k])
@@ -3929,9 +4116,9 @@ def _selection_json_for(input_files: str, *, file_name: str, handle: str) -> str
     """
 
     entries = json.loads(input_files)[1]
-    for name, _stamp, selection_json in entries:
-        if name == file_name:
-            return str(selection_json)
+    for entry in entries:
+        if entry[0] == file_name:
+            return str(entry[2])
     raise ValueError(
         f"Slot {short_id(handle)} on file {file_name!r}: input_files has no "
         f"entry for its own file — corrupt archive."
@@ -4043,6 +4230,12 @@ def _read_slot(slot_group: h5py.Group, *, file_name: str) -> SavedFitSlot:
         if calibration_obj is not None
         else None
     )
+    sigma_obj = slot_group.get("sigma")
+    sigma = (
+        _read_array(require_dataset(sigma_obj, "sigma"))
+        if sigma_obj is not None
+        else None
+    )
     model_yaml_obj = slot_group.get("model_yaml")
     model_yaml = (
         _read_model_yaml(require_group(model_yaml_obj, "model_yaml"))
@@ -4072,6 +4265,12 @@ def _read_slot(slot_group: h5py.Group, *, file_name: str) -> SavedFitSlot:
         sigma_type=_attr_str(a["sigma_type"]),
         sigma_data=float(np.asarray(a["sigma_data"]).item()),
         sigma_eff=float(np.asarray(a["sigma_eff"]).item()),
+        noise_scale=(
+            float(np.asarray(a["noise_scale"]).item())
+            if "noise_scale" in a
+            else float("nan")
+        ),
+        sigma=sigma,
         dark=dark,
         calibration=calibration,
         model_yaml=model_yaml,

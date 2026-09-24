@@ -2,9 +2,12 @@
 
 No active multi-step feature.
 
-Cleared 2026-09-19 after the `export-by-handle` work (`export_fit(ref)` with
-the fixed `files/<file>/<model>/<handle8>/` layout and joint-bundle export, exact
-8/64-character references, project-wide unique labels; v0.16.0). The decisions
-and rejected alternatives live in `docs/design/fit_archive_principles.md`
-(§Slot handles, §Labels, §Archive vs export) and the 0.16.0 changelog entry;
-the step list is in this file's git history on branch `export-by-handle`.
+Cleared 2026-09-23 after the noise-model weighting work (`File.set_noise`
+with `poisson` / `gaussian` / `unknown`, weighted residuals and Jacobians,
+noise in the fit identity and metrics, MCMC and CI following the declared
+model, `Simulator.noise_model`, the `sensitivity` module as the independent
+check, notebooks 12 and 13; v0.17.0). The design rationale, the rejected
+frozen-weights alternative, the verification numbers and the example
+teaching split live in `docs/design/archive/noise_model_weighting_plan.md`;
+the identity and schema amendments in `docs/design/fit_archive_principles.md`
+and `docs/design/fit_archive_schema.md`; follow-ups in `TODO.md`.

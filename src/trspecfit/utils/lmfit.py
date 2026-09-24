@@ -800,20 +800,25 @@ class MC:
         sampling in a spawn-backed process pool (safe in multithreaded
         processes, unlike fork), costing ~1-2 s of pool startup per fit.
     is_weighted : bool, default=False
-        Whether the residual is already in units of sigma. False samples
-        the noise scale as the ``__lnsigma`` nuisance parameter; True trusts
-        the residual's scale, has no nuisance, and ignores the sigma knobs.
+        Whether the residual is already in units of sigma. The fitted
+        file's declared noise decides this, not the request: any
+        ``File.set_noise`` kind other than ``'unknown'`` resolves to True,
+        and asking for True under ``'unknown'`` raises at fit time. True
+        trusts the residual's scale and has no ``__lnsigma`` nuisance;
+        False samples the noise scale as that nuisance parameter.
     sigma_ini : float or None, default=None
         Start of the sampled noise scale (data units). None derives the
         fit's RMS residual, ``sqrt(chisqr / ndata)`` of the optimizer result:
         the maximum-likelihood sigma of the unweighted Gaussian model on the
         data view the fit saw. Started far off the true scale, the walkers
         spend the chain hunting for it and the posterior widths are
-        unreliable.
+        unreliable. Rejected under a declared noise model, which leaves no
+        ``__lnsigma`` to start.
     sigma_min, sigma_max : float or None, default=None
         Bounds of the sampled noise scale (data units). None derives two
         decades either side of the start. A derived start outside explicit
-        bounds raises at fit time.
+        bounds raises at fit time, as does any of them under a declared
+        noise model.
     seed : int or None, default=None
         Seed for the sampler's random state (initial walker spread and
         proposals), forwarded to ``lmfit.Minimizer.emcee(seed=)``. Makes a
@@ -823,8 +828,8 @@ class MC:
     Attributes
     ----------
     Same names as the parameters. On the copy returned by :meth:`resolve`
-    every derivable knob is explicit, except that the ``sigma_*`` knobs stay
-    None when ``is_weighted`` is True.
+    every derivable knob is explicit, ``is_weighted`` is the fit's declared
+    weighting, and the ``sigma_*`` knobs stay None when it is True.
 
     Examples
     --------
@@ -884,7 +889,7 @@ class MC:
         self.seed = None if seed is None else _as_int(seed, "seed", minimum=0)
 
     #
-    def resolve(self, *, sigma_fit: float, n_dim: int) -> MC:
+    def resolve(self, *, sigma_fit: float, n_dim: int, weighted: bool) -> MC:
         """
         Fill every derivable knob from the optimizer result; return a copy.
 
@@ -896,20 +901,44 @@ class MC:
             ``sigma_ini`` is None.
         n_dim : int
             Sampled dimensions: varying parameters plus one for ``__lnsigma``
-            when ``is_weighted`` is False.
+            when *weighted* is False.
+        weighted : bool
+            Whether the fit declared a noise model, so its residual is
+            already in units of sigma. The resolved copy's ``is_weighted``
+            is this flag, whatever the request asked for.
 
         Raises
         ------
         ValueError
-            Derived start outside explicit sigma bounds; explicit ``nwalkers``
-            below emcee's minimum of ``2 * n_dim``; a non-positive
-            ``sigma_fit`` when the start must be derived.
+            Sigma knobs requested under a declared noise model, or weighted
+            sampling requested without one; derived start outside explicit
+            sigma bounds; explicit ``nwalkers`` below emcee's minimum of
+            ``2 * n_dim``; a non-positive ``sigma_fit`` when the start must
+            be derived.
         """
+
+        if weighted:
+            named = ("sigma_ini", "sigma_min", "sigma_max")
+            given = [name for name in named if getattr(self, name) is not None]
+            if given:
+                raise ValueError(
+                    f"{', '.join(given)} describe(s) the __lnsigma nuisance "
+                    "parameter, which does not exist under a declared noise "
+                    "model (File.set_noise): the residual already is in units "
+                    "of sigma. Drop the sigma knobs from MC()."
+                )
+        elif self.is_weighted:
+            raise ValueError(
+                "MC(is_weighted=True) needs a declared noise model: under "
+                "noise_type='unknown' the residual is not in units of sigma. "
+                "Declare one with File.set_noise to sample the weighted "
+                "likelihood."
+            )
 
         sigma_ini: float | None = None
         sigma_min: float | None = None
         sigma_max: float | None = None
-        if not self.is_weighted:
+        if not weighted:
             if self.sigma_ini is None:
                 if not (np.isfinite(sigma_fit) and sigma_fit > 0):
                     raise ValueError(
@@ -930,7 +959,7 @@ class MC:
                 f"nwalkers={self.nwalkers} is below emcee's minimum of "
                 f"2 * n_dim = {2 * n_dim} ({n_dim} sampled dimensions: the "
                 "varying parameters"
-                + ("" if self.is_weighted else " plus __lnsigma")
+                + ("" if weighted else " plus __lnsigma")
                 + "); raise it or pass nwalkers=None to derive it"
             )
         else:
@@ -943,7 +972,7 @@ class MC:
             thin=self.thin,
             ntemps=self.ntemps,
             workers=self.workers,
-            is_weighted=self.is_weighted,
+            is_weighted=weighted,
             sigma_ini=sigma_ini,
             sigma_min=sigma_min,
             sigma_max=sigma_max,

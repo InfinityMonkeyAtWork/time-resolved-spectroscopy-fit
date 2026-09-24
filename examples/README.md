@@ -20,7 +20,8 @@ notebook list and the 0x / 1x / 2x numeric-block legend.
 | [04_parameter_profiles](fitting_workflows/04_parameter_profiles/)   | Depth-dependent parameters via profile functions (with optional time-dependence). |
 | [10_model_comparison](fitting_workflows/10_model_comparison/)       | Compare two models on the same file (baseline / SbS / 2D). |
 | [11_save_load_export](fitting_workflows/11_save_load_export/)       | `FitResults` HDF5 round-trip, CSV/PNG export, "ship just the winners". |
-| [12_uncertainty_mcmc](fitting_workflows/12_uncertainty_mcmc/)       | Three tiers of parameter uncertainty — `stderr`, profiled CIs, and MCMC — checked against truth. |
+| [12_uncertainty_mcmc](fitting_workflows/12_uncertainty_mcmc/)       | Declare the noise model, then three tiers of parameter uncertainty — `stderr`, profiled CIs, and MCMC — checked against truth and the Cramér-Rao bound. |
+| [13_missing_noise_model](fitting_workflows/13_missing_noise_model/) | What the `unknown` default does to `stderr`, profiled CIs and MCMC on the same data as 12, and the Gaussian fallback. |
 | [20_multi_file_independent_fit](fitting_workflows/20_multi_file_independent_fit/) | Multi-file workspace, per-file independent fits (bridge to shared-parameter fitting). |
 | [21_multi_file_shared_fit](fitting_workflows/21_multi_file_shared_fit/) | Multi-file workspace, shared-parameter fits across files. |
 
@@ -40,6 +41,7 @@ they cover how to generate datasets from a known model.
 - **Compare two candidate models on one file:** [`fitting_workflows/10_model_comparison`](fitting_workflows/10_model_comparison/).
 - **Save, load, or export fit results:** [`fitting_workflows/11_save_load_export`](fitting_workflows/11_save_load_export/).
 - **Estimate uncertainties with MCMC:** [`fitting_workflows/12_uncertainty_mcmc`](fitting_workflows/12_uncertainty_mcmc/).
+- **No noise model declared, and what the default costs:** [`fitting_workflows/13_missing_noise_model`](fitting_workflows/13_missing_noise_model/).
 - **Many files, fit each independently:** [`fitting_workflows/20_multi_file_independent_fit`](fitting_workflows/20_multi_file_independent_fit/).
 - **Many files, shared-parameter fit:** [`fitting_workflows/21_multi_file_shared_fit`](fitting_workflows/21_multi_file_shared_fit/).
 - **Generate synthetic / ML training data:** [`synthetic_data/`](synthetic_data/).
@@ -53,12 +55,13 @@ Most examples are self-contained with:
 - `models_energy.yaml` / `models_time.yaml` / `models_profile.yaml` — model definitions.
 - `project.yaml` — project configuration.
 
-The two post-fit notebooks are the exception: **`11_save_load_export`** and
-**`12_uncertainty_mcmc`** carry no model files of their own. Their first cell
-`%run`s an upstream notebook (11 → 10, 12 → 01) to bring a finished fit into
-scope, then shows what to do with it — open them like any other notebook (the
-preamble handles the dependency), but expect that first cell to run for the
-better part of a minute.
+The post-fit notebooks are the exception: **`11_save_load_export`**,
+**`12_uncertainty_mcmc`** and **`13_missing_noise_model`** carry no model files
+of their own. Their first cell `%run`s an upstream notebook (11 → 10, and the
+chain 13 → 12 → 01) to bring a finished fit into scope, then shows what to do
+with it — open them like any other notebook (the preamble handles the
+dependency), but expect that first cell to run for the better part of a minute,
+and for several minutes in 13, which re-runs two notebooks and their fits.
 
 Install the notebook dependencies first:
 

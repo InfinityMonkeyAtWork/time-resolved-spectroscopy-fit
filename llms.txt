@@ -37,6 +37,12 @@ file.plot_fit(fit_type='2d')                         # observed/fit/residual
 file.save_fit(...)                                   # HDF5 fit archive
 ```
 
+Before fitting, `file.set_noise('poisson', scale=...)` (counting data) or
+`file.set_sigma(sigma)` (known Gaussian σ) declares the noise model. A
+declared model weights the residual and calibrates `stderr`, confidence
+intervals, MCMC and the χ²-based metrics; without one, fits are unweighted
+least squares with lmfit's rescaled covariance.
+
 All `get_*` / `plot_*` result accessors read the persisted fit record
 (latest matching fit), so they work identically on a live session and on
 archives loaded via `FitResults.load(path)`.
