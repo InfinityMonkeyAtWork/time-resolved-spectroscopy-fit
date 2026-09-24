@@ -17,7 +17,7 @@
 
 ## Performance & architecture
 
-- [ ] **JAX backend follow-ons**: the backend itself shipped in v0.12.0 (Phases A–D of [docs/design/archive/jax-planning.md](docs/design/archive/jax-planning.md); execution record in [docs/design/archive/jax-backend.md](docs/design/archive/jax-backend.md)). Remaining candidates, none scheduled:
+- [ ] **JAX backend follow-ons**: the backend itself shipped in v0.12.0 (Phases A–D of [docs/design/archive/jax_backend_note.md](docs/design/archive/jax_backend_note.md); execution record in [docs/design/archive/jax_backend_plan.md](docs/design/archive/jax_backend_plan.md)). Remaining candidates, none scheduled:
   - Full-parameter-vector evaluator variant for interactive use (fixed-value edits without recompile) plus session-level evaluator caching — see [docs/design/ui.md](docs/design/ui.md).
   - vmap-batched slice-by-slice solver (the one workload where lmfit overhead plausibly dominates; would be the Phase E pilot) — see [docs/design/ui.md](docs/design/ui.md).
   - `vmap`-batch homogeneous file series in the fused project fit: unrolled per-file fusion shipped in v0.13.0 and compiles a ten-file program in a few seconds (see [docs/design/project-level-fits.md](docs/design/project-level-fits.md)); batching identical-grid files through one evaluator body is the follow-on if compile time ever becomes a complaint (moved here 2026-09-17).

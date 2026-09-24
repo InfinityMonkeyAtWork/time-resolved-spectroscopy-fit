@@ -1,6 +1,6 @@
 """Experimental JAX evaluator backend for 2D scheduled plans.
 
-Covers the full lowered 2D surface (docs/design/archive/jax-planning.md,
+Covers the full lowered 2D surface (docs/design/archive/jax_backend_note.md,
 Phases B + C): static component ops, dynamics groups, arithmetic
 expressions, subcycle dynamics, profile-varying parameters,
 kernel-matrix convolution, and Voigt (via a Weideman rational

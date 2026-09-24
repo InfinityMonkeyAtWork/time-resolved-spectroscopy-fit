@@ -175,7 +175,7 @@ and every schema-2-through-6 fallback branch is deleted rather than left inert.
 
   **Schema 7 serializes a first-class joint result; it does not produce one.**
   That upstream prerequisite landed 2026-07-31 (decisions in
-  [joint_fit_result.md](joint_fit_result.md)): every `Project.fit_2d` now
+  [joint_fit_result_plan.md](joint_fit_result_plan.md)): every `Project.fit_2d` now
   captures a `JointFitResult` — combined parameter table, per-projection
   parameter maps, joint `conf_ci`/`correl`/MCMC, whole-objective metrics —
   into `Project._joint_fit_history`, published together with the per-file
@@ -226,7 +226,7 @@ enumerates groups to find insertion points.
 #### Projection records
 
 The parameter map is data, not a naming convention
-([joint_fit_result.md](joint_fit_result.md)): combined optimizer names encode
+([joint_fit_result_plan.md](joint_fit_result_plan.md)): combined optimizer names encode
 file *position* (`file{idx:02d}_{local}`; project-shared parameters
 unprefixed), and each landed `JointFitProjection` already stores the exact
 combined → local relation as `parameter_map`. The archive persists that map;
@@ -405,7 +405,7 @@ snapshot rather than a view (Principle 4).
 ### `JointFitResult` (extended — no parallel `SavedJointFit`)
 
 `JointFitResult` is the semantic type in memory and after an archive load
-([joint_fit_result.md](joint_fit_result.md) §Object model); schema 7 extends
+([joint_fit_result_plan.md](joint_fit_result_plan.md) §Object model); schema 7 extends
 it rather than minting a `Saved*` twin. Already landed: `model_name`,
 `projections` (tuple of `JointFitProjection` — parameter map + slot, in
 canonical file-name order), `params` (combined, long format), `metrics`,

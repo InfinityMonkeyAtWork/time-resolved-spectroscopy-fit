@@ -601,7 +601,7 @@ The joint record is **represented in schema 7**, not reserved for a later
 version. Schema 7 **consumes** a first-class joint result; it does not create
 one. Producing that record was sequenced ahead of the conversion (see
 "Sequencing") and landed on branch `joint-fit-result` (2026-07-31, decisions
-in [joint_fit_result.md](archive/joint_fit_result.md)): every `Project.fit_2d` now
+in [joint_fit_result_plan.md](archive/joint_fit_result_plan.md)): every `Project.fit_2d` now
 captures a `JointFitResult` — combined parameter table, per-file parameter
 maps, joint `conf_ci`/`correl` (correlation over covariance), joint MCMC, and
 whole-objective metrics — into `Project._joint_fit_history`, published
@@ -635,7 +635,7 @@ state:
 `correl` is a **correlation** matrix, not a covariance matrix — that is what
 schema 6 stores and what `correl_to_df` produces. The joint-record branch
 settled the covariance question
-([joint_fit_result.md](archive/joint_fit_result.md)): correlation only — with
+([joint_fit_result_plan.md](archive/joint_fit_result_plan.md)): correlation only — with
 `stderr` in the parameter table it recovers covariance as
 `correl(i,j) · stderr(i) · stderr(j)`, and storing both would invite
 disagreement.
@@ -658,7 +658,7 @@ canonically by name would sever the association — the fifth instance of the
 composite-key rule above, this time discarding association. Each projection
 record therefore carries its own combined → local `parameter_map`; readers
 look names up rather than parse the prefix convention
-([joint_fit_result.md](archive/joint_fit_result.md)), and a project-shared parameter
+([joint_fit_result_plan.md](archive/joint_fit_result_plan.md)), and a project-shared parameter
 appears under the same unprefixed name in every projection's map.
 
 **Mutation.** One transaction over the whole bundle: validate the joint record
@@ -1476,7 +1476,7 @@ a transient discarded after `fit_2d()`, which is the wrong order.
    Schema 7 cannot be finalized before this — it would have nothing to
    serialize. **Done** on branch `joint-fit-result` (2026-07-31): the record
    is `JointFitResult` (correlation chosen over covariance), decisions in
-   [joint_fit_result.md](archive/joint_fit_result.md).
+   [joint_fit_result_plan.md](archive/joint_fit_result_plan.md).
 4. **Schema 7.** With the object model settled, the wire format largely falls
    out. Array ownership (Principle 4) is local to the capture path and ships
    with it — it does **not** wait on the systemic array-mutation TODO, which

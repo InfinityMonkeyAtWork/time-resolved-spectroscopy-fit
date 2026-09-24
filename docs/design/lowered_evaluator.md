@@ -1,6 +1,6 @@
 # Lowered Evaluator (GIR): Design and Spec
 
-> Implementation history (Phases 1-6): [archive/lowered_evaluator_implementation.md](archive/lowered_evaluator_implementation.md).
+> Implementation history (Phases 1-6): [archive/lowered_evaluator_implementation_plan.md](archive/lowered_evaluator_implementation_plan.md).
 
 ## Motivation
 
@@ -1044,6 +1044,6 @@ This document is the long-lived design/spec for the lowered evaluator.
 
 - The completed implementation history (all phases of the GIR / lowered
   evaluator rollout) is archived in
-  [archive/lowered_evaluator_implementation.md](archive/lowered_evaluator_implementation.md).
+  [archive/lowered_evaluator_implementation_plan.md](archive/lowered_evaluator_implementation_plan.md).
 - The closed backend-decision benchmark write-up lives in
-  [archive/numba_vs_jax.md](archive/numba_vs_jax.md).
+  [archive/numba_vs_jax_decision.md](archive/numba_vs_jax_decision.md).
