@@ -404,13 +404,16 @@ class FitResults:
             )
 
         if slot.fit_type == "spectrum":
+            time_point = slot.selection.get("time_point")
+            time_range = slot.selection.get("time_range")
+            time_type = slot.selection.get("time_type", "abs")
+            if time_point is None and time_range is None:
+                # a 1D file is its own spectrum; nothing to select
+                return data if data.ndim == 1 else None
             time = getattr(provider, "time", None)
             if time is None:
                 return None
             time = np.asarray(time)
-            time_point = slot.selection.get("time_point")
-            time_range = slot.selection.get("time_range")
-            time_type = slot.selection.get("time_type", "abs")
             try:
                 if time_point is not None:
                     ind = resolve_time_selection(

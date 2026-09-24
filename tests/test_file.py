@@ -362,6 +362,94 @@ class TestModelManagement:
 
 #
 #
+class TestFileConstruction:
+    """The constructor validates its inputs and derives what it can."""
+
+    #
+    def test_3d_data_raises(self):
+        """Only 1D (energy) or 2D (time x energy) data is accepted."""
+
+        with pytest.raises(ValueError, match=r"1D \(energy\) or 2D"):
+            File(parent_project=make_project(), data=np.zeros((2, 3, 4)))
+
+    #
+    def test_1d_data_with_time_axis_raises(self):
+        """A single spectrum takes no time axis."""
+
+        with pytest.raises(ValueError, match="takes no time axis"):
+            File(
+                parent_project=make_project(),
+                data=np.zeros(5),
+                energy=np.arange(5.0),
+                time=np.arange(3.0),
+            )
+
+    #
+    def test_energy_axis_length_mismatch_raises_1d(self):
+        """The energy axis must span the spectrum."""
+
+        with pytest.raises(ValueError, match="energy axis has 4 points"):
+            File(parent_project=make_project(), data=np.zeros(5), energy=np.arange(4.0))
+
+    #
+    def test_energy_axis_length_mismatch_raises_2d(self):
+        """The energy axis must span the second data axis."""
+
+        with pytest.raises(ValueError, match="energy axis has 4 points"):
+            File(
+                parent_project=make_project(),
+                data=np.zeros((3, 5)),
+                energy=np.arange(4.0),
+                time=np.arange(3.0),
+            )
+
+    #
+    def test_time_axis_length_mismatch_raises(self):
+        """The time axis must span the first data axis."""
+
+        with pytest.raises(ValueError, match="time axis has 2 points"):
+            File(
+                parent_project=make_project(),
+                data=np.zeros((3, 5)),
+                energy=np.arange(5.0),
+                time=np.arange(2.0),
+            )
+
+    #
+    def test_swapped_axes_suggest_transposing(self):
+        """Energy x time data gets told to pass data.T."""
+
+        with pytest.raises(ValueError, match=r"Pass data\.T"):
+            File(
+                parent_project=make_project(),
+                data=np.zeros((5, 3)),
+                energy=np.arange(5.0),
+                time=np.arange(3.0),
+            )
+
+    #
+    def test_axes_are_synthesized_when_absent(self):
+        """Data without axes gets index axes of the right lengths."""
+
+        file = File(parent_project=make_project(), data=np.zeros((3, 5)))
+        assert file.dim == 2
+        assert file.energy is not None and file.energy.shape == (5,)  # type guard
+        assert file.time is not None and file.time.shape == (3,)  # type guard
+
+    #
+    def test_axes_without_data_make_a_grid(self):
+        """Axes alone build a grid for a model, as the example generators do."""
+
+        file = File(
+            parent_project=make_project(), energy=np.arange(5.0), time=np.arange(3.0)
+        )
+        assert file.data is None
+        assert file.energy is not None and file.energy.shape == (5,)  # type guard
+        assert file.time is not None and file.time.shape == (3,)  # type guard
+
+
+#
+#
 class TestFitLimitsAndBaseline:
     """Test fit limits and baseline."""
 
@@ -503,6 +591,19 @@ class TestFitLimitsAndBaseline:
         file = File(parent_project=make_project(), data=data, energy=energy)
         with pytest.raises(ValueError, match="Cannot define baseline for 1D"):
             file.define_baseline(-10, 0, show_plot=False)
+
+    #
+    def test_fit_baseline_1d_raises(self):
+        """A 1D file has no baseline; fit_baseline points at fit_spectrum."""
+
+        energy = np.linspace(80, 90, 201)
+        data = np.random.default_rng(42).normal(size=len(energy))
+        file = File(parent_project=make_project(), data=data, energy=energy)
+        file.load_model(
+            model_yaml="models/file_energy.yaml", model_info="simple_energy"
+        )
+        with pytest.raises(ValueError, match="fit_spectrum"):
+            file.fit_baseline("simple_energy")
 
     #
     def test_define_baseline_no_data_raises(self):

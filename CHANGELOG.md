@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [Unreleased]
+
+### Added
+
+- **`File.fit_spectrum` fits 1D files.** A file built from one spectrum (energy axis, no time axis) is fitted as is; `time_point` / `time_range` are for 2D data only. Before, a 1D file had no fit path: `fit_spectrum` refused it, and `define_baseline` (the only way to a baseline) refused it too.
+
+### Changed
+
+- **`File` validates its inputs at construction.** Data must be 1D or 2D, its shape must match the energy and time axes, and 1D data takes no time axis; mismatches raise instead of surfacing later as index errors or wrong plots.
+- **`fit_baseline` and `define_baseline` refuse 1D files** with a message that points at `fit_spectrum`.
+
 ## [0.17.0] - 2026-09-23
 
 ### Added

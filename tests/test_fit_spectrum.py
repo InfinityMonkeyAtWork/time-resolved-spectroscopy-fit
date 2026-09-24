@@ -5,10 +5,11 @@ import matplotlib
 matplotlib.use("Agg")
 
 import numpy as np
+import pandas as pd
 import pytest
 from _utils import make_project, simulate_clean
 
-from trspecfit import File
+from trspecfit import File, FitResults
 
 
 #
@@ -31,6 +32,25 @@ def _make_truth_file(project):
         target_parameter="GLP_01_A",
         dynamics_yaml="models/file_time.yaml",
         dynamics_model=["MonoExpPos"],
+    )
+    return file
+
+
+#
+def _make_fit_file_1d(project, *, name="fit_1d"):
+    """A 1D file holding the truth model's first (pre-trigger) spectrum."""
+
+    truth_file = _make_truth_file(project)
+    clean = simulate_clean(truth_file.model_active)
+    file = File(
+        parent_project=project,
+        name=name,
+        data=clean[0].copy(),
+        energy=truth_file.energy.copy(),
+    )
+    file.load_model(
+        model_yaml="models/file_energy.yaml",
+        model_info="single_glp",
     )
     return file
 
@@ -60,22 +80,15 @@ class TestFitSpectrumErrors:
     """Validation errors for fit_spectrum()."""
 
     #
-    def test_1d_data_raises(self):
-        """fit_spectrum raises ValueError for 1D data."""
+    def test_1d_file_with_time_selection_raises(self):
+        """A 1D file has no time axis to select from."""
 
         project = make_project(name="fit_spectrum")
-        file = File(
-            parent_project=project,
-            name="err_1d",
-            data=np.ones(50),
-            energy=np.linspace(80, 90, 50),
-        )
-        file.load_model(
-            model_yaml="models/file_energy.yaml",
-            model_info="single_glp",
-        )
-        with pytest.raises(ValueError, match="2D data"):
+        file = _make_fit_file_1d(project)
+        with pytest.raises(ValueError, match="no time axis to select"):
             file.fit_spectrum("single_glp", time_point=0.0)
+        with pytest.raises(ValueError, match="no time axis to select"):
+            file.fit_spectrum("single_glp", time_range=(0.0, 1.0))
 
     #
     def test_no_time_selection_raises(self):
@@ -174,6 +187,94 @@ class TestFitSpectrumErrors:
         fit_file = _make_fit_file(project, clean, truth_file.energy, truth_file.time)
         with pytest.raises(ValueError, match="empty or out-of-range"):
             fit_file.fit_spectrum("single_glp", time_range=(8.0, 2.0))
+
+
+#
+#
+class TestFitSpectrum1D:
+    """A 1D file is a single spectrum: fit_spectrum fits it as is."""
+
+    #
+    def test_1d_file_fits_directly(self):
+        """No time selection; the slot records none and the fit is exact."""
+
+        project = make_project(name="fit_spectrum")
+        file = _make_fit_file_1d(project)
+        file.fit_spectrum("single_glp", stages=2, try_ci=0, show_plot=False)
+
+        assert file.model_spec is not None  # type guard
+        assert file.model_spec.result is not None
+        assert file.spec_t_ind == []
+        assert file.spec_t_abs == []
+        slot = project.results.get(
+            file="fit_1d", model="single_glp", fit_type="spectrum"
+        )
+        assert slot.selection["time_point"] is None
+        assert slot.selection["time_range"] is None
+        np.testing.assert_allclose(slot.fit, slot.observed, rtol=1e-3, atol=1e-6)
+        params = file.get_parameters(fit_type="spectrum")
+        assert not params.empty
+
+    #
+    def test_1d_file_respects_fit_limits(self):
+        """The energy window crops the recorded spectrum like any other fit."""
+
+        project = make_project(name="fit_spectrum")
+        file = _make_fit_file_1d(project)
+        file.set_fit_limits([84.0, 86.0], show_plot=False)
+        file.fit_spectrum("single_glp", stages=1, try_ci=0, show_plot=False)
+
+        slot = project.results.get(
+            file="fit_1d", model="single_glp", fit_type="spectrum"
+        )
+        assert slot.observed.shape[0] == file.e_lim[1] - file.e_lim[0]
+        assert slot.observed.shape[0] < len(file.energy)
+
+    #
+    def test_1d_file_under_declared_noise(self):
+        """A per-point σ weights the 1D fit without any row selection."""
+
+        project = make_project(name="fit_spectrum")
+        file = _make_fit_file_1d(project)
+        file.set_noise("gaussian", sigma=np.full(len(file.energy), 0.1))
+        file.fit_spectrum("single_glp", stages=1, try_ci=0, show_plot=False)
+
+        assert file.model_spec is not None  # type guard
+        assert file.model_spec.result is not None  # type guard
+        fin = file.model_spec.result.par_fin.params
+        varying = [name for name in fin if fin[name].vary]
+        assert varying
+        assert all(np.isfinite(fin[name].stderr) for name in varying)
+        slot = project.results.get(
+            file="fit_1d", model="single_glp", fit_type="spectrum"
+        )
+        assert slot.sigma is not None  # type guard
+        assert slot.sigma.shape == slot.observed.shape
+        assert "chi2" in slot.metrics
+
+    #
+    def test_1d_file_round_trips_through_the_archive(self, tmp_path):
+        """A 1D spectrum slot saves and loads like a 2D one."""
+
+        project = make_project(name="fit_spectrum")
+        file = _make_fit_file_1d(project)
+        file.fit_spectrum("single_glp", stages=1, try_ci=0, show_plot=False)
+        archive_path = tmp_path / "spectrum_1d.fit.h5"
+        project.save_fits(archive_path, show_output=0)
+
+        loaded = FitResults.load(archive_path)
+        assert len(loaded) == 1
+        pd.testing.assert_frame_equal(
+            loaded.get_parameters(
+                file="fit_1d", model="single_glp", fit_type="spectrum"
+            ),
+            project.results.get_parameters(
+                file="fit_1d", model="single_glp", fit_type="spectrum"
+            ),
+        )
+        slot = loaded.get(file="fit_1d", model="single_glp", fit_type="spectrum")
+        assert slot.selection["time_point"] is None
+        assert slot.selection["time_range"] is None
 
 
 #
