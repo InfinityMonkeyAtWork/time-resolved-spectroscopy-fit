@@ -44,7 +44,6 @@ def _truth_2d_data():
         energy=_ENERGY_AXIS,
         time=_TIME_AXIS,
     )
-    truth.dim = 2
     truth.load_model(model_yaml=_MODEL_YAML, model_info="single_glp")
     truth.add_time_dependence(
         target_model="single_glp",

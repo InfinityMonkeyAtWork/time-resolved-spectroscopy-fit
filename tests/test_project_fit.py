@@ -36,7 +36,6 @@ def _make_truth_file(
     file = File(parent_project=truth_project)
     file.energy = energy
     file.time = time_ax
-    file.dim = 2
 
     file.load_model(
         model_yaml="models/project_energy.yaml",
@@ -129,7 +128,6 @@ class TestProjectFitClean:
             tf = File(parent_project=tp)
             tf.energy = np.linspace(80, 90, 50)
             tf.time = np.linspace(-5, 50, 120)
-            tf.dim = 2
             tf.load_model(
                 model_yaml="models/project_energy.yaml",
                 model_info="project_glp",
@@ -230,7 +228,6 @@ class TestVaryLevelParsing:
         file = File(parent_project=project)
         file.energy = np.linspace(83, 87, 10)
         file.time = np.linspace(-2, 10, 10)
-        file.dim = 2
 
         file.load_model(
             model_yaml="models/project_energy.yaml",
@@ -254,7 +251,6 @@ class TestVaryLevelParsing:
         file = File(parent_project=project)
         file.energy = np.linspace(83, 87, 10)
         file.time = np.linspace(-2, 10, 10)
-        file.dim = 2
 
         file.load_model(
             model_yaml="models/project_energy.yaml",
@@ -293,7 +289,6 @@ class TestVaryLevelParsing:
         file = File(parent_project=project, aux_axis=np.linspace(0, 4, 5))
         file.energy = np.linspace(83, 87, 10)
         file.time = np.linspace(-2, 10, 10)
-        file.dim = 2
 
         file.load_model(
             model_yaml="models/project_energy.yaml",
@@ -331,7 +326,6 @@ class TestVaryLevelParsing:
         file = File(parent_project=project)
         file.energy = np.linspace(83, 87, 10)
         file.time = np.linspace(-2, 10, 10)
-        file.dim = 2
 
         file.load_model(
             model_yaml="models/project_energy.yaml",
@@ -362,7 +356,6 @@ class TestBuildFitParams:
             f = File(parent_project=project, name=f"file_{i}")
             f.energy = np.linspace(83, 87, 10)
             f.time = np.linspace(-2, 10, 10)
-            f.dim = 2
             f.load_model(
                 model_yaml="models/project_energy.yaml",
                 model_info="project_glp",
@@ -400,7 +393,6 @@ class TestBuildFitParams:
             f = File(parent_project=project, name=f"file_{i}")
             f.energy = np.linspace(83, 87, 10)
             f.time = np.linspace(-2, 10, 10)
-            f.dim = 2
             f.load_model(
                 model_yaml="models/project_energy.yaml",
                 model_info="project_glp_expr",
@@ -427,7 +419,6 @@ class TestBuildFitParams:
             f = File(parent_project=project, name=f"file_{i}")
             f.energy = np.linspace(83, 87, 10)
             f.time = np.linspace(-2, 10, 10)
-            f.dim = 2
             f.load_model(
                 model_yaml="models/project_energy.yaml",
                 model_info="project_glp",
@@ -463,7 +454,6 @@ class TestBuildFitParams:
             f = File(parent_project=project, name=f"file_{i}")
             f.energy = np.linspace(83, 87, 10)
             f.time = np.linspace(-2, 10, 10)
-            f.dim = 2
             f.load_model(
                 model_yaml="models/project_energy.yaml",
                 model_info="project_glp",
@@ -493,7 +483,6 @@ class TestBuildFitParams:
             f = File(parent_project=project, name=f"file_{i}")
             f.energy = np.linspace(83, 87, 10)
             f.time = np.linspace(-2, 10, 10)
-            f.dim = 2
             f.load_model(
                 model_yaml="models/project_energy.yaml",
                 model_info="project_glp",
@@ -745,7 +734,6 @@ class TestPackProjectTheta:
             f = File(parent_project=project, name=f"file_{i}")
             f.energy = np.linspace(83, 87, 10)
             f.time = np.linspace(-2, 10, 10)
-            f.dim = 2
             f.load_model(
                 model_yaml="models/project_energy.yaml",
                 model_info="project_glp",

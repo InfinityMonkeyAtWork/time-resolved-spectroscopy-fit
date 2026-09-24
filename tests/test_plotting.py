@@ -897,7 +897,6 @@ class TestPlotConfigPropagation:
         file.data = np.random.default_rng(42).normal(
             size=(len(file.time), len(file.energy))
         )
-        file.dim = 2
 
         file.load_model(
             model_yaml="models/file_energy.yaml",
@@ -1066,7 +1065,6 @@ class TestHighLevelPlotOverrides:
         file.data = np.random.default_rng(0).normal(
             size=(len(file.time), len(file.energy))
         )
-        file.dim = 2
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="single_glp",

@@ -310,7 +310,6 @@ class TestTwoDimensional:
         file = File(parent_project=project, name="d2", energy=energy, time=time)
         file.energy = energy.copy()
         file.time = time.copy()
-        file.dim = 2
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="single_glp",
@@ -340,7 +339,6 @@ class TestTwoDimensional:
         file = File(parent_project=project, name="d3", energy=energy, time=time)
         file.energy = energy.copy()
         file.time = time.copy()
-        file.dim = 2
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="single_glp",

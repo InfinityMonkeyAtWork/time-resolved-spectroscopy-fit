@@ -35,7 +35,6 @@ class TestModelManagement:
         file.data = np.random.default_rng(42).normal(
             size=(len(file.time), len(file.energy))
         )
-        file.dim = 2
         return file
 
     #
@@ -371,14 +370,10 @@ class TestFitLimitsAndBaseline:
         """Create file with axes and 2D data."""
 
         project = make_project(show_output=show_output)
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 201)
-        file.time = np.linspace(-10, 100, 111)
-        file.data = np.random.default_rng(42).normal(
-            size=(len(file.time), len(file.energy))
-        )
-        file.dim = 2
-        return file
+        energy = np.linspace(80, 90, 201)
+        time = np.linspace(-10, 100, 111)
+        data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
+        return File(parent_project=project, data=data, energy=energy, time=time)
 
     #
     def test_set_fit_limits_energy_only(self):
@@ -430,7 +425,6 @@ class TestFitLimitsAndBaseline:
         file.data = np.random.default_rng(42).normal(
             size=(len(file.time), len(file.energy))
         )
-        file.dim = 2
         file.set_fit_limits([82, 88], show_plot=False)
         assert file.e_lim_abs == [82, 88]
         assert file.e_lim is not None  # type guard
@@ -448,7 +442,6 @@ class TestFitLimitsAndBaseline:
         project = make_project()
         file = File(parent_project=project)
         file.energy = np.linspace(80, 90, 201)
-        file.dim = 1
         with pytest.raises(ValueError, match="[Tt]ime.*missing"):
             file.set_fit_limits([82, 88], time_limits=[0, 50], show_plot=False)
 
@@ -505,8 +498,9 @@ class TestFitLimitsAndBaseline:
     def test_define_baseline_1d_raises(self):
         """define_baseline on 1D data should raise."""
 
-        file = self._make_file_with_data()
-        file.dim = 1
+        energy = np.linspace(80, 90, 201)
+        data = np.random.default_rng(42).normal(size=len(energy))
+        file = File(parent_project=make_project(), data=data, energy=energy)
         with pytest.raises(ValueError, match="Cannot define baseline for 1D"):
             file.define_baseline(-10, 0, show_plot=False)
 
@@ -516,7 +510,6 @@ class TestFitLimitsAndBaseline:
 
         project = make_project()
         file = File(parent_project=project)
-        file.dim = 2
         with pytest.raises(ValueError, match="No data loaded"):
             file.define_baseline(-10, 0, show_plot=False)
 
@@ -539,7 +532,7 @@ class TestFitLimitsAndBaseline:
         project = make_project(show_output=show_output)
         file = File(parent_project=project)
         file.data = np.zeros((5, 7))
-        file.dim = 2
+        file.dim = 2  # deliberate: the corrupted state under test
         return file
 
     #
@@ -650,10 +643,8 @@ class TestFitLimitsSlicing:
         if time is not None:
             file.time = time
             file.data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
-            file.dim = 2
         else:
             file.data = np.random.default_rng(42).normal(size=len(energy))
-            file.dim = 1
         return file
 
     # -- sub-range limits: verify correct data points remain --
@@ -1016,7 +1007,6 @@ class TestFitPreconditions:
         file.data = np.random.default_rng(42).normal(
             size=(len(file.time), len(file.energy))
         )
-        file.dim = 2
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="simple_energy",
@@ -1337,13 +1327,10 @@ class TestDescribeWaterfall:
         """Create a 2D File with *n_time* spectra."""
 
         project = make_project(show_output=1)
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 50)
-        file.time = np.linspace(0, 10, n_time)
-        rng = np.random.default_rng(42)
-        file.data = rng.normal(size=(n_time, len(file.energy)))
-        file.dim = 2
-        return file
+        energy = np.linspace(80, 90, 50)
+        time = np.linspace(0, 10, n_time)
+        data = np.random.default_rng(42).normal(size=(n_time, len(energy)))
+        return File(parent_project=project, data=data, energy=energy, time=time)
 
     #
     def test_auto_waterfall_for_small_dataset(self):
@@ -1492,24 +1479,23 @@ class TestDescribeWaterfall:
                 assert alphas[i] == 0.35, f"trace {i} (t={t:.2f}) should be dimmed"
 
     #
-    def test_waterfall_no_time_limits_no_alphas(self):
-        """Without time limits, alphas should not be passed."""
+    def test_waterfall_default_limits_dim_nothing(self):
+        """With the default full-range time limits, no trace is dimmed."""
 
         file = self._make_file(n_time=5)
         with unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d:
             file.describe()
         _, kwargs = mock_1d.call_args
-        assert kwargs.get("alphas") is None
+        assert all(alpha == 1.0 for alpha in kwargs["alphas"])
 
     #
     def test_describe_1d_unaffected(self):
         """waterfall parameter should not affect 1D data display."""
 
         project = make_project(show_output=1)
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 50)
-        file.data = np.random.default_rng(42).normal(size=50)
-        file.dim = 1
+        energy = np.linspace(80, 90, 50)
+        data = np.random.default_rng(42).normal(size=50)
+        file = File(parent_project=project, data=data, energy=energy)
         with (
             unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d,
             unittest.mock.patch("trspecfit.utils.plot.plot_2d") as mock_2d,

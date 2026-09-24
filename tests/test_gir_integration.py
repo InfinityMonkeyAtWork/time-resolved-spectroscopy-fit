@@ -795,7 +795,6 @@ def _make_truth_file(project):
     file = File(parent_project=project, name="truth")
     file.energy = energy
     file.time = time
-    file.dim = 2
     file.load_model(model_yaml=_FILE_ENERGY_YAML, model_info="single_glp")
     file.add_time_dependence(
         target_model="single_glp",
@@ -891,7 +890,6 @@ class TestFileFit2D:
         truth_file = File(parent_project=project, name="truth")
         truth_file.energy = energy
         truth_file.time = time
-        truth_file.dim = 2
         truth_file.load_model(model_yaml=_FILE_ENERGY_YAML, model_info="single_glp")
         truth_file.add_time_dependence(
             target_model="single_glp",
@@ -1260,7 +1258,6 @@ def _make_1d_truth_file(project):
     energy = np.linspace(83, 87, 50)
     time = np.linspace(-2, 10, 12)
     file = File(parent_project=project, name="truth_1d", energy=energy, time=time)
-    file.dim = 2
     file.load_model(model_yaml=_FILE_ENERGY_YAML, model_info="single_glp")
     return file
 

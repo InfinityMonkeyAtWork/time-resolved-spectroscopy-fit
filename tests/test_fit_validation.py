@@ -27,7 +27,6 @@ def _simulate_truth(project):
     file = File(parent_project=project, name="truth")
     file.energy = energy
     file.time = time
-    file.dim = 2
     file.load_model(
         model_yaml="models/file_energy.yaml",
         model_info="single_glp",

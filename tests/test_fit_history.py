@@ -62,7 +62,6 @@ def _make_truth_file(project):
     file = File(parent_project=project, name="truth")
     file.energy = energy
     file.time = time
-    file.dim = 2
     file.load_model(
         model_yaml="models/file_energy.yaml",
         model_info="single_glp",
@@ -3359,7 +3358,6 @@ class TestHistoryAccumulationAndSnapshot:
             energy=np.linspace(82, 92, 30),
             time=np.linspace(-2, 10, 24),
         )
-        truth.dim = 2
         truth.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
         data = simulate_noisy(truth.model_active, noise_level=0.01)
 

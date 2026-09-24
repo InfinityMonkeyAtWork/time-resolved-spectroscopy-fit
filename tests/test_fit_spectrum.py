@@ -21,7 +21,6 @@ def _make_truth_file(project):
     file = File(parent_project=project, name="truth")
     file.energy = energy
     file.time = time
-    file.dim = 2
 
     file.load_model(
         model_yaml="models/file_energy.yaml",
