@@ -183,11 +183,13 @@ more named entry in the same YAML file, loaded by name. It is a little
 clumsy, and it keeps things clear: the loaded model always says what the
 file says, the compared models are named things, and the archive persists
 the YAML snippet at capture, so editing the file afterwards changes nothing
-recorded. Notebooks 10 and 12 currently edit `lmfit_pars` in memory; 10
-moves to two named variants of `base_GLP`, and 12 passes the parameters it
-holds fixed to the sensitivity calculation as an explicit input instead of
-editing the truth model. A UI can make authoring more convenient later; it
-will author YAML, not mutate models. Decided 2026-09-24.
+recorded. Notebooks 10 and 12 used to edit `lmfit_pars` in memory. 10 now
+loads its pinned `base_GLP` from two extra YAML files that define the same
+model name, so the runs still group under one model for `variants()` and
+`diff()`; 12 passes the parameters its fit holds fixed to
+`sensitivity.crb(fixed=...)` instead of editing the truth model. A UI can
+make authoring more convenient later; it will author YAML, not mutate
+models. Decided 2026-09-24.
 
 **The package writes execution state into the live model, and that is
 fine.** After a fit the optimized values are written back, so the next fit
@@ -369,8 +371,9 @@ everywhere renames `get_parameters` a second time in two minor releases;
    (rule 4). Whether `lmfit_pars` becomes a read-only view or stays an
    unguarded attribute is a step 4 mechanism question. Usage today: 122
    sites in tests (55 set a value, 9 a `vary` flag, 3 a bound, none an
-   expression), 4 in the two notebooks, 15 in src outside mcp, of which the
-   writers are the fit write-back, the baseline injection, and the sweep.
+   expression), none left in the notebooks, 15 in src outside mcp, of which
+   the writers are the fit write-back, the baseline injection, and the
+   sweep.
 4. **A `Model` without a `File`.** Settled 2026-09-24: a model is
    constructed only by its file (rule 4), because axes with two owners can
    drift and contradict the data's provenance. The alternative, a standalone

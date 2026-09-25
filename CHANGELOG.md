@@ -11,12 +11,15 @@ This file is maintained using the shared changelog workflow in
 
 ### Added
 
+- **`fixed=` on the `sensitivity` functions.** `crb`, `fisher_matrix`, `counts_required` and `sensitivity_report` take the names of free parameters to treat as known, so a bound can match a fit that pins parameters the model leaves free, without editing the model.
 - **`File.fit_spectrum` fits 1D files.** A file built from one spectrum (energy axis, no time axis) is fitted as is; `time_point` / `time_range` are for 2D data only. Before, a 1D file had no fit path: `fit_spectrum` refused it, and `define_baseline` (the only way to a baseline) refused it too.
 
 ### Changed
 
 - **`File` validates its inputs at construction.** Data must be 1D or 2D, its shape must match the energy and time axes, and 1D data takes no time axis; mismatches raise instead of surfacing later as index errors or wrong plots.
 - **`fit_baseline` and `define_baseline` refuse 1D files** with a message that points at `fit_spectrum`.
+- **A fixed parameter's bounds no longer distinguish fits.** lmfit clips a fixed value into its bounds when it is set, so the bounds add nothing to the value the fit uses; the identity hash drops them and `variants()` / `diff()` no longer list them. Archives keep their stored handles; a refit of a configuration with fixed parameters records a new handle next to a slot written before this release.
+- **No in-memory parameter edits in the examples.** Notebook 10 loads its pinned `base_GLP` variants from two extra YAML files that define the same model name, and notebook 12 passes the parameters its fit holds fixed to `sensitivity.crb(fixed=...)`; the model YAML is the source of truth (`docs/design/api_ownership_contract.md`).
 
 ## [0.17.0] - 2026-09-23
 
