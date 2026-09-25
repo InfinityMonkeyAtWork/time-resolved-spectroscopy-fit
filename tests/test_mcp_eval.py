@@ -23,9 +23,11 @@ class TestEvaluation:
         """Create project, file, and load model."""
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 201)
-        file.time = np.linspace(-10, 100, 111)
+        file = File(
+            parent_project=project,
+            energy=np.linspace(80, 90, 201),
+            time=np.linspace(-10, 100, 111),
+        )
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info=model_info,
@@ -40,9 +42,12 @@ class TestEvaluation:
 
         project = make_project()
         aux_axis = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
-        file = File(parent_project=project, aux_axis=aux_axis)
-        file.energy = np.linspace(80, 90, 201)
-        file.time = np.linspace(-10, 100, 111)
+        file = File(
+            parent_project=project,
+            energy=np.linspace(80, 90, 201),
+            time=np.linspace(-10, 100, 111),
+            aux_axis=aux_axis,
+        )
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info=model_info,
@@ -143,9 +148,11 @@ class TestEvaluation:
         """
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 201)
-        file.time = np.array([0.0])
+        file = File(
+            parent_project=project,
+            energy=np.linspace(80, 90, 201),
+            time=np.array([0.0]),
+        )
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info=["energy_expression"],

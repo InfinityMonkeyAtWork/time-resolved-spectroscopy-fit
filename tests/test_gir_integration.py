@@ -58,9 +58,11 @@ def _make_2d_model(project, model_info, dynamics_params, *, frequency=None):
     call, enabling subcycle-aware fixtures.
     """
 
-    file = File(parent_project=project)
-    file.energy = np.linspace(80, 90, 101)
-    file.time = np.linspace(-10, 100, 51)
+    file = File(
+        parent_project=project,
+        energy=np.linspace(80, 90, 101),
+        time=np.linspace(-10, 100, 51),
+    )
     file.load_model(model_yaml=_ENERGY_YAML, model_info=model_info)
     model = file.model_active
     assert model is not None  # type guard
@@ -792,9 +794,7 @@ def _make_truth_file(project):
 
     energy = np.linspace(83, 87, 30)
     time = np.linspace(-2, 10, 24)
-    file = File(parent_project=project, name="truth")
-    file.energy = energy
-    file.time = time
+    file = File(parent_project=project, name="truth", energy=energy, time=time)
     file.load_model(model_yaml=_FILE_ENERGY_YAML, model_info="single_glp")
     file.add_time_dependence(
         target_model="single_glp",
@@ -887,9 +887,9 @@ class TestFileFit2D:
         # truth model: MonoExpPosIRF inits SD at the truth value, so the
         # simulated data carries a correctly sized kernel regardless of
         # when the support is built
-        truth_file = File(parent_project=project, name="truth")
-        truth_file.energy = energy
-        truth_file.time = time
+        truth_file = File(
+            parent_project=project, name="truth", energy=energy, time=time
+        )
         truth_file.load_model(model_yaml=_FILE_ENERGY_YAML, model_info="single_glp")
         truth_file.add_time_dependence(
             target_model="single_glp",
@@ -1213,8 +1213,7 @@ class TestGIR1DvsInterpreter:
         """
 
         project = _make_project()
-        file = File(parent_project=project)
-        file.time = np.linspace(-10, 100, 111)
+        file = File(parent_project=project, time=np.linspace(-10, 100, 111))
         dyn = file.load_model(
             model_yaml=_TIME_YAML,
             model_info=["MonoExpPos"],

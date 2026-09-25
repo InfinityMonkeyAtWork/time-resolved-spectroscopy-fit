@@ -26,8 +26,7 @@ def _make_energy_model(model_info):
     """Create project + file + load energy model, return (file, model)."""
 
     project = make_project()
-    file = File(parent_project=project)
-    file.energy = np.linspace(80, 90, 201)
+    file = File(parent_project=project, energy=np.linspace(80, 90, 201))
     file.load_model(
         model_yaml="models/file_energy.yaml",
         model_info=model_info,
@@ -50,9 +49,11 @@ def _make_2d_model(model_info, dynamics_params):
     """
 
     project = make_project()
-    file = File(parent_project=project)
-    file.energy = np.linspace(80, 90, 201)
-    file.time = np.linspace(-10, 100, 111)
+    file = File(
+        parent_project=project,
+        energy=np.linspace(80, 90, 201),
+        time=np.linspace(-10, 100, 111),
+    )
     file.load_model(
         model_yaml="models/file_energy.yaml",
         model_info=model_info,
@@ -76,8 +77,7 @@ def _make_time_only_model(model_info, *, frequency=-1):
     """Create a standalone dynamics model, return (file, model)."""
 
     project = make_project()
-    file = File(parent_project=project)
-    file.time = np.linspace(-10, 100, 111)
+    file = File(parent_project=project, time=np.linspace(-10, 100, 111))
     model = file.load_model(
         model_yaml="models/file_time.yaml",
         model_info=model_info,
@@ -648,8 +648,11 @@ def _make_profile_model(energy_model_info, target_par, profile_model_info):
 
     project = make_project()
     aux_axis = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
-    file = File(parent_project=project, aux_axis=aux_axis)
-    file.energy = np.linspace(80, 90, 201)
+    file = File(
+        parent_project=project,
+        energy=np.linspace(80, 90, 201),
+        aux_axis=aux_axis,
+    )
     file.load_model(
         model_yaml="models/file_energy.yaml",
         model_info=energy_model_info,
@@ -894,9 +897,11 @@ def _make_subcycle_model():
     """Create a 2D model with multi-cycle subcycle dynamics."""
 
     project = make_project()
-    file = File(parent_project=project)
-    file.energy = np.linspace(80, 90, 201)
-    file.time = np.linspace(-10, 100, 111)
+    file = File(
+        parent_project=project,
+        energy=np.linspace(80, 90, 201),
+        time=np.linspace(-10, 100, 111),
+    )
     file.load_model(
         model_yaml="models/file_energy.yaml",
         model_info=["simple_energy"],
@@ -1248,9 +1253,12 @@ def _make_time_dep_profile_model(dynamics_model=None):
 
     project = make_project()
     aux_axis = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
-    file = File(parent_project=project, aux_axis=aux_axis)
-    file.energy = np.linspace(80, 90, 201)
-    file.time = np.linspace(-10, 100, 111)
+    file = File(
+        parent_project=project,
+        energy=np.linspace(80, 90, 201),
+        time=np.linspace(-10, 100, 111),
+        aux_axis=aux_axis,
+    )
     file.load_model(
         model_yaml="models/file_energy.yaml",
         model_info=["single_glp"],
@@ -1366,9 +1374,11 @@ def _make_irf_dynamics_model():
     """Create a 2D model where dynamics includes a convolution (gaussCONV)."""
 
     project = make_project()
-    file = File(parent_project=project)
-    file.energy = np.linspace(80, 90, 201)
-    file.time = np.linspace(-10, 100, 111)
+    file = File(
+        parent_project=project,
+        energy=np.linspace(80, 90, 201),
+        time=np.linspace(-10, 100, 111),
+    )
     file.load_model(
         model_yaml="models/file_energy.yaml",
         model_info=["simple_energy"],

@@ -599,9 +599,11 @@ def _build_joint_project(*, noise_level: float = 0.05):
     project = make_project(name="joint_roundtrip")
     for i, (amplitude, seed) in enumerate([(20.0, 42), (14.0, 43)]):
         truth_project = make_project(name="truth")
-        truth = File(parent_project=truth_project)
-        truth.energy = np.linspace(83, 87, 30)
-        truth.time = np.linspace(-2, 10, 24)
+        truth = File(
+            parent_project=truth_project,
+            energy=np.linspace(83, 87, 30),
+            time=np.linspace(-2, 10, 24),
+        )
         truth.load_model(
             model_yaml="models/project_energy.yaml", model_info="project_glp"
         )

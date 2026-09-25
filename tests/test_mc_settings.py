@@ -19,9 +19,12 @@ _CHAIN = {"steps": 20, "burn": 5, "thin": 1, "workers": 1}
 
 #
 def _make_truth_file(project):
-    file = File(parent_project=project, name="truth")
-    file.energy = np.linspace(83, 87, 30)
-    file.time = np.linspace(-2, 10, 24)
+    file = File(
+        parent_project=project,
+        name="truth",
+        energy=np.linspace(83, 87, 30),
+        time=np.linspace(-2, 10, 24),
+    )
     file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
     file.add_time_dependence(
         target_model="single_glp",

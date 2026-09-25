@@ -414,9 +414,11 @@ class TestMCPIntegration:
         from trspecfit import File
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 100)
-        file.time = np.linspace(0, 10, 50)
+        file = File(
+            parent_project=project,
+            energy=np.linspace(80, 90, 100),
+            time=np.linspace(0, 10, 50),
+        )
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="simple_energy",
@@ -454,9 +456,11 @@ class TestMCPIntegration:
         from trspecfit import File
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 100)
-        file.time = np.linspace(0, 10, 50)
+        file = File(
+            parent_project=project,
+            energy=np.linspace(80, 90, 100),
+            time=np.linspace(0, 10, 50),
+        )
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="single_glp",
@@ -649,9 +653,12 @@ class TestMCPProfile:
         from trspecfit import File
 
         project = make_project()
-        file = File(parent_project=project, aux_axis=aux_axis)
-        file.energy = np.linspace(80, 90, 100)
-        file.time = np.linspace(-10, 50, 60)
+        file = File(
+            parent_project=project,
+            energy=np.linspace(80, 90, 100),
+            time=np.linspace(-10, 50, 60),
+            aux_axis=aux_axis,
+        )
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="single_glp",
@@ -862,10 +869,10 @@ class TestMCPProfile:
         project = make_project()
         file = File(
             parent_project=project,
+            energy=np.linspace(80, 90, 100),
+            time=np.linspace(-10, 50, 60),
             aux_axis=np.linspace(0, 5, 20),
         )
-        file.energy = np.linspace(80, 90, 100)
-        file.time = np.linspace(-10, 50, 60)
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="two_glp_expr_amplitude",
@@ -887,10 +894,12 @@ class TestMCPProfile:
         from trspecfit import File
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 100)
-        file.time = np.linspace(-10, 100, 50)
-        file.aux_axis = np.linspace(0, 5, 20)
+        file = File(
+            parent_project=project,
+            energy=np.linspace(80, 90, 100),
+            time=np.linspace(-10, 100, 50),
+            aux_axis=np.linspace(0, 5, 20),
+        )
 
         file.load_model(
             model_yaml="models/file_energy.yaml",

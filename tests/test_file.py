@@ -28,14 +28,17 @@ class TestModelManagement:
 
         project = make_project()
         aux_axis = np.array([0.0, 1.0, 2.0, 3.0])
-        file = File(parent_project=project, aux_axis=aux_axis)
-        file.energy = np.linspace(80, 90, 201)
-        file.time = np.linspace(-10, 100, 111)
+        energy = np.linspace(80, 90, 201)
+        time = np.linspace(-10, 100, 111)
         # 2D dummy data for methods that need it
-        file.data = np.random.default_rng(42).normal(
-            size=(len(file.time), len(file.energy))
+        data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
+        return File(
+            parent_project=project,
+            data=data,
+            energy=energy,
+            time=time,
+            aux_axis=aux_axis,
         )
-        return file
 
     #
     def test_load_model_sets_active(self):
@@ -507,12 +510,10 @@ class TestFitLimitsAndBaseline:
         """set_fit_limits should handle descending energy axes correctly."""
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = np.linspace(90, 80, 201)  # descending
-        file.time = np.linspace(-10, 100, 111)
-        file.data = np.random.default_rng(42).normal(
-            size=(len(file.time), len(file.energy))
-        )
+        energy = np.linspace(90, 80, 201)  # descending
+        time = np.linspace(-10, 100, 111)
+        data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
+        file = File(parent_project=project, data=data, energy=energy, time=time)
         file.set_fit_limits([82, 88], show_plot=False)
         assert file.e_lim_abs == [82, 88]
         assert file.e_lim is not None  # type guard
@@ -528,8 +529,7 @@ class TestFitLimitsAndBaseline:
         """set_fit_limits with time_limits but no time axis (1D) should raise."""
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 201)
+        file = File(parent_project=project, energy=np.linspace(80, 90, 201))
         with pytest.raises(ValueError, match="[Tt]ime.*missing"):
             file.set_fit_limits([82, 88], time_limits=[0, 50], show_plot=False)
 
@@ -739,14 +739,11 @@ class TestFitLimitsSlicing:
         """Create a File with given energy axis and optional time axis."""
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = energy
         if time is not None:
-            file.time = time
-            file.data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
+            data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
         else:
-            file.data = np.random.default_rng(42).normal(size=len(energy))
-        return file
+            data = np.random.default_rng(42).normal(size=len(energy))
+        return File(parent_project=project, data=data, energy=energy, time=time)
 
     # -- sub-range limits: verify correct data points remain --
 
@@ -853,13 +850,11 @@ class TestFitLimitsSlicing:
         """Helper: File with data, loaded model, and fit limits set."""
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = energy
         if time is not None:
-            file.time = time
-            file.data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
+            data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
         else:
-            file.data = np.random.default_rng(42).normal(size=len(energy))
+            data = np.random.default_rng(42).normal(size=len(energy))
+        file = File(parent_project=project, data=data, energy=energy, time=time)
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="single_glp",
@@ -1011,14 +1006,11 @@ class TestFitLimitsOutOfRange:
         """Create a File with data on the given axes."""
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = energy
         if time is not None:
-            file.time = time
-            file.data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
+            data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
         else:
-            file.data = np.random.default_rng(42).normal(size=len(energy))
-        return file
+            data = np.random.default_rng(42).normal(size=len(energy))
+        return File(parent_project=project, data=data, energy=energy, time=time)
 
     #
     def test_energy_limits_entirely_below_range(self):
@@ -1098,16 +1090,18 @@ class TestFitPreconditions:
     """Fit methods raise ValueError on missing preconditions."""
 
     #
-    def _make_file_with_model(self):
-        """Create file with axes, 2D data, and a loaded energy model."""
+    def _make_file_with_model(self, *, with_data: bool = True):
+        """Create file with axes, a loaded energy model, and (by default) 2D data."""
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 201)
-        file.time = np.linspace(-10, 100, 111)
-        file.data = np.random.default_rng(42).normal(
-            size=(len(file.time), len(file.energy))
+        energy = np.linspace(80, 90, 201)
+        time = np.linspace(-10, 100, 111)
+        data = (
+            np.random.default_rng(42).normal(size=(len(time), len(energy)))
+            if with_data
+            else None
         )
+        file = File(parent_project=project, data=data, energy=energy, time=time)
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="simple_energy",
@@ -1121,7 +1115,7 @@ class TestFitPreconditions:
         """fit_baseline raises ValueError when energy axis is missing."""
 
         file = self._make_file_with_model()
-        file.energy = None
+        file.energy = None  # deliberate: the corrupted state under test
         with pytest.raises(ValueError, match="energy axis missing"):
             file.fit_baseline("simple_energy")
 
@@ -1130,7 +1124,6 @@ class TestFitPreconditions:
         """fit_baseline raises ValueError when baseline data is missing."""
 
         file = self._make_file_with_model()
-        file.data_base = None
         with pytest.raises(ValueError, match="data.*missing"):
             file.fit_baseline("simple_energy")
 
@@ -1206,8 +1199,7 @@ class TestFitPreconditions:
     def test_fit_sbs_no_data_raises(self):
         """fit_slice_by_slice raises ValueError when data is missing."""
 
-        file = self._make_file_with_model()
-        file.data = None
+        file = self._make_file_with_model(with_data=False)
         with pytest.raises(ValueError, match="missing"):
             file.fit_slice_by_slice(
                 "simple_energy", seed_source="model", seed_adapt=None
@@ -1218,7 +1210,7 @@ class TestFitPreconditions:
         """fit_slice_by_slice raises ValueError when time axis is missing."""
 
         file = self._make_file_with_model()
-        file.time = None
+        file.time = None  # deliberate: the corrupted state under test
         with pytest.raises(ValueError, match="missing"):
             file.fit_slice_by_slice(
                 "simple_energy", seed_source="model", seed_adapt=None
@@ -1239,9 +1231,8 @@ class TestFitPreconditions:
     def test_fit_2d_no_data_raises(self):
         """fit_2d raises ValueError when data is missing."""
 
-        file = self._make_file_with_model()
+        file = self._make_file_with_model(with_data=False)
         file.model_base = file.model_active
-        file.data = None
         with pytest.raises(ValueError, match="missing"):
             file.fit_2d("simple_energy")
 
@@ -1251,7 +1242,7 @@ class TestFitPreconditions:
 
         file = self._make_file_with_model()
         file.model_base = file.model_active
-        file.time = None
+        file.time = None  # deliberate: the corrupted state under test
         with pytest.raises(ValueError, match="missing"):
             file.fit_2d("simple_energy")
 

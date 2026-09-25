@@ -187,8 +187,10 @@ class TestTimeParsing:
         """Create project, file, and load dynamics model."""
 
         project = make_project()
-        file = File(parent_project=project)
-        file.time = np.linspace(-10, 100, 111)  # needed for time-dependent models
+        file = File(
+            parent_project=project,
+            time=np.linspace(-10, 100, 111),  # needed for time-dependent models
+        )
         model = file.load_model(
             model_yaml="models/file_time.yaml",
             model_info=model_info,
@@ -300,12 +302,15 @@ class Test2DModelParsing:
         """Create a File with loaded energy model and time axis."""
 
         project = make_project()
-        file = File(parent_project=project, aux_axis=aux_axis)
+        file = File(
+            parent_project=project,
+            time=np.linspace(-10, 100, 111),  # needed for time-dependent models
+            aux_axis=aux_axis,
+        )
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info=model_energy,
         )
-        file.time = np.linspace(-10, 100, 111)  # needed for time-dependent models
         return file
 
     #
@@ -430,12 +435,17 @@ class TestProfileParsing:
         self,
         model_energy: list[str],
         aux_axis: np.ndarray | None = None,
+        time: np.ndarray | None = None,
     ) -> File:
-        """Create a File with loaded energy model and optional aux axis."""
+        """Create a File with loaded energy model and optional aux/time axes."""
 
         project = make_project()
-        file = File(parent_project=project, aux_axis=aux_axis)
-        file.energy = np.linspace(80, 90, 201)
+        file = File(
+            parent_project=project,
+            energy=np.linspace(80, 90, 201),
+            time=time,
+            aux_axis=aux_axis,
+        )
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info=model_energy,
@@ -551,8 +561,8 @@ class TestProfileParsing:
         file = self._make_file(
             model_energy=["single_glp"],
             aux_axis=np.linspace(0, 10, 21),
+            time=np.linspace(-10, 100, 111),
         )
-        file.time = np.linspace(-10, 100, 111)
         file.add_time_dependence(
             target_model="single_glp",
             target_parameter="GLP_01_A",
@@ -669,8 +679,7 @@ class TestYAMLValidationErrors:
         """Convolution as last component should fail ordering validation."""
 
         project = make_project()
-        file = File(parent_project=project)
-        file.time = np.linspace(-10, 100, 111)
+        file = File(parent_project=project, time=np.linspace(-10, 100, 111))
         with pytest.raises(ModelValidationError, match="convolution function"):
             file.load_model(
                 model_yaml="models/file_time.yaml",
@@ -690,8 +699,7 @@ class TestYAMLValidationErrors:
         """
 
         project = make_project()
-        file = File(parent_project=project)
-        file.time = np.linspace(-10, 100, 111)
+        file = File(parent_project=project, time=np.linspace(-10, 100, 111))
         file.load_model(
             model_yaml="models/file_time.yaml",
             model_info="IRF",
