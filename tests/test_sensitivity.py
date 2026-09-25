@@ -23,7 +23,6 @@ def _gauss_model(*, energy=None):
         model_info="gauss_free",
     )
     model = file.model_active
-    model.energy = energy.copy()
     return model
 
 
@@ -39,7 +38,6 @@ def _model(model_info, *, name, energy=None):
         model_info=model_info,
     )
     model = file.model_active
-    model.energy = energy.copy()
     return model
 
 
@@ -186,6 +184,46 @@ class TestParameterFiltering:
         tight = sensitivity.crb(model, 1e4)["Gauss_01_A"]
         assert tight <= loose * (1 + 1e-9)
 
+    #
+    def test_fixed_argument_matches_a_fixed_model(self):
+        """fixed= treats a free parameter as known, exactly like vary=False."""
+
+        model = _gauss_model()
+        via_argument = sensitivity.crb(model, 1e4, fixed=("Gauss_01_SD",))
+        model.lmfit_pars["Gauss_01_SD"].vary = False
+        via_model = sensitivity.crb(model, 1e4)
+        assert set(via_argument) == set(via_model)
+        assert "Gauss_01_SD" not in via_argument
+        for name, bound in via_model.items():
+            assert via_argument[name] == pytest.approx(bound, rel=1e-9)
+
+    #
+    def test_fixed_argument_reaches_report_and_counts_required(self):
+        """The same fixed= set threads through every entry point."""
+
+        model = _gauss_model()
+        frame = sensitivity.sensitivity_report(
+            model, counts=1e4, fixed=("Gauss_01_SD",)
+        )
+        assert "Gauss_01_SD" not in set(frame["name"])
+        with_argument = sensitivity.counts_required(
+            model, "Gauss_01_A", 0.1, fixed=("Gauss_01_SD",)
+        )
+        model.lmfit_pars["Gauss_01_SD"].vary = False
+        with_model = sensitivity.counts_required(model, "Gauss_01_A", 0.1)
+        assert with_argument == pytest.approx(with_model, rel=1e-9)
+
+    #
+    def test_fixed_argument_rejects_unknown_and_already_fixed(self):
+        """A typo or a parameter that is not free is an error, not a no-op."""
+
+        model = _gauss_model()
+        with pytest.raises(ValueError, match="Unknown parameter"):
+            sensitivity.crb(model, 1e4, fixed=("not_a_parameter",))
+        model.lmfit_pars["Gauss_01_SD"].vary = False
+        with pytest.raises(ValueError, match="already fixed"):
+            sensitivity.crb(model, 1e4, fixed=("Gauss_01_SD",))
+
 
 #
 #
@@ -308,8 +346,6 @@ class TestTwoDimensional:
         energy = np.arange(83.0, 87.0, 0.05)
         time = np.linspace(-1.0, 8.0, 40)
         file = File(parent_project=project, name="d2", energy=energy, time=time)
-        file.energy = energy.copy()
-        file.time = time.copy()
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="single_glp",
@@ -321,8 +357,6 @@ class TestTwoDimensional:
             dynamics_model=["MonoExpPos"],
         )
         model = file.model_active
-        model.energy = energy.copy()
-        model.time = time.copy()
 
         frame = sensitivity.sensitivity_report(model, counts=1e6)
         tau = [n for n in frame["name"] if n.endswith("tau")]
@@ -337,8 +371,6 @@ class TestTwoDimensional:
         energy = np.arange(83.0, 87.0, 0.05)
         time = np.linspace(-1.0, 8.0, 40)
         file = File(parent_project=project, name="d3", energy=energy, time=time)
-        file.energy = energy.copy()
-        file.time = time.copy()
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="single_glp",
@@ -350,8 +382,6 @@ class TestTwoDimensional:
             dynamics_model=["MonoExpPos"],
         )
         model = file.model_active
-        model.energy = energy.copy()
-        model.time = time.copy()
 
         low = sensitivity.crb(model, 1e6)
         high = sensitivity.crb(model, 4e6)
