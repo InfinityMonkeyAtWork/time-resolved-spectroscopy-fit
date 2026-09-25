@@ -946,7 +946,13 @@ class FitResults:
                 if c in meta.columns
             ]
             for row in meta.to_dict("records"):
+                expr = row.get("expr")
+                fixed = not bool(row.get("vary", True)) and not (
+                    isinstance(expr, str) and expr
+                )
                 for field in fields:
+                    if fixed and field in ("min", "max"):
+                        continue  # not an input: identity drops them too
                     key = "init" if field == "init_value" else field
                     rec[f"{row['name']}.{key}"] = norm(row[field])
         return rec
@@ -1021,9 +1027,12 @@ class FitResults:
                 if k not in keys:
                     keys.append(k)
         # Constant-column suppression: repr-compare so unhashable or
-        # NaN-bearing cells (NaN != NaN) still count as equal.
+        # NaN-bearing cells (NaN != NaN) still count as equal. A key a run
+        # does not carry is not an input of that run (a fixed parameter has
+        # no bounds, a one-stage fit no second algorithm), so only the runs
+        # that carry it are compared.
         differing = [
-            k for k in keys if len({repr(rec.get(k, pd.NA)) for rec in records}) > 1
+            k for k in keys if len({repr(rec[k]) for rec in records if k in rec}) > 1
         ]
 
         rows: list[dict[str, Any]] = []
@@ -1254,14 +1263,14 @@ class FitResults:
     def _diff_record_rows(
         section: str, ra: dict[str, Any], rb: dict[str, Any]
     ) -> list[tuple[str, str, Any, Any]]:
-        """Rows for keys whose values differ (repr-compared; NaN==NaN)."""
+        """Rows for keys both records carry whose values differ (repr-compared;
+        NaN==NaN). A key only one side carries is not an input of the other
+        side, not a difference."""
 
-        keys = list(ra)
-        keys.extend(k for k in rb if k not in ra)
         return [
-            (section, k, ra.get(k, pd.NA), rb.get(k, pd.NA))
-            for k in keys
-            if repr(ra.get(k, pd.NA)) != repr(rb.get(k, pd.NA))
+            (section, k, ra[k], rb[k])
+            for k in ra
+            if k in rb and repr(ra[k]) != repr(rb[k])
         ]
 
     #

@@ -1,0 +1,10 @@
+# single_glp from file_energy.yaml with the mixing ratio pinned at its seed
+# and no bounds written: loaded under the same name it is a variant of that
+# model, and the missing bounds must not count as a changed input (a fixed
+# parameter's bounds are not identity).
+single_glp:
+    GLP:
+      A: [20, True, 5, 25]
+      x0: [85.0, True, 82, 88]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, False]

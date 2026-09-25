@@ -36,9 +36,7 @@ from trspecfit.utils.hdf5 import require_group
 def _make_truth_file(project):
     energy = np.linspace(83, 87, 30)
     time = np.linspace(-2, 10, 24)
-    file = File(parent_project=project, name="truth")
-    file.energy = energy
-    file.time = time
+    file = File(parent_project=project, name="truth", energy=energy, time=time)
     file.load_model(
         model_yaml="models/file_energy.yaml",
         model_info="single_glp",
@@ -108,9 +106,11 @@ def _build_joint_project(*, noise_level: float = 0.05):
     project = make_project(name="joint_query")
     for i, (amplitude, seed) in enumerate([(20.0, 42), (14.0, 43)]):
         truth_project = make_project(name="truth")
-        truth = File(parent_project=truth_project)
-        truth.energy = np.linspace(83, 87, 30)
-        truth.time = np.linspace(-2, 10, 24)
+        truth = File(
+            parent_project=truth_project,
+            energy=np.linspace(83, 87, 30),
+            time=np.linspace(-2, 10, 24),
+        )
         truth.load_model(
             model_yaml="models/project_energy.yaml", model_info="project_glp"
         )
@@ -149,8 +149,58 @@ def _build_joint_project(*, noise_level: float = 0.05):
 
 
 #
+def _yaml_pinned_variant_baseline():
+    """Two baseline runs of one model name; the second from a YAML that pins m.
+
+    The pinned YAML writes no bounds for ``m``, the way a user pins a
+    parameter by editing the file, so the two runs must differ in ``vary``
+    alone: a fixed parameter's bounds are not an input.
+    """
+
+    truth_project = make_project(name="truth")
+    truth = _make_truth_file(truth_project)
+    data = simulate_noisy(truth.model_active, noise_level=0.01)
+
+    project = make_project(name="fit")
+    file = File(
+        parent_project=project,
+        name="fit",
+        data=data,
+        energy=truth.energy.copy(),
+        time=truth.time.copy(),
+    )
+    file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+    file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
+    file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+    with pytest.warns(UserWarning, match="already exists"):
+        file.load_model(
+            model_yaml="models/file_energy_m_fixed.yaml", model_info="single_glp"
+        )
+    file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
+    return project, file
+
+
+#
 #
 class TestVariantsTable:
+    #
+    def test_fixed_parameter_bounds_do_not_show(self):
+        """A YAML that pins m without bounds differs from the free run in vary only."""
+
+        project, file = _yaml_pinned_variant_baseline()
+        df = project.results.variants(
+            file=file, model="single_glp", fit_type="baseline"
+        )
+        assert len(df) == 2
+        assert list(df["GLP_01_m.vary"]) == [True, False]
+        assert "GLP_01_m.min" not in df.columns
+        assert "GLP_01_m.max" not in df.columns
+        handle_a, handle_b = df["handle"]
+        d = project.results.diff(handle_a, handle_b)
+        fields = set(d.loc[d["section"] == "input", "field"])
+        assert "GLP_01_m.vary" in fields
+        assert not {"GLP_01_m.min", "GLP_01_m.max"} & fields
+
     #
     def test_vary_flip_shows_only_differing_inputs(self):
         project, file, handle_a, handle_b = _two_variant_baseline()
