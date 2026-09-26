@@ -7,25 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
-## [Unreleased]
+## [0.18.0] - 2026-09-26
 
 ### Added
 
-- **`fixed=` on the `sensitivity` functions.** `crb`, `fisher_matrix`, `counts_required` and `sensitivity_report` take the names of free parameters to treat as known, so a bound can match a fit that pins parameters the model leaves free, without editing the model.
-- **`File.fit_spectrum` fits 1D files.** A file built from one spectrum (energy axis, no time axis) is fitted as is; `time_point` / `time_range` are for 2D data only. Before, a 1D file had no fit path: `fit_spectrum` refused it, and `define_baseline` (the only way to a baseline) refused it too.
-
-### Fixed
-
-- **Examples 01, 03 and 04 ship data their generators reproduce.** The CSVs predated the July 2026 convolution fixes (kernel-support truncation, kernel-matrix operator), so a sub-10⁻³ shift of the truth re-drew part of the Poisson noise; regenerated, with one pull in 01's prose updated.
-- **A `File` the constructor rejects no longer stays registered on its project**, and an empty axis is refused with a clear message instead of a NumPy reduction error.
+- **`fixed=` on the `sensitivity` functions.** `crb`, `fisher_matrix`, `counts_required` and `sensitivity_report` treat the named free parameters as known, so a bound can match a fit that pins them without editing the model.
+- **`File.fit_spectrum` fits 1D files** (an energy axis, no time axis) as they are; `time_point` / `time_range` apply to 2D data only.
 
 ### Changed
 
-- **`File` validates its inputs at construction.** Data must be 1D or 2D, its shape must match the energy and time axes, and 1D data takes no time axis; mismatches raise instead of surfacing later as index errors or wrong plots.
+- **`File` validates its inputs at construction.** Data must be 1D or 2D and match its axes, 1D data takes no time axis, and empty axes are refused; mismatches raise instead of surfacing later as index errors or wrong plots.
 - **`fit_baseline` and `define_baseline` refuse 1D files** with a message that points at `fit_spectrum`.
-- **A fixed parameter's bounds no longer distinguish fits.** lmfit clips a fixed value into its bounds when it is set, so the bounds add nothing to the value the fit uses; the identity hash drops them and `variants()` / `diff()` no longer list them. Archives keep their stored handles; a refit of a configuration with fixed parameters records a new handle next to a slot written before this release.
-- **The ML training-data example states its footprint** before the write: about 37 GB on disk and a few minutes of runtime, with the two knobs that scale it.
-- **No in-memory parameter edits in the examples.** Notebook 10 loads its pinned `base_GLP` variants from two extra YAML files that define the same model name, and notebook 12 passes the parameters its fit holds fixed to `sensitivity.crb(fixed=...)`; the model YAML is the source of truth (`docs/design/api_ownership_contract.md`).
+- **A fixed parameter's bounds no longer distinguish fits**: the fit identity, `variants()` and `diff()` ignore them (`docs/design/fit_archive_principles.md`). A refit of a configuration with fixed parameters records a new handle next to slots written before this release.
+- **The examples load every model variant from YAML** instead of editing parameters in memory (notebooks 10 and 12; `docs/design/api_ownership_contract.md`).
+- **The ML training-data example states its footprint** (about 37 GB on disk, a few minutes) before the write.
+
+### Fixed
+
+- **A `File` the constructor rejects no longer stays registered on its project.**
+- **Examples 01, 03 and 04 ship the data their generators produce** under the current convolution; one number in 01's prose changed with it.
 
 ## [0.17.0] - 2026-09-23
 

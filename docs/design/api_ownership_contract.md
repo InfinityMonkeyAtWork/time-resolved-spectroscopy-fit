@@ -101,7 +101,7 @@ as the axis that must exist, that limits apply to, or that a 1D fit runs
 along; it addresses the primary axis and lets the `File` say which one that
 is.
 
-**Construction validates.** Since 0.17.1 the constructor rejects data that
+**Construction validates.** Since 0.18.0 the constructor rejects data that
 is not 1D or 2D, 1D data given with a time axis, and axes whose length does
 not match the data, and it names the transpose when the two lengths are
 merely swapped. Two states are therefore unreachable through the
@@ -146,7 +146,7 @@ guard.
 
 **A 1D file has no baseline.** `define_baseline` and `fit_baseline` refuse
 1D files and point at `fit_spectrum`, which fits a single spectrum as is
-(0.17.1). Before, a 1D file had no public fit path at all, and the library
+(0.18.0). Before, a 1D file had no public fit path at all, and the library
 tests hand-assigned `data_base` to get one; they now build a grid `File`,
 evaluate the model, and construct the data `File`, the pattern of the
 example generators. Three 2D sites still hand-assign `data_base`: a rescaled
@@ -421,4 +421,4 @@ everywhere renames `get_parameters` a second time in two minor releases;
   `fit_spectrum` refused it and pointed at `fit_baseline`, which needs a
   baseline that only `define_baseline` sets, which refuses 1D data. The
   constructor accepted data of any shape against any axes. Both closed in
-  0.17.1 (commit `99986d5`).
+  0.18.0 (commit `99986d5`).
