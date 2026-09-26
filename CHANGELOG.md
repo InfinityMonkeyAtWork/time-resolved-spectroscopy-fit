@@ -16,6 +16,7 @@ This file is maintained using the shared changelog workflow in
 
 ### Fixed
 
+- **Examples 01, 03 and 04 ship data their generators reproduce.** The CSVs predated the July 2026 convolution fixes (kernel-support truncation, kernel-matrix operator), so a sub-10⁻³ shift of the truth re-drew part of the Poisson noise; regenerated, with one pull in 01's prose updated.
 - **A `File` the constructor rejects no longer stays registered on its project**, and an empty axis is refused with a clear message instead of a NumPy reduction error.
 
 ### Changed
