@@ -181,6 +181,34 @@ def _yaml_pinned_variant_baseline():
 
 
 #
+def _seeded_variant_baseline():
+    """Two differential-evolution baseline runs of one YAML model: the first
+    without an optimizer seed, the second with ``seed=42``. The seed is the
+    only input that differs, and only the second run records it."""
+
+    truth_project = make_project(name="truth")
+    truth = _make_truth_file(truth_project)
+    data = simulate_noisy(truth.model_active, noise_level=0.01)
+
+    project = make_project(name="fit")
+    file = File(
+        parent_project=project,
+        name="fit",
+        data=data,
+        energy=truth.energy.copy(),
+        time=truth.time.copy(),
+    )
+    file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+    file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
+    fit_kwargs = {"stages": 1, "fit_alg_1": "differential_evolution", "try_ci": 0}
+    file.fit_baseline(model_name="single_glp", **fit_kwargs)
+    with pytest.warns(UserWarning, match="already exists"):
+        file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+    file.fit_baseline(model_name="single_glp", seed=42, **fit_kwargs)
+    return project, file
+
+
+#
 def _reload_project_glp(project, model_yaml):
     """Reload ``project_glp`` on every file from *model_yaml*, dynamics re-attached."""
 
@@ -248,6 +276,23 @@ class TestVariantsTable:
         fields = set(d.loc[d["section"] == "input", "field"])
         assert "GLP_01_m.vary" in fields
         assert not {"GLP_01_m.min", "GLP_01_m.max"} & fields
+
+    #
+    def test_setting_only_one_run_carries_shows(self):
+        """A seed set on one run only is an input difference, shown against NA."""
+
+        project, file = _seeded_variant_baseline()
+        df = project.results.variants(
+            file=file, model="single_glp", fit_type="baseline"
+        )
+        assert len(df) == 2
+        assert pd.isna(df["seed"].iloc[0])
+        assert df["seed"].iloc[1] == 42
+        handle_a, handle_b = df["handle"]
+        d = project.results.diff(handle_a, handle_b)
+        seed_rows = d[(d["section"] == "input") & (d["field"] == "seed")]
+        assert len(seed_rows) == 1
+        assert seed_rows.iloc[0][handle_b] == 42
 
     #
     def test_vary_flip_shows_only_differing_inputs(self):
