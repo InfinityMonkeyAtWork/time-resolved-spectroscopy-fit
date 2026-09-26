@@ -2111,7 +2111,6 @@ class File:
                 f'(e.g. name="{file_name}_2").'
             )
         self._name = file_name
-        self.p.files.append(self)  # register with parent project
         if data is not None and data.ndim not in (1, 2):
             raise ValueError(
                 "data must be 1D (energy) or 2D (time x energy); "
@@ -2136,6 +2135,17 @@ class File:
             self.time = time
         else:
             self.time = np.arange(data.shape[0])
+        # an axis is a non-empty 1D array
+        for axis_name, axis in (
+            ("energy", self.energy),
+            ("time", self.time),
+            ("aux_axis", aux_axis),
+        ):
+            if axis is not None and (axis.ndim != 1 or axis.shape[0] == 0):
+                raise ValueError(
+                    f"{axis_name} axis must be a non-empty 1D array; "
+                    f"got shape {axis.shape}."
+                )
         # the axes must span the data they come with
         if data is not None:
             assert self.energy is not None  # type guard — resolved above
@@ -2204,6 +2214,9 @@ class File:
         # default fit limits to entire dataset (energy is None only for bare File())
         if self.energy is not None:
             self.set_fit_limits(energy_limits=None, show_plot=False)
+        # register with the parent project last: a File the constructor
+        # rejects never appears on it
+        self.p.files.append(self)
 
     #
     @property
@@ -2947,6 +2960,13 @@ class File:
         show_plot : bool, default=True
             If True, plot the resulting baseline spectrum. Suppressed
             when ``Project.show_output < 1``.
+
+        Raises
+        ------
+        ValueError
+            If the file is 1D (a single spectrum has no baseline window;
+            use :meth:`fit_spectrum`), no data is loaded, the time axis is
+            missing, or *time_type* is invalid.
         """
 
         if self.dim == 1:
@@ -3322,16 +3342,23 @@ class File:
 
         **lmfit_wrapper_kwargs
             Additional keyword arguments passed to fitlib.fit_wrapper
+
+        Raises
+        ------
+        ValueError
+            If the file is 1D (use :meth:`fit_spectrum`), the model has time
+            dependence, or no baseline is defined (run :meth:`define_baseline`
+            first).
         """
 
         t_base = time.time()  # start timing for baseline fit
 
-        self.model_base = self._resolve_model(model_name)
         if self.dim == 1:
             raise ValueError(
                 "A 1D file is a single spectrum and has no baseline window; "
                 "use fit_spectrum() to fit it."
             )
+        self.model_base = self._resolve_model(model_name)
         if self.model_base.dim == 2:
             raise ValueError(
                 f'Model "{model_name}" has time dependence (dim=2) and cannot '

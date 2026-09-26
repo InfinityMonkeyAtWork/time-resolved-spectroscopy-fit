@@ -24,7 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import pathlib
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, Literal, cast
 
 import numpy as np
@@ -153,6 +153,15 @@ def _has_any_noise_model(slots: Sequence[SavedFitSlot]) -> bool:
     """True if at least one slot was fit under a declared noise model."""
 
     return any(s.noise_type != NOISE_TYPE_UNKNOWN for s in slots)
+
+
+#
+def _fixed_parameter_row(row: Mapping[str, Any]) -> bool:
+    """A parameter table row the optimizer cannot move: ``vary=False`` and
+    no expression. Its bounds are not an input (identity drops them too)."""
+
+    expr = row.get("expr")
+    return not bool(row.get("vary", True)) and not (isinstance(expr, str) and expr)
 
 
 #
@@ -946,13 +955,10 @@ class FitResults:
                 if c in meta.columns
             ]
             for row in meta.to_dict("records"):
-                expr = row.get("expr")
-                fixed = not bool(row.get("vary", True)) and not (
-                    isinstance(expr, str) and expr
-                )
+                fixed = _fixed_parameter_row(row)
                 for field in fields:
                     if fixed and field in ("min", "max"):
-                        continue  # not an input: identity drops them too
+                        continue
                     key = "init" if field == "init_value" else field
                     rec[f"{row['name']}.{key}"] = norm(row[field])
         return rec
@@ -1232,7 +1238,10 @@ class FitResults:
                 if c in jr.params.columns
             ]
             for row in jr.params.to_dict("records"):
+                fixed = _fixed_parameter_row(row)
                 for field in fields:
+                    if fixed and field in ("min", "max"):
+                        continue
                     key = "init" if field == "init_value" else field
                     rec[f"{row['name']}.{key}"] = row[field]
             return rec

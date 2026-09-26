@@ -181,6 +181,54 @@ def _yaml_pinned_variant_baseline():
 
 
 #
+def _reload_project_glp(project, model_yaml):
+    """Reload ``project_glp`` on every file from *model_yaml*, dynamics re-attached."""
+
+    for f in project.files:
+        with pytest.warns(UserWarning, match="already exists"):
+            f.load_model(model_yaml=model_yaml, model_info="project_glp")
+        f.add_time_dependence(
+            target_model="project_glp",
+            target_parameter="GLP_01_x0",
+            dynamics_yaml="models/project_time.yaml",
+            dynamics_model=["MonoExpProject"],
+        )
+
+
+#
+#
+class TestJointFixedBounds:
+    """A fixed parameter's bounds are not identity for joint fits either."""
+
+    #
+    def test_unbounded_pin_is_an_exact_rerun(self):
+        """Re-pinning ``m`` without bounds maps onto the existing joint record."""
+
+        project = _build_joint_project()
+        first = project.fit_2d(model_name="project_glp", stages=1, try_ci=0)
+        _reload_project_glp(project, "models/project_energy_m_nobounds.yaml")
+        second = project.fit_2d(model_name="project_glp", stages=1, try_ci=0)
+        # the session history keeps both executions; they are one configuration
+        assert second.optimization_hash == first.optimization_hash
+        assert len({jr.optimization_hash for jr in project.results.find_joint()}) == 1
+
+    #
+    def test_joint_diff_omits_fixed_bounds(self):
+        """Two joint runs that differ in stages show that, not the pinned bounds."""
+
+        project = _build_joint_project()
+        project.fit_2d(model_name="project_glp", stages=1, try_ci=0)
+        _reload_project_glp(project, "models/project_energy_m_nobounds.yaml")
+        project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
+        slots = project.results.find(file="file_0", fit_type="2d")
+        assert len(slots) == 2
+        d = project.results.diff(slots[0].handle, slots[1].handle)
+        fields = set(d.loc[d["section"] == "input", "field"])
+        assert "stages" in fields
+        assert not {f for f in fields if f.endswith((".min", ".max"))}
+
+
+#
 #
 class TestVariantsTable:
     #

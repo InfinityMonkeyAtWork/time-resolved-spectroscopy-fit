@@ -431,6 +431,40 @@ class TestFileConstruction:
             )
 
     #
+    def test_rejected_file_is_not_registered(self):
+        """A File the constructor refuses never appears on the project."""
+
+        project = make_project()
+        with pytest.raises(ValueError):
+            File(parent_project=project, name="bad3d", data=np.zeros((2, 3, 4)))
+        with pytest.raises(ValueError):
+            File(
+                parent_project=project,
+                name="short",
+                data=np.zeros((3, 5)),
+                energy=np.arange(4.0),
+                time=np.arange(3.0),
+            )
+        assert project.files == []
+
+    #
+    def test_empty_axis_raises(self):
+        """An axis with no points is refused before anything reads it."""
+
+        project = make_project()
+        with pytest.raises(ValueError, match="energy axis must be a non-empty"):
+            File(parent_project=project, name="e", energy=np.zeros(0))
+        with pytest.raises(ValueError, match="time axis must be a non-empty"):
+            File(
+                parent_project=project,
+                name="t",
+                data=np.zeros((0, 5)),
+                energy=np.arange(5.0),
+                time=np.zeros(0),
+            )
+        assert project.files == []
+
+    #
     def test_axes_are_synthesized_when_absent(self):
         """Data without axes gets index axes of the right lengths."""
 
@@ -604,6 +638,7 @@ class TestFitLimitsAndBaseline:
         )
         with pytest.raises(ValueError, match="fit_spectrum"):
             file.fit_baseline("simple_energy")
+        assert file.model_base is None  # refused before anything was published
 
     #
     def test_define_baseline_no_data_raises(self):

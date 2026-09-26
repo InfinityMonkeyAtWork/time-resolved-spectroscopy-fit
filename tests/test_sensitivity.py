@@ -223,6 +223,8 @@ class TestParameterFiltering:
         model.lmfit_pars["Gauss_01_SD"].vary = False
         with pytest.raises(ValueError, match="already fixed"):
             sensitivity.crb(model, 1e4, fixed=("Gauss_01_SD",))
+        with pytest.raises(TypeError, match="not one string"):
+            sensitivity.crb(model, 1e4, fixed="Gauss_01_SD")  # type: ignore[arg-type]
 
 
 #

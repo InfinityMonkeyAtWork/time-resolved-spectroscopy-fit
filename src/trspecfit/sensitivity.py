@@ -98,6 +98,8 @@ def _free_parameter_names(model: mcp.Model, fixed: Sequence[str] = ()) -> list[s
         for name in model.parameter_names
         if model.lmfit_pars[name].expr is None and model.lmfit_pars[name].vary
     ]
+    if isinstance(fixed, str):
+        raise TypeError("fixed takes a sequence of parameter names, not one string.")
     if fixed:
         unknown = [n for n in fixed if n not in model.parameter_names]
         if unknown:
@@ -370,8 +372,8 @@ def crb(
     par_names : sequence of str, optional
         Which bounds to return. Defaults to all free parameters. This selects
         the *output* only: the information matrix always spans every free
-        parameter, so asking for one parameter still accounts for covariance
-        with the rest of the model.
+        parameter not named in *fixed*, so asking for one parameter still
+        accounts for covariance with the rest of the model.
     fixed : sequence of str, optional
         Free parameters to treat as known, the way a fit that pins them
         does. They leave the information matrix, so the bounds on the rest

@@ -14,6 +14,10 @@ This file is maintained using the shared changelog workflow in
 - **`fixed=` on the `sensitivity` functions.** `crb`, `fisher_matrix`, `counts_required` and `sensitivity_report` take the names of free parameters to treat as known, so a bound can match a fit that pins parameters the model leaves free, without editing the model.
 - **`File.fit_spectrum` fits 1D files.** A file built from one spectrum (energy axis, no time axis) is fitted as is; `time_point` / `time_range` are for 2D data only. Before, a 1D file had no fit path: `fit_spectrum` refused it, and `define_baseline` (the only way to a baseline) refused it too.
 
+### Fixed
+
+- **A `File` the constructor rejects no longer stays registered on its project**, and an empty axis is refused with a clear message instead of a NumPy reduction error.
+
 ### Changed
 
 - **`File` validates its inputs at construction.** Data must be 1D or 2D, its shape must match the energy and time axes, and 1D data takes no time axis; mismatches raise instead of surfacing later as index errors or wrong plots.

@@ -40,9 +40,9 @@ user-tier list are in [../stability.md](../stability.md).
 `file.sigma_data`, `project.results` (a `FitResults`), the `SavedFitSlot`
 fields `params`, `observed`, `fit`, `metrics`, `handle`, `model_name`,
 `JointFitResult.params`, and `Simulator.data_clean` / `data_noisy` / `noise`.
-All of that is inside the contract. Two notebooks also edit
-`model.lmfit_pars[name].vary` and `.value` directly; that is the one taught
-use this contract retires (rule 4).
+All of that is inside the contract. Editing `model.lmfit_pars[name]` in
+place, which two notebooks used to teach, is the one use this contract
+retires (rule 4).
 
 Three tiers, classified coarsely here and inventoried name by name in step 5:
 
