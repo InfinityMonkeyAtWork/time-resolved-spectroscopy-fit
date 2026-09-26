@@ -52,16 +52,19 @@ def parse_docstring_params(docstring: str) -> list[str]:
                 and stripped
             ):
                 break
-            # Parameter line: valid Python identifier (letter or _) at base indent,
-            # followed by " : ". Starred entries (*args, **kwargs) are skipped.
+            # Parameter line: one or more comma-separated Python identifiers at
+            # base indent, then " : type" or nothing (NumPy style allows
+            # "x1, x2 : type" and omits the colon when there is no type).
+            # Starred entries (*args, **kwargs) are skipped.
             indent = len(line) - len(line.lstrip()) if line.strip() else -1
             if indent == base_indent:
-                m = re.match(r"^\s*(\*{0,2}[a-zA-Z_]\w*)\s*:", line)
+                name = r"\*{0,2}[a-zA-Z_]\w*"
+                m = re.match(rf"^\s*({name}(?:\s*,\s*{name})*)\s*(?::|$)", line)
                 if m:
-                    raw = m.group(1)
-                    if raw.startswith("*"):
-                        continue  # skip *args / **kwargs (not in the signature list)
-                    params.append(raw)
+                    for raw in (n.strip() for n in m.group(1).split(",")):
+                        if raw.startswith("*"):
+                            continue  # *args / **kwargs are not in the signature list
+                        params.append(raw)
     return params
 
 
