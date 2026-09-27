@@ -1,0 +1,15 @@
+# Section 4 of the notebook, the junk what-if: base_GLP with the mixing ratio
+# pinned to 0, which makes the GLP a pure Gaussian and re-fits what base_Gauss
+# already fits. Same model name as models_energy.yaml, so it lands as a
+# variant of base_GLP and is then dropped.
+base_GLP:
+    LinBack:
+      m: [1E-2, True, -1, 1]
+      b: [0, True, -5, 5]
+      xStart: [0, False]
+      xStop: [20, False]
+    GLP:
+      A: [12, True, 5, 15]
+      x0: [8, True, 5, 15]
+      F: [1.5, True, 0.75, 2.5]
+      m: [0, False]

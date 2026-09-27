@@ -242,6 +242,8 @@ optimization_hash = sha256(
   + model_structure              # per-attachment records, each with its own
                                  # submodel order and frequency; see below
   + shared parameter metadata    # name, bounds, vary, expr — IN MODEL ORDER
+                                 # (a fixed parameter's bounds are dropped,
+                                 # 2026-09-24; see below)
   + initial-state matrix         # (n_slices, n_par); n_slices = 1 except SbS
   + optimizer settings           # only what was actually in force; see below
 )
@@ -256,6 +258,19 @@ numerically, and omitting it would let two files differing only in their
 auxiliary axis produce colliding fits. (The schema-5 decision to exclude it
 was made when the hash *was* file identity; under Principle 1 it is a version
 stamp feeding a fit's input hash, and that rationale no longer transfers.)
+
+**A fixed parameter's bounds are not an input** (2026-09-24). lmfit clips a
+value into its bounds at the moment it is set, so everything the bounds of a
+`vary=False`, non-expression parameter could ever do is already in its
+value, and the value is in the initial-state matrix. Two fits whose fixed
+parameter holds the same value are the same numbers whatever bounds were
+written next to it, so the hash drops them, and `variants()` / `diff()` do
+not list them. This is what lets a YAML that pins a parameter as
+`m: [0.3, False]` be an exact re-run of one that pins it as
+`m: [0.3, False, 0, 1]`. Handles are stored, never recomputed (below), so
+archives written before this rule keep theirs; a refit of a configuration
+with fixed parameters mints a new handle beside such an older slot rather
+than colliding with it.
 
 ### `model_structure`: a collection of per-attachment records
 
@@ -1024,7 +1039,7 @@ YAML-typed seed like `1.5`.
 | Hashed input | Origin | Treatment |
 |---|---|---|
 | `data_raw`, `energy`, `time`, `aux_axis`, `dark`, `calibration` | user-supplied arrays | exact bytes |
-| bounds (`min` / `max`), `frequency`, `time_point` / `time_range` | user-supplied scalars | exact |
+| bounds (`min` / `max`) of parameters that are not fixed (a fixed parameter's are dropped: *A fixed parameter's bounds are not an input*), `frequency`, `time_point` / `time_range` | user-supplied scalars | exact |
 | `e_lim` / `t_lim` / `base_t_ind`, `stages`, `seed` | integers | exact |
 | algorithm names, `model_structure` names, `jac_fun` qualname | strings | exact |
 | **initial-state matrix** | may be computed | **quantized** |

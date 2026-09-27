@@ -1,0 +1,10 @@
+# project_glp from project_energy.yaml with the static mixing ratio written
+# without bounds. Loaded under the same name it must be an exact re-run of
+# the bounded one: a fixed parameter's bounds are not identity, for joint
+# fits as for single-file fits.
+project_glp:
+    GLP:
+      A: [20, "file", 5, 25]
+      x0: [85.0, "file", 82, 88]
+      F: [1.0, "static", 0.75, 2.5]
+      m: [0.3, "static"]

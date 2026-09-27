@@ -1,4 +1,4 @@
-# Bump Versions
+# Bump Dependencies
 
 Refresh the pinned dev tooling and GitHub Actions SHAs. Run every few months
 or before a release. This skill does the work of Dependabot (ecosystems

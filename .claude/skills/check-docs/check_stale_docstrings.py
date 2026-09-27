@@ -8,19 +8,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 SRC = REPO / "src" / "trspecfit"
 
-TARGET_FILES = [
-    SRC / "trspecfit.py",
-    SRC / "mcp.py",
-    SRC / "fitlib.py",
-    SRC / "simulator.py",
-    SRC / "spectra.py",
-    SRC / "graph_ir.py",
-    SRC / "eval_1d.py",
-    SRC / "eval_2d.py",
-    *sorted(SRC.glob("functions/*.py")),
-]
+TARGET_FILES = sorted(SRC.rglob("*.py"))
 
 SKIP_PARAMS = {"self", "cls"}
+
+FuncNode = ast.FunctionDef | ast.AsyncFunctionDef
+DocNode = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
 
 
 #
@@ -52,21 +45,24 @@ def parse_docstring_params(docstring: str) -> list[str]:
                 and stripped
             ):
                 break
-            # Parameter line: valid Python identifier (letter or _) at base indent,
-            # followed by " : ". Starred entries (*args, **kwargs) are skipped.
+            # Parameter line: one or more comma-separated Python identifiers at
+            # base indent, then " : type" or nothing (NumPy style allows
+            # "x1, x2 : type" and omits the colon when there is no type).
+            # Starred entries (*args, **kwargs) are skipped.
             indent = len(line) - len(line.lstrip()) if line.strip() else -1
             if indent == base_indent:
-                m = re.match(r"^\s*(\*{0,2}[a-zA-Z_]\w*)\s*:", line)
+                name = r"\*{0,2}[a-zA-Z_]\w*"
+                m = re.match(rf"^\s*({name}(?:\s*,\s*{name})*)\s*(?::|$)", line)
                 if m:
-                    raw = m.group(1)
-                    if raw.startswith("*"):
-                        continue  # skip *args / **kwargs (not in the signature list)
-                    params.append(raw)
+                    for raw in (n.strip() for n in m.group(1).split(",")):
+                        if raw.startswith("*"):
+                            continue  # *args / **kwargs are not in the signature list
+                        params.append(raw)
     return params
 
 
 #
-def get_sig_params(node: ast.FunctionDef) -> list[str]:
+def get_sig_params(node: FuncNode) -> list[str]:
     """Extract parameter names from an AST function node, skipping special ones."""
 
     params = []
@@ -78,19 +74,28 @@ def get_sig_params(node: ast.FunctionDef) -> list[str]:
 
 
 #
-def collect_functions(tree: ast.Module) -> list[tuple[str, ast.FunctionDef]]:
-    """Collect public functions and methods from an AST module."""
+def collect_functions(tree: ast.Module) -> list[tuple[str, FuncNode, DocNode]]:
+    """Collect (name, signature node, docstring node) for public API.
 
-    nodes: list[tuple[str, ast.FunctionDef]] = []
+    Public functions and methods document themselves. A public class's
+    ``__init__`` signature is checked against both the class docstring and
+    ``__init__``'s own docstring, whichever carry a Parameters section.
+    """
+
+    nodes: list[tuple[str, FuncNode, DocNode]] = []
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if not node.name.startswith("_"):
-                nodes.append((node.name, node))
-        elif isinstance(node, ast.ClassDef):
+                nodes.append((node.name, node, node))
+        elif isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
             for item in node.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    if not item.name.startswith("_"):
-                        nodes.append((f"{node.name}.{item.name}", item))
+                if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if item.name == "__init__":
+                    nodes.append((node.name, item, node))
+                    nodes.append((f"{node.name}.__init__", item, item))
+                elif not item.name.startswith("_"):
+                    nodes.append((f"{node.name}.{item.name}", item, item))
     return nodes
 
 
@@ -103,8 +108,8 @@ def check_file(filepath: Path) -> list[str]:
     issues = []
     rel = filepath.relative_to(REPO)
 
-    for qual_name, func_node in collect_functions(tree):
-        docstring = ast.get_docstring(func_node)
+    for qual_name, func_node, doc_node in collect_functions(tree):
+        docstring = ast.get_docstring(doc_node)
         if not docstring:
             continue
         sig_params = get_sig_params(func_node)
@@ -123,7 +128,7 @@ def check_file(filepath: Path) -> list[str]:
             if extra:
                 parts.append(f"extra in docstring: {extra}")
             issues.append(
-                f"{rel}:{func_node.lineno} — {qual_name} — {' / '.join(parts)}"
+                f"{rel}:{doc_node.lineno} — {qual_name} — {' / '.join(parts)}"
             )
     return issues
 

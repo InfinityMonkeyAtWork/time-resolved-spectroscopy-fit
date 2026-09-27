@@ -34,8 +34,7 @@ def _make_energy_model(model_info):
     """Load a 1D energy model from eval_2d_energy.yaml."""
 
     project = make_project()
-    file = File(parent_project=project)
-    file.energy = np.linspace(80, 90, 101)
+    file = File(parent_project=project, energy=np.linspace(80, 90, 101))
     file.load_model(model_yaml=_ENERGY_YAML, model_info=model_info)
     model = file.model_active
     assert model is not None  # type guard
@@ -53,9 +52,8 @@ def _make_2d_model(model_info, dynamics_params, *, frequency=None, time=None):
     """
 
     project = make_project()
-    file = File(parent_project=project)
-    file.energy = np.linspace(80, 90, 101)
-    file.time = np.linspace(-10, 100, 51) if time is None else time
+    time = np.linspace(-10, 100, 51) if time is None else time
+    file = File(parent_project=project, energy=np.linspace(80, 90, 101), time=time)
     file.load_model(model_yaml=_ENERGY_YAML, model_info=model_info)
     model = file.model_active
     assert model is not None  # type guard
@@ -1094,9 +1092,11 @@ class TestSubcycleDynamics:
         """
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 101)
-        file.time = np.linspace(-10, 100, 51)
+        file = File(
+            parent_project=project,
+            energy=np.linspace(80, 90, 101),
+            time=np.linspace(-10, 100, 51),
+        )
         file.load_model(model_yaml=_ENERGY_YAML, model_info=["offset_only"])
         model = file.model_active
         assert model is not None  # type guard

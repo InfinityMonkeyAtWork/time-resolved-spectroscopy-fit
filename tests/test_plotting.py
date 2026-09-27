@@ -891,13 +891,10 @@ class TestPlotConfigPropagation:
         project = make_project()
         project.plot_config.update(x_dir=x_dir, x_label="Binding Energy (eV)")
 
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 201)
-        file.time = np.linspace(-10, 100, 111)
-        file.data = np.random.default_rng(42).normal(
-            size=(len(file.time), len(file.energy))
-        )
-        file.dim = 2
+        energy = np.linspace(80, 90, 201)
+        time = np.linspace(-10, 100, 111)
+        data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
+        file = File(parent_project=project, data=data, energy=energy, time=time)
 
         file.load_model(
             model_yaml="models/file_energy.yaml",
@@ -1060,13 +1057,10 @@ class TestHighLevelPlotOverrides:
         project = make_project()
         project.plot_config.update(x_label="Binding Energy (eV)", x_dir="def")
 
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 201)
-        file.time = np.linspace(-10, 100, 111)
-        file.data = np.random.default_rng(0).normal(
-            size=(len(file.time), len(file.energy))
-        )
-        file.dim = 2
+        energy = np.linspace(80, 90, 201)
+        time = np.linspace(-10, 100, 111)
+        data = np.random.default_rng(0).normal(size=(len(time), len(energy)))
+        file = File(parent_project=project, data=data, energy=energy, time=time)
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="single_glp",

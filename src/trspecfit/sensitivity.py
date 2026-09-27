@@ -83,20 +83,35 @@ _COND_LIMIT = 1e12
 
 
 #
-def _free_parameter_names(model: mcp.Model) -> list[str]:
+def _free_parameter_names(model: mcp.Model, fixed: Sequence[str] = ()) -> list[str]:
     """
     Names of parameters the measurement can actually constrain.
 
     Fixed parameters carry no uncertainty, and expression parameters have no
     freedom of their own — their precision follows from whatever they
-    reference. Both are excluded.
+    reference. Both are excluded, as are the names in *fixed*: free
+    parameters the caller treats as known, the way a fit that pins them does.
     """
 
-    return [
+    free = [
         name
         for name in model.parameter_names
         if model.lmfit_pars[name].expr is None and model.lmfit_pars[name].vary
     ]
+    if isinstance(fixed, str):
+        raise TypeError("fixed takes a sequence of parameter names, not one string.")
+    if fixed:
+        unknown = [n for n in fixed if n not in model.parameter_names]
+        if unknown:
+            raise ValueError(f"Unknown parameter(s) in fixed: {unknown}")
+        not_free = [n for n in fixed if n not in free]
+        if not_free:
+            raise ValueError(
+                f"Parameter(s) {not_free} in fixed are already fixed or "
+                "expression-defined in the model."
+            )
+        free = [n for n in free if n not in fixed]
+    return free
 
 
 #
@@ -173,6 +188,7 @@ def fisher_matrix(
     counts: float,
     par_names: Sequence[str] | None = None,
     *,
+    fixed: Sequence[str] = (),
     rel_step: float = 1e-5,
 ) -> tuple[np.ndarray, list[str], dict[str, float]]:
     """
@@ -202,6 +218,11 @@ def fisher_matrix(
         parameters **exactly known**, which yields optimistic bounds. For
         realistic bounds on a subset, span everything and select afterwards —
         which is what :func:`crb` does.
+    fixed : sequence of str, optional
+        Free parameters to treat as known, the way a fit that pins them
+        does. They leave the information matrix, so the bounds on the rest
+        no longer pay for covariance with them. Use it to match the bound to
+        a fit that holds parameters fixed which the model leaves free.
     rel_step : float, default=1e-5
         Relative finite-difference step. Each parameter uses
         ``max(abs(value), 1.0) * rel_step``.
@@ -234,7 +255,7 @@ def fisher_matrix(
     if counts <= 0:
         raise ValueError(f"counts must be positive, got {counts}.")
 
-    free = _free_parameter_names(model)
+    free = _free_parameter_names(model, fixed)
     if par_names is None:
         names = free
     else:
@@ -332,6 +353,7 @@ def crb(
     counts: float,
     par_names: Sequence[str] | None = None,
     *,
+    fixed: Sequence[str] = (),
     rel_step: float = 1e-5,
     marginal: bool = True,
 ) -> dict[str, float]:
@@ -350,8 +372,13 @@ def crb(
     par_names : sequence of str, optional
         Which bounds to return. Defaults to all free parameters. This selects
         the *output* only: the information matrix always spans every free
-        parameter, so asking for one parameter still accounts for covariance
-        with the rest of the model.
+        parameter not named in *fixed*, so asking for one parameter still
+        accounts for covariance with the rest of the model.
+    fixed : sequence of str, optional
+        Free parameters to treat as known, the way a fit that pins them
+        does. They leave the information matrix, so the bounds on the rest
+        no longer pay for covariance with them. Use it to match the bound to
+        a fit that holds parameters fixed which the model leaves free.
     rel_step : float, default=1e-5
         Relative finite-difference step for the Jacobian.
     marginal : bool, default=True
@@ -385,7 +412,7 @@ def crb(
     # Always span the full free set: a bound on one parameter that silently
     # assumed the others were known would be optimistic, sometimes by a large
     # factor. Selection happens after inversion.
-    info, names, _ = fisher_matrix(model, counts, None, rel_step=rel_step)
+    info, names, _ = fisher_matrix(model, counts, None, fixed=fixed, rel_step=rel_step)
 
     if marginal:
         variances = np.diag(_invert(info, names))
@@ -420,6 +447,7 @@ def counts_required(
     par_name: str,
     target_sigma: float,
     *,
+    fixed: Sequence[str] = (),
     counts_ref: float = 1.0e4,
     rel_step: float = 1e-5,
     marginal: bool = True,
@@ -443,6 +471,11 @@ def counts_required(
     counts_ref : float, default=1e4
         Reference budget at which the information is evaluated. The result is
         independent of this choice; it only sets the numerical scale.
+    fixed : sequence of str, optional
+        Free parameters to treat as known, the way a fit that pins them
+        does. They leave the information matrix, so the bounds on the rest
+        no longer pay for covariance with them. Use it to match the bound to
+        a fit that holds parameters fixed which the model leaves free.
     rel_step : float, default=1e-5
         Relative finite-difference step for the Jacobian.
     marginal : bool, default=True
@@ -474,6 +507,7 @@ def counts_required(
         model,
         counts_ref,
         [par_name],
+        fixed=fixed,
         rel_step=rel_step,
         marginal=marginal,
     )[par_name]
@@ -489,6 +523,7 @@ def sensitivity_report(
     counts: float,
     par_names: Sequence[str] | None = None,
     *,
+    fixed: Sequence[str] = (),
     rel_step: float = 1e-5,
 ) -> pd.DataFrame:
     """
@@ -504,6 +539,11 @@ def sensitivity_report(
         Total expected photon count over the window, background included.
     par_names : sequence of str, optional
         Parameters to include. Defaults to all free parameters.
+    fixed : sequence of str, optional
+        Free parameters to treat as known, the way a fit that pins them
+        does. They leave the information matrix, so the bounds on the rest
+        no longer pay for covariance with them. Use it to match the bound to
+        a fit that holds parameters fixed which the model leaves free.
     rel_step : float, default=1e-5
         Relative finite-difference step for the Jacobian.
 
@@ -531,7 +571,9 @@ def sensitivity_report(
     >>> df.sort_values('correlation_penalty', ascending=False).head()
     """
 
-    info, names, meta = fisher_matrix(model, counts, par_names, rel_step=rel_step)
+    info, names, meta = fisher_matrix(
+        model, counts, par_names, fixed=fixed, rel_step=rel_step
+    )
 
     covariance = _invert(info, names)
     marginal_var = np.diag(covariance)

@@ -8,7 +8,7 @@ working on the repo.
 
 add-function
 benchmark
-bump-versions
+bump-dependencies
 changelog
 check-docs
 check-example

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [0.18.0] - 2026-09-26
+
+### Added
+
+- **`fixed=` on the `sensitivity` functions.** `crb`, `fisher_matrix`, `counts_required` and `sensitivity_report` treat the named free parameters as known, so a bound can match a fit that pins them without editing the model.
+- **`File.fit_spectrum` fits 1D files** (an energy axis, no time axis) as they are; `time_point` / `time_range` apply to 2D data only.
+
+### Changed
+
+- **`File` validates its inputs at construction.** Data must be 1D or 2D and match its axes, 1D data takes no time axis, and empty axes are refused; mismatches raise instead of surfacing later as index errors or wrong plots.
+- **`fit_baseline` and `define_baseline` refuse 1D files** with a message that points at `fit_spectrum`.
+- **A fixed parameter's bounds no longer distinguish fits**: the fit identity, `variants()` and `diff()` ignore them (`docs/design/fit_archive_principles.md`). A refit of a configuration with fixed parameters records a new handle next to slots written before this release.
+- **The examples load every model variant from YAML** instead of editing parameters in memory (notebooks 10 and 12; `docs/design/api_ownership_contract.md`).
+- **The ML training-data example states its footprint** (about 37 GB on disk, a few minutes) before the write.
+
+### Fixed
+
+- **A `File` the constructor rejects no longer stays registered on its project.**
+- **Examples 01, 03 and 04 ship the data their generators produce** under the current convolution; one number in 01's prose changed with it.
+
 ## [0.17.0] - 2026-09-23
 
 ### Added

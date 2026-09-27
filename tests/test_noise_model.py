@@ -55,9 +55,11 @@ def _make_2d_jax_args():
     """2D GLP model plus the JAX dispatch args, as ``File.fit_2d`` builds them."""
 
     project = make_project(name="noise")
-    file = File(parent_project=project)
-    file.energy = np.linspace(80, 90, 21)
-    file.time = np.linspace(-5, 20, 7)
+    file = File(
+        parent_project=project,
+        energy=np.linspace(80, 90, 21),
+        time=np.linspace(-5, 20, 7),
+    )
     file.load_model(model_yaml=_ENERGY_YAML, model_info=_MODEL_INFO)
     model = file.model_active
     assert model is not None  # type guard

@@ -28,15 +28,17 @@ class TestModelManagement:
 
         project = make_project()
         aux_axis = np.array([0.0, 1.0, 2.0, 3.0])
-        file = File(parent_project=project, aux_axis=aux_axis)
-        file.energy = np.linspace(80, 90, 201)
-        file.time = np.linspace(-10, 100, 111)
+        energy = np.linspace(80, 90, 201)
+        time = np.linspace(-10, 100, 111)
         # 2D dummy data for methods that need it
-        file.data = np.random.default_rng(42).normal(
-            size=(len(file.time), len(file.energy))
+        data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
+        return File(
+            parent_project=project,
+            data=data,
+            energy=energy,
+            time=time,
+            aux_axis=aux_axis,
         )
-        file.dim = 2
-        return file
 
     #
     def test_load_model_sets_active(self):
@@ -363,6 +365,128 @@ class TestModelManagement:
 
 #
 #
+class TestFileConstruction:
+    """The constructor validates its inputs and derives what it can."""
+
+    #
+    def test_3d_data_raises(self):
+        """Only 1D (energy) or 2D (time x energy) data is accepted."""
+
+        with pytest.raises(ValueError, match=r"1D \(energy\) or 2D"):
+            File(parent_project=make_project(), data=np.zeros((2, 3, 4)))
+
+    #
+    def test_1d_data_with_time_axis_raises(self):
+        """A single spectrum takes no time axis."""
+
+        with pytest.raises(ValueError, match="takes no time axis"):
+            File(
+                parent_project=make_project(),
+                data=np.zeros(5),
+                energy=np.arange(5.0),
+                time=np.arange(3.0),
+            )
+
+    #
+    def test_energy_axis_length_mismatch_raises_1d(self):
+        """The energy axis must span the spectrum."""
+
+        with pytest.raises(ValueError, match="energy axis has 4 points"):
+            File(parent_project=make_project(), data=np.zeros(5), energy=np.arange(4.0))
+
+    #
+    def test_energy_axis_length_mismatch_raises_2d(self):
+        """The energy axis must span the second data axis."""
+
+        with pytest.raises(ValueError, match="energy axis has 4 points"):
+            File(
+                parent_project=make_project(),
+                data=np.zeros((3, 5)),
+                energy=np.arange(4.0),
+                time=np.arange(3.0),
+            )
+
+    #
+    def test_time_axis_length_mismatch_raises(self):
+        """The time axis must span the first data axis."""
+
+        with pytest.raises(ValueError, match="time axis has 2 points"):
+            File(
+                parent_project=make_project(),
+                data=np.zeros((3, 5)),
+                energy=np.arange(5.0),
+                time=np.arange(2.0),
+            )
+
+    #
+    def test_swapped_axes_suggest_transposing(self):
+        """Energy x time data gets told to pass data.T."""
+
+        with pytest.raises(ValueError, match=r"Pass data\.T"):
+            File(
+                parent_project=make_project(),
+                data=np.zeros((5, 3)),
+                energy=np.arange(5.0),
+                time=np.arange(3.0),
+            )
+
+    #
+    def test_rejected_file_is_not_registered(self):
+        """A File the constructor refuses never appears on the project."""
+
+        project = make_project()
+        with pytest.raises(ValueError):
+            File(parent_project=project, name="bad3d", data=np.zeros((2, 3, 4)))
+        with pytest.raises(ValueError):
+            File(
+                parent_project=project,
+                name="short",
+                data=np.zeros((3, 5)),
+                energy=np.arange(4.0),
+                time=np.arange(3.0),
+            )
+        assert project.files == []
+
+    #
+    def test_empty_axis_raises(self):
+        """An axis with no points is refused before anything reads it."""
+
+        project = make_project()
+        with pytest.raises(ValueError, match="energy axis must be a non-empty"):
+            File(parent_project=project, name="e", energy=np.zeros(0))
+        with pytest.raises(ValueError, match="time axis must be a non-empty"):
+            File(
+                parent_project=project,
+                name="t",
+                data=np.zeros((0, 5)),
+                energy=np.arange(5.0),
+                time=np.zeros(0),
+            )
+        assert project.files == []
+
+    #
+    def test_axes_are_synthesized_when_absent(self):
+        """Data without axes gets index axes of the right lengths."""
+
+        file = File(parent_project=make_project(), data=np.zeros((3, 5)))
+        assert file.dim == 2
+        assert file.energy is not None and file.energy.shape == (5,)  # type guard
+        assert file.time is not None and file.time.shape == (3,)  # type guard
+
+    #
+    def test_axes_without_data_make_a_grid(self):
+        """Axes alone build a grid for a model, as the example generators do."""
+
+        file = File(
+            parent_project=make_project(), energy=np.arange(5.0), time=np.arange(3.0)
+        )
+        assert file.data is None
+        assert file.energy is not None and file.energy.shape == (5,)  # type guard
+        assert file.time is not None and file.time.shape == (3,)  # type guard
+
+
+#
+#
 class TestFitLimitsAndBaseline:
     """Test fit limits and baseline."""
 
@@ -371,14 +495,10 @@ class TestFitLimitsAndBaseline:
         """Create file with axes and 2D data."""
 
         project = make_project(show_output=show_output)
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 201)
-        file.time = np.linspace(-10, 100, 111)
-        file.data = np.random.default_rng(42).normal(
-            size=(len(file.time), len(file.energy))
-        )
-        file.dim = 2
-        return file
+        energy = np.linspace(80, 90, 201)
+        time = np.linspace(-10, 100, 111)
+        data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
+        return File(parent_project=project, data=data, energy=energy, time=time)
 
     #
     def test_set_fit_limits_energy_only(self):
@@ -424,13 +544,10 @@ class TestFitLimitsAndBaseline:
         """set_fit_limits should handle descending energy axes correctly."""
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = np.linspace(90, 80, 201)  # descending
-        file.time = np.linspace(-10, 100, 111)
-        file.data = np.random.default_rng(42).normal(
-            size=(len(file.time), len(file.energy))
-        )
-        file.dim = 2
+        energy = np.linspace(90, 80, 201)  # descending
+        time = np.linspace(-10, 100, 111)
+        data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
+        file = File(parent_project=project, data=data, energy=energy, time=time)
         file.set_fit_limits([82, 88], show_plot=False)
         assert file.e_lim_abs == [82, 88]
         assert file.e_lim is not None  # type guard
@@ -446,9 +563,7 @@ class TestFitLimitsAndBaseline:
         """set_fit_limits with time_limits but no time axis (1D) should raise."""
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 201)
-        file.dim = 1
+        file = File(parent_project=project, energy=np.linspace(80, 90, 201))
         with pytest.raises(ValueError, match="[Tt]ime.*missing"):
             file.set_fit_limits([82, 88], time_limits=[0, 50], show_plot=False)
 
@@ -505,10 +620,25 @@ class TestFitLimitsAndBaseline:
     def test_define_baseline_1d_raises(self):
         """define_baseline on 1D data should raise."""
 
-        file = self._make_file_with_data()
-        file.dim = 1
+        energy = np.linspace(80, 90, 201)
+        data = np.random.default_rng(42).normal(size=len(energy))
+        file = File(parent_project=make_project(), data=data, energy=energy)
         with pytest.raises(ValueError, match="Cannot define baseline for 1D"):
             file.define_baseline(-10, 0, show_plot=False)
+
+    #
+    def test_fit_baseline_1d_raises(self):
+        """A 1D file has no baseline; fit_baseline points at fit_spectrum."""
+
+        energy = np.linspace(80, 90, 201)
+        data = np.random.default_rng(42).normal(size=len(energy))
+        file = File(parent_project=make_project(), data=data, energy=energy)
+        file.load_model(
+            model_yaml="models/file_energy.yaml", model_info="simple_energy"
+        )
+        with pytest.raises(ValueError, match="fit_spectrum"):
+            file.fit_baseline("simple_energy")
+        assert file.model_base is None  # refused before anything was published
 
     #
     def test_define_baseline_no_data_raises(self):
@@ -516,7 +646,6 @@ class TestFitLimitsAndBaseline:
 
         project = make_project()
         file = File(parent_project=project)
-        file.dim = 2
         with pytest.raises(ValueError, match="No data loaded"):
             file.define_baseline(-10, 0, show_plot=False)
 
@@ -539,7 +668,7 @@ class TestFitLimitsAndBaseline:
         project = make_project(show_output=show_output)
         file = File(parent_project=project)
         file.data = np.zeros((5, 7))
-        file.dim = 2
+        file.dim = 2  # deliberate: the corrupted state under test
         return file
 
     #
@@ -645,16 +774,11 @@ class TestFitLimitsSlicing:
         """Create a File with given energy axis and optional time axis."""
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = energy
         if time is not None:
-            file.time = time
-            file.data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
-            file.dim = 2
+            data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
         else:
-            file.data = np.random.default_rng(42).normal(size=len(energy))
-            file.dim = 1
-        return file
+            data = np.random.default_rng(42).normal(size=len(energy))
+        return File(parent_project=project, data=data, energy=energy, time=time)
 
     # -- sub-range limits: verify correct data points remain --
 
@@ -761,13 +885,11 @@ class TestFitLimitsSlicing:
         """Helper: File with data, loaded model, and fit limits set."""
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = energy
         if time is not None:
-            file.time = time
-            file.data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
+            data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
         else:
-            file.data = np.random.default_rng(42).normal(size=len(energy))
+            data = np.random.default_rng(42).normal(size=len(energy))
+        file = File(parent_project=project, data=data, energy=energy, time=time)
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="single_glp",
@@ -919,14 +1041,11 @@ class TestFitLimitsOutOfRange:
         """Create a File with data on the given axes."""
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = energy
         if time is not None:
-            file.time = time
-            file.data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
+            data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
         else:
-            file.data = np.random.default_rng(42).normal(size=len(energy))
-        return file
+            data = np.random.default_rng(42).normal(size=len(energy))
+        return File(parent_project=project, data=data, energy=energy, time=time)
 
     #
     def test_energy_limits_entirely_below_range(self):
@@ -1006,17 +1125,18 @@ class TestFitPreconditions:
     """Fit methods raise ValueError on missing preconditions."""
 
     #
-    def _make_file_with_model(self):
-        """Create file with axes, 2D data, and a loaded energy model."""
+    def _make_file_with_model(self, *, with_data: bool = True):
+        """Create file with axes, a loaded energy model, and (by default) 2D data."""
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 201)
-        file.time = np.linspace(-10, 100, 111)
-        file.data = np.random.default_rng(42).normal(
-            size=(len(file.time), len(file.energy))
+        energy = np.linspace(80, 90, 201)
+        time = np.linspace(-10, 100, 111)
+        data = (
+            np.random.default_rng(42).normal(size=(len(time), len(energy)))
+            if with_data
+            else None
         )
-        file.dim = 2
+        file = File(parent_project=project, data=data, energy=energy, time=time)
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="simple_energy",
@@ -1030,7 +1150,7 @@ class TestFitPreconditions:
         """fit_baseline raises ValueError when energy axis is missing."""
 
         file = self._make_file_with_model()
-        file.energy = None
+        file.energy = None  # deliberate: the corrupted state under test
         with pytest.raises(ValueError, match="energy axis missing"):
             file.fit_baseline("simple_energy")
 
@@ -1039,7 +1159,6 @@ class TestFitPreconditions:
         """fit_baseline raises ValueError when baseline data is missing."""
 
         file = self._make_file_with_model()
-        file.data_base = None
         with pytest.raises(ValueError, match="data.*missing"):
             file.fit_baseline("simple_energy")
 
@@ -1115,8 +1234,7 @@ class TestFitPreconditions:
     def test_fit_sbs_no_data_raises(self):
         """fit_slice_by_slice raises ValueError when data is missing."""
 
-        file = self._make_file_with_model()
-        file.data = None
+        file = self._make_file_with_model(with_data=False)
         with pytest.raises(ValueError, match="missing"):
             file.fit_slice_by_slice(
                 "simple_energy", seed_source="model", seed_adapt=None
@@ -1127,7 +1245,7 @@ class TestFitPreconditions:
         """fit_slice_by_slice raises ValueError when time axis is missing."""
 
         file = self._make_file_with_model()
-        file.time = None
+        file.time = None  # deliberate: the corrupted state under test
         with pytest.raises(ValueError, match="missing"):
             file.fit_slice_by_slice(
                 "simple_energy", seed_source="model", seed_adapt=None
@@ -1148,9 +1266,8 @@ class TestFitPreconditions:
     def test_fit_2d_no_data_raises(self):
         """fit_2d raises ValueError when data is missing."""
 
-        file = self._make_file_with_model()
+        file = self._make_file_with_model(with_data=False)
         file.model_base = file.model_active
-        file.data = None
         with pytest.raises(ValueError, match="missing"):
             file.fit_2d("simple_energy")
 
@@ -1160,7 +1277,7 @@ class TestFitPreconditions:
 
         file = self._make_file_with_model()
         file.model_base = file.model_active
-        file.time = None
+        file.time = None  # deliberate: the corrupted state under test
         with pytest.raises(ValueError, match="missing"):
             file.fit_2d("simple_energy")
 
@@ -1337,13 +1454,10 @@ class TestDescribeWaterfall:
         """Create a 2D File with *n_time* spectra."""
 
         project = make_project(show_output=1)
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 50)
-        file.time = np.linspace(0, 10, n_time)
-        rng = np.random.default_rng(42)
-        file.data = rng.normal(size=(n_time, len(file.energy)))
-        file.dim = 2
-        return file
+        energy = np.linspace(80, 90, 50)
+        time = np.linspace(0, 10, n_time)
+        data = np.random.default_rng(42).normal(size=(n_time, len(energy)))
+        return File(parent_project=project, data=data, energy=energy, time=time)
 
     #
     def test_auto_waterfall_for_small_dataset(self):
@@ -1492,24 +1606,23 @@ class TestDescribeWaterfall:
                 assert alphas[i] == 0.35, f"trace {i} (t={t:.2f}) should be dimmed"
 
     #
-    def test_waterfall_no_time_limits_no_alphas(self):
-        """Without time limits, alphas should not be passed."""
+    def test_waterfall_default_limits_dim_nothing(self):
+        """With the default full-range time limits, no trace is dimmed."""
 
         file = self._make_file(n_time=5)
         with unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d:
             file.describe()
         _, kwargs = mock_1d.call_args
-        assert kwargs.get("alphas") is None
+        assert all(alpha == 1.0 for alpha in kwargs["alphas"])
 
     #
     def test_describe_1d_unaffected(self):
         """waterfall parameter should not affect 1D data display."""
 
         project = make_project(show_output=1)
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 50)
-        file.data = np.random.default_rng(42).normal(size=50)
-        file.dim = 1
+        energy = np.linspace(80, 90, 50)
+        data = np.random.default_rng(42).normal(size=50)
+        file = File(parent_project=project, data=data, energy=energy)
         with (
             unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d,
             unittest.mock.patch("trspecfit.utils.plot.plot_2d") as mock_2d,

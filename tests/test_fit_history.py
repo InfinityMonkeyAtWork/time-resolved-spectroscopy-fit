@@ -59,10 +59,7 @@ from trspecfit.utils.fit_io import (
 def _make_truth_file(project):
     energy = np.linspace(83, 87, 30)
     time = np.linspace(-2, 10, 24)
-    file = File(parent_project=project, name="truth")
-    file.energy = energy
-    file.time = time
-    file.dim = 2
+    file = File(parent_project=project, name="truth", energy=energy, time=time)
     file.load_model(
         model_yaml="models/file_energy.yaml",
         model_info="single_glp",
@@ -1123,10 +1120,10 @@ class TestSlotBackedAccessors:
     #
     def test_latest_slot_wins_after_refit(self):
         project, file = _setup_baseline_fit()
-        assert file.data_base is not None  # type guard
+        assert file.energy is not None  # type guard
         # Refit against rescaled data: same (file, model, fit_type, selection)
         # → a second slot appends, and the accessors must serve the newer one.
-        file.data_base = file.data_base * 1.5
+        file.calibrate_data(np.full(len(file.energy), 1 / 1.5))
         file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
         assert len(project._fit_history) == 2
 
@@ -3359,7 +3356,6 @@ class TestHistoryAccumulationAndSnapshot:
             energy=np.linspace(82, 92, 30),
             time=np.linspace(-2, 10, 24),
         )
-        truth.dim = 2
         truth.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
         data = simulate_noisy(truth.model_active, noise_level=0.01)
 

@@ -405,6 +405,8 @@ def jacobian_fun(
 
     Parameters
     ----------
+    par, x, data, fit_fun_str, unpack, e_lim, t_lim, res_type, args
+        As for :func:`residual_fun`, which lmfit calls with the same arguments.
     noise : NoiseModel or SegmentedNoise, optional
         Declared noise of the fitted view, forwarded by lmfit from
         ``fcn_kws`` exactly as to :func:`residual_fun`. A weighted model
@@ -496,6 +498,8 @@ def jacobian_fun_project(
 
     Parameters
     ----------
+    par, x, data, fit_fun_str, unpack, e_lim, t_lim, res_type, args
+        As for :func:`residual_fun`, which lmfit calls with the same arguments.
     noise : NoiseModel or SegmentedNoise, optional
         Declared noise of the concatenated view, forwarded by lmfit from
         ``fcn_kws``. A weighted model multiplies every row by ``-dr/dm``;

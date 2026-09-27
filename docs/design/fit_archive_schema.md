@@ -312,7 +312,7 @@ no two inputs can collide by concatenation.
 | `input_files` | `encode_input_files` | scope (`"file"` \| `"project"`) + per-file `(name, version_stamp, selection_json)`, sorted by name |
 | `model_structure` | `encode_model_structure` | per file: energy-model composition and dynamics attachments incl. `frequency`, in model order |
 | optimizer settings | `encode_optimizer_settings` | stage count, per-stage methods (`fit_alg_2` only when `stages == 2`), effective backend, `seed` when supplied, Jacobian qualname when a `leastsq` stage is in force |
-| `optimization_hash` | `compute_optimization_hash` | `input_files` + `fit_type` + `model_structure` + parameter metadata `(name, min, max, vary, expr)` in model order + initial state (quantized values) + optimizer settings |
+| `optimization_hash` | `compute_optimization_hash` | `input_files` + `fit_type` + `model_structure` + parameter metadata `(name, min, max, vary, expr)` in model order (a fixed parameter's bounds are dropped, see the principles) + initial state (quantized values) + optimizer settings |
 | `handle` | `compute_slot_handle` | `optimization_hash` + `file_name` |
 
 The full 64-hex `handle` is authoritative on disk; display abbreviates to

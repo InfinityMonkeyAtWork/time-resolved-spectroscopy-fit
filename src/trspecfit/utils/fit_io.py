@@ -1015,7 +1015,12 @@ def compute_optimization_hash(
 
     ``parameter_metadata`` rows are ``(name, min, max, vary, expr)`` in
     **model order** — order is identity, never sorted. Bounds encode
-    exact; ``expr`` is ``None`` for non-expression parameters. For a
+    exact; ``expr`` is ``None`` for non-expression parameters. The bounds
+    of a fixed (``vary=False``, no ``expr``) parameter are dropped: lmfit
+    clips a value into its bounds when it is set, so everything the bounds
+    could do is already in the value, and two fits whose fixed parameter
+    holds the same value are the same numbers whatever its bounds (see
+    Principle 3 in ``docs/design/fit_archive_principles.md``). For a
     joint fit the rows are the **combined** table, where project sharing
     is visible in the names. ``initial_state`` is the ``(n_slices,
     n_par)`` optimizer-entry value matrix (one row except SbS), the only
@@ -1029,7 +1034,9 @@ def compute_optimization_hash(
             f"parameter_metadata has {len(parameter_metadata)} rows"
         )
     metadata_rows = [
-        [str(name), _exact_float_text(lo), _exact_float_text(hi), bool(vary), expr]
+        [str(name), None, None, False, None]
+        if not vary and expr is None
+        else [str(name), _exact_float_text(lo), _exact_float_text(hi), bool(vary), expr]
         for name, lo, hi, vary, expr in parameter_metadata
     ]
     matrix_rows = [[_quantized_float_text(v) for v in row] for row in matrix]

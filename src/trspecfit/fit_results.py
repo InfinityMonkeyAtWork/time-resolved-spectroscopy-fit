@@ -24,7 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import pathlib
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, Literal, cast
 
 import numpy as np
@@ -153,6 +153,28 @@ def _has_any_noise_model(slots: Sequence[SavedFitSlot]) -> bool:
     """True if at least one slot was fit under a declared noise model."""
 
     return any(s.noise_type != NOISE_TYPE_UNKNOWN for s in slots)
+
+
+#
+#
+class _NotAnInput:
+    """Marker for a record field a run carries but does not use as an input
+    (a fixed parameter's bounds). Comparisons skip it; tables show NA."""
+
+    def __repr__(self) -> str:
+        return "<not an input>"
+
+
+_NOT_AN_INPUT = _NotAnInput()
+
+
+#
+def _fixed_parameter_row(row: Mapping[str, Any]) -> bool:
+    """A parameter table row the optimizer cannot move: ``vary=False`` and
+    no expression. Its bounds are not an input (identity drops them too)."""
+
+    expr = row.get("expr")
+    return not bool(row.get("vary", True)) and not (isinstance(expr, str) and expr)
 
 
 #
@@ -404,13 +426,16 @@ class FitResults:
             )
 
         if slot.fit_type == "spectrum":
+            time_point = slot.selection.get("time_point")
+            time_range = slot.selection.get("time_range")
+            time_type = slot.selection.get("time_type", "abs")
+            if time_point is None and time_range is None:
+                # a 1D file is its own spectrum; nothing to select
+                return data if data.ndim == 1 else None
             time = getattr(provider, "time", None)
             if time is None:
                 return None
             time = np.asarray(time)
-            time_point = slot.selection.get("time_point")
-            time_range = slot.selection.get("time_range")
-            time_type = slot.selection.get("time_type", "abs")
             try:
                 if time_point is not None:
                     ind = resolve_time_selection(
@@ -943,9 +968,14 @@ class FitResults:
                 if c in meta.columns
             ]
             for row in meta.to_dict("records"):
+                fixed = _fixed_parameter_row(row)
                 for field in fields:
                     key = "init" if field == "init_value" else field
-                    rec[f"{row['name']}.{key}"] = norm(row[field])
+                    rec[f"{row['name']}.{key}"] = (
+                        _NOT_AN_INPUT
+                        if fixed and field in ("min", "max")
+                        else norm(row[field])
+                    )
         return rec
 
     #
@@ -1018,10 +1048,18 @@ class FitResults:
                 if k not in keys:
                     keys.append(k)
         # Constant-column suppression: repr-compare so unhashable or
-        # NaN-bearing cells (NaN != NaN) still count as equal.
-        differing = [
-            k for k in keys if len({repr(rec.get(k, pd.NA)) for rec in records}) > 1
-        ]
+        # NaN-bearing cells (NaN != NaN) still count as equal. A key a run
+        # lacks compares as NA (an unset seed differs from seed=42); only
+        # cells marked not-an-input (a fixed parameter's bounds) are skipped.
+        differing: list[str] = []
+        for k in keys:
+            cells = {
+                repr(rec.get(k, pd.NA))
+                for rec in records
+                if rec.get(k) is not _NOT_AN_INPUT
+            }
+            if len(cells) > 1:
+                differing.append(k)
 
         rows: list[dict[str, Any]] = []
         labels = [self._display_label(s) for s in matched]
@@ -1032,7 +1070,8 @@ class FitResults:
                 row["label"] = lbl
             row["timestamp"] = slot.timestamp
             for k in differing:
-                row[k] = rec.get(k, pd.NA)
+                value = rec.get(k, pd.NA)
+                row[k] = pd.NA if value is _NOT_AN_INPUT else value
             rows.append(row)
         identity = ["handle", *(["label"] if with_label else []), "timestamp"]
         return pd.DataFrame(rows, columns=[*identity, *differing])
@@ -1220,9 +1259,14 @@ class FitResults:
                 if c in jr.params.columns
             ]
             for row in jr.params.to_dict("records"):
+                fixed = _fixed_parameter_row(row)
                 for field in fields:
                     key = "init" if field == "init_value" else field
-                    rec[f"{row['name']}.{key}"] = row[field]
+                    rec[f"{row['name']}.{key}"] = (
+                        _NOT_AN_INPUT
+                        if fixed and field in ("min", "max")
+                        else row[field]
+                    )
             return rec
 
         rows.extend(self._diff_record_rows("input", joint_inputs(ja), joint_inputs(jb)))
@@ -1251,15 +1295,20 @@ class FitResults:
     def _diff_record_rows(
         section: str, ra: dict[str, Any], rb: dict[str, Any]
     ) -> list[tuple[str, str, Any, Any]]:
-        """Rows for keys whose values differ (repr-compared; NaN==NaN)."""
+        """Rows for keys whose values differ (repr-compared; NaN==NaN). A key
+        one side lacks compares as NA; a key either side marks not-an-input
+        (a fixed parameter's bounds) is skipped."""
 
         keys = list(ra)
         keys.extend(k for k in rb if k not in ra)
-        return [
-            (section, k, ra.get(k, pd.NA), rb.get(k, pd.NA))
-            for k in keys
-            if repr(ra.get(k, pd.NA)) != repr(rb.get(k, pd.NA))
-        ]
+        rows: list[tuple[str, str, Any, Any]] = []
+        for k in keys:
+            va, vb = ra.get(k, pd.NA), rb.get(k, pd.NA)
+            if va is _NOT_AN_INPUT or vb is _NOT_AN_INPUT:
+                continue
+            if repr(va) != repr(vb):
+                rows.append((section, k, va, vb))
+        return rows
 
     #
     def _diff_value_rows(

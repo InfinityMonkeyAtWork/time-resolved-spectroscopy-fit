@@ -2111,7 +2111,16 @@ class File:
                 f'(e.g. name="{file_name}_2").'
             )
         self._name = file_name
-        self.p.files.append(self)  # register with parent project
+        if data is not None and data.ndim not in (1, 2):
+            raise ValueError(
+                "data must be 1D (energy) or 2D (time x energy); "
+                f"got {data.ndim}D data of shape {data.shape}."
+            )
+        if data is not None and data.ndim == 1 and time is not None:
+            raise ValueError(
+                "1D data is a single spectrum and takes no time axis; "
+                "pass 2D data (time x energy) with time=, or drop time=."
+            )
         self.data = data  # (time-[optional] and) energy-dependent data to fit
         self.data_raw: np.ndarray | None = data.copy() if data is not None else None
         self.dim = 0 if data is None else data.ndim  # 1/2 D for energy/+time
@@ -2126,6 +2135,39 @@ class File:
             self.time = time
         else:
             self.time = np.arange(data.shape[0])
+        # an axis is a non-empty 1D array
+        for axis_name, axis in (
+            ("energy", self.energy),
+            ("time", self.time),
+            ("aux_axis", aux_axis),
+        ):
+            if axis is not None and (axis.ndim != 1 or axis.shape[0] == 0):
+                raise ValueError(
+                    f"{axis_name} axis must be a non-empty 1D array; "
+                    f"got shape {axis.shape}."
+                )
+        # the axes must span the data they come with
+        if data is not None:
+            assert self.energy is not None  # type guard — resolved above
+            n_e, n_t = self.energy.shape[0], None
+            if data.ndim == 2:
+                assert self.time is not None  # type guard — resolved above
+                n_t = self.time.shape[0]
+                if (n_e, n_t) == data.shape and n_t != n_e:
+                    raise ValueError(
+                        f"data shape {data.shape} is energy x time; trspecfit "
+                        "expects time x energy. Pass data.T."
+                    )
+            if n_e != data.shape[-1]:
+                raise ValueError(
+                    f"energy axis has {n_e} points but data has "
+                    f"{data.shape[-1]} energy points (data shape {data.shape})."
+                )
+            if n_t is not None and n_t != data.shape[0]:
+                raise ValueError(
+                    f"time axis has {n_t} points but data has "
+                    f"{data.shape[0]} time points (data shape {data.shape})."
+                )
         self.aux_axis: np.ndarray | None = (
             aux_axis  # auxiliary physical axis (e.g. depth)
         )
@@ -2172,6 +2214,9 @@ class File:
         # default fit limits to entire dataset (energy is None only for bare File())
         if self.energy is not None:
             self.set_fit_limits(energy_limits=None, show_plot=False)
+        # register with the parent project last: a File the constructor
+        # rejects never appears on it
+        self.p.files.append(self)
 
     #
     @property
@@ -2915,10 +2960,20 @@ class File:
         show_plot : bool, default=True
             If True, plot the resulting baseline spectrum. Suppressed
             when ``Project.show_output < 1``.
+
+        Raises
+        ------
+        ValueError
+            If the file is 1D (a single spectrum has no baseline window;
+            use :meth:`fit_spectrum`), no data is loaded, the time axis is
+            missing, or *time_type* is invalid.
         """
 
         if self.dim == 1:
-            raise ValueError("Cannot define baseline for 1D data.")
+            raise ValueError(
+                "Cannot define baseline for 1D data: a 1D file is a single "
+                "spectrum with no time window. Use fit_spectrum() to fit it."
+            )
         if self.data is None:
             raise ValueError("No data loaded; cannot define baseline.")
         if self.time is None:
@@ -3287,10 +3342,22 @@ class File:
 
         **lmfit_wrapper_kwargs
             Additional keyword arguments passed to fitlib.fit_wrapper
+
+        Raises
+        ------
+        ValueError
+            If the file is 1D (use :meth:`fit_spectrum`), the model has time
+            dependence, or no baseline is defined (run :meth:`define_baseline`
+            first).
         """
 
         t_base = time.time()  # start timing for baseline fit
 
+        if self.dim == 1:
+            raise ValueError(
+                "A 1D file is a single spectrum and has no baseline window; "
+                "use fit_spectrum() to fit it."
+            )
         self.model_base = self._resolve_model(model_name)
         if self.model_base.dim == 2:
             raise ValueError(
@@ -3436,10 +3503,12 @@ class File:
         **lmfit_wrapper_kwargs,
     ) -> None:
         """
-        Fit a 1D model to an individual spectrum at a selected time point or range.
+        Fit a 1D model to an individual spectrum.
 
-        Extracts a single spectrum from 2D data at the given time point or by
+        For 2D data, extracts a single spectrum at the given time point or by
         averaging over a time range, then fits it with the specified model.
+        A 1D file is a single spectrum already: it is fitted as is, and
+        *time_point* / *time_range* must be left out.
 
         Parameters
         ----------
@@ -3472,28 +3541,35 @@ class File:
         Raises
         ------
         ValueError
-            If the data is not 2D, or neither *time_point* nor *time_range*
-            is provided, or *time_type* is invalid.
+            If no data is loaded; if 2D data comes with neither or both of
+            *time_point* and *time_range*; if 1D data comes with either; or
+            if *time_type* is invalid.
         """
 
         t_spec = time.time()  # start timing for spectrum fit
 
-        if self.dim != 2:
+        if self.data is None or self.energy is None:
             raise ValueError(
-                "fit_spectrum() requires 2D data. "
-                "For 1D data use fit_baseline() instead."
+                "Data or energy axis is missing; cannot fit individual spectrum."
             )
-        if self.data is None or self.energy is None or self.time is None:
-            raise ValueError(
-                "Data, energy axis, or time axis is missing; "
-                "cannot fit individual spectrum."
-            )
-        if time_point is None and time_range is None:
-            raise ValueError(
-                "Provide either time_point or time_range to select a spectrum."
-            )
-        if time_point is not None and time_range is not None:
-            raise ValueError("time_point and time_range are mutually exclusive.")
+        if self.dim == 1:
+            if time_point is not None or time_range is not None:
+                raise ValueError(
+                    "A 1D file is a single spectrum and has no time axis to "
+                    "select from; call fit_spectrum() without time_point / "
+                    "time_range."
+                )
+        else:
+            if self.time is None:
+                raise ValueError(
+                    "Time axis is missing; cannot select a spectrum from 2D data."
+                )
+            if time_point is None and time_range is None:
+                raise ValueError(
+                    "Provide either time_point or time_range to select a spectrum."
+                )
+            if time_point is not None and time_range is not None:
+                raise ValueError("time_point and time_range are mutually exclusive.")
 
         self.model_spec = self._resolve_model(model_name)
         if self.model_spec.dim == 2:
@@ -3503,8 +3579,13 @@ class File:
                 "or use fit_slice_by_slice() / fit_2d() instead."
             )
 
-        # extract 1D spectrum at selected time point / range
-        if time_point is not None:
+        # extract 1D spectrum at selected time point / range (1D data: as is)
+        if self.dim == 1:
+            self.spec_t_ind = []
+            self.spec_t_abs = []
+            self.data_spec = self.data
+        elif time_point is not None:
+            assert self.time is not None  # type guard — checked above
             self.spec_t_ind = self._resolve_time_selection(
                 time_point, time_point, time_type=time_type
             )
@@ -3515,6 +3596,7 @@ class File:
             self.data_spec = self.data[self.spec_t_ind[0], :]
         else:
             assert time_range is not None  # type guard
+            assert self.time is not None  # type guard — checked above
             self.spec_t_ind = self._resolve_time_selection(
                 time_range[0], time_range[1], time_type=time_type
             )
@@ -3542,9 +3624,12 @@ class File:
         _args = self._build_1d_dispatch_args(self.model_spec, _fun_str)
         self.model_spec.args = _args
         # noise of the extracted spectrum: one slice, or the mean over the
-        # selected time range, on the e_lim window
+        # selected time range, on the e_lim window; a 1D file is its own view
         (_e_slice,) = fitlib._fit_window_slices(1, self.e_lim, [])
-        _rows, _n_avg = self._mean_rows_view(self.spec_t_ind)
+        if self.spec_t_ind:
+            _rows, _n_avg = self._mean_rows_view(self.spec_t_ind)
+        else:
+            _rows, _n_avg = None, None
         noise_view = self._noise_view(rows=_rows, average=_n_avg, e_window=_e_slice)
         # fit
         fit_out = fitlib.fit_wrapper(

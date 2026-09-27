@@ -37,6 +37,11 @@ file.plot_fit(fit_type='2d')                         # observed/fit/residual
 file.save_fit(...)                                   # HDF5 fit archive
 ```
 
+A 1D file (a single spectrum: `File(..., data=spectrum, energy=energy_axis)`,
+no time axis) skips the baseline step: load a model and call
+`file.fit_spectrum('base')`. `define_baseline` and `fit_baseline` are for 2D
+data and raise on a 1D file.
+
 Before fitting, `file.set_noise('poisson', scale=...)` (counting data) or
 `file.set_sigma(sigma)` (known Gaussian σ) declares the noise model. A
 declared model weights the residual and calibrates `stderr`, confidence
@@ -47,9 +52,10 @@ All `get_*` / `plot_*` result accessors read the persisted fit record
 (latest matching fit), so they work identically on a live session and on
 archives loaded via `FitResults.load(path)`.
 
-Every fit is kept as a distinct variant (a changed bound, `vary` flag,
-seed, or data correction makes a new one; exact re-runs stay in the
-session history and deduplicate to the latest when saving).
+Every fit is kept as a distinct variant (a changed bound on a parameter
+that is not fixed, a `vary` flag, seed, or data correction makes a new
+one; exact re-runs stay in the session history and deduplicate to the
+latest when saving).
 `project.results` is the query layer: `compare_models()` compares
 fit-quality metrics across runs (each row carries a short `handle` id),
 `variants()` shows how one model's runs differ in their *inputs*,

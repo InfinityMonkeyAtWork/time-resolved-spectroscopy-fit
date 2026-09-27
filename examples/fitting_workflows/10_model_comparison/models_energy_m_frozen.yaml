@@ -1,0 +1,16 @@
+# Section 4 of the notebook: the same base_GLP as in models_energy.yaml with
+# the GLP mixing ratio frozen at its seed. A model changes by editing the
+# YAML and reloading, so a pinned variant is a second file that defines the
+# same model name; loaded under that name it is a distinct configuration of
+# base_GLP, not a new model.
+base_GLP:
+    LinBack:
+      m: [1E-2, True, -1, 1]
+      b: [0, True, -5, 5]
+      xStart: [0, False]
+      xStop: [20, False]
+    GLP:
+      A: [12, True, 5, 15]
+      x0: [8, True, 5, 15]
+      F: [1.5, True, 0.75, 2.5]
+      m: [0.3, False]

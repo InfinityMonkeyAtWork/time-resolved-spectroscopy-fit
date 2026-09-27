@@ -343,6 +343,44 @@ class TestOptimizationHash:
         ) == compute_optimization_hash(**make_optimization_kwargs())
 
     #
+    def test_fixed_parameter_bounds_are_not_identity(self):
+        """A vary=False parameter's bounds add nothing to its value."""
+
+        bounded = make_optimization_kwargs()  # GLP_01_x0 fixed within [-1, 1]
+        unbounded = make_optimization_kwargs(
+            parameter_metadata=[
+                ("GLP_01_A", 0.0, 10.0, True, None),
+                ("GLP_01_x0", float("-inf"), float("inf"), False, None),
+            ]
+        )
+        assert compute_optimization_hash(**bounded) == compute_optimization_hash(
+            **unbounded
+        )
+
+    #
+    def test_fixed_parameter_value_is_identity(self):
+        """Dropping the bounds does not drop the value the fit uses."""
+
+        moved = make_optimization_kwargs(initial_state=[[1.0, 0.6]])
+        assert compute_optimization_hash(
+            **make_optimization_kwargs()
+        ) != compute_optimization_hash(**moved)
+
+    #
+    def test_free_parameter_bounds_stay_identity(self):
+        """Bounds still count for a parameter the optimizer may move."""
+
+        tightened = make_optimization_kwargs(
+            parameter_metadata=[
+                ("GLP_01_A", 0.0, 5.0, True, None),
+                ("GLP_01_x0", -1.0, 1.0, False, None),
+            ]
+        )
+        assert compute_optimization_hash(
+            **make_optimization_kwargs()
+        ) != compute_optimization_hash(**tightened)
+
+    #
     def test_vary_flip_is_identity(self):
         flipped = make_optimization_kwargs(
             parameter_metadata=[

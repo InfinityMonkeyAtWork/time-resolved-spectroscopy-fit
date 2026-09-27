@@ -24,10 +24,7 @@ def _simulate_truth(project):
     energy = np.linspace(83, 87, 30)
     time = np.linspace(-2, 10, 24)
 
-    file = File(parent_project=project, name="truth")
-    file.energy = energy
-    file.time = time
-    file.dim = 2
+    file = File(parent_project=project, name="truth", energy=energy, time=time)
     file.load_model(
         model_yaml="models/file_energy.yaml",
         model_info="single_glp",

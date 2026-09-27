@@ -414,9 +414,11 @@ class TestMCPIntegration:
         from trspecfit import File
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 100)
-        file.time = np.linspace(0, 10, 50)
+        file = File(
+            parent_project=project,
+            energy=np.linspace(80, 90, 100),
+            time=np.linspace(0, 10, 50),
+        )
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="simple_energy",
@@ -454,9 +456,11 @@ class TestMCPIntegration:
         from trspecfit import File
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 100)
-        file.time = np.linspace(0, 10, 50)
+        file = File(
+            parent_project=project,
+            energy=np.linspace(80, 90, 100),
+            time=np.linspace(0, 10, 50),
+        )
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="single_glp",
@@ -649,9 +653,12 @@ class TestMCPProfile:
         from trspecfit import File
 
         project = make_project()
-        file = File(parent_project=project, aux_axis=aux_axis)
-        file.energy = np.linspace(80, 90, 100)
-        file.time = np.linspace(-10, 50, 60)
+        file = File(
+            parent_project=project,
+            energy=np.linspace(80, 90, 100),
+            time=np.linspace(-10, 50, 60),
+            aux_axis=aux_axis,
+        )
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="single_glp",
@@ -862,10 +869,10 @@ class TestMCPProfile:
         project = make_project()
         file = File(
             parent_project=project,
+            energy=np.linspace(80, 90, 100),
+            time=np.linspace(-10, 50, 60),
             aux_axis=np.linspace(0, 5, 20),
         )
-        file.energy = np.linspace(80, 90, 100)
-        file.time = np.linspace(-10, 50, 60)
         file.load_model(
             model_yaml="models/file_energy.yaml",
             model_info="two_glp_expr_amplitude",
@@ -887,10 +894,12 @@ class TestMCPProfile:
         from trspecfit import File
 
         project = make_project()
-        file = File(parent_project=project)
-        file.energy = np.linspace(80, 90, 100)
-        file.time = np.linspace(-10, 100, 50)
-        file.aux_axis = np.linspace(0, 5, 20)
+        file = File(
+            parent_project=project,
+            energy=np.linspace(80, 90, 100),
+            time=np.linspace(-10, 100, 50),
+            aux_axis=np.linspace(0, 5, 20),
+        )
 
         file.load_model(
             model_yaml="models/file_energy.yaml",
@@ -948,28 +957,24 @@ class TestMCPPickling:
     """
 
     #
-    def _make_fittable_file(self):
-        """File with a 1D energy model loaded and data populated."""
+    def _make_fittable_file(self, *, model_info="single_glp", noise_sd=0.0):
+        """1D File whose data is the model's own curve, plus optional noise."""
 
         from trspecfit import File
 
         project = make_project()
-        file = File(parent_project=project, energy=np.linspace(80, 90, 101))
-        file.load_model(
-            model_yaml="models/file_energy.yaml",
-            model_info="single_glp",
-        )
-        # synthesize clean 1D data from the model
-        assert file.model_active is not None  # type guard
-        file.model_active.create_value_1d()
-        assert file.model_active.value_1d is not None  # type guard
-        file.data_base = file.model_active.value_1d.copy()
-        # file.data / file.data_raw back the content hash used for slot
-        # capture — without them the fit completes but records no slot,
-        # and the slot-backed get_* accessors have nothing to read.
-        file.data = file.model_active.value_1d.copy()
-        file.data_raw = file.data.copy()
-        file.e_lim = [0, len(file.energy)]
+        energy = np.linspace(80, 90, 101)
+        # evaluate the model on a grid-only File, as the example generators do
+        grid = File(parent_project=project, name="grid", energy=energy)
+        grid.load_model(model_yaml="models/file_energy.yaml", model_info=model_info)
+        assert grid.model_active is not None  # type guard
+        grid.model_active.create_value_1d()
+        assert grid.model_active.value_1d is not None  # type guard
+        curve = grid.model_active.value_1d.copy()
+        if noise_sd:
+            curve = curve + np.random.default_rng(0).normal(0, noise_sd, curve.shape)
+        file = File(parent_project=project, name="fit", data=curve, energy=energy)
+        file.load_model(model_yaml="models/file_energy.yaml", model_info=model_info)
         return file
 
     #
@@ -1010,6 +1015,7 @@ class TestMCPPickling:
 
         file = self._make_fittable_file()
         model = file.model_active
+        model.create_value_1d()
         expected = model.value_1d.copy()
 
         restored = pickle.loads(pickle.dumps(model))
@@ -1058,11 +1064,11 @@ class TestMCPPickling:
         # 2 * n_params for emcee's red-blue move, hence 32 for a 4-param GLP.
         mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1, workers=2)
 
-        # fit_baseline raises TypeError before the pickle hooks were added;
+        # fit_spectrum raises TypeError before the pickle hooks were added;
         # after the hooks, it completes (even if MCMC itself converges poorly
         # on 20 steps, the point here is that it doesn't crash).
         try:
-            file.fit_baseline(
+            file.fit_spectrum(
                 model_name="single_glp", stages=1, try_ci=0, mc_settings=mc
             )
         except TypeError as e:
@@ -1096,7 +1102,7 @@ class TestMCPPickling:
         try:
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
-                file.fit_baseline(
+                file.fit_spectrum(
                     model_name="single_glp", stages=1, try_ci=0, mc_settings=mc
                 )
         finally:
@@ -1135,10 +1141,10 @@ class TestMCPPickling:
             sigma_min=0.01,
             sigma_max=5.0,
         )
-        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0, mc_settings=mc)
+        file.fit_spectrum(model_name="single_glp", stages=1, try_ci=0, mc_settings=mc)
 
-        assert file.model_base.result is not None  # type guard
-        emcee_fin = file.model_base.result.emcee_fin
+        assert file.model_spec.result is not None  # type guard
+        emcee_fin = file.model_spec.result.emcee_fin
         assert emcee_fin is not None  # type guard
         lnsigma = emcee_fin.params["__lnsigma"]
         np.testing.assert_allclose(lnsigma.min, np.log(0.01))
@@ -1158,31 +1164,29 @@ class TestMCPPickling:
 
         file = self._make_fittable_file()
         mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1)
-        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0, mc_settings=mc)
+        file.fit_spectrum(model_name="single_glp", stages=1, try_ci=0, mc_settings=mc)
 
-        assert file.model_base.result is not None  # type guard
-        assert file.model_base.result.emcee_fin is not None  # type guard
+        assert file.model_spec.result is not None  # type guard
+        assert file.model_spec.result.emcee_fin is not None  # type guard
         # par_fin (leastsq): model parameters only, no __lnsigma
-        assert "__lnsigma" not in file.model_base.result.par_fin.params
+        assert "__lnsigma" not in file.model_spec.result.par_fin.params
         # emcee_fin (MCMC): __lnsigma belongs here
-        assert "__lnsigma" in file.model_base.result.emcee_fin.params
+        assert "__lnsigma" in file.model_spec.result.emcee_fin.params
 
     #
     def test_get_correlations_matrix(self):
         """get_correlations returns a square varying-param matrix, unit diag."""
 
-        file = self._make_fittable_file()
         # light noise so the covariance (hence correlations) is well-conditioned
-        rng = np.random.default_rng(0)
-        file.data_base = file.data_base + rng.normal(0, 0.3, file.data_base.shape)
-        file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+        file = self._make_fittable_file(noise_sd=0.3)
+        file.fit_spectrum(model_name="single_glp", stages=2, try_ci=0)
 
-        corr = file.get_correlations(fit_type="baseline")
-        assert file.model_base.result is not None  # type guard
+        corr = file.get_correlations(fit_type="spectrum")
+        assert file.model_spec.result is not None  # type guard
         varying = [
             p
-            for p in file.model_base.parameter_names
-            if file.model_base.result.par_fin.params[p].vary
+            for p in file.model_spec.parameter_names
+            if file.model_spec.result.par_fin.params[p].vary
         ]
         assert list(corr.index) == varying
         assert list(corr.columns) == varying
@@ -1196,27 +1200,25 @@ class TestMCPPickling:
     def test_get_confidence_intervals_populated_and_empty(self):
         """get_confidence_intervals gives the CI table with try_ci=1, else empty."""
 
-        file = self._make_fittable_file()
         # light noise so the profiled CI is well-defined
-        rng = np.random.default_rng(0)
-        file.data_base = file.data_base + rng.normal(0, 0.3, file.data_base.shape)
+        file = self._make_fittable_file(noise_sd=0.3)
 
-        file.fit_baseline(model_name="single_glp", stages=2, try_ci=1)
-        ci = file.get_confidence_intervals(fit_type="baseline")
+        file.fit_spectrum(model_name="single_glp", stages=2, try_ci=1)
+        ci = file.get_confidence_intervals(fit_type="spectrum")
         assert isinstance(ci, pd.DataFrame)
         assert not ci.empty
 
-        file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
-        assert file.get_confidence_intervals(fit_type="baseline").empty
+        file.fit_spectrum(model_name="single_glp", stages=2, try_ci=0)
+        assert file.get_confidence_intervals(fit_type="spectrum").empty
 
     #
     def test_get_mcmc_raises_without_mcmc(self):
         """get_mcmc on a fit that ran no MCMC raises a clear error."""
 
         file = self._make_fittable_file()
-        file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+        file.fit_spectrum(model_name="single_glp", stages=2, try_ci=0)
         with pytest.raises(ValueError, match="No MCMC results"):
-            file.get_mcmc(fit_type="baseline")
+            file.get_mcmc(fit_type="spectrum")
 
     #
     def test_accessors_raise_before_fit(self):
@@ -1243,9 +1245,9 @@ class TestMCPPickling:
 
         file = self._make_fittable_file()
         mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1)
-        file.fit_baseline(model_name="single_glp", stages=1, try_ci=0, mc_settings=mc)
+        file.fit_spectrum(model_name="single_glp", stages=1, try_ci=0, mc_settings=mc)
 
-        res = file.get_mcmc(fit_type="baseline")
+        res = file.get_mcmc(fit_type="spectrum")
         assert isinstance(res, MCMCResult)
         assert isinstance(res.table, pd.DataFrame) and not res.table.empty
         assert "__lnsigma" in res.flatchain.columns
@@ -1256,29 +1258,16 @@ class TestMCPPickling:
         """The MCMC quantile table holds only sampled params — no fixed-row
         placeholders that would read as real posterior quantiles."""
 
-        from trspecfit import File
         from trspecfit.utils.lmfit import MC
 
-        project = make_project()
-        file = File(parent_project=project, energy=np.linspace(80, 90, 101))
-        file.load_model(
-            model_yaml="models/file_energy.yaml", model_info="glp_one_fixed"
-        )
-        assert file.model_active is not None  # type guard
-        file.model_active.create_value_1d()
-        assert file.model_active.value_1d is not None  # type guard
-        file.data_base = file.model_active.value_1d.copy()
-        # content hash for slot capture
-        file.data = file.model_active.value_1d.copy()
-        file.data_raw = file.data.copy()
-        file.e_lim = [0, len(file.energy)]
+        file = self._make_fittable_file(model_info="glp_one_fixed")
 
         mc = MC(use_mc=1, steps=20, nwalkers=32, burn=5, thin=1)
-        file.fit_baseline(
+        file.fit_spectrum(
             model_name="glp_one_fixed", stages=1, try_ci=0, mc_settings=mc
         )
 
-        table = file.get_mcmc(fit_type="baseline").table
+        table = file.get_mcmc(fit_type="spectrum").table
         names = set(table["par[v]/sigma[>]"])
         # fixed parameter has no posterior → no row
         assert "GLP_01_F" not in names
