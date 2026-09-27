@@ -1039,7 +1039,7 @@ YAML-typed seed like `1.5`.
 | Hashed input | Origin | Treatment |
 |---|---|---|
 | `data_raw`, `energy`, `time`, `aux_axis`, `dark`, `calibration` | user-supplied arrays | exact bytes |
-| bounds (`min` / `max`), `frequency`, `time_point` / `time_range` | user-supplied scalars | exact |
+| bounds (`min` / `max`) of parameters that are not fixed (a fixed parameter's are dropped: *A fixed parameter's bounds are not an input*), `frequency`, `time_point` / `time_range` | user-supplied scalars | exact |
 | `e_lim` / `t_lim` / `base_t_ind`, `stages`, `seed` | integers | exact |
 | algorithm names, `model_structure` names, `jac_fun` qualname | strings | exact |
 | **initial-state matrix** | may be computed | **quantized** |
