@@ -4,6 +4,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/trspecfit.svg)](https://pypi.org/project/trspecfit/)
 [![CI](https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/actions/workflows/ci.yaml/badge.svg)](https://github.com/InfinityMonkeyAtWork/time-resolved-spectroscopy-fit/actions/workflows/ci.yaml)
 [![Python versions](https://img.shields.io/pypi/pyversions/trspecfit.svg)](https://pypi.org/project/trspecfit/)
+[![DOI](https://img.shields.io/badge/DOI-10.11578%2Fdc.20251009.2-blue)](https://doi.org/10.11578/dc.20251009.2)
 
 `trspecfit` is a Python package for modeling and fitting 1D energy-resolved and 2D time-and-energy-resolved spectroscopy data. It extends lmfit with composable spectral components, parameter-level time dynamics, convolution kernels, and simulation tools so you can build, fit, and validate physically meaningful models in one workflow.
 
