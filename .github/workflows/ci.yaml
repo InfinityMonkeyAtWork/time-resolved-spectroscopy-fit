@@ -9,6 +9,9 @@ permissions: {}
 jobs:
   checks:
     runs-on: ubuntu-latest
+    # A job runs in 5–8 min; the cap fails a hung run (worker pool, MCMC)
+    # instead of holding the runner for GitHub's 6-hour default.
+    timeout-minutes: 30
     permissions:
       contents: read
     strategy:
@@ -67,6 +70,7 @@ jobs:
   # on 3.13/3.14 — that axis is covered by the `checks` matrix at latest deps).
   min-versions:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
