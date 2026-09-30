@@ -395,10 +395,11 @@ class SavedFitSlot:
     fit_settings : dict | None
         Optimizer-configuration provenance: ``{"stages", "fit_alg_1",
         "fit_alg_2", "try_ci"}``, plus ``{"seed_source", "seed_adapt",
-        "seed_values"}`` for SbS and an ``"mc"`` sub-dict (steps, walkers,
-        burn, thin, ntemps, is_weighted, sigma bounds) when MCMC was
-        enabled. Deliberately excludes execution details that cannot
-        change the result (worker counts). The result-shaping core
+        "seed_values"}`` for SbS, ``"seed_source"`` for 2D and joint fits
+        (0.19.0+), and an ``"mc"`` sub-dict (steps, walkers, burn, thin,
+        ntemps, is_weighted, sigma bounds) when MCMC was enabled.
+        Deliberately excludes execution details that cannot change the
+        result (worker counts). The result-shaping core
         (stages, per-stage methods, backend, seed, Jacobian) also enters
         ``optimization_hash`` via ``encode_optimizer_settings``; the
         post-fit analysis knobs (``try_ci``, ``mc``) do not — rerunning
@@ -654,9 +655,9 @@ class JointFitResult:
     params : pd.DataFrame
         Authoritative combined parameter table (``par_to_df`` ``"min"``
         columns) in optimizer order. ``init_value`` is the effective
-        optimizer-entry value — after baseline-result injection,
-        project-sharing resolution, and expression evaluation — not the
-        value authored in YAML.
+        optimizer-entry value — after the seeding chosen by
+        ``seed_source``, project-sharing resolution, and expression
+        evaluation — not the value authored in YAML.
     metrics : Mapping[str, float]
         Whole-objective metrics; see ``_joint_result_from_project_fit``.
     fit_alg : str
@@ -1153,8 +1154,8 @@ def params_identity(
     Rows are ``(name, min, max, vary, expr)`` in model order (lmfit
     preserves insertion order); values are the optimizer-entry values —
     ``FitOutput.par_ini`` is the pre-fit deepcopy, so ``.value`` is the
-    effective entry value after baseline injection, sharing resolution,
-    and expression evaluation. Feeds ``compute_optimization_hash``.
+    effective entry value after ``seed_source`` seeding, sharing
+    resolution, and expression evaluation. Feeds ``compute_optimization_hash``.
     """
 
     rows: list[tuple[str, float, float, bool, str | None]] = []
@@ -1286,12 +1287,13 @@ def build_fit_settings(
     iff MCMC ran; the sampler seed lives in that block, not in the top-level
     ``seed``), plus any
     fit-type-specific extras the caller passes verbatim (e.g. SbS
-    ``seed_source`` / ``seed_adapt`` / ``seed_values`` — ``None`` values
-    are kept: "no seed adaptation" is provenance too). Execution details
-    that cannot change the result (SbS / emcee worker counts) are
-    deliberately excluded — serial and parallel dispatch are pinned
-    result-identical by test. ``optimizer_settings_from_provenance``
-    derives the identity-keyed subset from this dict.
+    ``seed_source`` / ``seed_adapt`` / ``seed_values``, 2D and joint
+    ``seed_source`` — ``None`` values are kept: "no seed adaptation" is
+    provenance too). Execution details that cannot change the result
+    (SbS / emcee worker counts) are deliberately excluded — serial and
+    parallel dispatch are pinned result-identical by test.
+    ``optimizer_settings_from_provenance`` derives the identity-keyed subset
+    from this dict.
 
     Defaults mirror ``fitlib.fit_wrapper``'s signature; if you change one,
     change the other.

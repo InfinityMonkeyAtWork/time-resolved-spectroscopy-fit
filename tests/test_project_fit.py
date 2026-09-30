@@ -99,6 +99,31 @@ def _make_fit_file(project, data, energy, time_ax, *, name="test"):
 
 
 #
+def _make_fit_file_without_baseline(project, data, energy, time_ax, *, name="test"):
+    """Create a fresh file with only the 2D model loaded: no baseline is
+    defined or fitted (the seed_source='model' path)."""
+
+    file = File(
+        parent_project=project,
+        name=name,
+        data=data,
+        energy=energy.copy(),
+        time=time_ax.copy(),
+    )
+    file.load_model(
+        model_yaml="models/project_energy.yaml",
+        model_info="project_glp",
+    )
+    file.add_time_dependence(
+        target_model="project_glp",
+        target_parameter="GLP_01_x0",
+        dynamics_yaml="models/project_time.yaml",
+        dynamics_model=["MonoExpProject"],
+    )
+    return file
+
+
+#
 #
 class TestProjectFitClean:
     """Project-level fit on noiseless data — non-trivial roundtrips."""
@@ -348,6 +373,61 @@ class TestVaryLevelParsing:
         # "static" should map to vary=False
         assert model.lmfit_pars["GLP_01_F"].vary is False
         assert model.lmfit_pars["GLP_01_m"].vary is False
+
+
+#
+#
+class TestProjectFitSeedSource:
+    """Project.fit_2d seeds every file by name from its baseline
+    (seed_source='baseline') or keeps each model's own state ('model')."""
+
+    #
+    def test_model_seed_runs_without_baselines(self):
+        """Two files, no baselines: seed_source='model' fits, every
+        optimizer parameter starts from its file model's loaded value, and
+        the joint record and its projections record the source."""
+
+        project = make_project(name="project_fit")
+        truth = _make_truth_file()
+        clean = simulate_clean(truth.model_active)
+        loaded = {}
+        for i in range(2):
+            f = _make_fit_file_without_baseline(
+                project, clean, truth.energy, truth.time, name=f"file_{i}"
+            )
+            model = f.select_model("project_glp")
+            loaded[f.name] = {
+                name: model.lmfit_pars[name].value for name in model.parameter_names
+            }
+
+        record = project.fit_2d(
+            model_name="project_glp", stages=1, try_ci=0, seed_source="model"
+        )
+
+        init = dict(
+            zip(record.params["name"], record.params["init_value"], strict=True)
+        )
+        for projection in record.projections:
+            file_loaded = loaded[projection.slot.file_name]
+            for opt_name, par_name in projection.parameter_map.items():
+                assert init[opt_name] == pytest.approx(file_loaded[par_name]), opt_name
+            assert projection.slot.fit_settings["seed_source"] == "model"
+        assert record.fit_settings["seed_source"] == "model"
+
+    #
+    def test_baseline_seed_requires_fitted_baselines(self):
+        """The default seed_source='baseline' names the file whose
+        baseline is not fitted."""
+
+        project = make_project(name="project_fit")
+        truth = _make_truth_file()
+        clean = simulate_clean(truth.model_active)
+        _make_fit_file_without_baseline(
+            project, clean, truth.energy, truth.time, name="file_0"
+        )
+
+        with pytest.raises(ValueError, match='File "file_0": Baseline seed requested'):
+            project.fit_2d(model_name="project_glp", stages=1, try_ci=0)
 
 
 #

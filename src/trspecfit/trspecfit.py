@@ -61,7 +61,7 @@ import re
 import time
 import warnings
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args, overload
 
 # TYPE_CHECKING is False at runtime so this import is skipped during execution.
 # Exists only for type checkers (mypy/pyright) to resolve types.ModuleType annotations.
@@ -98,6 +98,9 @@ from trspecfit.utils import parsing as uparsing
 from trspecfit.utils import plot as uplt
 from trspecfit.utils import sbs as usbs
 from trspecfit.utils import spawn as uspawn
+
+# starting parameter state of a 2D fit; see File.fit_2d
+_SeedSource = Literal["baseline", "model"]
 
 PathLike = str | pathlib.Path
 ModelRef = str | int | list[str]
@@ -1692,6 +1695,7 @@ class Project:
         *,
         model_name: str,
         stages: int = 2,
+        seed_source: _SeedSource = "baseline",
         **fit_wrapper_kwargs,
     ) -> fit_io.JointFitResult:
         """
@@ -1713,6 +1717,21 @@ class Project:
             Model name (must exist on every File in the project).
         stages : {1, 2}, default=2
             Number of optimization stages (see ``fitlib.fit_wrapper``).
+        seed_source : {'baseline', 'model'}, default='baseline'
+            Starting parameter state of every file's model, one value for
+            the whole project fit (see ``File.fit_2d``).
+
+            - ``'baseline'``: in each file, every parameter that shares its
+              name with a parameter of that file's fitted baseline starts
+              from the baseline value, fixed or varying; the other
+              parameters keep the model's current state. Every file needs
+              a completed ``fit_baseline()`` (or ``fit_baselines()``), and
+              every baseline parameter must exist by name in the model.
+              Parameters are matched by name, so each baseline and the 2D
+              model must describe the same features under the same
+              component names.
+            - ``'model'``: each file's model starts from its current
+              parameter state; no baseline fit is needed.
         **fit_wrapper_kwargs
             Additional keyword arguments passed to ``fitlib.fit_wrapper``.
 
@@ -1730,26 +1749,22 @@ class Project:
         if not self.files:
             raise ValueError("Project has no files to fit.")
 
-        # Validate: each file must have baseline fitted and 2D model ready
+        if seed_source not in get_args(_SeedSource):
+            raise ValueError(
+                f"seed_source must be 'baseline' or 'model', got {seed_source!r}."
+            )
+        # Validate: each file must have the 2D model and data ready, then
+        # seed its starting parameter state (same helper as File.fit_2d)
         for f in self.files:
-            if f.model_base is None:
-                raise ValueError(
-                    f'File "{f.name}": baseline not fitted. '
-                    f"Fit individual baselines with file.fit_baseline() "
-                    f"or all at once with project.fit_baselines()."
-                )
             model = f.select_model(model_name)
             if model is None:
                 raise ValueError(f'File "{f.path}" does not have model "{model_name}"')
             if f.energy is None or f.time is None or f.data is None:
                 raise ValueError(f'File "{f.path}": data or axes missing.')
-
-            # Set fixed params from baseline (same as File.fit_2d does)
-            base_df = ulmfit.par_to_df(f.model_base.lmfit_pars, col_type="min")
-            model.update_value(
-                new_par_values=list(base_df["value"]),
-                par_select=list(base_df["name"]),
-            )
+            try:
+                f._seed_parameters(model, seed_source=seed_source)
+            except ValueError as err:
+                raise ValueError(f'File "{f.name}": {err}') from err
 
         # Build combined parameters and project fit context
         combined_pars, project_fit_info = self._build_fit_params(
@@ -1900,6 +1915,7 @@ class Project:
             backend=fit_fun_str,
             fit_wrapper_kwargs=fit_wrapper_kwargs,
             mc_settings=result.mc_settings,
+            seed_source=seed_source,
         )
         # Joint identity: one optimization over N files. Each file's entry
         # carries its version stamp (correction state) and its 2d-window
@@ -3813,8 +3829,16 @@ class File:
             Shared parameter template used to seed every slice before any
             per-slice adaptation is applied.
 
-            - ``'model'``: use the current ``model_sbs.lmfit_pars`` values
-            - ``'baseline'``: use the stored ``fit_baseline()`` result values
+            - ``'model'``: use the current ``model_sbs.lmfit_pars`` values;
+              with ``seed_adapt=None`` the fit needs no baseline at all
+            - ``'baseline'``: every parameter that shares its name with a
+              parameter of the completed ``fit_baseline()`` result starts
+              from the fitted value; the other parameters keep the model's
+              current values. Requires a completed ``fit_baseline()`` (use
+              ``'model'`` or ``'explicit'`` otherwise), and every baseline
+              parameter must exist by name in this model. Parameters are
+              matched by name, so the baseline and SbS models must describe
+              the same features under the same component names.
             - ``'explicit'``: use ``seed_values`` after normalizing it to the
               model parameter order
 
@@ -3857,40 +3881,29 @@ class File:
             raise ValueError("seed_source must be 'model', 'baseline', or 'explicit'.")
         if seed_adapt not in (None, "argmax_shift"):
             raise ValueError("seed_adapt must be None or 'argmax_shift'.")
-        if seed_source == "baseline" and (
-            self.model_base is None or self.model_base.result is None
-        ):
-            raise ValueError(
-                "Baseline seed requested but baseline model is not fitted yet; "
-                "run fit_baseline() first or use seed_source='model'/'explicit'."
-            )
         if seed_source != "explicit" and seed_values is not None:
             raise ValueError("seed_values is only used when seed_source='explicit'.")
         if seed_source == "explicit" and seed_values is None:
             raise ValueError("seed_source='explicit' requires seed_values.")
+        if seed_source != "explicit":
+            # 'model' / 'baseline' seed the model the same way fit_2d does
+            self._seed_parameters(self.model_sbs, seed_source=seed_source)
         if seed_adapt == "argmax_shift" and self.data_base is None:
             raise ValueError(
                 "seed_adapt='argmax_shift' requires baseline data; "
                 "run define_baseline() first or use seed_adapt=None."
             )
 
-        if seed_source == "model":
-            seed_template = ulmfit.par_extract(
-                self.model_sbs.lmfit_pars, return_type="list"
-            )
-        elif seed_source == "baseline":
-            assert self.model_base is not None  # type guard
-            assert self.model_base.result is not None  # type guard
-            seed_template = ulmfit.par_extract(
-                self.model_base.result.par_fin, return_type="list"
-            )
-        else:
+        if seed_source == "explicit":
             seed_template = usbs.extract_sbs_seed_template(
                 seed_values,
                 self.model_sbs.parameter_names,
             )
-
-        self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
+            self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
+        else:
+            seed_template = ulmfit.par_extract(
+                self.model_sbs.lmfit_pars, return_type="list"
+            )
 
         # find all parameters with names ending in "x0"
         # so they can be updated for every slice
@@ -4968,7 +4981,61 @@ class File:
             model.dim = 2
 
     #
-    def fit_2d(self, model_name: str, stages: int = 1, **fit_wrapper_kwargs) -> None:
+    def _seed_parameters(
+        self,
+        model: mcp.Model,
+        *,
+        seed_source: _SeedSource,
+    ) -> None:
+        """
+        Set ``model``'s starting parameter state for a fit.
+
+        ``'model'`` keeps the model's current state. ``'baseline'`` sets
+        every parameter of ``model`` that shares its name with a parameter
+        of the completed baseline fit (``model_base.result.par_fin``) to the
+        fitted value, fixed or varying; the other parameters keep their
+        state. Parameters are matched by name, so the baseline and ``model``
+        must describe the same features under the same component names;
+        every baseline parameter must exist in ``model``.
+        """
+
+        if seed_source not in get_args(_SeedSource):
+            raise ValueError(
+                f"seed_source must be 'baseline' or 'model', got {seed_source!r}."
+            )
+        if seed_source == "model":
+            return
+        if self.model_base is None or self.model_base.result is None:
+            raise ValueError(
+                "Baseline seed requested but baseline model is not fitted yet; "
+                "run fit_baseline() first or use seed_source='model'."
+            )
+        base_params = self.model_base.result.par_fin.params
+        missing = [name for name in base_params if name not in model.lmfit_pars]
+        if missing:
+            raise ValueError(
+                f'Baseline seed requested but model "{model.name}" has no '
+                f"parameter(s) {missing} of baseline model "
+                f'"{self.model_base.name}". Baseline values are matched by '
+                "name, so the model must contain every baseline component "
+                "under the same name; use seed_source='model' to start from "
+                "the model's own values."
+            )
+        names = list(base_params)
+        model.update_value(
+            new_par_values=[base_params[name].value for name in names],
+            par_select=names,
+        )
+
+    #
+    def fit_2d(
+        self,
+        model_name: str,
+        stages: int = 1,
+        *,
+        seed_source: _SeedSource = "baseline",
+        **fit_wrapper_kwargs,
+    ) -> None:
         """
         Perform energy- and time-dependent 2D model fit.
 
@@ -4982,26 +5049,40 @@ class File:
             - 1: Single optimization with ``fit_alg_1``
             - 2: Two-stage fit (``fit_alg_1`` then ``fit_alg_2``)
 
+        seed_source : {'baseline', 'model'}, default='baseline'
+            Starting parameter state of the fit.
+
+            - ``'baseline'``: every parameter that shares its name with a
+              baseline parameter starts from the baseline's fitted value
+              (``model_base.result.par_fin``), fixed or varying; the other
+              parameters (dynamics, profiles, added components) keep the
+              model's current state. Requires a completed
+              ``fit_baseline()``, and every baseline parameter must exist by
+              name in this model. Parameters are matched by name, so the
+              baseline and 2D models must describe the same features under
+              the same component names.
+            - ``'model'``: the model's current parameter state as is (the
+              YAML values after a load, the last fit's values after a fit of
+              this model); no baseline fit is needed.
+
         **fit_wrapper_kwargs
             Additional keyword arguments passed to fitlib.fit_wrapper
             (see fitlib.fit_wrapper for details)
+
+        Raises
+        ------
+        ValueError
+            If data or axes are missing, ``seed_source`` is not supported,
+            or ``seed_source='baseline'`` and the baseline is not fitted or
+            has a parameter this model lacks.
         """
 
         t_2d = time.time()  # start timing for 2D fit
 
         self.model_2d = self._resolve_model(model_name)
-        if self.model_base is None:
-            raise ValueError(
-                "Baseline model is not fitted yet; run fit_baseline() first."
-            )
         if self.energy is None or self.time is None or self.data is None:
             raise ValueError("Data/axes missing; cannot run 2D fit.")
-
-        # set all fixed 2D fit parameters equal to baseline model results
-        base_df = ulmfit.par_to_df(self.model_base.lmfit_pars, col_type="min")
-        self.model_2d.update_value(
-            new_par_values=list(base_df["value"]), par_select=list(base_df["name"])
-        )
+        self._seed_parameters(self.model_2d, seed_source=seed_source)
         # --- dispatch: GIR fast path vs interpreter ---
         _fun_str = self.p.spec_fun_str
 
@@ -5095,6 +5176,7 @@ class File:
                     backend=_effective_backend(_fun_str, _args),
                     fit_wrapper_kwargs=fit_wrapper_kwargs,
                     mc_settings=fit_out.mc_settings,
+                    seed_source=seed_source,
                 ),
                 noise=noise_view,
             )

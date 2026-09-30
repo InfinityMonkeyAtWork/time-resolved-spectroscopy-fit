@@ -10,7 +10,7 @@ import unittest.mock
 import numpy as np
 import pandas as pd
 import pytest
-from _utils import make_project
+from _utils import make_project, simulate_noisy
 from lmfit.minimizer import MinimizerResult
 
 from trspecfit import File
@@ -1267,7 +1267,6 @@ class TestFitPreconditions:
         """fit_2d raises ValueError when data is missing."""
 
         file = self._make_file_with_model(with_data=False)
-        file.model_base = file.model_active
         with pytest.raises(ValueError, match="missing"):
             file.fit_2d("simple_energy")
 
@@ -1276,10 +1275,32 @@ class TestFitPreconditions:
         """fit_2d raises ValueError when time axis is missing."""
 
         file = self._make_file_with_model()
-        file.model_base = file.model_active
         file.time = None  # deliberate: the corrupted state under test
         with pytest.raises(ValueError, match="missing"):
             file.fit_2d("simple_energy")
+
+    #
+    def test_fit_2d_unsupported_seed_source_raises(self):
+        """fit_2d accepts only seed_source='baseline' or 'model'."""
+
+        file = self._make_file_with_model()
+        with pytest.raises(ValueError, match="seed_source must be 'baseline' or"):
+            file.fit_2d(
+                "simple_energy",
+                seed_source=typing.cast("typing.Any", "explicit"),
+            )
+
+    #
+    def test_fit_2d_baseline_seed_requires_completed_baseline_fit(self):
+        """A baseline model whose fit never completed cannot seed fit_2d."""
+
+        file = self._make_file_with_model()
+        # fit_baseline before define_baseline sets model_base, then raises
+        with pytest.raises(ValueError, match="data.*missing"):
+            file.fit_baseline("simple_energy")
+        assert file.model_base is not None
+        with pytest.raises(ValueError, match="Baseline seed requested"):
+            file.fit_2d("simple_energy", seed_source="baseline")
 
     # -- removed legacy savers --
 
@@ -1297,6 +1318,221 @@ class TestFitPreconditions:
             "_save_2d_fit_legacy",
         ):
             assert not hasattr(file, name)
+
+
+_SEED_YAML = "models/seed_order.yaml"
+_SEED_TRUTH = {
+    "GLP_01_A": 18.0,
+    "GLP_01_x0": 85.5,
+    "GLP_01_F": 1.2,
+    "GLP_01_m": 0.4,
+    "Gauss_01_A": 12.0,
+    "Gauss_01_x0": 80.3,
+    "Gauss_01_SD": 0.9,
+}
+
+
+#
+def _make_seed_order_file(project):
+    """File with noisy static data from seed_base at _SEED_TRUTH, seed_base
+    loaded and its baseline window defined (not fitted)."""
+
+    energy = np.linspace(75, 90, 120)
+    time = np.linspace(-2, 10, 8)
+    truth = File(parent_project=make_project(name="truth"), energy=energy, time=time)
+    truth.load_model(model_yaml=_SEED_YAML, model_info="seed_base")
+    assert truth.model_active is not None  # type guard
+    for name, value in _SEED_TRUTH.items():
+        truth.model_active.lmfit_pars[name].value = value
+    data = simulate_noisy(truth.model_active, noise_level=0.01)
+
+    file = File(parent_project=project, data=data, energy=energy, time=time)
+    file.load_model(model_yaml=_SEED_YAML, model_info="seed_base")
+    file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
+    return file
+
+
+#
+def _make_fitted_seed_order_file(project):
+    """_make_seed_order_file with seed_base fitted as the baseline."""
+
+    file = _make_seed_order_file(project)
+    file.fit_baseline(model_name="seed_base", stages=1, try_ci=0)
+    return file
+
+
+#
+def _load_2d_model(file, model_name):
+    """Load a seed_order.yaml 2D target and give it dynamics on GLP_01_A."""
+
+    file.load_model(model_yaml=_SEED_YAML, model_info=model_name)
+    file.add_time_dependence(
+        target_model=model_name,
+        target_parameter="GLP_01_A",
+        dynamics_yaml="models/file_time.yaml",
+        dynamics_model=["MonoExpPos"],
+    )
+    return file.select_model(model_name)
+
+
+#
+def _baseline_values(file):
+    """``{name: value}`` of the completed baseline fit."""
+
+    assert file.model_base is not None  # type guard
+    assert file.model_base.result is not None  # type guard
+    params = file.model_base.result.par_fin.params
+    return {name: params[name].value for name in params}
+
+
+#
+def _latest_slot(project, fit_type):
+    """The most recent slot of ``fit_type`` in the project history."""
+
+    return [s for s in project._fit_history if s.fit_type == fit_type][-1]
+
+
+#
+def _init_values(slot):
+    """``{name: init_value}`` of a baseline / spectrum / 2d slot."""
+
+    return dict(zip(slot.params["name"], slot.params["init_value"], strict=True))
+
+
+#
+#
+class TestSeedSource:
+    """fit_2d / fit_slice_by_slice seed their starting state by name from
+    the baseline (seed_source='baseline') or keep the model's own state
+    (seed_source='model')."""
+
+    #
+    def test_fit_2d_model_seed_runs_without_baseline(self):
+        """seed_source='model' fits without any baseline fit and starts from
+        the loaded model's values."""
+
+        project = make_project(name="seed")
+        file = _make_seed_order_file(project)
+        model = _load_2d_model(file, "seed_2d_reversed")
+        loaded = {name: model.lmfit_pars[name].value for name in model.parameter_names}
+
+        file.fit_2d("seed_2d_reversed", stages=1, try_ci=0, seed_source="model")
+
+        slot = _latest_slot(project, "2d")
+        assert _init_values(slot) == pytest.approx(loaded)
+        assert slot.fit_settings["seed_source"] == "model"
+
+    #
+    def test_fit_2d_baseline_seed_sets_fixed_parameter(self):
+        """A fixed 2D parameter (GLP_01_m: 0.5 in the YAML) starts from the
+        baseline's fitted value under the default seed_source='baseline'."""
+
+        project = make_project(name="seed")
+        file = _make_fitted_seed_order_file(project)
+        m_base = _baseline_values(file)["GLP_01_m"]
+        assert not np.isclose(m_base, 0.5)
+        _load_2d_model(file, "seed_2d_reversed")
+
+        file.fit_2d("seed_2d_reversed", stages=1, try_ci=0)
+
+        slot = _latest_slot(project, "2d")
+        assert _init_values(slot)["GLP_01_m"] == pytest.approx(m_base)
+        assert slot.fit_settings["seed_source"] == "baseline"
+
+    #
+    def test_fit_2d_model_seed_ignores_fitted_baseline(self):
+        """seed_source='model' with a fitted baseline present keeps the
+        model's values, also where the baseline fit moved a parameter."""
+
+        project = make_project(name="seed")
+        file = _make_fitted_seed_order_file(project)
+        assert not np.isclose(_baseline_values(file)["GLP_01_m"], 0.5)
+        model = _load_2d_model(file, "seed_2d_reversed")
+        loaded = {name: model.lmfit_pars[name].value for name in model.parameter_names}
+
+        file.fit_2d("seed_2d_reversed", stages=1, try_ci=0, seed_source="model")
+
+        init = _init_values(_latest_slot(project, "2d"))
+        assert init == pytest.approx(loaded)
+        assert init["GLP_01_m"] == 0.5
+
+    #
+    def test_fit_2d_default_seed_source_is_baseline(self):
+        """Omitting seed_source and passing 'baseline' mint the same handle;
+        'model' starts elsewhere and mints another."""
+
+        project = make_project(name="seed")
+        file = _make_fitted_seed_order_file(project)
+        handles = []
+        for seed_kwargs in ({}, {"seed_source": "baseline"}, {"seed_source": "model"}):
+            # reload: a fit writes its dynamics values back into the live model
+            if handles:
+                file.delete_model("seed_2d_reversed")
+            _load_2d_model(file, "seed_2d_reversed")
+            file.fit_2d("seed_2d_reversed", stages=1, try_ci=0, **seed_kwargs)
+            handles.append(_latest_slot(project, "2d").handle)
+        handle_default, handle_baseline, handle_model = handles
+
+        assert handle_baseline == handle_default
+        assert handle_model != handle_default
+
+    #
+    def test_fit_2d_baseline_seed_matches_by_name(self):
+        """A 2D model listing the baseline's components in the reverse
+        order starts every namesake from the baseline value (regression:
+        the baseline values were assigned by position)."""
+
+        project = make_project(name="seed")
+        file = _make_fitted_seed_order_file(project)
+        _load_2d_model(file, "seed_2d_reversed")
+
+        file.fit_2d("seed_2d_reversed", stages=1, try_ci=0)
+
+        init = _init_values(_latest_slot(project, "2d"))
+        base = _baseline_values(file)
+        assert {name: init[name] for name in base} == pytest.approx(base)
+
+    #
+    def test_sbs_baseline_seed_matches_by_name(self):
+        """SbS seeding from a baseline whose components are listed in the
+        other order seeds every slice with the namesake baseline values."""
+
+        project = make_project(name="seed")
+        file = _make_fitted_seed_order_file(project)
+        file.load_model(model_yaml=_SEED_YAML, model_info="seed_sbs_reversed")
+
+        file.fit_slice_by_slice(
+            "seed_sbs_reversed",
+            n_workers=1,
+            seed_source="baseline",
+            seed_adapt=None,
+            try_ci=0,
+        )
+
+        slot = _latest_slot(project, "sbs")
+        assert slot.params_init is not None  # type guard
+        base = _baseline_values(file)
+        for row in range(len(slot.params_init)):
+            seeds = slot.params_init.iloc[row]
+            assert {name: seeds[name] for name in base} == pytest.approx(base)
+
+    #
+    def test_fit_2d_baseline_seed_missing_component_raises(self):
+        """A 2D model lacking a baseline component cannot be seeded from
+        the baseline; the error lists the missing names, and the same
+        model fits with seed_source='model'."""
+
+        project = make_project(name="seed")
+        file = _make_fitted_seed_order_file(project)
+        _load_2d_model(file, "seed_2d_glp_only")
+
+        with pytest.raises(ValueError, match="seed_source='model'") as excinfo:
+            file.fit_2d("seed_2d_glp_only", stages=1, try_ci=0)
+        for name in ("Gauss_01_A", "Gauss_01_x0", "Gauss_01_SD"):
+            assert name in str(excinfo.value)
+
+        file.fit_2d("seed_2d_glp_only", stages=1, try_ci=0, seed_source="model")
+        assert _latest_slot(project, "2d").model_name == "seed_2d_glp_only"
 
 
 #

@@ -418,9 +418,9 @@ A qualified name is sufficient for the package's own Jacobians, which is the
 supported workflow. It does not identify closures, lambdas, or monkey-patched
 functions — see "What the hash cannot cover" for the explicit scope boundary.
 
-The SbS `seed_source` / `seed_adapt` / `seed_values` are keyed **nowhere** —
-the initial state they produce is hashed directly instead (see "The initial
-state is the identity input").
+The `seed_source` of SbS and 2D fits, and the SbS `seed_adapt` /
+`seed_values`, are keyed **nowhere** — the initial state they produce is
+hashed directly instead (see "The initial state is the identity input").
 
 The backend recorded is the **effective** one, not
 the requested one: the JAX gate rejects some models and falls back to the
@@ -807,8 +807,8 @@ as deterministic refinement, though `fit_alg_2` stays free-form: a
 stochastic second stage stays unseeded and is surfaced by the collision
 rules, never silently — and `build_fit_settings` records a `seed` field only
 when supplied. Every fit API inherits the kwarg through its
-`**fit_wrapper_kwargs` passthrough (including SbS, whose `seed_source` /
-`seed_values` knobs choose initial *parameter values*, a different thing
+`**fit_wrapper_kwargs` passthrough (including SbS and 2D, whose `seed_source`
+/ `seed_values` knobs choose initial *parameter values*, a different thing
 from the RNG state). When divergence is detected on runs that already carry
 a seed, the collision message points at a stochastic `fit_alg_2` instead of
 re-recommending the seed the user already supplied.
@@ -969,9 +969,9 @@ already implied by the selection.
 | `model_structure` (per-attachment records, incl. each `frequency`) | |
 | optimizer settings actually in force | |
 
-SbS `seed_source` / `seed_adapt` / `seed_values` are in **neither** column:
-they are provenance in `fit_settings`, because the initial state they produce
-is hashed directly instead.
+The 2D and SbS `seed_source` and the SbS `seed_adapt` / `seed_values` are in
+**neither** column: they are provenance in `fit_settings`, because the
+initial state they produce is hashed directly instead.
 
 Consequence for the writer: **a slot collision whose fitted parameters agree
 is an enrichment path, not an error.** Running a fit, saving, then later
@@ -1002,9 +1002,9 @@ They remain in `fit_settings` as provenance. Hashing the mechanism rather than
 its effect misses two real cases:
 
 - **`seed_source="baseline"`** derives seeds from the baseline fit's output.
-  Refit the baseline, re-run SbS with the same `seed_source`, and the seeds
-  change while the mechanism does not — mechanism-hashing would call two
-  genuinely different fits one configuration.
+  Refit the baseline, re-run SbS or the 2D fit with the same `seed_source`,
+  and the seeds change while the mechanism does not — mechanism-hashing would
+  call two genuinely different fits one configuration.
 - **`seed_adapt="argmax_shift"`** depends on `data_base`, hence on
   `base_t_ind`, which is *not* part of the SbS selection (`{e_lim, t_lim}`).
   Redefining the baseline changes every seed invisibly to the mechanism.

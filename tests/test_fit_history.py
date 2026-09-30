@@ -1059,6 +1059,26 @@ class TestFitSettingsProvenance:
         assert settings["fit_alg_1"] == "leastsq"
         assert settings["stages"] == 1
 
+    #
+    def test_2d_slot_records_seed_source(self):
+        """The 2d slot records the seed source it started from."""
+
+        project, file = _setup_baseline_fit()
+        file.add_time_dependence(
+            target_model="single_glp",
+            target_parameter="GLP_01_A",
+            dynamics_yaml="models/file_time.yaml",
+            dynamics_model=["MonoExpPos"],
+        )
+        file.fit_2d("single_glp", stages=1, try_ci=0)
+        file.fit_2d("single_glp", stages=1, try_ci=0, seed_source="model")
+
+        twod_slots = [s for s in project._fit_history if s.fit_type == "2d"]
+        assert [s.fit_settings["seed_source"] for s in twod_slots] == [
+            "baseline",
+            "model",
+        ]
+
 
 #
 # --- slot-backed get_* accessors ----------------------------------------------

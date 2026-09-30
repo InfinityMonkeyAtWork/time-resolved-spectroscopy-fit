@@ -463,7 +463,7 @@ class TestSimulatorParameterSweep:
 
         sweep = ParameterSweep(strategy="grid", seed=42)
         sweep.add_range("GLP_01_A", [15, 20])
-        sweep.add_range("GLP_01_x0", [8, 10])
+        sweep.add_range("GLP_01_x0", [84, 86])
 
         sim = Simulator(
             model=self._make_2d_model(), detection="analog", noise_level=0.05, seed=42
@@ -503,7 +503,7 @@ class TestSimulatorParameterSweep:
 
         sweep = ParameterSweep(strategy="grid", seed=42)
         sweep.add_range("GLP_01_A", [15, 20])
-        sweep.add_range("GLP_01_x0", [8, 10])
+        sweep.add_range("GLP_01_x0", [84, 86])
 
         sim = Simulator(
             model=self._make_2d_model(), detection="analog", noise_level=0.05, seed=42
@@ -831,6 +831,117 @@ class TestSimulatorParameterSweep:
                 metadata = f["metadata"]
                 assert isinstance(metadata, h5py.Group)
                 assert metadata.attrs["sweep_seed"] == 0
+
+    #
+    def test_sweep_out_of_model_order_records_simulated_values(self, tmp_path):
+        """Parameters added in another order than the model are simulated
+        with the values the file labels them with (regression: the swept
+        values were assigned to the model by position)."""
+
+        sweep = ParameterSweep(strategy="grid", seed=42)
+        sweep.add_range("GLP_01_x0", [84, 86])  # model order: GLP_01_A first
+        sweep.add_range("GLP_01_A", [10, 20])
+
+        sim = Simulator(
+            model=self._make_1d_model(), detection="analog", noise_level=0.05, seed=42
+        )
+        filepath = tmp_path / "test_sweep_order.h5"
+        sim.simulate_parameter_sweep(
+            parameter_sweep=sweep,
+            n_realizations=1,
+            dim=1,
+            filepath=str(filepath),
+            show_progress=False,
+        )
+
+        dataset = SweepDataset(str(filepath))
+        for config_idx in range(4):
+            config = dataset.load_config(config_idx, load_noisy=False)
+            for name, value in config["parameters"].items():
+                assert config["all_parameter_values"][name] == value, name
+
+    #
+    def test_sweep_unknown_parameter_raises_before_writing(self, tmp_path):
+        """A misspelt swept name raises and leaves the output file untouched."""
+
+        sweep = ParameterSweep(strategy="grid", seed=42)
+        sweep.add_range("GLP_01_A", [15, 20])
+        sweep.add_range("GLP_01_xO", [84, 86])
+
+        sim = Simulator(
+            model=self._make_1d_model(), detection="analog", noise_level=0.05, seed=42
+        )
+        filepath = tmp_path / "test_sweep_typo.h5"
+        filepath.write_bytes(b"existing")
+        with pytest.raises(ValueError, match="GLP_01_xO"):
+            sim.simulate_parameter_sweep(
+                parameter_sweep=sweep,
+                n_realizations=1,
+                dim=1,
+                filepath=str(filepath),
+                show_progress=False,
+            )
+        assert filepath.read_bytes() == b"existing"
+
+    #
+    def test_sweep_out_of_bounds_value_raises_before_writing(self, tmp_path):
+        """A swept value outside the parameter's bounds (GLP_01_A: [5, 25])
+        raises and leaves the output file untouched: lmfit would clip it
+        and the file would label the clipped spectrum with the swept value."""
+
+        sweep = ParameterSweep(strategy="grid", seed=42)
+        sweep.add_range("GLP_01_A", [15, 30])
+
+        sim = Simulator(
+            model=self._make_1d_model(), detection="analog", noise_level=0.05, seed=42
+        )
+        filepath = tmp_path / "test_sweep_bounds.h5"
+        filepath.write_bytes(b"existing")
+        with pytest.raises(ValueError, match=r"30 for parameter 'GLP_01_A'"):
+            sim.simulate_parameter_sweep(
+                parameter_sweep=sweep,
+                n_realizations=1,
+                dim=1,
+                filepath=str(filepath),
+                show_progress=False,
+            )
+        assert filepath.read_bytes() == b"existing"
+
+    #
+    def test_sweep_expression_parameter_raises_before_writing(self, tmp_path):
+        """Sweeping a parameter defined by an expression raises and leaves the
+        output file untouched: lmfit ignores a value set on such a parameter,
+        so the file would label the expression's result with the swept value."""
+
+        project = make_project(name="test")
+        file = File(
+            parent_project=project,
+            energy=np.arange(80, 92, 0.5),
+            time=np.arange(-10, 100, 5),
+        )
+        file.load_model(
+            model_yaml="models/project_energy.yaml", model_info="project_glp_expr"
+        )
+        assert file.model_active is not None  # type guard
+        sweep = ParameterSweep(strategy="grid", seed=42)
+        sweep.add_range("GLP_02_A", [8, 10])
+
+        sim = Simulator(
+            model=file.model_active, detection="analog", noise_level=0.05, seed=42
+        )
+        filepath = tmp_path / "test_sweep_expr.h5"
+        filepath.write_bytes(b"existing")
+        with pytest.raises(
+            ValueError, match=r"'GLP_02_A' is defined by the expression"
+        ):
+            sim.simulate_parameter_sweep(
+                parameter_sweep=sweep,
+                n_realizations=1,
+                dim=1,
+                filepath=str(filepath),
+                show_progress=False,
+            )
+        assert filepath.read_bytes() == b"existing"
 
 
 if __name__ == "__main__":

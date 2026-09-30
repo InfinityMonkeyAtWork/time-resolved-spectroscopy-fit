@@ -1,0 +1,49 @@
+# Models for seed_source tests (File.fit_2d / fit_slice_by_slice seeding).
+# The targets list the baseline's components in the reverse order, or drop
+# one, so a positional seed would assign wrong values: baseline values are
+# matched to the target by parameter name.
+
+# Baseline: GLP first, then Gauss.
+seed_base:
+    GLP:
+      A: [20, True, 5, 25]
+      x0: [85.0, True, 82, 88]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+    Gauss:
+      A: [10, True, 1, 30]
+      x0: [80.0, True, 78, 82]
+      SD: [0.8, True, 0.3, 2.0]
+
+# 2D target: the same features in the reverse order. The GLP mixing m is
+# fixed at 0.5, a value the baseline fit does not end at.
+seed_2d_reversed:
+    Gauss:
+      A: [10, False, 1, 30]
+      x0: [80.0, False, 78, 82]
+      SD: [0.8, False, 0.3, 2.0]
+    GLP:
+      A: [20, True, 5, 25]
+      x0: [85.0, False, 82, 88]
+      F: [1.0, False, 0.75, 2.5]
+      m: [0.5, False, 0, 1]
+
+# SbS target: the same features in the reverse order, all varying.
+seed_sbs_reversed:
+    Gauss:
+      A: [10, True, 1, 30]
+      x0: [80.0, True, 78, 82]
+      SD: [0.8, True, 0.3, 2.0]
+    GLP:
+      A: [20, True, 5, 25]
+      x0: [85.0, True, 82, 88]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]
+
+# 2D target without the baseline's Gauss component.
+seed_2d_glp_only:
+    GLP:
+      A: [20, True, 5, 25]
+      x0: [85.0, False, 82, 88]
+      F: [1.0, False, 0.75, 2.5]
+      m: [0.3, False, 0, 1]

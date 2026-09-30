@@ -1908,7 +1908,7 @@ class Simulator:
         Generate ML training dataset by sweeping parameters.
 
         Processes configurations one at a time, immediately saving to disk.
-        Memory usage remains constant regardless of parameter space size.
+        Swept values are assigned to the model parameters by name.
 
         Parameters
         ----------
@@ -1924,6 +1924,15 @@ class Simulator:
             HDF5 file path for output
         show_progress : bool, default=True
             Print progress updates during generation
+
+        Raises
+        ------
+        ValueError
+            If a swept parameter name is not a parameter of the model, the
+            parameter is defined by an expression, or a swept value lies
+            outside that parameter's ``[min, max]`` bounds.
+            Checked for every configuration before the output file is
+            opened, so an existing file is left untouched.
 
         Examples
         --------
@@ -1949,9 +1958,9 @@ class Simulator:
         Notes
         -----
         **Memory Efficiency:**
-        Only one configuration is in memory at a time. Each is immediately
-        written to disk before processing the next. Total memory usage is
-        independent of parameter space size.
+        The parameter configurations are drawn up front for validation;
+        simulated data is held for one configuration at a time, each
+        written to disk before processing the next.
 
         **Resumability:**
         If interrupted, completed configurations are already saved to disk.
@@ -1968,6 +1977,14 @@ class Simulator:
         _append_config_to_hdf5 : Incremental saving logic
         """
 
+        # Draw every configuration once (an unseeded random sweep yields
+        # new values on each pass) and validate them before the output
+        # file is truncated: a value the model cannot hold would be
+        # simulated as something other than what the file records.
+        configs = list(parameter_sweep)
+        self._validate_sweep_configs(configs)
+        n_configs = len(configs)
+
         # Convert to Path object
         filepath_obj = Path(filepath)
 
@@ -1981,9 +1998,6 @@ class Simulator:
             # User provided a path with directory, use it as-is but ensure parent exists
             filepath_obj.parent.mkdir(parents=True, exist_ok=True)
             filepath = str(filepath_obj)
-
-        # Get total number of configurations
-        n_configs = parameter_sweep.get_n_configs()
 
         if show_progress:
             print(
@@ -2003,7 +2017,7 @@ class Simulator:
             )
 
             # Process each configuration
-            for config_idx, param_config in enumerate(parameter_sweep):
+            for config_idx, param_config in enumerate(configs):
                 if show_progress:
                     # Format parameters nicely
                     param_str = ", ".join(
@@ -2046,6 +2060,36 @@ class Simulator:
                 f"Data saved to: {filepath}\n"
                 f"{'=' * 60}"
             )
+
+    #
+    def _validate_sweep_configs(self, configs: list[dict[str, float]]) -> None:
+        """Raise if a swept name is unknown or a swept value is out of bounds."""
+
+        par_names = list(configs[0]) if configs else []
+        unknown = [name for name in par_names if name not in self.model.lmfit_pars]
+        if unknown:
+            raise ValueError(
+                f"Swept parameter(s) {unknown} not found in model "
+                f'"{self.model.name}"; available parameters: '
+                f"{self.model.parameter_names}."
+            )
+        for name in par_names:
+            par = self.model.lmfit_pars[name]
+            if par.expr is not None:
+                raise ValueError(
+                    f"Swept parameter '{name}' is defined by the expression "
+                    f"'{par.expr}' and cannot be swept; sweep the parameters "
+                    "the expression depends on instead."
+                )
+            values = np.array([config[name] for config in configs], dtype=float)
+            outside = values[(values < par.min) | (values > par.max)]
+            if outside.size:
+                raise ValueError(
+                    f"Swept value {outside[0]:g} for parameter '{name}' lies "
+                    f"outside its bounds [{par.min:g}, {par.max:g}] "
+                    f"({outside.size} of {values.size} configurations); widen "
+                    "the bounds in the model YAML or narrow the sweep."
+                )
 
     #
     def _initialize_sweep_hdf5(
