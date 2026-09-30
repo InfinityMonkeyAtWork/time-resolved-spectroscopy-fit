@@ -16,9 +16,9 @@ This file is maintained using the shared changelog workflow in
 
 ### Changed
 
-- **`seed_source="baseline"` matches parameters by name**: every baseline parameter must exist in the fitted model (a missing name raises; use `"model"` instead), both models must describe the same features under the same component names, and the values come from the captured record of the last completed baseline fit, so a later fit of the same model object does not change the seed.
+- **`seed_source="baseline"` matches parameters by name.** Every baseline parameter must exist in the fitted model under the same component name (a missing name raises; use `"model"` instead), and the seed is the captured record of the last completed baseline fit, unchanged by later fits of that model.
 - **The list form of `Model.update_value` assigns by name** and raises on an unknown name or a length mismatch.
-- **`Simulator.simulate_parameter_sweep` refuses unknown parameter names, expression-defined parameters and out-of-bounds values.** Names and `range` / `uniform` specifications are checked before the output file is opened; `normal` / `lognormal` draws when their configuration is generated.
+- **`Simulator.simulate_parameter_sweep` refuses unknown parameter names, expression-defined parameters and out-of-bounds values.** Names and `range` / `uniform` specifications are checked before the output file is opened; `normal` / `lognormal` draws are checked when their configuration is generated.
 
 ### Fixed
 
