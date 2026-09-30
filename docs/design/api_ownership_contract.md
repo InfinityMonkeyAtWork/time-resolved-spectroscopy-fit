@@ -386,8 +386,10 @@ everywhere renames `get_parameters` a second time in two minor releases;
 ## Sequencing
 
 - **Step 2** relies on rule 4: `seed_source="model"` means the live model's
-  current values and `"baseline"` the baseline fit's, so neither needs the
-  definition to change and neither needs a parent-baseline reference.
+  current values and `"baseline"` the baseline fit's, read from its captured
+  record rather than from the live baseline model (which a later 2D fit of
+  the same object overwrites), so neither needs the definition to change and
+  neither needs a parent-baseline reference. Landed in v0.19.0.
 - **Step 3** turns each row of the contract table into a behavioural probe
   in `docs/ai/code-review.md`.
 - **Step 4** enforces rules 1 to 5; the violations listed above are its

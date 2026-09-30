@@ -943,6 +943,55 @@ class TestSimulatorParameterSweep:
             )
         assert filepath.read_bytes() == b"existing"
 
+    #
+    def test_sweep_uniform_interval_outside_bounds_raises_before_writing(
+        self, tmp_path
+    ):
+        """A uniform specification reaching past the bounds (GLP_01_A: [5, 25])
+        is refused from the specification, before the output file is opened."""
+
+        sweep = ParameterSweep(strategy="grid", seed=42)
+        sweep.add_uniform("GLP_01_A", min_val=20, max_val=30, n_samples=3)
+
+        sim = Simulator(
+            model=self._make_1d_model(), detection="analog", noise_level=0.05, seed=42
+        )
+        filepath = tmp_path / "test_sweep_uniform.h5"
+        filepath.write_bytes(b"existing")
+        with pytest.raises(ValueError, match=r"30 for parameter 'GLP_01_A'"):
+            sim.simulate_parameter_sweep(
+                parameter_sweep=sweep,
+                n_realizations=1,
+                dim=1,
+                filepath=str(filepath),
+                show_progress=False,
+            )
+        assert filepath.read_bytes() == b"existing"
+
+    #
+    def test_sweep_normal_draw_outside_bounds_raises_at_its_configuration(
+        self, tmp_path
+    ):
+        """A normal draw cannot be checked from the specification; a value
+        outside the bounds (GLP_01_A: [5, 25]) is refused when its
+        configuration is generated, naming the configuration."""
+
+        sweep = ParameterSweep(strategy="grid", seed=42)
+        sweep.add_normal("GLP_01_A", mean=100.0, std=0.01, n_samples=2)
+
+        sim = Simulator(
+            model=self._make_1d_model(), detection="analog", noise_level=0.05, seed=42
+        )
+        filepath = tmp_path / "test_sweep_normal.h5"
+        with pytest.raises(ValueError, match=r"configuration 1 of 2"):
+            sim.simulate_parameter_sweep(
+                parameter_sweep=sweep,
+                n_realizations=1,
+                dim=1,
+                filepath=str(filepath),
+                show_progress=False,
+            )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

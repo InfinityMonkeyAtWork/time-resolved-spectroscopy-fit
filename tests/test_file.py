@@ -1400,6 +1400,13 @@ def _init_values(slot):
 
 
 #
+def _fitted_values(slot):
+    """``{name: value}`` of a baseline / spectrum / 2d slot."""
+
+    return dict(zip(slot.params["name"], slot.params["value"], strict=True))
+
+
+#
 #
 class TestSeedSource:
     """fit_2d / fit_slice_by_slice seed their starting state by name from
@@ -1512,6 +1519,48 @@ class TestSeedSource:
         slot = _latest_slot(project, "sbs")
         assert slot.params_init is not None  # type guard
         base = _baseline_values(file)
+        for row in range(len(slot.params_init)):
+            seeds = slot.params_init.iloc[row]
+            assert {name: seeds[name] for name in base} == pytest.approx(base)
+
+    #
+    def test_baseline_seed_reads_record_after_baseline_model_refit(self):
+        """Attaching dynamics to the baseline model and fitting it in 2D
+        overwrites that model's live result; the baseline seed of later 2D
+        and SbS fits still comes from the captured baseline record, and a
+        failed baseline refit does not change it."""
+
+        project = make_project(name="seed")
+        file = _make_fitted_seed_order_file(project)
+        base = _fitted_values(_latest_slot(project, "baseline"))
+
+        file.add_time_dependence(
+            target_model="seed_base",
+            target_parameter="GLP_01_x0",
+            dynamics_yaml="models/file_time.yaml",
+            dynamics_model=["MonoExpPos"],
+        )
+        file.fit_2d("seed_base", stages=1, try_ci=0)
+        base_model_2d = _fitted_values(_latest_slot(project, "2d"))
+        assert any(abs(base_model_2d[name] - base[name]) > 1e-6 for name in base)
+        with pytest.raises(ValueError, match="time dependence"):
+            file.fit_baseline(model_name="seed_base", stages=1, try_ci=0)
+
+        _load_2d_model(file, "seed_2d_reversed")
+        file.fit_2d("seed_2d_reversed", stages=1, try_ci=0)
+        init = _init_values(_latest_slot(project, "2d"))
+        assert {name: init[name] for name in base} == pytest.approx(base)
+
+        file.load_model(model_yaml=_SEED_YAML, model_info="seed_sbs_reversed")
+        file.fit_slice_by_slice(
+            "seed_sbs_reversed",
+            n_workers=1,
+            seed_source="baseline",
+            seed_adapt=None,
+            try_ci=0,
+        )
+        slot = _latest_slot(project, "sbs")
+        assert slot.params_init is not None  # type guard
         for row in range(len(slot.params_init)):
             seeds = slot.params_init.iloc[row]
             assert {name: seeds[name] for name in base} == pytest.approx(base)

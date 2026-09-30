@@ -2208,6 +2208,8 @@ class File:
         self.base_t_ind: list[int] = []  # index of the above start and stop time
         self.data_base: np.ndarray | None = None  # average spectrum between indices
         self.model_base: mcp.Model | None = None
+        # record of the last completed baseline fit; the 'baseline' seed reads it
+        self._baseline_slot: fit_io.SavedFitSlot | None = None
         #
         self.model_sbs: mcp.Model | None = None
         self.model_2d: mcp.Model | None = None
@@ -3435,7 +3437,7 @@ class File:
             self.model_base.update_value(
                 new_par_values=ulmfit.par_extract(fit_out.par_fin, return_type="list")
             )
-            self._append_baseline_slot(
+            self._baseline_slot = self._append_baseline_slot(
                 model_name=model_name,
                 fit_fun_str=_fun_str,
                 fit_settings=fit_io.build_fit_settings(
@@ -4992,9 +4994,11 @@ class File:
 
         ``'model'`` keeps the model's current state. ``'baseline'`` sets
         every parameter of ``model`` that shares its name with a parameter
-        of the completed baseline fit (``model_base.result.par_fin``) to the
-        fitted value, fixed or varying; the other parameters keep their
-        state. Parameters are matched by name, so the baseline and ``model``
+        of the last completed baseline fit to the fitted value, fixed or
+        varying; the other parameters keep their state. The values come from
+        the captured baseline record (``_baseline_slot``), not from the live
+        baseline model, so fitting that model again in 2D does not change the
+        seed. Parameters are matched by name, so the baseline and ``model``
         must describe the same features under the same component names;
         every baseline parameter must exist in ``model``.
         """
@@ -5005,26 +5009,26 @@ class File:
             )
         if seed_source == "model":
             return
-        if self.model_base is None or self.model_base.result is None:
+        slot = self._baseline_slot
+        if slot is None:
             raise ValueError(
                 "Baseline seed requested but baseline model is not fitted yet; "
                 "run fit_baseline() first or use seed_source='model'."
             )
-        base_params = self.model_base.result.par_fin.params
-        missing = [name for name in base_params if name not in model.lmfit_pars]
+        base_values = dict(zip(slot.params["name"], slot.params["value"], strict=True))
+        missing = [name for name in base_values if name not in model.lmfit_pars]
         if missing:
             raise ValueError(
                 f'Baseline seed requested but model "{model.name}" has no '
                 f"parameter(s) {missing} of baseline model "
-                f'"{self.model_base.name}". Baseline values are matched by '
+                f'"{slot.model_name}". Baseline values are matched by '
                 "name, so the model must contain every baseline component "
                 "under the same name; use seed_source='model' to start from "
                 "the model's own values."
             )
-        names = list(base_params)
         model.update_value(
-            new_par_values=[base_params[name].value for name in names],
-            par_select=names,
+            new_par_values=[float(v) for v in base_values.values()],
+            par_select=list(base_values),
         )
 
     #
@@ -5053,10 +5057,11 @@ class File:
             Starting parameter state of the fit.
 
             - ``'baseline'``: every parameter that shares its name with a
-              baseline parameter starts from the baseline's fitted value
-              (``model_base.result.par_fin``), fixed or varying; the other
-              parameters (dynamics, profiles, added components) keep the
-              model's current state. Requires a completed
+              baseline parameter starts from the baseline's fitted value,
+              fixed or varying, read from the captured record of the last
+              completed ``fit_baseline()`` (a later fit of that model does
+              not change it); the other parameters (dynamics, profiles,
+              added components) keep the model's current state. Requires a completed
               ``fit_baseline()``, and every baseline parameter must exist by
               name in this model. Parameters are matched by name, so the
               baseline and 2D models must describe the same features under

@@ -1908,6 +1908,7 @@ class Simulator:
         Generate ML training dataset by sweeping parameters.
 
         Processes configurations one at a time, immediately saving to disk.
+        Memory usage remains constant regardless of parameter space size.
         Swept values are assigned to the model parameters by name.
 
         Parameters
@@ -1930,9 +1931,12 @@ class Simulator:
         ValueError
             If a swept parameter name is not a parameter of the model, the
             parameter is defined by an expression, or a swept value lies
-            outside that parameter's ``[min, max]`` bounds.
-            Checked for every configuration before the output file is
-            opened, so an existing file is left untouched.
+            outside that parameter's ``[min, max]`` bounds. Names,
+            expressions and the values of ``range`` and ``uniform``
+            specifications are checked before the output file is opened,
+            so an existing file is left untouched; a value drawn from a
+            ``normal`` or ``lognormal`` distribution is checked when its
+            configuration is generated, before it is simulated.
 
         Examples
         --------
@@ -1958,9 +1962,9 @@ class Simulator:
         Notes
         -----
         **Memory Efficiency:**
-        The parameter configurations are drawn up front for validation;
-        simulated data is held for one configuration at a time, each
-        written to disk before processing the next.
+        Only one configuration is in memory at a time. Each is immediately
+        written to disk before processing the next. Total memory usage is
+        independent of parameter space size.
 
         **Resumability:**
         If interrupted, completed configurations are already saved to disk.
@@ -1977,13 +1981,11 @@ class Simulator:
         _append_config_to_hdf5 : Incremental saving logic
         """
 
-        # Draw every configuration once (an unseeded random sweep yields
-        # new values on each pass) and validate them before the output
+        # Refuse what the specification already shows before the output
         # file is truncated: a value the model cannot hold would be
         # simulated as something other than what the file records.
-        configs = list(parameter_sweep)
-        self._validate_sweep_configs(configs)
-        n_configs = len(configs)
+        self._validate_sweep_specs(parameter_sweep)
+        n_configs = parameter_sweep.get_n_configs()
 
         # Convert to Path object
         filepath_obj = Path(filepath)
@@ -2017,7 +2019,7 @@ class Simulator:
             )
 
             # Process each configuration
-            for config_idx, param_config in enumerate(configs):
+            for config_idx, param_config in enumerate(parameter_sweep):
                 if show_progress:
                     # Format parameters nicely
                     param_str = ", ".join(
@@ -2028,7 +2030,13 @@ class Simulator:
                         f" {{{param_str}}}"
                     )
 
-                # Update model parameters
+                # Drawn values (normal / lognormal) are only known now
+                for name, value in param_config.items():
+                    self._check_within_bounds(
+                        name,
+                        np.array([value], dtype=float),
+                        where=f" (configuration {config_idx + 1} of {n_configs})",
+                    )
                 param_names = list(param_config.keys())
                 param_values = list(param_config.values())
                 self.model.update_value(param_values, par_select=param_names)
@@ -2062,18 +2070,24 @@ class Simulator:
             )
 
     #
-    def _validate_sweep_configs(self, configs: list[dict[str, float]]) -> None:
-        """Raise if a swept name is unknown or a swept value is out of bounds."""
+    def _validate_sweep_specs(self, parameter_sweep: ParameterSweep) -> None:
+        """
+        Refuse swept names the model lacks, expression-defined parameters,
+        and ``range`` / ``uniform`` specifications outside the bounds.
 
-        par_names = list(configs[0]) if configs else []
-        unknown = [name for name in par_names if name not in self.model.lmfit_pars]
+        Runs before the output file is opened. ``normal`` / ``lognormal``
+        draws are checked per configuration by ``_check_within_bounds``.
+        """
+
+        specs = parameter_sweep.parameter_specs
+        unknown = [name for name in specs if name not in self.model.lmfit_pars]
         if unknown:
             raise ValueError(
                 f"Swept parameter(s) {unknown} not found in model "
                 f'"{self.model.name}"; available parameters: '
                 f"{self.model.parameter_names}."
             )
-        for name in par_names:
+        for name, spec in specs.items():
             par = self.model.lmfit_pars[name]
             if par.expr is not None:
                 raise ValueError(
@@ -2081,15 +2095,27 @@ class Simulator:
                     f"'{par.expr}' and cannot be swept; sweep the parameters "
                     "the expression depends on instead."
                 )
-            values = np.array([config[name] for config in configs], dtype=float)
-            outside = values[(values < par.min) | (values > par.max)]
-            if outside.size:
-                raise ValueError(
-                    f"Swept value {outside[0]:g} for parameter '{name}' lies "
-                    f"outside its bounds [{par.min:g}, {par.max:g}] "
-                    f"({outside.size} of {values.size} configurations); widen "
-                    "the bounds in the model YAML or narrow the sweep."
+            if spec["type"] == "range":
+                self._check_within_bounds(name, np.asarray(spec["values"], dtype=float))
+            elif spec["type"] == "uniform":
+                self._check_within_bounds(
+                    name, np.array([spec["min"], spec["max"]], dtype=float)
                 )
+
+    #
+    def _check_within_bounds(
+        self, name: str, values: np.ndarray, *, where: str = ""
+    ) -> None:
+        """Raise if any of ``values`` lies outside parameter ``name``'s bounds."""
+
+        par = self.model.lmfit_pars[name]
+        outside = values[(values < par.min) | (values > par.max)]
+        if outside.size:
+            raise ValueError(
+                f"Swept value {outside[0]:g} for parameter '{name}' lies "
+                f"outside its bounds [{par.min:g}, {par.max:g}]{where}; widen "
+                "the bounds in the model YAML or narrow the sweep."
+            )
 
     #
     def _initialize_sweep_hdf5(
