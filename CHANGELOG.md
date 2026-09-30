@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [0.19.0] - 2026-09-29
+
+### Added
+
+- **`seed_source="baseline" | "model"` on `File.fit_2d` and `Project.fit_2d`.** The default is unchanged; `"model"` fits from the model's current parameter state and needs no baseline. `fit_slice_by_slice(seed_source="model", seed_adapt=None)` is the slice-by-slice path without a baseline.
+- **2D and joint fit records carry `seed_source`** in `fit_settings`.
+
+### Changed
+
+- **`seed_source="baseline"` matches parameters by name.** Every baseline parameter must exist in the fitted model under the same component name (a missing name raises; use `"model"` instead), and the seed is the captured record of the last completed baseline fit, unchanged by later fits of that model.
+- **The list form of `Model.update_value` assigns by name** and raises on an unknown name or a length mismatch.
+- **`Simulator.simulate_parameter_sweep` refuses unknown parameter names, expression-defined parameters and out-of-bounds values.** Names and `range` / `uniform` specifications are checked before the output file is opened; `normal` / `lognormal` draws are checked when their configuration is generated.
+
+### Fixed
+
+- **2D and slice-by-slice fits seeded from a baseline assigned its values by position**, so a model listing its components in a different order, or a baseline with an extra leading component, silently started from wrong values.
+- **A parameter sweep added out of model order** simulated values other than those recorded in the HDF5 file.
+
 ## [0.18.0] - 2026-09-26
 
 ### Added

@@ -681,8 +681,18 @@ class Model:
         par_select : str or list of str, default='all'
             Which parameters to update:
 
-            - 'all': Update all parameters in order
-            - list: Update only parameters with names in this list
+            - 'all': Update all parameters, ``new_par_values`` in
+              ``parameter_names`` order
+            - list: Update only the named parameters, matched by name:
+              ``new_par_values[i]`` is assigned to the parameter named
+              ``par_select[i]``
+
+        Raises
+        ------
+        ValueError
+            If ``par_select`` is a list whose length differs from
+            ``new_par_values``, or that names a parameter the model does not
+            have.
 
         Notes
         -----
@@ -692,16 +702,24 @@ class Model:
         create_value_2d() after updating values.
         """
 
-        p_count = 0  # initialize counter for parameters in par_select
-        for i, p in enumerate(self.lmfit_pars):
-            # update ALL values in model.lmfit_pars attribute
-            if par_select == "all":
+        if par_select == "all":
+            for i, p in enumerate(self.lmfit_pars):
                 self.lmfit_pars[p].value = new_par_values[i]
-            # update only selected values in model.lmfit_pars
-            else:
-                if self.lmfit_pars[p].name in par_select:
-                    self.lmfit_pars[p].value = new_par_values[p_count]
-                    p_count += 1
+            return
+
+        if len(par_select) != len(new_par_values):
+            raise ValueError(
+                f"update_value got {len(new_par_values)} values for "
+                f"{len(par_select)} names in par_select; pass one value per name."
+            )
+        unknown = [name for name in par_select if name not in self.lmfit_pars]
+        if unknown:
+            raise ValueError(
+                f'Model "{self.name}" has no parameter(s) {unknown}; '
+                f"available parameters: {self.parameter_names}."
+            )
+        for name, value in zip(par_select, new_par_values, strict=True):
+            self.lmfit_pars[name].value = value
 
     #
     def add_dynamics(self, dynamics_model: "Dynamics", frequency: float = -1) -> None:

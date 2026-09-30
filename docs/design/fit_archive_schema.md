@@ -338,6 +338,7 @@ influence the result — built by `build_fit_settings`:
   `try_ci`;
 - when supplied: `seed` (the optimizer RNG seed, forwarded to the stage-1
   method), `jac_fun` (the analytic Jacobian's qualified name);
+- 2d slots and the joint record (0.19.0+): `seed_source`;
 - sbs: `seed_source`, `seed_adapt`, `seed_values` (JSON `null` is
   meaningful — "no seed adaptation" is provenance too; these choose
   initial parameter values and are unrelated to the RNG `seed`);

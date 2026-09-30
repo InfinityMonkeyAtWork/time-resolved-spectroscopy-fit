@@ -808,8 +808,8 @@ def fit_wrapper(
         capability table is maintained — a seed on a method that cannot
         consume it surfaces as the library's own ``TypeError``, which is
         correct behavior (fit_archive_principles.md). Distinct from
-        SbS's ``seed_source``/``seed_values`` knobs, which choose
-        initial *parameter values*, not the RNG state.
+        the SbS and 2D ``seed_source``/``seed_values`` knobs, which
+        choose initial *parameter values*, not the RNG state.
     show_output : {0, 1}, default=0
         Output mode:
 

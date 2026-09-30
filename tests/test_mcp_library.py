@@ -485,6 +485,60 @@ class TestMCPIntegration:
         updated_values = [model.lmfit_pars[p].value for p in model.lmfit_pars]
         assert updated_values == new_values
 
+    #
+    def _make_single_glp_model(self):
+        """Helper: the single_glp model (GLP_01_A, _x0, _F, _m in that order)."""
+
+        from trspecfit import File
+
+        file = File(
+            parent_project=make_project(),
+            energy=np.linspace(80, 90, 100),
+            time=np.linspace(0, 10, 50),
+        )
+        file.load_model(
+            model_yaml="models/file_energy.yaml",
+            model_info="single_glp",
+        )
+        assert file.model_active is not None  # type guard
+        return file.model_active
+
+    #
+    def test_update_value_list_assigns_by_name(self):
+        """A par_select list in another order than the model assigns each
+        value to the parameter it names (regression: it assigned by position)."""
+
+        model = self._make_single_glp_model()
+        F_before = model.lmfit_pars["GLP_01_F"].value
+
+        model.update_value([86.0, 15.0], par_select=["GLP_01_x0", "GLP_01_A"])
+
+        assert model.lmfit_pars["GLP_01_A"].value == 15.0
+        assert model.lmfit_pars["GLP_01_x0"].value == 86.0
+        assert model.lmfit_pars["GLP_01_F"].value == F_before
+
+    #
+    def test_update_value_unknown_name_raises(self):
+        """An unknown name raises, naming it, and writes nothing."""
+
+        model = self._make_single_glp_model()
+        A_before = model.lmfit_pars["GLP_01_A"].value
+
+        with pytest.raises(ValueError, match="GLP_01_typo"):
+            model.update_value([1.0, 15.0], par_select=["GLP_01_typo", "GLP_01_A"])
+        assert model.lmfit_pars["GLP_01_A"].value == A_before
+
+    #
+    def test_update_value_length_mismatch_raises(self):
+        """A value list longer or shorter than par_select raises."""
+
+        model = self._make_single_glp_model()
+
+        with pytest.raises(ValueError, match="3 values for 2 names"):
+            model.update_value([15.0, 86.0, 1.0], par_select=["GLP_01_A", "GLP_01_x0"])
+        with pytest.raises(ValueError, match="1 values for 2 names"):
+            model.update_value([15.0], par_select=["GLP_01_A", "GLP_01_x0"])
+
 
 #
 #
