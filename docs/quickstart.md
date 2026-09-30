@@ -67,6 +67,13 @@ Optional extension after step 2:
 Optional extension after step 6:
 `file.add_par_profile(...)` — make a parameter vary over an auxiliary axis
 
+Optional shortcut for steps 3 to 5:
+`file.fit_2d(..., seed_source='model')` starts from the model's own parameter
+state, the YAML values after a load, instead of a fitted baseline; use it when
+the YAML already holds good starting values, for instance from an earlier fit.
+`file.fit_slice_by_slice(..., seed_source='model', seed_adapt=None)` is the
+slice-by-slice equivalent.
+
 ## YAML model format
 
 Models are defined in YAML files. Each file can contain multiple named models.
