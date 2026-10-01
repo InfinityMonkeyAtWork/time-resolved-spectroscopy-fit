@@ -1168,9 +1168,14 @@ class TestProjectFitJax:
         records = {}
         for spec_fun_str in ("fit_model_gir", "fit_model_jax"):
             project = _make_shared_tau_project(spec_fun_str=spec_fun_str, show_output=1)
-            # exercise per-file fit windows on one file
-            project.files[0].e_lim = [2, 28]
-            project.files[0].t_lim = [1, 23]
+            # exercise per-file fit windows on one file: indices [2, 28) x [1, 23)
+            first = project.files[0]
+            first.set_fit_limits(
+                [float(first.energy[2]), float(first.energy[27])],
+                time_limits=[float(first.time[1]), float(first.time[22])],
+                show_plot=False,
+            )
+            assert (first.e_lim, first.t_lim) == ((2, 28), (1, 23))
             records[spec_fun_str] = project.fit_2d(
                 model_name="project_glp", stages=2, try_ci=0
             )

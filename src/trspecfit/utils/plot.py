@@ -928,7 +928,7 @@ def plot_fit_overlay_1d(
     init: ArrayLike | None = None,
     legend: Sequence[str] | None = None,
     title: str = "",
-    fit_lim: list[int] | None = None,
+    fit_lim: Sequence[int] | None = None,
     config: PlotConfig | None = None,
     **kwargs: Any,
 ) -> None:

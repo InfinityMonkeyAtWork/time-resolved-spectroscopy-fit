@@ -472,7 +472,12 @@ class TestCaptureOwnership:
         assert not slot.fit.flags.writeable
         observed_before = slot.observed.copy()
         assert file.data_base is not None  # type guard
-        file.data_base *= 3.0
+        assert slot.observed is not file.data_base
+        # the live baseline changes through its supported route only
+        with pytest.raises(ValueError, match="read-only"):
+            file.data_base[0] += 1.0
+        file.subtract_dark(np.ones(file.energy.shape[0]))
+        assert not np.array_equal(file.data_base, observed_before)
         np.testing.assert_array_equal(slot.observed, observed_before)
 
     #
@@ -480,10 +485,12 @@ class TestCaptureOwnership:
         project, file = _setup_baseline_fit()
         captured = project._captured_files[file.name]
         assert not captured.data_raw.flags.writeable
-        raw_before = captured.data_raw.copy()
         assert file.data_raw is not None  # type guard
-        file.data_raw[0, 0] += 1.0  # the live array stays the user's
-        np.testing.assert_array_equal(captured.data_raw, raw_before)
+        # the record holds its own copy; neither side is writable
+        assert captured.data_raw is not file.data_raw
+        np.testing.assert_array_equal(captured.data_raw, file.data_raw)
+        with pytest.raises(ValueError, match="read-only"):
+            file.data_raw[0, 0] += 1.0
 
     #
     def test_captured_empty_time_axis_is_frozen(self):
@@ -506,10 +513,13 @@ class TestCaptureOwnership:
     #
     def test_data_raw_mutation_after_capture_raises_on_next_fit(self):
         """In-place raw-data mutation would put slots from different
-        measurements under one name; the next fit refuses."""
+        measurements under one name. The live array is read-only; the
+        write flag is advisory, so the capture-hash guard stays as the
+        backstop and the next fit refuses."""
 
         project, file = _setup_baseline_fit()
         assert file.data_raw is not None  # type guard
+        file.data_raw.flags.writeable = True  # deliberate: bypass the first line
         file.data_raw[0, 0] += 1.0
         with pytest.raises(RuntimeError, match="in-place mutation is not supported"):
             file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
@@ -3706,9 +3716,11 @@ class TestSelectionIdentity:
             seed_adapt=None,
             try_ci=0,
         )
-        # Refit with a tighter e_lim. Set both index and absolute parallels.
-        file.e_lim = [5, 25]
-        file.e_lim_abs = [float(file.energy[5]), float(file.energy[24])]
+        # Refit with a tighter e_lim (indices [5, 25) on the ascending axis).
+        file.set_fit_limits(
+            [float(file.energy[5]), float(file.energy[24])], show_plot=False
+        )
+        assert file.e_lim == (5, 25)
         file.fit_slice_by_slice(
             "single_glp",
             n_workers=1,
@@ -3750,8 +3762,12 @@ class TestSelectionIdentity:
         )
         file.fit_2d("single_glp", stages=1, try_ci=0)
         # Refit with a tighter t_lim covering the post-trigger half.
-        file.t_lim = [4, 24]
-        file.t_lim_abs = [float(file.time[4]), float(file.time[23])]
+        file.set_fit_limits(
+            None,
+            time_limits=[float(file.time[4]), float(file.time[23])],
+            show_plot=False,
+        )
+        assert file.t_lim == (4, 24)
         file.fit_2d("single_glp", stages=1, try_ci=0)
 
         twod_slots = [s for s in project._fit_history if s.fit_type == "2d"]

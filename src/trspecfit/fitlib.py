@@ -203,7 +203,7 @@ def compute_fit_metrics(
 
 #
 def _fit_window_slices(
-    ndim: int, e_lim: list[int] | None, t_lim: list[int] | None
+    ndim: int, e_lim: Sequence[int] | None, t_lim: Sequence[int] | None
 ) -> tuple[slice, ...]:
     """Build array slices selecting the user-defined fit window.
 
@@ -227,8 +227,8 @@ def residual_fun(
     data: np.ndarray,
     fit_fun_str: str,
     unpack: int = 0,
-    e_lim: list[int] | None = None,
-    t_lim: list[int] | None = None,
+    e_lim: Sequence[int] | None = None,
+    t_lim: Sequence[int] | None = None,
     res_type: str = "lmfit",
     args: Sequence[Any] | None = None,
     *,
@@ -360,8 +360,8 @@ def _jacobian_noise_weight(
     data: np.ndarray,
     fit_fun_str: str,
     unpack: int,
-    e_lim: list[int] | None,
-    t_lim: list[int] | None,
+    e_lim: Sequence[int] | None,
+    t_lim: Sequence[int] | None,
     args: Sequence[Any] | None,
     window: tuple[slice, ...],
 ) -> np.ndarray:
@@ -388,8 +388,8 @@ def jacobian_fun(
     data: np.ndarray,
     fit_fun_str: str,
     unpack: int = 0,
-    e_lim: list[int] | None = None,
-    t_lim: list[int] | None = None,
+    e_lim: Sequence[int] | None = None,
+    t_lim: Sequence[int] | None = None,
     res_type: str = "lmfit",
     args: Sequence[Any] | None = None,
     *,
@@ -479,8 +479,8 @@ def jacobian_fun_project(
     data: np.ndarray,
     fit_fun_str: str,
     unpack: int = 0,
-    e_lim: list[int] | None = None,
-    t_lim: list[int] | None = None,
+    e_lim: Sequence[int] | None = None,
+    t_lim: Sequence[int] | None = None,
     res_type: str = "lmfit",
     args: Sequence[Any] | None = None,
     *,

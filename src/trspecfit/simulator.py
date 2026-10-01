@@ -697,11 +697,15 @@ class Simulator:
         >>> ax2.pcolormesh(model.energy, model.time, noisy)
         >>> ax2.set_title(f'Noisy (SNR={sim.get_snr():.1f})')
 
-        >>> # Test fitting on simulated data
+        >>> # Test fitting on simulated data: a File owns its data, so the
+        >>> # noisy array goes in at construction
         >>> clean, noisy, noise = sim.simulate_2d()
-        >>> # ... set up fitting ...
-        >>> file.data = noisy  # Use noisy data for fit
-        >>> file.fit_2d(model_name='test', stages=2)
+        >>> fit_file = trspecfit.File(
+        ...     parent_project=project, name="sim", data=noisy,
+        ...     energy=model.energy, time=model.time,
+        ... )
+        >>> # ... load the model, set limits, define the baseline ...
+        >>> fit_file.fit_2d(model_name='test', stages=2)
         >>> # Compare fitted vs. true parameters
 
         >>> # Vary noise level to study impact
@@ -803,12 +807,17 @@ class Simulator:
         >>>
         >>> # Fit each dataset and analyze parameter distribution
         >>> fitted_params = []
-        >>> for noisy_data in noisy_list:
-        ...     file.data = noisy_data
-        ...     file.fit_2d('test', stages=2)
-        ...     fitted_params.append(model.lmfit_pars['amplitude'].value)
+        >>> for i, noisy_data in enumerate(noisy_list):
+        ...     fit_file = trspecfit.File(
+        ...         parent_project=project, name=f"sim_{i}", data=noisy_data,
+        ...         energy=model.energy, time=model.time,
+        ...     )
+        ...     # ... load the model, set limits, define the baseline ...
+        ...     fit_file.fit_2d('test', stages=2)
+        ...     fitted = fit_file.get_parameters(fit_type='2d').set_index('name')
+        ...     fitted_params.append(fitted.loc['amplitude', 'value'])
         >>>
-        >>> # Check parameter recovery
+        >>> # Check parameter recovery against the simulator's truth model
         >>> true_value = model.lmfit_pars['amplitude'].value
         >>> mean_fitted = np.mean(fitted_params)
         >>> std_fitted = np.std(fitted_params)

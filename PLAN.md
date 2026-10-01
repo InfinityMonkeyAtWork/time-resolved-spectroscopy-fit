@@ -390,7 +390,7 @@ Pushed to TODO item 8, the simulator output rework (recorded there 2026-09-30):
   `_update_value` (rule 4); `detached` copies (rule 5); the rule 7 split
   (snapshot copy here, owned simulator outputs and `model_parameters` to
   TODO item 8); the YAML-variant rule for test models.
-- [ ] 1. Rules 1 to 3 on `File`: `utils/ownership.py` with `frozen_copy`
+- [x] 1. Rules 1 to 3 on `File`: `utils/ownership.py` with `frozen_copy`
   and `owned` (`detached` joins in step 3, after its typing gate); the
   `owned` attributes with immutable storage (frozen arrays, window tuples),
   correction copies, baseline guard removed with its test, the 11 test
@@ -399,6 +399,19 @@ Pushed to TODO item 8, the simulator output rework (recorded there 2026-09-30):
   `file.data` rewritten. Probes: constructor array mutated afterwards;
   correction array mutated afterwards; item assignment on a returned window
   raises; assignment of each owned attribute raises with the route.
+  Landed 2026-09-30: `tests/test_ownership.py` holds the probes (rules 1
+  to 3). `data` aliases `data_raw` until a correction rebuilds it (both
+  frozen, one copy at construction). The `describe` and `define_baseline`
+  axis-missing branches were dead (data always has its axes) and left with
+  their tests; the `set_fit_limits` branch is reachable on a bare `File`
+  and keeps a test. Four more tests mutated live arrays in place to prove
+  a record's independence; they now assert the refusal and the record's
+  own copy, and the capture-hash backstop test flips the write flag
+  deliberately. `pyright` (its configured scope, `src` and tests), `mypy`
+  and `ruff` clean; 1483 default tests pass (slow tests run once at step
+  6). Review found the probe module writing `Project.path` (fixed: it
+  builds through `make_project`) and the simulator loop example reading
+  the truth model after the fit (fixed: it reads `get_parameters`).
 - [ ] 2. Rule 4 atomicity: `load_model` candidate-then-publish;
   `add_dynamics` / `add_profile` / `Par.update` validate-then-attach with
   restore; already-attached check in mcp; `model_active` cleared on removal.
