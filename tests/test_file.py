@@ -133,7 +133,7 @@ class TestModelManagement:
             model_yaml="models/file_energy.yaml",
             model_info="simple_energy",
         )
-        with pytest.warns(UserWarning, match="overwriting"):
+        with pytest.warns(UserWarning, match="replacing"):
             second = file.load_model(
                 model_yaml="models/file_energy.yaml",
                 model_info="simple_energy",
@@ -1684,7 +1684,7 @@ class TestFileNameAndProjectAccess:
         project = make_project(name="guard")
         file = File(parent_project=project, energy=np.linspace(80, 90, 10))
         file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
-        with pytest.warns(UserWarning, match="overwriting"):
+        with pytest.warns(UserWarning, match="replacing"):
             file.load_model(
                 model_yaml="models/file_energy.yaml", model_info="single_glp"
             )

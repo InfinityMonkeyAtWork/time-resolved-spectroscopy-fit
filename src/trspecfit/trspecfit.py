@@ -2616,18 +2616,6 @@ class File:
                 'Profile models (model_type="profile") require a single model name'
                 " in model_info."
             )
-        if model_type == "energy":
-            existing = self.select_model(model_info)
-            if existing is not None:
-                warnings.warn(
-                    f'Model "{self.model_list_to_name(model_info)}" already '
-                    f"exists on file '{self.name}' — overwriting the live "
-                    f"model object. Completed fits are unaffected (they are "
-                    f"kept in the fit history).",
-                    stacklevel=2,
-                )
-                self.models.remove(existing)
-
         # Load and process YAML file with appropriate numbering strategy
         model_yaml_path = self.p.path / pathlib.Path(model_yaml)
         model_info_dict = uparsing.load_and_number_yaml_components(
@@ -2715,8 +2703,19 @@ class File:
         # Add all components (and their parameters) to model
         loaded_model.add_components(all_comps)
 
-        # Add model to file
+        # Publish: the candidate is complete, so only now does a same-named
+        # model leave the file (a failure above leaves it in place and usable)
         if model_type == "energy":
+            existing = self.select_model(model_info)
+            if existing is not None:
+                warnings.warn(
+                    f'Model "{self.model_list_to_name(model_info)}" already '
+                    f"exists on file '{self.name}' — replacing the live "
+                    f"model object. Completed fits are unaffected (they are "
+                    f"kept in the fit history).",
+                    stacklevel=2,
+                )
+                self._remove_model(existing)
             self.models.append(loaded_model)
             self.set_active_model(model_info)  # set as current active model
         return loaded_model
@@ -2824,15 +2823,15 @@ class File:
 
         Notes
         -----
-        After deletion, model_active may be invalid. Set a new active model
-        if needed using set_active_model().
+        Deleting the active model leaves no active model; set one with
+        set_active_model() or name the model in the fit call.
         """
 
         if model_to_delete is None:
             if self.model_active is None:
                 warnings.warn("No active model to delete.", stacklevel=2)
                 return
-            self.models.remove(self.model_active)
+            self._remove_model(self.model_active)
             return
 
         mod = self.select_model(model_to_delete)
@@ -2842,7 +2841,15 @@ class File:
                 stacklevel=2,
             )
             return
-        self.models.remove(mod)
+        self._remove_model(mod)
+
+    #
+    def _remove_model(self, model: mcp.Model) -> None:
+        """Drop *model* from the file; an active reference to it goes with it."""
+
+        self.models.remove(model)
+        if self.model_active is model:
+            self.model_active = None
 
     #
     def reset_models(self) -> None:
@@ -2854,6 +2861,7 @@ class File:
         """
 
         self.models = []
+        self.model_active = None
 
     #
     def _reject_correction_under_noise(self, action: str) -> None:

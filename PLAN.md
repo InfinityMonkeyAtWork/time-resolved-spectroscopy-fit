@@ -412,12 +412,47 @@ Pushed to TODO item 8, the simulator output rework (recorded there 2026-09-30):
   6). Review found the probe module writing `Project.path` (fixed: it
   builds through `make_project`) and the simulator loop example reading
   the truth model after the fit (fixed: it reads `get_parameters`).
-- [ ] 2. Rule 4 atomicity: `load_model` candidate-then-publish;
+- [x] 2. Rule 4 atomicity: `load_model` candidate-then-publish;
   `add_dynamics` / `add_profile` / `Par.update` validate-then-attach with
   restore; already-attached check in mcp; `model_active` cleared on removal.
   Probes: state after a broken-YAML reload, after an unknown-parameter,
   expression-linked, already-attached, invalid-frequency and
   transitive-chain rejection, each with the before/after evaluation check.
+  Landed 2026-09-30: `_AttachmentRollback` (`mcp.py`) snapshots the target
+  parameter's attachment fields and list, every parameter's expression
+  flags, and the candidate's parent, axis, timing and evaluation state,
+  restores them and re-runs `update()` on any failure;
+  `Dynamics.validate_frequency` holds the four frequency checks once,
+  write-free, and `set_frequency` / `normalize_time` call it; `Par.update`
+  evaluates before it flags. `load_model` publishes after the candidate is
+  complete (the warning says "replacing"); `_remove_model` clears
+  `model_active` for `delete_model` / `reset_models` (`model_base` and the
+  other fit-role references record the last fit and stay). Probes in
+  `tests/test_ownership.py` compare the settled evaluation, names, vary
+  levels, flags and dim before and after each rejection, and the
+  candidate's state on the advanced route. Finding, not fixed here: the
+  first evaluation of a model with a static expression chain
+  (`expression_chain`) differs from every later one by the chained term;
+  `lmfit_pars.update_constraints()` after load settles it, and the
+  Simulator's first clean array on such a model is the unsettled one.
+  Direct fan-out is unaffected. Decided 2026-09-30, after a first call to
+  refuse chains at load was reversed on the evidence that the compiled
+  path handles them and lmfit supports them natively: keep static chains
+  and settle them the way lmfit does. Mechanism: an expression parameter
+  enters lmfit's container with a placeholder value, and lmfit resolves an
+  expression lazily on read from its symbol table, so a chained expression
+  read before its dependency gets the placeholder; lmfit's minimizer calls
+  `update_constraints()` before every residual, which walks the
+  dependencies in order. Fix (own commit, after step 2): call it at the
+  end of `Model.update()` and at the top of `create_value_1d` /
+  `create_value_2d`; an unknown name in an expression then fails at load
+  with the existing "references an unknown parameter" message, and the two
+  late `NameError` wrappers in `add_dynamics` / `add_profile` go. Chains
+  through a `t_vary` / `p_vary` parameter stay refused: lmfit's symbol
+  table holds scalars, and our direct-reference substitution does not
+  propagate through a second expression. Rollback probes also cover a
+  rejection after `set_frequency` wrote the candidate's timing arrays.
+  1493 default tests pass.
 - [ ] 3. Rule 5: mypy + pyright on the `detached` prototype first (the
   typing gate), then `detached` into `utils/ownership.py` and onto the
   record classes, `MCMCResult` included; hoisted reads in the
