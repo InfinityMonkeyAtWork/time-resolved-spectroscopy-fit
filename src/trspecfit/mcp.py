@@ -97,10 +97,10 @@ class _AttachmentRollback:
     Restore both models when an attachment fails after it started writing.
 
     ``Model.add_dynamics`` and ``Model.add_profile`` validate everything
-    before they write. What can still fail afterwards — a dynamics
-    expression naming an unknown parameter, a transitive expression chain
-    found by the analysis — surfaces only once the candidate is attached,
-    so the attachment runs inside this context manager. It snapshots what
+    before they write. What can still fail afterwards — a transitive
+    expression chain through the newly dynamic parameter, found by the
+    analysis — surfaces only once the candidate is attached, so the
+    attachment runs inside this context manager. It snapshots what
     the attachment writes: the target parameter's attachment fields, every
     parameter's expression flags, and the candidate's parent pointer, axis,
     timing and evaluation state. On any exception it puts that back,
@@ -752,6 +752,19 @@ class Model:
         # update list of all parameter names
         self.parameter_names = [par.name for par in self.lmfit_par_list]
 
+        # settle every expression in dependency order, as lmfit's minimizer
+        # does before a fit: an expression parameter enters the container
+        # with a placeholder, and a chained expression read before its
+        # dependency would otherwise see that placeholder
+        try:
+            self.lmfit_pars.update_constraints()
+        except NameError as e:
+            raise ValueError(
+                f'Model "{self.name}" has an expression that references an '
+                f"unknown parameter ({e}). Expressions can only reference "
+                "parameters of the same model."
+            ) from e
+
     #
     def update_value(
         self,
@@ -871,16 +884,7 @@ class Model:
         with _AttachmentRollback(self, target_par, dynamics_model):
             if frequency != -1:
                 dynamics_model.set_frequency(frequency)
-            try:
-                target_par.update(dynamics_model)
-            except NameError as e:
-                # lmfit evaluates dynamics expressions in the dynamics model's
-                # own parameter namespace; unknown names surface as NameError
-                raise ValueError(
-                    f'Dynamics model for "{dynamics_model.name}" references an '
-                    f"unknown parameter ({e}). Expressions in a dynamics model "
-                    "can only reference parameters of that same dynamics model."
-                ) from e
+            target_par.update(dynamics_model)
             dynamics_model.parent_model = self
             # update model lmfit_par_list, parameter_names and components
             self.update()
@@ -1159,6 +1163,16 @@ class Model:
         with convolution/background interactions.
         """
 
+        # settle expressions as lmfit's minimizer does before a residual
+        self.lmfit_pars.update_constraints()
+        return self._evaluate_1d(t_ind, store_1d=store_1d, return_1d=return_1d)
+
+    #
+    def _evaluate_1d(
+        self, t_ind: int = 0, *, store_1d: int = 0, return_1d: int = 0
+    ) -> np.ndarray | None:
+        """``create_value_1d`` on an already settled container."""
+
         # re-initialize list containing individual component spectra
         if store_1d == 1:
             self.component_spectra = []
@@ -1226,12 +1240,15 @@ class Model:
         if self.time is None or self.energy is None:
             raise ValueError("Model time and energy axes required for 2D evaluation")
 
+        # settle expressions once; nothing in lmfit's container changes
+        # between the time points of one evaluation
+        self.lmfit_pars.update_constraints()
         t_start = 0 if t_ind is None else t_ind[0]
         time_slice = self.time if t_ind is None else self.time[t_ind[0] : t_ind[1]]
         self.value_2d = np.empty((len(time_slice), len(self.energy)))
         for ti, _t in enumerate(time_slice):
-            # create_value_1d expects an absolute index into self.time
-            val = self.create_value_1d(t_ind=t_start + ti, return_1d=1)
+            # the evaluator expects an absolute index into self.time
+            val = self._evaluate_1d(t_ind=t_start + ti, return_1d=1)
             if val is None:
                 raise RuntimeError("create_value_1d returned None during 2D eval")
             self.value_2d[ti, :] = val

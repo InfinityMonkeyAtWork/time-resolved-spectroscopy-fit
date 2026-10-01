@@ -423,6 +423,32 @@ class TestAttachmentIsAtomic:
         assert dyn.parent_model is None
 
     #
+    def test_unknown_name_in_a_candidate_expression_leaves_the_model_unchanged(self):
+        """The candidate fails at its own load, before anything is attached."""
+
+        file = make_model_file()
+        before = model_state(file.model_active)
+        with pytest.raises(ValueError, match="references an unknown parameter"):
+            add_dynamics(
+                file,
+                model="simple_energy",
+                parameter="GLP_01_A",
+                dynamics=["CrossModelExpr"],
+            )
+        assert_same_state(before, model_state(file.model_active))
+
+        with_aux = make_model_file(with_aux=True)
+        before = model_state(with_aux.model_active)
+        with pytest.raises(ValueError, match="references an unknown parameter"):
+            add_profile(
+                with_aux,
+                model="simple_energy",
+                parameter="GLP_01_x0",
+                profile="profile_pLinear_unknown_name",
+            )
+        assert_same_state(before, model_state(with_aux.model_active))
+
+    #
     def test_profile_rejections_touch_neither_model(self):
         no_aux = make_model_file()
         before = model_state(no_aux.model_active)

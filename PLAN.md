@@ -452,7 +452,17 @@ Pushed to TODO item 8, the simulator output rework (recorded there 2026-09-30):
   table holds scalars, and our direct-reference substitution does not
   propagate through a second expression. Rollback probes also cover a
   rejection after `set_frequency` wrote the candidate's timing arrays.
-  1493 default tests pass.
+  Landed as its own commit after step 2: `update()` settles and converts
+  the `NameError` to "references an unknown parameter"; `create_value_1d`
+  / `create_value_2d` settle once per call (the 2D loop runs an internal
+  evaluator, since nothing in the container changes between time points;
+  the settle costs ~30 µs against ~60 µs for a 1D evaluation of the test
+  model, 1.6 ms for its 26-slice 2D evaluation); probes: first evaluation
+  equals the second and the Simulator's first clean array, unknown names
+  refused at load for profiles, unchanged state after a candidate fails at
+  load (`CrossModelExpr`, `profile_pLinear_unknown_name`);
+  `supported_models.md` states that static chains are supported on both
+  paths. 1497 default tests pass.
 - [ ] 3. Rule 5: mypy + pyright on the `detached` prototype first (the
   typing gate), then `detached` into `utils/ownership.py` and onto the
   record classes, `MCMCResult` included; hoisted reads in the

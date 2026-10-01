@@ -613,6 +613,27 @@ class TestYAMLValidationErrors:
             )
 
     #
+    def test_unknown_name_in_expression_is_reported_at_load(self):
+        """The container settles its expressions when it is built, so an
+        expression naming a parameter the model does not define fails at
+        load, not at the first evaluation."""
+
+        project = make_project()
+        file = File(
+            parent_project=project,
+            energy=np.linspace(80, 90, 50),
+            time=np.linspace(0, 10, 6),
+            aux_axis=np.linspace(0, 5, 4),
+        )
+        with pytest.raises(ValueError, match="references an unknown parameter"):
+            file.load_model(
+                "models/file_profile.yaml",
+                "profile_pLinear_unknown_name",
+                "GLP_01_x0",
+                model_type="profile",
+            )
+
+    #
     def test_nonexistent_model_raises(self):
         """Loading a model name that doesn't exist in the YAML should fail."""
 
