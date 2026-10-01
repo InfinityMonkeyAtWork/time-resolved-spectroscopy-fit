@@ -57,6 +57,10 @@ split the work as follows:
     (plain pytest, public API usage, `show_plot=False`), and
     verification that parity coverage claimed in chunk B exists in
     `tests/test_gir_integration.py`. Runs after B.
+- **Behavioral probes** — check 21 is conditional on a diff; on a `full`
+  run, execute one probe per row of the ownership-contract table, across
+  chunks A (`File`, `Model`), D (results, archive) and E (simulator, sweep),
+  and report per surface.
 - Each subagent returns only concise findings: file:line, severity
   (PASS/INFO/WARN/FAIL), one-line description.
 - Findings are collected into a report file (e.g.
@@ -218,6 +222,16 @@ Scan test files for coverage of:
 
 Report as INFO with suggestions for what to add.
 
+When the diff touches fit, evaluation, or simulation code, also read the
+changed files' line coverage: run
+`COVERAGE_CORE=sysmon pytest -q -m "" --cov --cov-report=term-missing`
+(about four minutes; the `sysmon` core keeps the tracing overhead near 10%,
+and the `patch = subprocess` setting in `pyproject.toml` measures the spawned
+SbS / MCMC workers) and check whether the new or changed lines are executed
+by any test. An unexecuted branch in a fit path is where a wrong number goes
+unnoticed: report it as WARN with the missing line ranges. The percentage
+itself is not a finding; no threshold is enforced.
+
 ## 18. GIR / MCP parity
 
 Trigger when the diff touches any of `src/trspecfit/graph_ir.py`,
@@ -278,6 +292,49 @@ Verify:
 
 Report as FAIL if a new node kind has no coverage in either direction.
 
+## 21. Behavioral probes
+
+Trigger when the diff touches ownership, state transitions, or persistence:
+`src/trspecfit/trspecfit.py`, `src/trspecfit/mcp.py`,
+`src/trspecfit/simulator.py`, `src/trspecfit/fit_results.py`,
+`src/trspecfit/utils/fit_io.py`, `src/trspecfit/utils/sweep.py`,
+`src/trspecfit/utils/hdf5.py`. Run only the probes whose surface the diff
+touches, not the whole set.
+
+Reading the code shows what a function does; a probe shows what the object
+does afterwards. The contracts under test are the rows of the table in
+`docs/design/api_ownership_contract.md`. Each probe is a small deterministic
+script through the public lifecycle (`Project`, `File.load_model`, the
+`fit_*` methods, `save_fit`), in a temporary directory, with one stated
+invariant:
+
+| Probe | Do | Check |
+|---|---|---|
+| Mutate across an ownership boundary | After passing an array to a constructor or setter, or after reading a result (a DataFrame, a dict, an array), modify the caller's copy in place. | Internal state, the record, and the archive are unchanged. |
+| Inspect state after a rejection | Trigger a rejected operation: a `load_model` on a broken YAML, an attachment to an unknown parameter. | The previous model is intact and usable; parameter state and `parent_model` are what they were. An exception assertion alone misses partial mutation. |
+| Change settings between computing and saving | Compute, change a live setting (noise, `PlotConfig`, a simulator noise level), then save. | The saved metadata describes the computation that produced the saved arrays, not the current settings. |
+| Reconstruct from archive contents alone | Rebuild a model from the archived records only, without the original YAML, the live model, or the baseline result, and evaluate it. | Numerical agreement with the saved prediction, including fixed and expression-linked parameters. Matching stored fields alone does not establish executable equivalence. |
+| Use deliberately different candidate values | Make the YAML default, the baseline value, and the fitted value of one parameter distinguishable. | The value that surfaces names its source; a fixed value is the one the record claims. |
+
+Method:
+
+- Validate the probe before reporting: a control run in which the invariant
+  is expected to hold, and discriminating inputs. The September 2026 review's
+  first "defect" was in its own reconstruction script.
+- Report the concrete trigger, expected behavior, observed behavior, and the
+  scope of the conclusion (which surfaces, which fit types).
+- Distinguish missing persisted information from a missing API: if the
+  diagnostic needs internal access because no public path exists, say so
+  instead of presenting it as a supported workflow.
+- A confirmed failure becomes a regression test when it is fixed; a
+  successful reconstruction probe becomes round-trip coverage when the loader
+  lands. The probe script itself is not kept.
+
+Report as FAIL for a confirmed contract break not already listed under
+"Evidence" in the contract document (those are step 4's known scope), WARN
+when a probe needs internal access for lack of a public path, INFO for a
+passing probe.
+
 ## Summary
 
 Print a summary table:
@@ -304,5 +361,6 @@ Print a summary table:
 | 18 | GIR / MCP parity | ... | ... |
 | 19 | Two-layer design compliance | ... | ... |
 | 20 | `can_lower_*` hygiene | ... | ... |
+| 21 | Behavioral probes | ... | ... |
 
 Then list any FAIL or WARN items with actionable next steps.

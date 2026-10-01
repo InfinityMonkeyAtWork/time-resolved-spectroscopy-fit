@@ -63,6 +63,8 @@ dev = [
   "nbstripout==0.9.1",
   "pytest==9.1.1",
   "pytest-xdist==3.8.0",
+  "pytest-timeout==2.4.0",
+  "pytest-cov==7.1.0",
   "pyright==1.1.411",
   "ruff==0.15.20",
   "build==1.5.0",
@@ -132,6 +134,10 @@ testpaths = ["tests"]
 # parallel by default (pytest-xdist); tests/conftest.py pins BLAS to one
 # thread per worker. For a sequential run (e.g. --pdb debugging) pass -n 0.
 addopts = "-m 'not slow' -n auto --dist worksteal"
+# per-test cap (pytest-timeout): a hang fails that one test by name instead
+# of stalling its worker until the CI job cap. The full suite runs in ~5 min
+# on four workers, so no legitimate test comes near this.
+timeout = 600
 markers = ["slow: long-running round-trip tests (skipped by default, use -m slow)"]
 filterwarnings = [
     # test fixtures often sample exactly on subcycle boundaries (integer-step
@@ -140,6 +146,20 @@ filterwarnings = [
     "ignore:FigureCanvasAgg is non-interactive:UserWarning",
     "ignore:invalid value encountered in scalar divide:RuntimeWarning:lmfit",
 ]
+
+# Coverage is an on-demand review instrument, not a CI check and not a
+# threshold: `COVERAGE_CORE=sysmon pytest --cov` (the env var keeps the tracing
+# overhead near 10%; the default tracer more than doubles the run). When to
+# read it: docs/ai/code-review.md, check 17.
+[tool.coverage.run]
+source = ["trspecfit"]
+# measure the spawned SbS / MCMC worker processes too (pytest-cov 7 has no
+# subprocess hook of its own)
+patch = ["subprocess"]
+
+[tool.coverage.report]
+skip_empty = true
+precision = 1
 
 [tool.ruff]
 line-length = 88

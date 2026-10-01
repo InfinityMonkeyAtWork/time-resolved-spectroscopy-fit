@@ -391,7 +391,7 @@ everywhere renames `get_parameters` a second time in two minor releases;
   the same object overwrites), so neither needs the definition to change and
   neither needs a parent-baseline reference. Landed in v0.19.0.
 - **Step 3** turns each row of the contract table into a behavioural probe
-  in `docs/ai/code-review.md`.
+  in `docs/ai/code-review.md`. Landed 2026-09-30 as check 21.
 - **Step 4** enforces rules 1 to 5; the violations listed above are its
   scope, the probes its acceptance tests.
 - **Step 5** inventories the tiers name by name and applies the vocabulary.

@@ -35,3 +35,4 @@ added or a plan is archived (see "The Archive" in `CLAUDE.md`).
 - [archive/jax_backend_plan.md](archive/jax_backend_plan.md) — v0.12.0 execution record of the JAX backend track, Phases A–D.
 - [archive/kernel_matrix_convolution_plan.md](archive/kernel_matrix_convolution_plan.md) — the kernel-matrix convolution operator on the mcp and GIR paths, and why two kernels were dropped.
 - [archive/code_review_2026_07.md](archive/code_review_2026_07.md) — full-repo code review of July 2026: every finding fixed, declined with rationale, or moved to `TODO.md`.
+- [archive/review_2026_06_triage.md](archive/review_2026_06_triage.md) — the June 2026 external review triaged against v0.19.0: each weakness retired with evidence or carried to its `TODO.md` item; the reachable-trigger rule.
