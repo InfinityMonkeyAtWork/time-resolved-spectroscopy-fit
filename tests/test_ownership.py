@@ -14,7 +14,7 @@ import pandas as pd
 import pytest
 from _utils import make_project, simulate_noisy
 
-from trspecfit import File, FitResults
+from trspecfit import File, FitResults, Simulator
 from trspecfit.utils import fit_io
 
 
@@ -711,3 +711,63 @@ class TestResultRecordsAreSnapshots:
         assert result.acceptance_fraction is not None  # type guard
         assert list(result.acceptance_fraction) == [0.3, 0.4]
         assert not result.acceptance_fraction.flags.writeable
+
+
+#
+#
+class TestSimulatorRecordsTheDraw:
+    """Rule 7: the simulator's draw record describes the draw, not what the
+    caller did to the arrays or to the settings afterwards."""
+
+    #
+    def test_caller_mutation_of_the_returned_arrays_leaves_the_record_alone(self):
+        truth = make_model_file()
+        sim = Simulator(
+            model=truth.model_active,
+            detection="photon_counting",
+            counts_per_delay=5000,
+            seed=3,
+        )
+        clean, noisy, _noise = sim.simulate_2d()
+        declared = sim.noise_model
+        sigma = sim.sigma_data
+        clean *= -1.0
+        noisy[...] = 0.0
+        assert sim.noise_model == declared
+        assert sim.sigma_data == sigma
+
+    #
+    @pytest.mark.xfail(
+        strict=True,
+        reason="TODO item 8: model_parameters is read from the live model at "
+        "save time, not from the state that generated the arrays",
+    )
+    def test_saved_model_parameters_describe_generation_time(
+        self, tmp_path, monkeypatch
+    ):
+        """Simulate, let a fit write new values into the same model, save:
+        the saved parameters should be the ones that generated the arrays."""
+
+        import json
+
+        import h5py
+
+        file, _ = make_fitted_file()  # a fitted baseline model with data
+        model = file.model_base
+        assert model is not None  # type guard
+        sim = Simulator(model=model, detection="analog", noise_level=0.05, seed=5)
+        sim.simulate_1d()
+        generated = {
+            name: model.lmfit_pars[name].value for name in model.parameter_names
+        }
+        # a fit of the same model writes its execution state back
+        file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
+        fitted = {name: model.lmfit_pars[name].value for name in model.parameter_names}
+        assert fitted != generated
+        monkeypatch.chdir(tmp_path)
+        sim.save_data(filepath="generation.h5", show_output=0)
+        with h5py.File(tmp_path / "simulated_data" / "generation.h5", "r") as f:
+            saved = json.loads(f["metadata"].attrs["model_parameters"])
+        assert {name: spec["value"] for name, spec in saved.items()} == pytest.approx(
+            generated
+        )

@@ -17,6 +17,7 @@ from _utils import make_project
 matplotlib.use("Agg")
 
 from trspecfit import File, Simulator  # noqa: E402
+from trspecfit.utils.hdf5 import require_dataset  # noqa: E402
 
 _ENERGY = np.linspace(82.0, 88.0, 41)
 _TIME = np.linspace(-2.0, 10.0, 17)
@@ -80,9 +81,8 @@ def _truth_model(*, name, dynamics=True):
 def _bleach_model(*, name):
     """Truth model whose clean signal is negative everywhere.
 
-    A negative background of -3 with a peak of 2 on top: the signal is a
-    bleach, and ``abs(clean)`` stays between 1 and 3, so no pixel gets the
-    zero sigma that ``set_noise`` rejects.
+    A negative background of -3 with a peak of 2 on top: a bleach, which no
+    counting draw describes.
     """
 
     file = _peak_file(name=name)
@@ -304,45 +304,177 @@ class TestSnapshotBelongsToTheSimulatedData:
             saved = f["metadata"].attrs["sigma_data"]
         assert saved == pytest.approx(simulated, rel=1e-12)
 
+    #
+    def test_saved_settings_are_the_simulated_ones(self, tmp_path, monkeypatch):
+        """Draw, change the noise level and type, save: the file describes
+        the draw, not the current settings."""
 
-#
-#
-class TestSignedOutputDeclaresPerPointSigma:
-    """A bleach sampled as counts is not counting data any more.
-
-    The sampler draws from ``abs(clean)`` and restores the sign, so the output
-    is negative where the signal is. No counting likelihood covers that, and
-    the poisson variance is declared point by point instead.
-    """
+        model = _truth_model(name="stale_settings")
+        sim = _analog_simulator(model, noise_level=0.1)
+        clean, _noisy, _noise = sim.simulate_2d()
+        simulated = 0.1 * float(np.max(np.abs(clean)))
+        sim.set_noise_level(0.4)
+        sim.set_noise_type("poisson")
+        monkeypatch.chdir(tmp_path)
+        sim.save_data(filepath="stale_settings.h5", show_output=0)
+        with h5py.File(tmp_path / "simulated_data" / "stale_settings.h5", "r") as f:
+            attrs = dict(f["metadata"].attrs)
+        assert attrs["noise_level"] == pytest.approx(0.1)
+        assert attrs["noise_type"] == "gaussian"
+        assert attrs["sigma_data"] == pytest.approx(simulated, rel=1e-12)
+        assert attrs["seed"] == _SEED
 
     #
-    def test_declaration_is_the_poisson_variance_per_point(self):
-        model = _bleach_model(name="bleach")
+    def test_a_standalone_add_noise_does_not_touch_the_record(
+        self, tmp_path, monkeypatch
+    ):
+        """add_noise on the caller's array is a helper: the stored
+        simulation and its record are untouched, and save_data writes
+        the record of the stored arrays."""
+
+        model = _truth_model(name="helper_draw")
+        sim = _analog_simulator(model, noise_level=0.1)
+        clean, noisy, _noise = sim.simulate_2d()
+        declared, sigma = sim.noise_model, sim.sigma_data
+        sim.set_noise_level(0.4)
+        other_noisy, _other_noise = sim.add_noise(2.0 * clean, dim=2)
+        assert not np.array_equal(other_noisy, noisy)
+        assert sim.noise_model == declared and sim.sigma_data == sigma
+        assert sim.data_noisy is noisy
+        monkeypatch.chdir(tmp_path)
+        sim.save_data(filepath="helper_draw.h5", show_output=0)
+        with h5py.File(tmp_path / "simulated_data" / "helper_draw.h5", "r") as f:
+            attrs = dict(f["metadata"].attrs)
+            saved_noisy = require_dataset(f["simulated_data/000000"], "000000")[()]
+        assert attrs["noise_level"] == pytest.approx(0.1)
+        assert attrs["sigma_data"] == pytest.approx(sigma, rel=1e-12)
+        np.testing.assert_array_equal(saved_noisy, noisy)
+
+    #
+    def test_a_new_clean_array_starts_a_new_simulation(self, tmp_path, monkeypatch):
+        """generate_clean_data replaces the stored simulation as a unit: the
+        old noisy arrays and record do not describe the new clean array."""
+
+        model = _truth_model(name="new_clean")
+        sim = _analog_simulator(model, noise_level=0.1)
+        sim.simulate_2d()
+        sim.generate_clean_data(dim=2)
+        assert sim.data_noisy is None and sim.noise is None
+        assert sim.noise_model is None and sim.sigma_data is None
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(ValueError):
+            sim.save_data(filepath="new_clean.h5", show_output=0)
+
+
+#
+#
+class TestTheDrawIsTheDeclaredModel:
+    """The simulator draws from the NoiseModel it declares, as lmfit fits
+    weight with it; replaying the draw from the declaration reproduces the
+    noisy array exactly, for the same seed."""
+
+    #
+    def test_counting_draw_is_poisson_on_clean_times_scale(self):
+        model = _truth_model(name="replay_counting")
+        sim = _counting_simulator(model)
+        clean, noisy, noise = sim.simulate_2d()
+        declared = sim.noise_model
+        assert declared is not None  # type guard
+        scale = declared["scale"]
+        rng = np.random.default_rng(_SEED)
+        np.testing.assert_array_equal(noisy, rng.poisson(clean * scale) / scale)
+        np.testing.assert_array_equal(noise, noisy - clean)
+
+    #
+    def test_analog_gaussian_draw_is_normal_with_the_declared_sigma(self):
+        model = _truth_model(name="replay_gaussian")
+        sim = _analog_simulator(model, noise_level=0.1)
+        clean, noisy, noise = sim.simulate_2d()
+        declared = sim.noise_model
+        assert declared is not None  # type guard
+        rng = np.random.default_rng(_SEED)
+        np.testing.assert_array_equal(
+            noise, rng.normal(0, declared["sigma"], clean.shape)
+        )
+        np.testing.assert_array_equal(noisy, clean + noise)
+
+    #
+    def test_analog_poisson_draw_is_poisson_on_clean_times_scale(self):
+        model = _truth_model(name="replay_analog_poisson")
+        sim = _analog_simulator(model, noise_level=0.02, noise_type="poisson")
+        clean, noisy, noise = sim.simulate_2d()
+        declared = sim.noise_model
+        assert declared is not None  # type guard
+        scale = declared["scale"]
+        rng = np.random.default_rng(_SEED)
+        np.testing.assert_array_equal(noise, rng.poisson(clean * scale) / scale - clean)
+        np.testing.assert_array_equal(noisy, clean + noise)
+
+    #
+    def test_declaration_round_trips_into_the_file_noise_model(self):
+        model = _truth_model(name="round_trip")
+        for sim in (
+            _counting_simulator(model),
+            _analog_simulator(model, noise_level=0.1),
+            _analog_simulator(model, noise_level=0.02, noise_type="poisson"),
+        ):
+            _clean, noisy, _noise = sim.simulate_2d()
+            declared = sim.noise_model
+            assert declared is not None  # type guard
+            file = _peak_file(
+                name=f"round_trip_{sim.detection}_{sim.noise_type}", data=noisy
+            )
+            file.set_noise(**declared)
+            drawn = sim._noise_applied.model  # the declared model itself
+            assert drawn is not None  # type guard
+            assert file.noise.kind == drawn.kind
+            assert file.noise.scale == drawn.scale
+            assert file.noise.sigma == drawn.sigma
+
+
+#
+#
+class TestSignalsNoModelDescribesAreRefused:
+    """A count cannot be negative, and a gaussian draw needs a sigma: the
+    simulator refuses what no NoiseModel describes instead of drawing
+    something a fit cannot weight."""
+
+    #
+    @pytest.mark.parametrize("dim", [1, 2])
+    def test_counting_refuses_a_negative_signal(self, dim):
+        model = _bleach_model(name=f"refuse_counting_{dim}")
         sim = _counting_simulator(model, counts_per_delay=_BLEACH_COUNTS)
+        with pytest.raises(ValueError, match="non-negative"):
+            sim.simulate_1d() if dim == 1 else sim.simulate_2d()
+        assert sim.data_noisy is None and sim.noise_model is None  # nothing drawn
+
+    #
+    def test_analog_poisson_refuses_a_negative_signal(self):
+        model = _bleach_model(name="refuse_analog_poisson")
+        sim = _analog_simulator(model, noise_level=0.02, noise_type="poisson")
+        with pytest.raises(ValueError, match="non-negative"):
+            sim.simulate_2d()
+        assert sim.data_noisy is None and sim.noise_model is None  # nothing drawn
+
+    #
+    def test_analog_gaussian_refuses_a_zero_sigma(self):
+        model = _truth_model(name="refuse_zero_sigma")
+        sim = _analog_simulator(model, noise_level=0.0)
+        with pytest.raises(ValueError, match="noise_type='none'"):
+            sim.simulate_2d()
+        assert sim.data_noisy is None and sim.noise_model is None  # nothing drawn
+
+    #
+    def test_a_gaussian_draw_on_a_negative_signal_is_fine(self):
+        """Gaussian noise describes signed data; only counts are non-negative."""
+
+        model = _bleach_model(name="gaussian_bleach")
+        sim = _analog_simulator(model, noise_level=0.1)
         clean, noisy, _noise = sim.simulate_2d()
         assert clean.max() < 0.0
-        assert noisy.min() < 0.0
-
-        noise_model = sim.noise_model
-        assert noise_model is not None  # type guard
-        assert noise_model["noise_type"] == "gaussian"
-        scale = _BLEACH_COUNTS / float(np.mean(np.sum(np.abs(clean), axis=1)))
-        sigma = noise_model["sigma"]
-        assert sigma.shape == clean.shape
-        assert np.allclose(sigma, np.sqrt(np.abs(clean) / scale), rtol=1e-12)
-        assert sim.sigma_data is None
-
-    #
-    def test_declaration_is_accepted_as_a_per_point_sigma(self):
-        model = _bleach_model(name="bleach_accept")
-        sim = _counting_simulator(model, counts_per_delay=_BLEACH_COUNTS)
-        _clean, noisy, _noise = sim.simulate_2d()
-        noise_model = sim.noise_model
-        assert noise_model is not None  # type guard
-        file = _peak_file(name="bleach_accept_fit", data=noisy)
-        file.set_noise(**noise_model)
-        assert file.noise_type == "gaussian"
-        assert file.sigma_type == "per_point"
+        declared = sim.noise_model
+        assert declared is not None  # type guard
+        assert declared["noise_type"] == "gaussian"
 
 
 #

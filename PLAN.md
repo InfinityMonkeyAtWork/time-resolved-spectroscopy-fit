@@ -501,7 +501,7 @@ Pushed to TODO item 8, the simulator output rework (recorded there 2026-09-30):
   instead of four (0.25 ms per call); the probes mutate a local read and assert the edit
   took before asserting the record did not change (no chained-assignment
   warnings). 1502 default tests pass.
-- [ ] 4. Rule 7: the simulator draws from a `NoiseModel` built once from
+- [x] 4. Rule 7: the simulator draws from a `NoiseModel` built once from
   the settings and the clean array; the snapshot is that model plus the
   settings and seed, holding a frozen copy of what it needs (`add_noise`
   included); `_write_detection_metadata` reads the snapshot. Signed Poisson
@@ -513,6 +513,36 @@ Pushed to TODO item 8, the simulator output rework (recorded there 2026-09-30):
   `set_noise(**sim.noise_model)` round trip compared by kind, scale and
   sigma; negative-signal refusal. The `model_parameters` probe run and its
   result recorded for TODO item 8, no fix here.
+  Landed 2026-09-30. `_noise_model_for(settings, clean, dim)` is the one
+  mapping (photon counting → poisson, scale = budget / reference; analog
+  gaussian → gaussian, sigma = level × clean maximum; analog poisson →
+  poisson, scale = 1 / (level + 1e-10); `none` and a zero-signal count
+  budget → no model); `_draw(model, clean)` samples from it (the two
+  Poisson pathways keep their historical compositions, which differ in the
+  last bit); `_NoiseSnapshot` holds the model and a `_DetectionSettings`
+  record (detection, level, type, budget, rate, integration time, seed),
+  so nothing references the clean array; `save_data` writes the draw's
+  settings, the sweep the live ones it does not change. Refusals before
+  any draw: a negative signal under either Poisson pathway (names the
+  routes), a gaussian draw whose sigma would be zero (names
+  `noise_type='none'`). `_bleach_model` stays as the refusal fixture; the
+  three generator methods went. Tests replay each draw from the
+  declaration with a fresh rng and match the arrays exactly, round-trip
+  the declaration into `File.noise` by kind, scale and sigma, and check
+  the saved settings after `set_noise_level` / `set_noise_type`. Ownership
+  probes: caller mutation of the returned arrays leaves the record alone;
+  the `model_parameters` probe (simulate, let a fit write back, save) is a
+  strict `xfail` pointing at TODO item 8. Example CSVs: all four
+  generators (01, 03, 04, 21) reproduced the committed files
+  byte-for-byte before the change and again after it, executed as copies
+  in the scratchpad, sequentially. Review addition: the stored simulation
+  is one unit (`_store` sets the three arrays and the record together);
+  the public `add_noise` is a helper on the caller's array that records
+  nothing, and `generate_clean_data` starts a new unit (the old noisy
+  arrays and record are cleared, so `save_data` refuses until a draw),
+  because a standalone `add_noise` or a new clean array had left
+  `save_data` pairing the stored arrays with another draw's record.
+  1513 default tests pass, 1 xfail.
 - [ ] 5. Parameter state: underscore the six lmfit handles and
   `update_value` across `src` (including `graph_ir.py`) and tests; notebook
   12 via `get_vary_levels`; example 21's generator via named YAML entries;
