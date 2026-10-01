@@ -7,11 +7,15 @@ does afterwards: a caller mutates across the ownership boundary, or assigns
 an owned attribute, and the File's state is what the contract says.
 """
 
-import numpy as np
-import pytest
-from _utils import make_project
+import dataclasses
 
-from trspecfit import File
+import numpy as np
+import pandas as pd
+import pytest
+from _utils import make_project, simulate_noisy
+
+from trspecfit import File, FitResults
+from trspecfit.utils import fit_io
 
 
 #
@@ -498,3 +502,212 @@ class TestAttachmentIsAtomic:
                 profile="profile_pExpDecay",
             )
         assert_same_state(before, model_state(file.model_active))
+
+
+#
+def make_fitted_file(*, try_ci: int = 0) -> tuple[File, fit_io.SavedFitSlot]:
+    """A baseline fit on simulated single-peak data (``try_ci=1`` for intervals)."""
+
+    energy = np.linspace(83, 87, 30)
+    time = np.linspace(-2, 10, 24)
+    truth = File(
+        parent_project=make_project(name="truth"),
+        name="truth",
+        energy=energy,
+        time=time,
+    )
+    truth.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+    truth.add_time_dependence(
+        target_model="single_glp",
+        target_parameter="GLP_01_A",
+        dynamics_yaml="models/file_time.yaml",
+        dynamics_model=["MonoExpPos"],
+    )
+    data = simulate_noisy(truth.model_active, noise_level=0.01)
+    project = make_project()
+    file = File(parent_project=project, name="fit", data=data, energy=energy, time=time)
+    file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+    file.define_baseline(0, 3, time_type="ind", show_plot=False)
+    file.fit_baseline(model_name="single_glp", stages=1, try_ci=try_ci)
+    slot = project.results.find(file="fit", fit_type="baseline")[-1]
+    return file, slot
+
+
+#
+def record_content(slot: fit_io.SavedFitSlot) -> dict:
+    """The container content of a slot, as independent copies."""
+
+    assert slot.fit_settings is not None  # type guard
+    assert slot.component_names is not None  # type guard
+    return {
+        "params": slot.params.copy(),
+        "metrics": dict(slot.metrics),
+        "fit_settings": dict(slot.fit_settings),
+        "component_names": list(slot.component_names),
+        "selection": dict(slot.selection),
+        "conf_ci": None if slot.conf_ci is None else slot.conf_ci.copy(),
+    }
+
+
+#
+def assert_same_content(slot: fit_io.SavedFitSlot, before: dict) -> None:
+    pd.testing.assert_frame_equal(slot.params, before["params"])
+    assert slot.metrics == before["metrics"]
+    assert slot.fit_settings == before["fit_settings"]
+    assert slot.component_names == before["component_names"]
+    assert slot.selection == before["selection"]
+    if before["conf_ci"] is None:
+        assert slot.conf_ci is None
+    else:
+        assert slot.conf_ci is not None  # type guard
+        pd.testing.assert_frame_equal(slot.conf_ci, before["conf_ci"])
+
+
+#
+#
+class TestResultRecordsAreSnapshots:
+    """Rule 5: every public read is a detached copy; the record never changes."""
+
+    #
+    def test_editing_what_a_read_returned_does_not_reach_the_record(self, tmp_path):
+        file, slot = make_fitted_file(try_ci=1)
+        before = record_content(slot)
+        assert before["conf_ci"] is not None  # try_ci=1 produced intervals
+
+        frame = slot.params
+        frame.loc[0, "value"] = -999.0
+        assert frame.loc[0, "value"] == -999.0  # the edit took, on the copy
+        slot.metrics["chi2"] = -1.0
+        slot.fit_settings["stages"] = 99  # type: ignore[index]
+        slot.component_names.append("intruder")  # type: ignore[union-attr]
+        slot.selection["e_lim"] = [0, 1]
+        intervals = slot.conf_ci
+        assert intervals is not None  # type guard
+        intervals.iloc[0, 1] = -999.0
+        assert intervals.iloc[0, 1] == -999.0
+        assert_same_content(slot, before)
+
+        # the same record through the query surface, and the next archive
+        again = file.p.results.get(file="fit", model="single_glp", fit_type="baseline")
+        assert again is slot
+        assert_same_content(again, before)
+        path = tmp_path / "snapshot.fit.h5"
+        file.p.save_fits(path, show_output=0)
+        loaded = FitResults.load(path).find(file="fit", fit_type="baseline")[-1]
+        assert loaded.handle == slot.handle
+        pd.testing.assert_frame_equal(loaded.params, before["params"])
+        assert loaded.fit_settings == before["fit_settings"]
+        assert loaded.component_names == before["component_names"]
+        for key, value in before["metrics"].items():
+            assert loaded.metrics[key] == pytest.approx(value, nan_ok=True)
+
+    #
+    def test_editing_the_live_result_after_the_fit_does_not_reach_the_slot(self):
+        """Copy on set: the slot's conf_ci was the live model result's frame."""
+
+        file, slot = make_fitted_file(try_ci=1)
+        before = record_content(slot)
+        live = file.model_base.result  # type: ignore[union-attr]
+        assert live is not None  # type guard
+        live_intervals = live.conf_ci
+        live_intervals.iloc[0, 1] = -999.0
+        assert live_intervals.iloc[0, 1] == -999.0  # the live object did change
+        assert_same_content(slot, before)
+
+    #
+    def test_a_container_shared_between_records_is_copied_at_capture(self):
+        """Copy on set at the record level: the joint fit builds its
+        projection slots from one settings dict."""
+
+        _, slot = make_fitted_file()
+        shared = {"stages": 1, "mc": {"use_mc": 0}}
+        frame = slot.params.copy()
+        first = dataclasses.replace(slot, fit_settings=shared, params=frame)
+        second = dataclasses.replace(slot, fit_settings=shared, params=frame)
+        shared["stages"] = 99
+        shared["mc"]["use_mc"] = 5
+        frame.loc[0, "value"] = -999.0
+        for record in (first, second):
+            assert record.fit_settings == {"stages": 1, "mc": {"use_mc": 0}}
+            pd.testing.assert_frame_equal(record.params, slot.params)
+
+    #
+    def test_nested_mcmc_and_joint_containers_are_detached(self):
+        _, slot = make_fitted_file()
+        payload = {
+            "flatchain": pd.DataFrame({"GLP_01_A": [1.0, 2.0]}),
+            "ci": pd.DataFrame({"par[v]/sigma[>]": ["GLP_01_A"], "best fit": [1.5]}),
+            "lnsigma": None,
+            "acceptance_fraction": np.array([0.3, 0.4]),
+        }
+        with_mcmc = dataclasses.replace(slot, mcmc=payload)
+        payload["flatchain"].loc[0, "GLP_01_A"] = -999.0
+        read = with_mcmc.mcmc
+        assert read is not None  # type guard
+        read["flatchain"].loc[1, "GLP_01_A"] = -999.0
+        assert read["flatchain"].loc[1, "GLP_01_A"] == -999.0
+        chain = with_mcmc.mcmc["flatchain"]  # type: ignore[index]
+        assert list(chain["GLP_01_A"]) == [1.0, 2.0]
+        assert not with_mcmc.mcmc["acceptance_fraction"].flags.writeable  # type: ignore[index]
+
+        result = fit_io.mcmc_result_from_payload(payload)
+        chain = result.flatchain
+        chain.loc[0, "GLP_01_A"] = 7.0
+        assert chain.loc[0, "GLP_01_A"] == 7.0
+        assert list(result.flatchain["GLP_01_A"]) == [-999.0, 2.0]
+
+        parameter_map = {"GLP_01_A": "file00_GLP_01_A"}
+        projection = fit_io.JointFitProjection(slot=slot, parameter_map=parameter_map)
+        parameter_map["GLP_01_A"] = "edited"
+        projection.parameter_map["GLP_01_A"] = "edited again"  # type: ignore[index]
+        assert projection.parameter_map == {"GLP_01_A": "file00_GLP_01_A"}
+        joint = fit_io.JointFitResult(
+            model_name="single_glp",
+            optimization_hash="0" * 64,
+            input_files="",
+            model_structure="",
+            projections=(projection,),
+            fit_alg="leastsq",
+            timestamp="t",
+            params=slot.params,
+            metrics={"chi2": 1.0},
+            fit_settings={"stages": 1},
+        )
+        joint_frame = joint.params
+        joint_frame.loc[0, "value"] = -999.0
+        assert joint_frame.loc[0, "value"] == -999.0
+        joint.metrics["chi2"] = -1.0  # type: ignore[index]
+        pd.testing.assert_frame_equal(joint.params, slot.params)
+        assert joint.metrics == {"chi2": 1.0}
+
+    #
+    def test_detach_covers_mappings_tuples_and_direct_arrays(self):
+        """Direct construction with a Mapping subclass, a tuple holding a
+        dict, or a writable array is detached at the record boundary too."""
+
+        from collections import UserDict
+
+        _, slot = make_fitted_file()
+        mapping = UserDict({"GLP_01_A": "file00_GLP_01_A"})
+        projection = fit_io.JointFitProjection(slot=slot, parameter_map=mapping)
+        mapping["GLP_01_A"] = "edited"
+        assert projection.parameter_map == {"GLP_01_A": "file00_GLP_01_A"}
+
+        settings = {"window": ({"e_lim": [0, 5]},)}
+        record = dataclasses.replace(slot, fit_settings=settings)
+        settings["window"][0]["e_lim"].append(99)
+        read = record.fit_settings
+        assert read is not None  # type guard
+        read["window"][0]["e_lim"].append(98)
+        assert record.fit_settings == {"window": ({"e_lim": [0, 5]},)}
+
+        acceptance = np.array([0.3, 0.4])
+        result = fit_io.MCMCResult(
+            table=pd.DataFrame(),
+            flatchain=pd.DataFrame(),
+            acceptance_fraction=acceptance,
+        )
+        acceptance[0] = -1.0
+        assert result.acceptance_fraction is not None  # type guard
+        assert list(result.acceptance_fraction) == [0.3, 0.4]
+        assert not result.acceptance_fraction.flags.writeable

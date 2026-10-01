@@ -1086,14 +1086,15 @@ class FitResults:
         per-slice column to its median (documented on :meth:`diff`).
         """
 
+        params = slot.params  # one detached copy
         if slot.fit_type != "sbs":
             return {
                 str(n): float(v)
-                for n, v in zip(slot.params["name"], slot.params["value"], strict=True)
+                for n, v in zip(params["name"], params["value"], strict=True)
             }
         return {
-            str(c): float(np.nanmedian(np.asarray(slot.params[c], dtype=float)))
-            for c in slot.params.columns
+            str(c): float(np.nanmedian(np.asarray(params[c], dtype=float)))
+            for c in params.columns
         }
 
     #
@@ -1605,12 +1606,13 @@ class FitResults:
         slot = self._resolve_slot(
             file=file, model=model, fit_type=fit_type, handle=handle
         )
-        if slot.mcmc is None:
+        payload = slot.mcmc  # one detached copy
+        if payload is None:
             raise ValueError(
                 f"No MCMC results for the {slot.fit_type} fit. Re-run with "
                 "mc_settings=MC(use_mc=1, ...)."
             )
-        return mcmc_result_from_payload(slot.mcmc)
+        return mcmc_result_from_payload(payload)
 
     #
     def plot_fit(
@@ -1998,16 +2000,15 @@ class FitResults:
                 "No project-level joint fit results. Run Project.fit_2d() first."
             )
         record = matches[-1]
-        if record.mcmc is None:
+        mcmc = record.mcmc
+        if mcmc is None:
             raise ValueError(
                 "No MCMC results for the joint fit. Re-run "
                 "Project.fit_2d with mc_settings=MC(use_mc=1, ...)."
             )
         from trspecfit.utils import plot as uplt
 
-        uplt.plot_mcmc_diagnostics(
-            record.mcmc, show_plot=show_plot, config=self._config
-        )
+        uplt.plot_mcmc_diagnostics(mcmc, show_plot=show_plot, config=self._config)
 
     #
     def plot_param_evolution(
@@ -2060,32 +2061,30 @@ class FitResults:
             handle=handle,
             required_fit_type="sbs",
         )
+        frame = slot.params  # one detached copy
+        meta = slot.params_meta
         if params is None:
-            if slot.params_meta is not None:
+            if meta is not None:
                 params = [
                     str(name)
-                    for name, vary in zip(
-                        slot.params_meta["name"],
-                        slot.params_meta["vary"],
-                        strict=True,
-                    )
+                    for name, vary in zip(meta["name"], meta["vary"], strict=True)
                     if vary
                 ]
             else:
-                params = [str(c) for c in slot.params.columns]
+                params = [str(c) for c in frame.columns]
         else:
             params = [str(p) for p in params]
-            missing = [p for p in params if p not in slot.params.columns]
+            missing = [p for p in params if p not in frame.columns]
             if missing:
                 raise KeyError(
                     f"Parameter(s) {missing} not in this SbS fit; available: "
-                    f"{list(slot.params.columns)}"
+                    f"{list(frame.columns)}"
                 )
         if not params:
             return
         cfg = self._config_for(slot, config)
         _, time = self._axes_for(slot)
-        n_slices = len(slot.params)
+        n_slices = len(frame)
         x = (
             np.asarray(time)[:n_slices]
             if time is not None and np.asarray(time).size >= n_slices
@@ -2094,7 +2093,7 @@ class FitResults:
         from trspecfit.utils import plot as uplt
 
         uplt.plot_par_series(
-            df=slot.params.loc[:, params],
+            df=frame.loc[:, params],
             x=x,
             config=cfg,
             save_img=0 if show_plot else -2,
@@ -2309,7 +2308,7 @@ class FitResults:
 
     #
     @staticmethod
-    def _aggregate_sbs_reduced_sum(slot: SavedFitSlot, key: str) -> float:
+    def _aggregate_sbs_reduced_sum(metrics: Mapping[str, Any], key: str) -> float:
         """
         Aggregate reduced χ² for sum-mode SbS — handles both raw and σ-calibrated.
 
@@ -2328,8 +2327,8 @@ class FitResults:
         the numerator is non-finite.
         """
 
-        chi2_raw_arr = np.asarray(slot.metrics["chi2_raw"], dtype=float)
-        chi2_red_raw_arr = np.asarray(slot.metrics["chi2_red_raw"], dtype=float)
+        chi2_raw_arr = np.asarray(metrics["chi2_raw"], dtype=float)
+        chi2_red_raw_arr = np.asarray(metrics["chi2_red_raw"], dtype=float)
         with np.errstate(divide="ignore", invalid="ignore"):
             dof_arr = np.where(
                 chi2_red_raw_arr != 0,
@@ -2340,7 +2339,7 @@ class FitResults:
         if not (total_dof > 0):
             return float("nan")
         numerator_key = "chi2_raw" if key == "chi2_red_raw" else "chi2"
-        numerator_arr = np.asarray(slot.metrics[numerator_key], dtype=float)
+        numerator_arr = np.asarray(metrics[numerator_key], dtype=float)
         total_num = float(np.nansum(numerator_arr))
         if not np.isfinite(total_num):
             return float("nan")
@@ -2348,25 +2347,26 @@ class FitResults:
 
     #
     @staticmethod
-    def _slot_metric(slot: SavedFitSlot, key: str) -> Any:
+    def _slot_metric(slot: SavedFitSlot, key: str, metrics: Mapping[str, Any]) -> Any:
         """Look up ``key`` on the slot, with sigma_eff handled as a special case.
 
         ``sigma_eff`` lives as a top-level field on ``SavedFitSlot`` (not in
         the metrics dict) because it's noise metadata, not a fit-quality
-        metric. Every other key reads from ``slot.metrics`` with a clear
-        ``KeyError`` if absent.
+        metric. Every other key reads from *metrics*, the slot's metrics
+        read once by the caller (every read of ``slot.metrics`` is a
+        detached copy), with a clear ``KeyError`` if absent.
         """
 
         if key == "sigma_eff":
             return float(slot.sigma_eff)
-        if key not in slot.metrics:
+        if key not in metrics:
             raise KeyError(
                 f"metric {key!r} not present in slot "
                 f"(file={slot.file_name!r}, model={slot.model_name!r}, "
                 f"fit_type={slot.fit_type!r}); available: "
-                f"{sorted(slot.metrics.keys())} (plus 'sigma_eff')"
+                f"{sorted(metrics.keys())} (plus 'sigma_eff')"
             )
-        return slot.metrics[key]
+        return metrics[key]
 
     #
     def _compare_rows_scalar(
@@ -2386,12 +2386,13 @@ class FitResults:
                 "handle": short_id(slot.handle),
                 "selection_json": slot.selection_json,
             }
+            metrics = slot.metrics  # one detached copy per slot
             for key in metric_keys:
                 if key == "sigma_eff":
                     # Per-slot scalar; SbS doesn't aggregate it (one σ per fit).
                     row[key] = float(slot.sigma_eff)
                     continue
-                value = self._slot_metric(slot, key)
+                value = self._slot_metric(slot, key, metrics)
                 if slot.fit_type == "sbs":
                     if sbs_aggregation == "sum" and key in (
                         "chi2_red",
@@ -2401,7 +2402,7 @@ class FitResults:
                         # reduced chi-square = Σnumerator / ΣDoF. The naive
                         # nansum of per-slice reduced χ² would grow linearly
                         # with N_slices and lose the "≈ 1" reading.
-                        row[key] = self._aggregate_sbs_reduced_sum(slot, key)
+                        row[key] = self._aggregate_sbs_reduced_sum(metrics, key)
                     else:
                         row[key] = self._aggregate_sbs(value, sbs_aggregation)
                 else:
@@ -2612,11 +2613,12 @@ class FitResults:
                 "handle": short_id(slot.handle),
                 "selection_json": slot.selection_json,
             }
+            metrics = slot.metrics  # one detached copy per slot
             if slot.fit_type == "sbs":
                 # Use any non-sigma_eff key to determine n_slices (sigma_eff
                 # is a scalar). Fall back to the first array metric stored.
                 size_probe = next(
-                    (k for k in metric_keys if k != "sigma_eff" and k in slot.metrics),
+                    (k for k in metric_keys if k != "sigma_eff" and k in metrics),
                     None,
                 )
                 if size_probe is None:
@@ -2624,15 +2626,19 @@ class FitResults:
                     # SbS slot as a single row using slot.fit's row count.
                     n_slices = int(np.asarray(slot.fit).shape[0])
                 else:
-                    n_slices = int(np.asarray(slot.metrics[size_probe]).size)
+                    n_slices = int(np.asarray(metrics[size_probe]).size)
+                per_slice = {
+                    key: np.asarray(self._slot_metric(slot, key, metrics))
+                    for key in metric_keys
+                    if key != "sigma_eff"
+                }
                 for i in range(n_slices):
                     row = {**base, "slice_index": i}
                     for key in metric_keys:
                         if key == "sigma_eff":
                             row[key] = float(slot.sigma_eff)
                             continue
-                        arr = np.asarray(self._slot_metric(slot, key))
-                        row[key] = float(arr[i])
+                        row[key] = float(per_slice[key][i])
                     rows.append(row)
             else:
                 row = {**base, "slice_index": pd.NA}
@@ -2640,7 +2646,7 @@ class FitResults:
                     if key == "sigma_eff":
                         row[key] = float(slot.sigma_eff)
                         continue
-                    row[key] = float(self._slot_metric(slot, key))
+                    row[key] = float(self._slot_metric(slot, key, metrics))
                 rows.append(row)
         columns = [
             "file",

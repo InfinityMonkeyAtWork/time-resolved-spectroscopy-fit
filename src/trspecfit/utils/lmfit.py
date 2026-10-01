@@ -21,6 +21,8 @@ import numpy as np
 import pandas as pd
 from lmfit.minimizer import MinimizerResult
 
+from trspecfit.utils import ownership as uown
+
 if TYPE_CHECKING:
     #
     #
@@ -1017,9 +1019,10 @@ class MCMCResult:
         sampling was weighted (no nuisance parameter).
     """
 
-    table: pd.DataFrame
-    flatchain: pd.DataFrame
-    acceptance_fraction: np.ndarray | None
+    # detached: copied on set and on every read; the array comes back frozen
+    table: uown.detached[pd.DataFrame] = uown.detached()
+    flatchain: uown.detached[pd.DataFrame] = uown.detached()
+    acceptance_fraction: uown.detached[np.ndarray | None] = uown.detached()
     lnsigma: float | None = None
 
 

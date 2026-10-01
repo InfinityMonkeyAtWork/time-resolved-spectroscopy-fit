@@ -463,7 +463,7 @@ Pushed to TODO item 8, the simulator output rework (recorded there 2026-09-30):
   load (`CrossModelExpr`, `profile_pLinear_unknown_name`);
   `supported_models.md` states that static chains are supported on both
   paths. 1497 default tests pass.
-- [ ] 3. Rule 5: mypy + pyright on the `detached` prototype first (the
+- [x] 3. Rule 5: mypy + pyright on the `detached` prototype first (the
   typing gate), then `detached` into `utils/ownership.py` and onto the
   record classes, `MCMCResult` included; hoisted reads in the
   `compare_models` helpers, `_fitted_value_map`, `plot_param_evolution` and
@@ -471,6 +471,36 @@ Pushed to TODO item 8, the simulator output rework (recorded there 2026-09-30):
   timed before and after; the configured checkers run on the integrated
   change (they are in pre-commit). Probes (a), (b), (c) of the rule 5
   section.
+  Landed 2026-09-30. Typing gate: both checkers type a read as the
+  annotation (`name: detached[T] = detached()`; mypy sees pandas as `Any`
+  with or without the descriptor, it has no pandas stubs) and both refuse
+  a required plain field after a `detached()` field, so the record classes
+  list their plain required fields first; no record is constructed
+  positionally (AST scan), so the reorder is safe. `detach` rebuilds dicts
+  and lists member by member and hands out frozen copies of arrays inside
+  them, so a container a record hands out holds read-only arrays like
+  every other array the package hands out (the archive reader's
+  `acceptance_fraction` test kept its assertion; the `get_mcmc` copy test
+  now asserts the refusal). Benchmark (2 SbS × 150 slices, 2D + 1500-step
+  MCMC, 28000-row chain), before → after: `compare_models` long 1.6 →
+  1.8 ms, median 0.5 → 0.7 ms, `variants` 0.7 → 0.9 ms, `get_mcmc` 0.1 →
+  1.8 ms (the chain is copied on read), `slot.params` / `metrics` read
+  0 → 9 / 7 µs, export 0.66 → 0.73 s and 1.00 → 1.10 s with the machine
+  10% slower on the second run (setup 9.9 → 11.0 s). Probes in
+  `tests/test_ownership.py::TestResultRecordsAreSnapshots`: edits through
+  reads of `params`, `metrics`, `fit_settings`, `component_names`,
+  `selection`, `conf_ci`, the nested MCMC payload, `JointFitResult` and
+  `JointFitProjection` fields; the live `model.result.conf_ci` edited after
+  the fit; one dict and one frame shared by two records; save then load
+  equals the content captured before the edits. Review additions: `detach`
+  rebuilds any `Mapping` (as a dict) and recurses through tuples, so a
+  `UserDict` or a tuple holding a dict is detached too; `MCMCResult`'s
+  acceptance array is a detached field, so direct construction freezes a
+  copy like the decoder; the decoder's own copies went (the descriptor
+  copies on set) and `get_mcmc` reads the payload once, three chain copies
+  instead of four (0.25 ms per call); the probes mutate a local read and assert the edit
+  took before asserting the record did not change (no chained-assignment
+  warnings). 1502 default tests pass.
 - [ ] 4. Rule 7: the simulator draws from a `NoiseModel` built once from
   the settings and the clean array; the snapshot is that model plus the
   settings and seed, holding a frozen copy of what it needs (`add_noise`

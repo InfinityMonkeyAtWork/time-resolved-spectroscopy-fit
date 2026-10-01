@@ -455,10 +455,7 @@ class SavedFitSlot:
     file_name: str
     model_name: str
     fit_type: FitType
-    selection: dict[str, Any]
     selection_json: str
-    params: pd.DataFrame
-    metrics: dict[str, Any]
     observed: np.ndarray
     fit: np.ndarray
     fit_alg: str
@@ -468,6 +465,12 @@ class SavedFitSlot:
     sigma_type: str
     sigma_data: float
     sigma_eff: float
+    # container fields are detached: copied on set and on every read, so a
+    # record is a snapshot and editing what a read returned never reaches
+    # it (the type checkers need them after the plain required fields)
+    selection: uown.detached[dict[str, Any]] = uown.detached()
+    params: uown.detached[pd.DataFrame] = uown.detached()
+    metrics: uown.detached[dict[str, Any]] = uown.detached()
     noise_scale: float = float("nan")
     sigma: np.ndarray | None = None
     dark: np.ndarray | None = None
@@ -475,16 +478,16 @@ class SavedFitSlot:
     model_yaml: tuple[ModelYamlRecord, ...] | None = None
     label: str | None = None
     joint_ref: str | None = None
-    conf_ci: pd.DataFrame | None = None
-    correl: pd.DataFrame | None = None
-    mcmc: dict[str, Any] | None = None
-    params_meta: pd.DataFrame | None = None
-    params_stderr: pd.DataFrame | None = None
-    fit_settings: dict[str, Any] | None = None
+    conf_ci: uown.detached[pd.DataFrame | None] = uown.detached(default=None)
+    correl: uown.detached[pd.DataFrame | None] = uown.detached(default=None)
+    mcmc: uown.detached[dict[str, Any] | None] = uown.detached(default=None)
+    params_meta: uown.detached[pd.DataFrame | None] = uown.detached(default=None)
+    params_stderr: uown.detached[pd.DataFrame | None] = uown.detached(default=None)
+    fit_settings: uown.detached[dict[str, Any] | None] = uown.detached(default=None)
     components: np.ndarray | None = None
-    component_names: list[str] | None = None
+    component_names: uown.detached[list[str] | None] = uown.detached(default=None)
     fit_ini: np.ndarray | None = None
-    params_init: pd.DataFrame | None = None
+    params_init: uown.detached[pd.DataFrame | None] = uown.detached(default=None)
 
 
 #
@@ -616,8 +619,8 @@ class JointFitProjection:
         joint uncertainty lives on the ``JointFitResult`` only.
     """
 
-    parameter_map: Mapping[str, str]
     slot: SavedFitSlot
+    parameter_map: uown.detached[Mapping[str, str]] = uown.detached()
 
 
 #
@@ -691,13 +694,14 @@ class JointFitResult:
     input_files: str
     model_structure: str
     projections: tuple[JointFitProjection, ...]
-    params: pd.DataFrame
-    metrics: Mapping[str, float]
     fit_alg: str
-    fit_settings: Mapping[str, Any]
     timestamp: str
-    conf_ci: pd.DataFrame | None = None
-    correl: pd.DataFrame | None = None
+    # container fields are detached (see SavedFitSlot)
+    params: uown.detached[pd.DataFrame] = uown.detached()
+    metrics: uown.detached[Mapping[str, float]] = uown.detached()
+    fit_settings: uown.detached[Mapping[str, Any]] = uown.detached()
+    conf_ci: uown.detached[pd.DataFrame | None] = uown.detached(default=None)
+    correl: uown.detached[pd.DataFrame | None] = uown.detached(default=None)
     mcmc: MCMCResult | None = None
     label: str | None = None
 
@@ -1209,15 +1213,13 @@ def _mcmc_payload(
 
     if emcee_fin is None:
         return None
+    # the slot's detached mcmc field copies the payload on set
     flatchain = getattr(emcee_fin, "flatchain", None)
-    if isinstance(flatchain, pd.DataFrame):
-        flatchain_out: pd.DataFrame | None = flatchain.copy()
-    else:
-        flatchain_out = None
+    flatchain_out = flatchain if isinstance(flatchain, pd.DataFrame) else None
     params = getattr(emcee_fin, "params", None)
     lnsigma_par = params.get("__lnsigma") if params is not None else None
     lnsigma = float(lnsigma_par.value) if lnsigma_par is not None else None
-    ci_out = emcee_ci.copy() if not emcee_ci.empty else None
+    ci_out = emcee_ci if not emcee_ci.empty else None
     acceptance = getattr(emcee_fin, "acceptance_fraction", None)
     acceptance_out = (
         np.array(acceptance, dtype=np.float64) if acceptance is not None else None
@@ -1246,12 +1248,11 @@ def mcmc_result_from_payload(payload: dict[str, Any]) -> MCMCResult:
     ci = payload.get("ci")
     acceptance = payload.get("acceptance_fraction")
     lnsigma = payload.get("lnsigma")
+    # the record's detached fields copy on set, so nothing is copied here
     return MCMCResult(
-        table=ci.copy() if ci is not None else pd.DataFrame(),
-        flatchain=flatchain.copy() if flatchain is not None else pd.DataFrame(),
-        acceptance_fraction=(
-            np.asarray(acceptance).copy() if acceptance is not None else None
-        ),
+        table=ci if ci is not None else pd.DataFrame(),
+        flatchain=flatchain if flatchain is not None else pd.DataFrame(),
+        acceptance_fraction=np.asarray(acceptance) if acceptance is not None else None,
         lnsigma=float(lnsigma) if lnsigma is not None else None,
     )
 

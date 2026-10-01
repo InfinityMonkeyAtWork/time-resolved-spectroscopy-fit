@@ -1138,9 +1138,14 @@ class TestSlotBackedAccessors:
         res = FitResults(slots=[slot]).get_mcmc(fit_type="baseline")
 
         assert res.acceptance_fraction is not None  # type guard
-        res.acceptance_fraction[0] = -1.0
-        res.flatchain.loc[0, "GLP_01_A"] = -999.0
-        res.table.loc[0, "best fit"] = -999.0
+        # the handed-out array is its own read-only copy
+        assert res.acceptance_fraction is not payload["acceptance_fraction"]
+        with pytest.raises(ValueError, match="read-only"):
+            res.acceptance_fraction[0] = -1.0
+        chain, table = res.flatchain, res.table
+        chain.loc[0, "GLP_01_A"] = -999.0
+        table.loc[0, "best fit"] = -999.0
+        assert chain.loc[0, "GLP_01_A"] == -999.0 and table.loc[0, "best fit"] == -999.0
         np.testing.assert_array_equal(
             payload["acceptance_fraction"], np.array([0.3, 0.4])
         )
