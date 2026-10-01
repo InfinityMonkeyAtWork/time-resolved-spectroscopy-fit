@@ -73,7 +73,7 @@ def _truth_model(*, name, dynamics=True):
     assert model is not None  # type guard
     for par, value in _TRUTH.items():
         if par in model.parameter_names:
-            model.lmfit_pars[par].value = value
+            model._lmfit_pars[par].value = value
     return model
 
 
@@ -88,8 +88,8 @@ def _bleach_model(*, name):
     file = _peak_file(name=name)
     model = file.model_active
     assert model is not None  # type guard
-    model.lmfit_pars["Offset_y0"].set(min=-10.0, value=-3.0)
-    model.lmfit_pars["GLP_01_A"].value = 2.0
+    model._lmfit_pars["Offset_y0"].set(min=-10.0, value=-3.0)
+    model._lmfit_pars["GLP_01_A"].value = 2.0
     return model
 
 

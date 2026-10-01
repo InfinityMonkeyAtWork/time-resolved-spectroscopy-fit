@@ -543,7 +543,7 @@ Pushed to TODO item 8, the simulator output rework (recorded there 2026-09-30):
   because a standalone `add_noise` or a new clean array had left
   `save_data` pairing the stored arrays with another draw's record.
   1513 default tests pass, 1 xfail.
-- [ ] 5. Parameter state: underscore the six lmfit handles and
+- [x] 5. Parameter state: underscore the six lmfit handles and
   `update_value` across `src` (including `graph_ir.py`) and tests; notebook
   12 via `get_vary_levels`; example 21's generator via named YAML entries;
   the 15 `vary` / bound test writes via YAML variants; docstrings and
@@ -552,6 +552,27 @@ Pushed to TODO item 8, the simulator output rework (recorded there 2026-09-30):
   and `Par`; `describe`,
   `describe_model` and `get_vary_levels` work; notebook 12's count matches;
   the example notebooks run. Curated autocomplete is TODO item 5.
+  Landed 2026-10-01. Mechanical rename of the attribute accesses and the
+  prose mentions in `src` (the `par_extract` parameter named `lmfit_pars`
+  in `utils/lmfit.py` is a function argument and stays) and in tests;
+  `lowered_evaluator.md` and `fit_archive_principles.md` name the private
+  routes; the simulator and `print_all_pars` docstrings stopped citing the
+  handle. Variants: `file_energy_x0_fixed`, `file_energy_x0_shifted`,
+  `file_energy_x0_shifted_free` (run C of the label tests needs the
+  shifted seed with x0 free again, a third configuration),
+  `file_energy_A_max`, `project_time_tau_bounds`, `project_time_tau_clamped`
+  as files; `gauss_SD_fixed`, `gauss_all_fixed` as entries; loaded through
+  `tests/_utils.reload_model`, which silences the replacement warning. One
+  bound write the inventory missed (`par_A.max` through a `Parameter`
+  reference in `test_bound_change_mints_distinct_slot`) went the same way.
+  Truth-fixture value writes stay on the internal route, as decided. The
+  rule is one sentence in the Testing section of `CLAUDE.md`. Notebook 12
+  counts non-static vary levels (verified equal to the lmfit free count,
+  expression parameters included); example 21's generator loads six
+  `MonoExpPosIRF_A*` entries and reproduces its six CSVs byte-for-byte;
+  notebook 12 executes (re-running 01) with its count assertion. The
+  acceptance probe is in `tests/test_ownership.py`. 1514 default tests
+  pass, 1 xfail.
 - [ ] 6. Docs and release: `api_ownership_contract.md` "where this stands"
   paragraphs and Evidence closed with the mechanisms recorded (fork 3
   outcome, rule 5 mechanism, stamp-and-check as the deferral) and a short

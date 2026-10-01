@@ -209,7 +209,7 @@ produce the same name, so the second fit silently replaces the first.
 
 The intuitive candidate is to hash the model's YAML entry. That is not
 sufficient, because the YAML is not the whole model: `add_time_dependence()`,
-`add_par_profile()`, and `Model.update_value()`
+`add_par_profile()`, and `Model._update_value()`
 ([mcp.py:581](../../src/trspecfit/mcp.py#L581)) all mutate a loaded model
 without touching any YAML — potentially including the exact `vary` flip that
 motivates the whole design.
@@ -1185,7 +1185,7 @@ primitive.
 It is also **not** a rehydration record, which an earlier draft of this
 principle overstated. Model construction is partly programmatic:
 `add_time_dependence()` supplies the subcycle ordering and `frequency`,
-`add_par_profile()` attaches profiles, and `update_value()` can move a seed —
+`add_par_profile()` attaches profiles, and `_update_value()` can move a seed —
 none of which appear in any YAML. For a multi-cycle model the snippets yield
 several independent top-level models with no indication that they form a cycle
 sequence or at what rate. The hash carries what determines the numbers

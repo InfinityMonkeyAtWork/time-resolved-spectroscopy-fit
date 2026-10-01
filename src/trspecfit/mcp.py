@@ -132,7 +132,7 @@ class _AttachmentRollback:
     def __init__(self, model: "Model", target_par: "Par", candidate: "Model") -> None:
         self._model = model
         self._target_par = target_par
-        self._target_list = list(target_par.lmfit_par_list)
+        self._target_list = list(target_par._lmfit_par_list)
         self._pars = [
             (par, self._snapshot(par, self._PAR_FIELDS))
             for par in model.get_all_parameters()
@@ -173,7 +173,7 @@ class _AttachmentRollback:
     def restore(self) -> None:
         for par, state in self._pars:
             self._restore(par, state)
-        self._target_par.lmfit_par_list = self._target_list
+        self._target_par._lmfit_par_list = self._target_list
         self._restore(self._candidate, self._candidate_state)
         for comp, state in self._components:
             self._restore(comp, state)
@@ -203,10 +203,10 @@ class Model:
         Function objects for all components (extracted from Component.fct)
     components : list of Component
         Component objects that define this model's behavior
-    lmfit_par_list : list of lmfit.Parameter
+    _lmfit_par_list : list of lmfit.Parameter
         Flattened list of all individual parameters (spectral + temporal + profile)
-    lmfit_pars : lmfit.Parameters
-        Complete parameter object for fitting (from lmfit_par_list)
+    _lmfit_pars : lmfit.Parameters
+        Complete parameter object for fitting (from _lmfit_par_list)
     parameter_names : list of str
         Names of all parameters in the model
     component_spectra : list of ndarray
@@ -300,9 +300,9 @@ class Model:
         # list of objects of type defined in Component class
         self.components: list[Component] = []
         # flattened lmfit parameters list (1D with time- and energy-components)
-        self.lmfit_par_list: list[lmfit.Parameter] = []  # (individual objects)
-        # lmfit.Parameters object corresponding to lmfit_par_list attribute
-        self.lmfit_pars: lmfit.Parameters = lmfit.Parameters()
+        self._lmfit_par_list: list[lmfit.Parameter] = []  # (individual objects)
+        # lmfit.Parameters object corresponding to _lmfit_par_list attribute
+        self._lmfit_pars: lmfit.Parameters = lmfit.Parameters()
         # list of all parameter names
         self.parameter_names: list[str] = []
         # list of component spectra (from last evaluation/ current parameters)
@@ -478,8 +478,8 @@ class Model:
         else:
             print("no elements in this model")
         print("all lmfit.Parameters() [flattened and sorted alphabetically]:")
-        if self.lmfit_pars:
-            self.lmfit_pars.pretty_print()
+        if self._lmfit_pars:
+            self._lmfit_pars.pretty_print()
         else:
             print("lmfit.Parameters() object is empty")
         print()
@@ -614,7 +614,7 @@ class Model:
         - kernel-matrix convolution operator (for convolution components)
 
         **Model Updates:**
-        After adding components, the model's lmfit_pars and parameter_names
+        After adding components, the model's _lmfit_pars and parameter_names
         are automatically updated via self.update().
         """
 
@@ -673,7 +673,7 @@ class Model:
             # populate pars attribute in the component
             comp.create_pars(prefix=prefix)
 
-        # update model lmfit_par_list (+parameter_names) and components
+        # update model _lmfit_par_list (+parameter_names) and components
         self.update()
 
     #
@@ -711,8 +711,7 @@ class Model:
         Print information on all parameters individually.
 
         Debugging utility to inspect parameter structure and values.
-        For routine parameter inspection, use model.describe() or
-        model.lmfit_pars.pretty_print().
+        For routine parameter inspection, use model.describe().
 
         Parameters
         ----------
@@ -736,28 +735,28 @@ class Model:
         """
 
         # re-initialize
-        self.lmfit_par_list = []
-        self.lmfit_pars = lmfit.Parameters()
+        self._lmfit_par_list = []
+        self._lmfit_pars = lmfit.Parameters()
         self.parameter_names = []
 
         for comp in self.components:
             # create a flattened lmfit.Parameter list for the component
             comp.update_lmfit_par_list()
             # add lmfit.Parameter list of this component to corresponding model list
-            self.lmfit_par_list.extend(comp.lmfit_par_list)
+            self._lmfit_par_list.extend(comp._lmfit_par_list)
 
-        # create lmfit.Parameters object from the lmfit_par_list
-        self.lmfit_pars.add_many(*self.lmfit_par_list)
+        # create lmfit.Parameters object from the _lmfit_par_list
+        self._lmfit_pars.add_many(*self._lmfit_par_list)
 
         # update list of all parameter names
-        self.parameter_names = [par.name for par in self.lmfit_par_list]
+        self.parameter_names = [par.name for par in self._lmfit_par_list]
 
         # settle every expression in dependency order, as lmfit's minimizer
         # does before a fit: an expression parameter enters the container
         # with a placeholder, and a chained expression read before its
         # dependency would otherwise see that placeholder
         try:
-            self.lmfit_pars.update_constraints()
+            self._lmfit_pars.update_constraints()
         except NameError as e:
             raise ValueError(
                 f'Model "{self.name}" has an expression that references an '
@@ -766,7 +765,7 @@ class Model:
             ) from e
 
     #
-    def update_value(
+    def _update_value(
         self,
         new_par_values: list[float] | np.ndarray,
         par_select: str | list[str] = "all",
@@ -774,7 +773,7 @@ class Model:
         """
         Update model from top down: model → components → parameters.
 
-        Updates parameter values in the model's lmfit_pars based on new
+        Updates parameter values in the model's _lmfit_pars based on new
         values (e.g., from optimizer). Used during fitting to apply
         proposed parameter values before model evaluation.
 
@@ -808,23 +807,23 @@ class Model:
         """
 
         if par_select == "all":
-            for i, p in enumerate(self.lmfit_pars):
-                self.lmfit_pars[p].value = new_par_values[i]
+            for i, p in enumerate(self._lmfit_pars):
+                self._lmfit_pars[p].value = new_par_values[i]
             return
 
         if len(par_select) != len(new_par_values):
             raise ValueError(
-                f"update_value got {len(new_par_values)} values for "
+                f"_update_value got {len(new_par_values)} values for "
                 f"{len(par_select)} names in par_select; pass one value per name."
             )
-        unknown = [name for name in par_select if name not in self.lmfit_pars]
+        unknown = [name for name in par_select if name not in self._lmfit_pars]
         if unknown:
             raise ValueError(
                 f'Model "{self.name}" has no parameter(s) {unknown}; '
                 f"available parameters: {self.parameter_names}."
             )
         for name, value in zip(par_select, new_par_values, strict=True):
-            self.lmfit_pars[name].value = value
+            self._lmfit_pars[name].value = value
 
     #
     def add_dynamics(self, dynamics_model: "Dynamics", frequency: float = -1) -> None:
@@ -886,7 +885,7 @@ class Model:
                 dynamics_model.set_frequency(frequency)
             target_par.update(dynamics_model)
             dynamics_model.parent_model = self
-            # update model lmfit_par_list, parameter_names and components
+            # update model _lmfit_par_list, parameter_names and components
             self.update()
             # re-analyze all expressions: time-dependence status changed
             self._analyze_expression_dependencies()
@@ -965,9 +964,9 @@ class Model:
             target_par.p_vary = True
             target_par.p_model = profile_model
             # include profile parameters in this model's lmfit parameter list
-            target_par.lmfit_par_list.extend(profile_model.lmfit_par_list)
+            target_par._lmfit_par_list.extend(profile_model._lmfit_par_list)
             profile_model.parent_model = self
-            # update model lmfit_par_list, parameter_names and components
+            # update model _lmfit_par_list, parameter_names and components
             self.update()
             # re-analyze all expressions: profile status changed
             self._analyze_expression_dependencies()
@@ -1037,7 +1036,7 @@ class Model:
         have dynamics sub-models).
         """
 
-        for lmf_par in par.lmfit_par.values():
+        for lmf_par in par._lmfit_par.values():
             levels[lmf_par.name] = par.vary_level
         if par.t_vary and par.t_model is not None:
             for sub_par in par.t_model.get_all_parameters():
@@ -1164,7 +1163,7 @@ class Model:
         """
 
         # settle expressions as lmfit's minimizer does before a residual
-        self.lmfit_pars.update_constraints()
+        self._lmfit_pars.update_constraints()
         return self._evaluate_1d(t_ind, store_1d=store_1d, return_1d=return_1d)
 
     #
@@ -1242,7 +1241,7 @@ class Model:
 
         # settle expressions once; nothing in lmfit's container changes
         # between the time points of one evaluation
-        self.lmfit_pars.update_constraints()
+        self._lmfit_pars.update_constraints()
         t_start = 0 if t_ind is None else t_ind[0]
         time_slice = self.time if t_ind is None else self.time[t_ind[0] : t_ind[1]]
         self.value_2d = np.empty((len(time_slice), len(self.energy)))
@@ -1458,10 +1457,10 @@ class Component:
         Normalized time axis (resets to 0 at each subcycle start)
     pars : list of Par
         Parameter objects for this component
-    lmfit_par_list : list of lmfit.Parameter
+    _lmfit_par_list : list of lmfit.Parameter
         Flattened list of lmfit parameters
-    lmfit_pars : lmfit.Parameters
-        lmfit.Parameters object built from lmfit_par_list
+    _lmfit_pars : lmfit.Parameters
+        lmfit.Parameters object built from _lmfit_par_list
     time : ndarray or None
         Time axis (inherited from model, or kernel axis for convolutions)
     energy : ndarray or None
@@ -1526,8 +1525,8 @@ class Component:
         # list of Par objects needed to construct component
         self.pars: list[Par] = []  # used to create component value during fit
         # flattened list of all lmfit parameters defining this component
-        self.lmfit_par_list: list[lmfit.Parameter] = []
-        self.lmfit_pars: lmfit.Parameters = lmfit.Parameters()  # for describe() method
+        self._lmfit_par_list: list[lmfit.Parameter] = []
+        self._lmfit_pars: lmfit.Parameters = lmfit.Parameters()  # for describe() method
         # time, energy, and aux axes are inherited from model
         self.time: np.ndarray | None = None
         self.energy: np.ndarray | None = None
@@ -1806,7 +1805,7 @@ class Component:
             # Set the expression on the lmfit parameter
             par_name = temp.name
             try:
-                temp.lmfit_par[par_name].set(expr=expr)
+                temp._lmfit_par[par_name].set(expr=expr)
             except Exception as e:  # noqa: BLE001
                 raise ValueError(
                     f"Failed to set expression '{expr}' for parameter '{par_name}': {e}"
@@ -1831,14 +1830,14 @@ class Component:
         """
 
         # re-initialize the list and lmfit.Parameters object
-        self.lmfit_par_list = []
-        self.lmfit_pars = lmfit.Parameters()
+        self._lmfit_par_list = []
+        self._lmfit_pars = lmfit.Parameters()
         # go through all pars of this component ...
         for p in self.pars:
             # ... and add their list of all lmfit.Parameter objects
-            self.lmfit_par_list.extend(p.lmfit_par_list)
-        # update lmfit.Parameters object from the lmfit_par_list
-        self.lmfit_pars.add_many(*self.lmfit_par_list)
+            self._lmfit_par_list.extend(p._lmfit_par_list)
+        # update lmfit.Parameters object from the _lmfit_par_list
+        self._lmfit_pars.add_many(*self._lmfit_par_list)
 
     #
     def describe(self, detail: int = 1) -> None:
@@ -1875,8 +1874,8 @@ class Component:
             print(f"function will be {comp_type_str} [{subcycle_str}]\n")
 
             print("all lmfit.Parameters() [flattened and sorted alphabetically]:")
-            if self.lmfit_pars:
-                self.lmfit_pars.pretty_print()
+            if self._lmfit_pars:
+                self._lmfit_pars.pretty_print()
             else:
                 print("lmfit.Parameters() object is empty")
             print()
@@ -2100,7 +2099,7 @@ class Component:
                         p.p_model.create_value_1d(t_ind=t_ind)
                     if p.p_model.value_1d is None:
                         raise ValueError(f"Profile value_1d is None for par '{p.name}'")
-                    base = cast("list[Any]", ulmfit.par_extract(p.lmfit_par))
+                    base = cast("list[Any]", ulmfit.par_extract(p._lmfit_par))
                     pars_i.append(base[0] + p.p_model.value_1d[i])
                 else:
                     pars_i.append(
@@ -2271,7 +2270,7 @@ class Par:
         Parameter name
     info : list
         Parameter specification from initialization
-    lmfit_par : lmfit.Parameters
+    _lmfit_par : lmfit.Parameters
         lmfit Parameters object (contains 1+ parameters)
     t_vary : bool
         Whether parameter has time-dependence (via Dynamics)
@@ -2281,7 +2280,7 @@ class Par:
         Whether parameter varies over the auxiliary axis (via Profile)
     p_model : Profile or None
         Profile model describing variation over aux_axis (if p_vary=True)
-    lmfit_par_list : list
+    _lmfit_par_list : list
         Flattened list of all lmfit parameters (spectral + temporal + profile)
     expr_refs_time_dep : bool
         Whether expression references time-dependent parameters
@@ -2319,7 +2318,7 @@ class Par:
 
     **Parameter Flattening:**
 
-    lmfit_par_list contains all parameters defining this Par:
+    _lmfit_par_list contains all parameters defining this Par:
 
     - Without time/profile-dependence: 1 parameter (the spectral one)
     - With time-dependence: N parameters (spectral + all from Dynamics model)
@@ -2332,12 +2331,12 @@ class Par:
         self.name = name
         self.info: list[Any] = [] if info is None else list(info)
         self.vary_level: str = "static"  # "project", "file", or "static"
-        self.lmfit_par: lmfit.Parameters = lmfit.Parameters()
+        self._lmfit_par: lmfit.Parameters = lmfit.Parameters()
         self.t_vary: bool = False
         self.t_model: Dynamics | None = None  # set by add_dynamics()
         self.p_vary: bool = False
         self.p_model: Profile | None = None  # set by add_profile()
-        self.lmfit_par_list: list[lmfit.Parameter] = []
+        self._lmfit_par_list: list[lmfit.Parameter] = []
         # Expression analysis attributes
         self.expr_refs_time_dep: bool = False  # flag for time-dependent references
         self.expr_refs_profile_dep: bool = False  # flag for profile-dependent refs
@@ -2384,13 +2383,13 @@ class Par:
 
         print(
             f"par name: {self.name} [value: {self.value()}]"
-            " and its lmfit_par attribute:"
+            " and its _lmfit_par attribute:"
         )
-        if isinstance(self.lmfit_par, lmfit.Parameters):
-            self.lmfit_par.pretty_print()
+        if isinstance(self._lmfit_par, lmfit.Parameters):
+            self._lmfit_par.pretty_print()
         else:
             print("[this is not an lmfit.Parameter instance]")
-            display(self.lmfit_par)
+            display(self._lmfit_par)
         #
         if not self.t_vary:
             print("parameter has no time dependence")
@@ -2450,9 +2449,9 @@ class Par:
         else:
             lmfit_par = ulmfit.par_create(self.name, self.info, prefix, suffix)
         # add to lmfit_par attribute
-        self.lmfit_par.add_many(lmfit_par)
+        self._lmfit_par.add_many(lmfit_par)
         # and list of individual lmfit paramters
-        self.lmfit_par_list.extend([lmfit_par])
+        self._lmfit_par_list.extend([lmfit_par])
 
     #
     def update(self, t_model: "Dynamics") -> None:
@@ -2473,7 +2472,7 @@ class Par:
         self.t_vary = True
         self.t_model = t_model
         # add t_model pars to list of individual lmfit parameters
-        self.lmfit_par_list.extend(t_model.lmfit_par_list)
+        self._lmfit_par_list.extend(t_model._lmfit_par_list)
 
     #
     def value(
@@ -2524,20 +2523,20 @@ class Par:
                 # Ensure profile is fresh for this t_ind (no-op if already
                 # evaluated via the owning component, cheap cache check).
                 self.p_model.create_value_1d(t_ind=t_ind)
-                base = cast("list[float]", ulmfit.par_extract(self.lmfit_par))
+                base = cast("list[float]", ulmfit.par_extract(self._lmfit_par))
                 if self.p_model.value_1d is None:
                     raise RuntimeError(
                         f'Profile model "{self.p_model.name}" has no value_1d'
                     )
                 return float(base[0] + self.p_model.value_1d[aux_ind])
             # Standard lmfit evaluation
-            value = cast("list[float]", ulmfit.par_extract(self.lmfit_par))[0]
+            value = cast("list[float]", ulmfit.par_extract(self._lmfit_par))[0]
 
         elif self.t_vary and self.t_model is not None:
             if update_t_model:
                 # update t_model, specifically self.t_model.value_1d
                 self.t_model.create_value_1d()
-            base = cast("list[float]", ulmfit.par_extract(self.lmfit_par))
+            base = cast("list[float]", ulmfit.par_extract(self._lmfit_par))
             if self.t_model.value_1d is None:
                 raise RuntimeError(
                     f'Dynamics model "{self.t_model.name}" has no value_1d'

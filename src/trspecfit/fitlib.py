@@ -860,7 +860,7 @@ def fit_wrapper(
     ...     const=const,
     ...     args=args,
     ...     par_names=model.parameter_names,
-    ...     par=model.lmfit_pars,
+    ...     par=model._lmfit_pars,
     ...     stages=1,
     ...     show_output=1
     ... )
@@ -871,7 +871,7 @@ def fit_wrapper(
     ...     const=const,
     ...     args=args,
     ...     par_names=model.parameter_names,
-    ...     par=model.lmfit_pars,
+    ...     par=model._lmfit_pars,
     ...     stages=2,
     ...     try_ci=1,
     ...     ci_sigmas=[1, 2, 3],
@@ -884,7 +884,7 @@ def fit_wrapper(
     ...     const=const,
     ...     args=args,
     ...     par_names=model.parameter_names,
-    ...     par=model.lmfit_pars,
+    ...     par=model._lmfit_pars,
     ...     stages=2,
     ...     try_ci=1,
     ...     mc_settings=mc,

@@ -886,7 +886,7 @@ class TestFitLimitsSlicing:
         )
         args = (model, dim)
         residual = fitlib.residual_fun(
-            model.lmfit_pars,
+            model._lmfit_pars,
             *const,
             res_type=res_type,
             args=args,
@@ -1305,7 +1305,7 @@ def _make_seed_order_file(project):
     truth.load_model(model_yaml=_SEED_YAML, model_info="seed_base")
     assert truth.model_active is not None  # type guard
     for name, value in _SEED_TRUTH.items():
-        truth.model_active.lmfit_pars[name].value = value
+        truth.model_active._lmfit_pars[name].value = value
     data = simulate_noisy(truth.model_active, noise_level=0.01)
 
     file = File(parent_project=project, data=data, energy=energy, time=time)
@@ -1383,7 +1383,7 @@ class TestSeedSource:
         project = make_project(name="seed")
         file = _make_seed_order_file(project)
         model = _load_2d_model(file, "seed_2d_reversed")
-        loaded = {name: model.lmfit_pars[name].value for name in model.parameter_names}
+        loaded = {name: model._lmfit_pars[name].value for name in model.parameter_names}
 
         file.fit_2d("seed_2d_reversed", stages=1, try_ci=0, seed_source="model")
 
@@ -1417,7 +1417,7 @@ class TestSeedSource:
         file = _make_fitted_seed_order_file(project)
         assert not np.isclose(_baseline_values(file)["GLP_01_m"], 0.5)
         model = _load_2d_model(file, "seed_2d_reversed")
-        loaded = {name: model.lmfit_pars[name].value for name in model.parameter_names}
+        loaded = {name: model._lmfit_pars[name].value for name in model.parameter_names}
 
         file.fit_2d("seed_2d_reversed", stages=1, try_ci=0, seed_source="model")
 

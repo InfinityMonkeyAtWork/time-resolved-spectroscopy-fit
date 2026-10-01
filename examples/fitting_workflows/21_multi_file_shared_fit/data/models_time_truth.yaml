@@ -7,3 +7,57 @@ MonoExpPosIRF:
         A: [5, True, 0, 15]
         tau: [50, True, 1, 100]
         t0: [0, False]
+
+# MonoExpPosIRF with the shift amplitude at 5: one entry per dataset
+MonoExpPosIRF_A5:
+    gaussCONV:
+        SD: [3, True, 1.0E-6, 10]
+    expFun:
+        A: [5, True, 0, 15]
+        tau: [50, True, 1, 100]
+        t0: [0, False]
+
+# MonoExpPosIRF with the shift amplitude at 2: one entry per dataset
+MonoExpPosIRF_A2:
+    gaussCONV:
+        SD: [3, True, 1.0E-6, 10]
+    expFun:
+        A: [2, True, 0, 15]
+        tau: [50, True, 1, 100]
+        t0: [0, False]
+
+# MonoExpPosIRF with the shift amplitude at 1: one entry per dataset
+MonoExpPosIRF_A1:
+    gaussCONV:
+        SD: [3, True, 1.0E-6, 10]
+    expFun:
+        A: [1, True, 0, 15]
+        tau: [50, True, 1, 100]
+        t0: [0, False]
+
+# MonoExpPosIRF with the shift amplitude at 0.5: one entry per dataset
+MonoExpPosIRF_A0p5:
+    gaussCONV:
+        SD: [3, True, 1.0E-6, 10]
+    expFun:
+        A: [0.5, True, 0, 15]
+        tau: [50, True, 1, 100]
+        t0: [0, False]
+
+# MonoExpPosIRF with the shift amplitude at 0.2: one entry per dataset
+MonoExpPosIRF_A0p2:
+    gaussCONV:
+        SD: [3, True, 1.0E-6, 10]
+    expFun:
+        A: [0.2, True, 0, 15]
+        tau: [50, True, 1, 100]
+        t0: [0, False]
+
+# MonoExpPosIRF with the shift amplitude at 0.1: one entry per dataset
+MonoExpPosIRF_A0p1:
+    gaussCONV:
+        SD: [3, True, 1.0E-6, 10]
+    expFun:
+        A: [0.1, True, 0, 15]
+        tau: [50, True, 1, 100]
+        t0: [0, False]

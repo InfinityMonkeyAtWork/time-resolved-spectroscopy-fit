@@ -892,7 +892,7 @@ class Simulator:
         ...     fitted_params.append(fitted.loc['amplitude', 'value'])
         >>>
         >>> # Check parameter recovery against the simulator's truth model
-        >>> true_value = model.lmfit_pars['amplitude'].value
+        >>> true_value = 20.0  # the amplitude in the truth model's YAML
         >>> mean_fitted = np.mean(fitted_params)
         >>> std_fitted = np.std(fitted_params)
         >>> print(f"True: {true_value:.2f}")
@@ -1761,8 +1761,8 @@ class Simulator:
         """Serialize the model's lmfit parameters (full spec) to JSON."""
 
         params_dict = {}
-        for par_name in self.model.lmfit_pars:
-            par = self.model.lmfit_pars[par_name]
+        for par_name in self.model._lmfit_pars:
+            par = self.model._lmfit_pars[par_name]
             params_dict[par_name] = {
                 "value": float(par.value),
                 "vary": bool(par.vary),
@@ -1976,7 +1976,7 @@ class Simulator:
                     )
                 param_names = list(param_config.keys())
                 param_values = list(param_config.values())
-                self.model.update_value(param_values, par_select=param_names)
+                self.model._update_value(param_values, par_select=param_names)
 
                 # Generate noisy realizations for this config
                 clean, noisy_list, _noise_list = self.simulate_n(
@@ -2017,7 +2017,7 @@ class Simulator:
         """
 
         specs = parameter_sweep.parameter_specs
-        unknown = [name for name in specs if name not in self.model.lmfit_pars]
+        unknown = [name for name in specs if name not in self.model._lmfit_pars]
         if unknown:
             raise ValueError(
                 f"Swept parameter(s) {unknown} not found in model "
@@ -2025,7 +2025,7 @@ class Simulator:
                 f"{self.model.parameter_names}."
             )
         for name, spec in specs.items():
-            par = self.model.lmfit_pars[name]
+            par = self.model._lmfit_pars[name]
             if par.expr is not None:
                 raise ValueError(
                     f"Swept parameter '{name}' is defined by the expression "
@@ -2045,7 +2045,7 @@ class Simulator:
     ) -> None:
         """Raise if any of ``values`` lies outside parameter ``name``'s bounds."""
 
-        par = self.model.lmfit_pars[name]
+        par = self.model._lmfit_pars[name]
         outside = values[(values < par.min) | (values > par.max)]
         if outside.size:
             raise ValueError(
@@ -2181,8 +2181,8 @@ class Simulator:
 
         # Save all parameter values for this config (full model state)
         param_values = {
-            par_name: float(self.model.lmfit_pars[par_name].value)
-            for par_name in self.model.lmfit_pars
+            par_name: float(self.model._lmfit_pars[par_name].value)
+            for par_name in self.model._lmfit_pars
         }
         config_group.attrs["all_parameter_values"] = json.dumps(param_values)
 

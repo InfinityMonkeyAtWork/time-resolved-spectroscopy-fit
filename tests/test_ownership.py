@@ -219,7 +219,7 @@ def model_state(model) -> tuple:
             par.expr_refs_time_dep,
             par.expr_refs_profile_dep,
             tuple(par.expr_refs),
-            len(par.lmfit_par_list),
+            len(par._lmfit_par_list),
         )
         for par in model.get_all_parameters()
     ]
@@ -758,11 +758,11 @@ class TestSimulatorRecordsTheDraw:
         sim = Simulator(model=model, detection="analog", noise_level=0.05, seed=5)
         sim.simulate_1d()
         generated = {
-            name: model.lmfit_pars[name].value for name in model.parameter_names
+            name: model._lmfit_pars[name].value for name in model.parameter_names
         }
         # a fit of the same model writes its execution state back
         file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
-        fitted = {name: model.lmfit_pars[name].value for name in model.parameter_names}
+        fitted = {name: model._lmfit_pars[name].value for name in model.parameter_names}
         assert fitted != generated
         monkeypatch.chdir(tmp_path)
         sim.save_data(filepath="generation.h5", show_output=0)
@@ -771,3 +771,40 @@ class TestSimulatorRecordsTheDraw:
         assert {name: spec["value"] for name, spec in saved.items()} == pytest.approx(
             generated
         )
+
+
+#
+#
+class TestParameterStateIsPackageInternal:
+    """Rule 4, parameter state: the lmfit objects and the value setter are
+    package-internal (a naming boundary, not a guard); inspection goes
+    through the documented routes."""
+
+    #
+    def test_the_old_handles_are_gone_and_inspection_works(self, capsys):
+        file = make_model_file(with_aux=True)
+        model = file.model_active
+        assert model is not None  # type guard
+        add_profile(
+            file,
+            model="simple_energy",
+            parameter="GLP_01_A",
+            profile="profile_pExpDecay",
+        )
+        component = model.components[0]
+        par = component.pars[0]
+        for obj, names in (
+            (model, ("lmfit_pars", "lmfit_par_list", "update_value")),
+            (component, ("lmfit_pars", "lmfit_par_list")),
+            (par, ("lmfit_par", "lmfit_par_list")),
+            (par.p_model, ("lmfit_pars", "lmfit_par_list", "update_value")),
+        ):
+            for name in names:
+                assert not hasattr(obj, name), f"{type(obj).__name__}.{name}"
+        levels = model.get_vary_levels()
+        assert set(levels.values()) <= {"project", "file", "static"}
+        assert sum(level != "static" for level in levels.values()) > 0
+        file.p.show_output = 1
+        model.describe()
+        file.describe_model()
+        assert "simple_energy" in capsys.readouterr().out

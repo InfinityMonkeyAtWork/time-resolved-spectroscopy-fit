@@ -45,9 +45,9 @@ def extract_truth_pars(model) -> dict[str, float]:
     """Return ``{name: value}`` for all non-expression parameters."""
 
     return {
-        name: model.lmfit_pars[name].value
+        name: model._lmfit_pars[name].value
         for name in model.parameter_names
-        if model.lmfit_pars[name].expr is None
+        if model._lmfit_pars[name].expr is None
     }
 
 
@@ -156,3 +156,20 @@ def residual_jacobian_fd(par, *, const, args, noise, rel_step: float = 1e-6):
         )
         columns.append((res_plus - res_minus) / (2 * step))
     return np.stack(columns, axis=1)
+
+
+#
+def reload_model(file, model_yaml: str, model_info: str):
+    """Replace a loaded model with the same-named entry of *model_yaml*.
+
+    The YAML is the source of truth: a variant of a model (a fixed
+    parameter, a moved bound, a shifted seed) is another YAML entry or
+    file, loaded in place of the current one. ``load_model`` warns when it
+    replaces a model; that warning is the point here, not a finding.
+    """
+
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        return file.load_model(model_yaml=model_yaml, model_info=model_info)

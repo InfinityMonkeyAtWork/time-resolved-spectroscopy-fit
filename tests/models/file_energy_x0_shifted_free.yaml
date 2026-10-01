@@ -1,0 +1,8 @@
+# single_glp from file_energy.yaml seeded at the shifted peak position (+0.5)
+# with x0 free again: a third configuration next to the free and the fixed one
+single_glp:
+    GLP:
+      A: [20, True, 5, 25]
+      x0: [85.5, True, 82, 88]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]

@@ -786,7 +786,7 @@ schedule_2d(graph):
   in the plan (see below). This is the canonical order -- `extract_theta`
   must return values in this order, and result writeback must use it.
   At construction time, `opt_param_names` is derived from
-  `model.parameter_names` / `model.lmfit_pars` (only the vary=True
+  `model.parameter_names` / `model._lmfit_pars` (only the vary=True
   subset), so the contract is explicit rather than implicit.
 - The execution order preserves model semantics: the scheduler derives
   it from graph edges with stable tie-breaking on original definition
@@ -888,7 +888,7 @@ lmfit.minimize(residual_fun, params, ...)
   -> residual_fun(params, x, data, ..., args=(model, 2))
     -> par_extract(params) -> list of values
     -> fit_model_mcp(x, par_values, True, model, 2)
-      -> model.update_value(par_values)     # write theta into lmfit.Parameters
+      -> model._update_value(par_values)     # write theta into lmfit.Parameters
       -> model.create_value_2d()            # THE HOT PATH (interpreter loop)
         -> for each time step:
             create_value_1d(t_ind=ti)
@@ -943,7 +943,7 @@ Implemented behavior:
   build a graph / plan when `spec_fun_str` is `fit_model_gir` or
   `fit_model_compare`.
 - After fitting, all three methods write `result.par_fin.params` back
-  into `model.lmfit_pars` via `par_extract` + `update_value`,
+  into `model._lmfit_pars` via `par_extract` + `_update_value`,
   because `fit_wrapper` optimizes a deepcopy and the GIR path
   does not mutate model state on every residual call.
 
@@ -990,7 +990,7 @@ def validate_plan(model, plan):
     interp_result = model.value_2d.copy()
 
     # Evaluate via plan
-    theta = extract_theta(model.lmfit_pars)
+    theta = extract_theta(model._lmfit_pars)
     plan_result = evaluate_2d(plan, theta)
 
     # Compare -- rtol=1e-10 accounts for summation order differences.

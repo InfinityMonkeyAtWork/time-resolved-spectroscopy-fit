@@ -215,7 +215,7 @@ class TestEvaluation:
 
         file, model = self._make_file_with_model(["expression_chain"])
         # a direct read right after load is already the settled value
-        assert model.lmfit_pars["GLP_03_A"].value == pytest.approx(20.0 * 0.25)
+        assert model._lmfit_pars["GLP_03_A"].value == pytest.approx(20.0 * 0.25)
         first = np.array(model.create_value_1d(return_1d=1))
         second = np.array(model.create_value_1d(return_1d=1))
         np.testing.assert_array_equal(first, second)

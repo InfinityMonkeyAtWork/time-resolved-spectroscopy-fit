@@ -243,7 +243,7 @@ def prepare_paths(file):
     theta_indices = np.array(
         [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
     )
-    par = [model.lmfit_pars[n].value for n in model.parameter_names]
+    par = [model._lmfit_pars[n].value for n in model.parameter_names]
 
     return model, par, plan, theta_indices, True
 
@@ -553,13 +553,13 @@ def capture_par_variability(example_num, *, n_starts=4):
         model = file.model_active
         assert model is not None
         free_names = [
-            name for name, par in model.lmfit_pars.items() if par.vary and not par.expr
+            name for name, par in model._lmfit_pars.items() if par.vary and not par.expr
         ]
 
         label = "reference" if run == 0 else f"start {run}"
         if run > 0:
             for i, name in enumerate(free_names):
-                par = model.lmfit_pars[name]
+                par = model._lmfit_pars[name]
                 factor = ladder[(i + run - 1) % len(ladder)]
                 value = par.value * factor
                 if abs(par.value) < 1e-12:

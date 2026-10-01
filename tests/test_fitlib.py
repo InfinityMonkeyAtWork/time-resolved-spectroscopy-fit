@@ -72,7 +72,7 @@ class TestResultsToFit2D:
         file = _make_1d_model_file()
         model, const, args = self._const_args(file)
 
-        values = [model.lmfit_pars[n].value for n in model.parameter_names]
+        values = [model._lmfit_pars[n].value for n in model.parameter_names]
         df_pars = pd.DataFrame([values, values], columns=model.parameter_names)
         df_extra = df_pars.copy()
         df_extra["chi2"] = [0.1, 0.2]  # non-parameter column
@@ -94,7 +94,7 @@ class TestResultsToFit2D:
         file = _make_1d_model_file()
         model, const, args = self._const_args(file)
 
-        values = [model.lmfit_pars[n].value for n in model.parameter_names]
+        values = [model._lmfit_pars[n].value for n in model.parameter_names]
         df_pars = pd.DataFrame([values], columns=model.parameter_names)
         df_missing = df_pars.drop(columns=model.parameter_names[:1])
 

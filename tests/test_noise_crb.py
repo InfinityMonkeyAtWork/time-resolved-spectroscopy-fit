@@ -92,7 +92,7 @@ def _set_truth(model):
 
     for name, value in _TRUTH.items():
         if name in model.parameter_names:
-            model.lmfit_pars[name].value = value
+            model._lmfit_pars[name].value = value
     return model
 
 
@@ -341,7 +341,7 @@ class TestSeedScatterControl:
         truth.create_value_2d()
         clean = np.asarray(truth.value_2d, dtype=float)
 
-        names = [name for name in truth.lmfit_pars if truth.lmfit_pars[name].vary]
+        names = [name for name in truth._lmfit_pars if truth._lmfit_pars[name].vary]
 
         n_seeds = 256
         values = {"unknown": [], "poisson": []}

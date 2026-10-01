@@ -625,7 +625,7 @@ def _package_short_name(comp: Component) -> str:
 def _par_initial_value(par: Par) -> float:
     """Extract the current scalar value from a Par's lmfit_par."""
 
-    vals = list(par.lmfit_par.valuesdict().values())
+    vals = list(par._lmfit_par.valuesdict().values())
     return float(vals[0]) if vals else 0.0
 
 
@@ -633,7 +633,7 @@ def _par_initial_value(par: Par) -> float:
 def _par_bounds(par: Par) -> tuple[float, float] | None:
     """Extract bounds from a Par's lmfit_par, or None."""
 
-    for p in par.lmfit_par.values():
+    for p in par._lmfit_par.values():
         mn = p.min if p.min is not None else -np.inf
         mx = p.max if p.max is not None else np.inf
         return (float(mn), float(mx))
@@ -660,7 +660,7 @@ def _par_expression_string(par: Par) -> str | None:
     if not _is_expression_par(par):
         return None
 
-    for lmfit_par in par.lmfit_par.values():
+    for lmfit_par in par._lmfit_par.values():
         if lmfit_par.expr:
             return str(lmfit_par.expr)
 
@@ -703,7 +703,7 @@ def _par_is_vary(par: Par) -> bool:
     """True if the Par has ``vary=True`` in its lmfit parameter."""
 
     return bool(
-        par.lmfit_par.valuesdict() and any(p.vary for p in par.lmfit_par.values())
+        par._lmfit_par.valuesdict() and any(p.vary for p in par._lmfit_par.values())
     )
 
 

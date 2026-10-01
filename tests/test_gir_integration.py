@@ -140,7 +140,7 @@ def _make_2d_profile_model(project, model_info, dynamics_params, profiles):
 def _extract_par_list(model):
     """Return full parameter value list in model.parameter_names order."""
 
-    return [model.lmfit_pars[n].value for n in model.parameter_names]
+    return [model._lmfit_pars[n].value for n in model.parameter_names]
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +372,7 @@ class TestGIRvsInterpreter:
             [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
         )
 
-        par = model.lmfit_pars
+        par = model._lmfit_pars
 
         # Residual via GIR
         res_gir = fitlib.residual_fun(
@@ -442,7 +442,7 @@ class TestGIRvsInterpreter:
             [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
         )
 
-        par = model.lmfit_pars
+        par = model._lmfit_pars
         e_lim = [10, 80]
         t_lim = [5, 40]
 
@@ -494,7 +494,7 @@ class TestGIRvsInterpreter:
             [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
         )
 
-        par = model.lmfit_pars
+        par = model._lmfit_pars
 
         res_gir = fitlib.residual_fun(
             par=par,
@@ -564,7 +564,7 @@ class TestGIRvsInterpreter:
         theta_indices = np.array(
             [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
         )
-        par = model.lmfit_pars
+        par = model._lmfit_pars
 
         res_gir = fitlib.residual_fun(
             par=par,
@@ -677,7 +677,7 @@ class TestGIRvsInterpreter:
             [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
         )
 
-        par = model.lmfit_pars
+        par = model._lmfit_pars
         res_gir = fitlib.residual_fun(
             par=par,
             x=file.energy,
@@ -720,7 +720,7 @@ class TestGIRvsInterpreter:
             [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
         )
 
-        par = model.lmfit_pars
+        par = model._lmfit_pars
         res_gir = fitlib.residual_fun(
             par=par,
             x=file.energy,
@@ -763,7 +763,7 @@ class TestGIRvsInterpreter:
             [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
         )
 
-        par = model.lmfit_pars
+        par = model._lmfit_pars
         res_gir = fitlib.residual_fun(
             par=par,
             x=file.energy,
@@ -829,7 +829,7 @@ class TestFileFit2D:
     #
     @pytest.mark.slow
     def test_gir_fit_writes_back_to_model(self):
-        """After GIR fit, model_2d.lmfit_pars reflects optimized values."""
+        """After GIR fit, model_2d._lmfit_pars reflects optimized values."""
 
         project = make_project(name="gir_e2e")
         # Default spec_fun_str is "fit_model_gir"
@@ -848,12 +848,12 @@ class TestFileFit2D:
         )
         fit_file.fit_2d(model_name="single_glp", stages=2, try_ci=0)
 
-        # Verify writeback: model_2d.lmfit_pars should match result params
+        # Verify writeback: model_2d._lmfit_pars should match result params
         assert fit_file.model_2d is not None  # type guard
         assert fit_file.model_2d.result is not None  # type guard
         result_params = fit_file.model_2d.result.par_fin.params
         for name in fit_file.model_2d.parameter_names:
-            model_val = fit_file.model_2d.lmfit_pars[name].value
+            model_val = fit_file.model_2d._lmfit_pars[name].value
             result_val = result_params[name].value
             assert np.isclose(model_val, result_val, rtol=1e-12), (
                 f"{name}: model={model_val}, result={result_val}"
@@ -899,7 +899,7 @@ class TestFileFit2D:
         )
         truth_model = truth_file.model_active
         assert truth_model is not None  # type guard
-        assert truth_model.lmfit_pars[SD_name].value == SD_truth
+        assert truth_model._lmfit_pars[SD_name].value == SD_truth
         clean = simulate_clean(truth_model)
 
         # fit model: same shape, but SD inits at 5e-2, 8x below truth --
@@ -977,7 +977,7 @@ class TestGIR1DvsInterpreter:
             [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
         )
 
-        par = model.lmfit_pars
+        par = model._lmfit_pars
 
         # Residual via GIR
         res_gir = fitlib.residual_fun(
@@ -1019,7 +1019,7 @@ class TestGIR1DvsInterpreter:
             [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
         )
 
-        par = model.lmfit_pars
+        par = model._lmfit_pars
         e_lim = [10, 80]
 
         res_gir = fitlib.residual_fun(
@@ -1065,7 +1065,7 @@ class TestGIR1DvsInterpreter:
             [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
         )
 
-        par = model.lmfit_pars
+        par = model._lmfit_pars
         res_gir = fitlib.residual_fun(
             par=par,
             x=file.energy,
@@ -1157,7 +1157,7 @@ class TestGIR1DvsInterpreter:
             [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
         )
 
-        par = model.lmfit_pars
+        par = model._lmfit_pars
         res_gir = fitlib.residual_fun(
             par=par,
             x=file.energy,
@@ -1229,14 +1229,14 @@ class TestGIR1DvsInterpreter:
         data = np.asarray(dyn.value_1d) + 0.01
 
         res_mcp = fitlib.residual_fun(
-            par=dyn.lmfit_pars,
+            par=dyn._lmfit_pars,
             x=file.time,
             data=data,
             fit_fun_str="fit_model_mcp",
             args=(dyn, 1),
         )
         res_gir = fitlib.residual_fun(
-            par=dyn.lmfit_pars,
+            par=dyn._lmfit_pars,
             x=file.time,
             data=data,
             fit_fun_str="fit_model_gir",
@@ -1316,7 +1316,7 @@ class TestFileFitBaseline:
     #
     @pytest.mark.slow
     def test_gir_baseline_writes_back(self):
-        """After GIR baseline fit, model_base.lmfit_pars reflects results."""
+        """After GIR baseline fit, model_base._lmfit_pars reflects results."""
 
         project = make_project(name="gir_base")
 
@@ -1337,7 +1337,7 @@ class TestFileFitBaseline:
         assert fit_file.model_base.result is not None  # type guard
         result_params = fit_file.model_base.result.par_fin.params
         for name in fit_file.model_base.parameter_names:
-            model_val = fit_file.model_base.lmfit_pars[name].value
+            model_val = fit_file.model_base._lmfit_pars[name].value
             result_val = result_params[name].value
             assert np.isclose(model_val, result_val, rtol=1e-12), (
                 f"{name}: model={model_val}, result={result_val}"
@@ -1539,7 +1539,7 @@ class TestFileFitSliceBySlice:
         if seed_source == "model":
             expected = expected.copy()
             expected[0] = expected[0] + 1.234 if expected[0] == 0 else expected[0] * 0.8
-            fit_file.model_active.update_value(expected)
+            fit_file.model_active._update_value(expected)
         elif seed_source == "explicit":
             expected = expected.copy()
             expected[0] = expected[0] + 0.456 if expected[0] == 0 else expected[0] * 1.1
@@ -1560,7 +1560,7 @@ class TestFileFitSliceBySlice:
             fit_file.model_sbs.parameter_names, expected, strict=True
         ):
             np.testing.assert_allclose(
-                fit_file.model_sbs.lmfit_pars[name].value,
+                fit_file.model_sbs._lmfit_pars[name].value,
                 expected_value,
                 rtol=1e-12,
                 atol=1e-12,

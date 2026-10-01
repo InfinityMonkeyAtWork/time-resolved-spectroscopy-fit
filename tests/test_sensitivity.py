@@ -12,15 +12,19 @@ from trspecfit import File, sensitivity
 
 
 #
-def _gauss_model(*, energy=None):
-    """Single Gauss on a wide window: the case with a closed-form bound."""
+def _gauss_model(*, energy=None, entry="gauss_free"):
+    """Single Gauss on a wide window: the case with a closed-form bound.
+
+    *entry* names the YAML variant: ``gauss_SD_fixed`` holds the width
+    known, ``gauss_all_fixed`` fixes everything.
+    """
 
     project = make_project(name="sens")
     energy = np.arange(80.0, 90.0, 0.02) if energy is None else energy
     file = File(parent_project=project, name=f"g{energy.size}", energy=energy)
     file.load_model(
         model_yaml="models/sensitivity_energy.yaml",
-        model_info="gauss_free",
+        model_info=entry,
     )
     model = file.model_active
     return model
@@ -55,7 +59,7 @@ class TestAnalyticAgreement:
         """
 
         model = _gauss_model()
-        sd = model.lmfit_pars["Gauss_01_SD"].value
+        sd = model._lmfit_pars["Gauss_01_SD"].value
 
         for counts in (1e3, 1e4, 1e5):
             bound = sensitivity.crb(model, counts)["Gauss_01_x0"]
@@ -153,8 +157,7 @@ class TestParameterFiltering:
     def test_fixed_parameter_excluded(self):
         """vary=False parameters do not appear in the report."""
 
-        model = _gauss_model()
-        model.lmfit_pars["Gauss_01_SD"].vary = False
+        model = _gauss_model(entry="gauss_SD_fixed")
         frame = sensitivity.sensitivity_report(model, counts=1e4)
         assert "Gauss_01_SD" not in set(frame["name"])
         assert "Gauss_01_x0" in set(frame["name"])
@@ -163,8 +166,7 @@ class TestParameterFiltering:
     def test_fixed_parameter_request_raises(self):
         """Asking for a fixed parameter is an error, not a silent omission."""
 
-        model = _gauss_model()
-        model.lmfit_pars["Gauss_01_SD"].vary = False
+        model = _gauss_model(entry="gauss_SD_fixed")
         with pytest.raises(ValueError, match="fixed or expression-defined"):
             sensitivity.crb(model, 1e4, ["Gauss_01_SD"])
 
@@ -180,8 +182,7 @@ class TestParameterFiltering:
 
         model = _gauss_model()
         loose = sensitivity.crb(model, 1e4)["Gauss_01_A"]
-        model.lmfit_pars["Gauss_01_SD"].vary = False
-        tight = sensitivity.crb(model, 1e4)["Gauss_01_A"]
+        tight = sensitivity.crb(_gauss_model(entry="gauss_SD_fixed"), 1e4)["Gauss_01_A"]
         assert tight <= loose * (1 + 1e-9)
 
     #
@@ -190,8 +191,7 @@ class TestParameterFiltering:
 
         model = _gauss_model()
         via_argument = sensitivity.crb(model, 1e4, fixed=("Gauss_01_SD",))
-        model.lmfit_pars["Gauss_01_SD"].vary = False
-        via_model = sensitivity.crb(model, 1e4)
+        via_model = sensitivity.crb(_gauss_model(entry="gauss_SD_fixed"), 1e4)
         assert set(via_argument) == set(via_model)
         assert "Gauss_01_SD" not in via_argument
         for name, bound in via_model.items():
@@ -209,8 +209,9 @@ class TestParameterFiltering:
         with_argument = sensitivity.counts_required(
             model, "Gauss_01_A", 0.1, fixed=("Gauss_01_SD",)
         )
-        model.lmfit_pars["Gauss_01_SD"].vary = False
-        with_model = sensitivity.counts_required(model, "Gauss_01_A", 0.1)
+        with_model = sensitivity.counts_required(
+            _gauss_model(entry="gauss_SD_fixed"), "Gauss_01_A", 0.1
+        )
         assert with_argument == pytest.approx(with_model, rel=1e-9)
 
     #
@@ -220,9 +221,9 @@ class TestParameterFiltering:
         model = _gauss_model()
         with pytest.raises(ValueError, match="Unknown parameter"):
             sensitivity.crb(model, 1e4, fixed=("not_a_parameter",))
-        model.lmfit_pars["Gauss_01_SD"].vary = False
+        fixed_model = _gauss_model(entry="gauss_SD_fixed")
         with pytest.raises(ValueError, match="already fixed"):
-            sensitivity.crb(model, 1e4, fixed=("Gauss_01_SD",))
+            sensitivity.crb(fixed_model, 1e4, fixed=("Gauss_01_SD",))
         with pytest.raises(TypeError, match="not one string"):
             sensitivity.crb(model, 1e4, fixed="Gauss_01_SD")  # type: ignore[arg-type]
 
@@ -248,9 +249,7 @@ class TestValidation:
 
     #
     def test_all_parameters_fixed_raises(self):
-        model = _gauss_model()
-        for name in model.parameter_names:
-            model.lmfit_pars[name].vary = False
+        model = _gauss_model(entry="gauss_all_fixed")
         with pytest.raises(ValueError, match="no free parameters"):
             sensitivity.crb(model, 1e4)
 
@@ -320,9 +319,9 @@ class TestModelIsUnchanged:
     #
     def test_parameter_values_restored(self):
         model = _gauss_model()
-        before = {n: model.lmfit_pars[n].value for n in model.parameter_names}
+        before = {n: model._lmfit_pars[n].value for n in model.parameter_names}
         sensitivity.sensitivity_report(model, counts=1e4)
-        after = {n: model.lmfit_pars[n].value for n in model.parameter_names}
+        after = {n: model._lmfit_pars[n].value for n in model.parameter_names}
         assert before == after
 
     #

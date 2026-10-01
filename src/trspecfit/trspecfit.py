@@ -1509,7 +1509,7 @@ class Project:
             vary_levels = model.get_vary_levels()
             name_remap: dict[str, str] = {}
 
-            for local_name, lmf_par in model.lmfit_pars.items():
+            for local_name, lmf_par in model._lmfit_pars.items():
                 level = vary_levels.get(local_name, "static")
 
                 if level == "project":
@@ -1866,7 +1866,7 @@ class Project:
         final_pars = joint_par_fin.params
         for proj_name, file_idx, local_name in mapping:
             if proj_name in final_pars:
-                models[file_idx].lmfit_pars[local_name].value = final_pars[
+                models[file_idx]._lmfit_pars[local_name].value = final_pars[
                     proj_name
                 ].value
 
@@ -1891,7 +1891,7 @@ class Project:
                 par_fin=cast(
                     "ulmfit.TypedMinimizerResult",
                     MinimizerResult(
-                        params=model.lmfit_pars,
+                        params=model._lmfit_pars,
                         method=joint_method,
                     ),
                 ),
@@ -2776,7 +2776,7 @@ class File:
             total, comps = fitlib.eval_model_curves_1d(
                 self.energy,
                 self.p.spec_fun_str,
-                mod.lmfit_pars,
+                mod._lmfit_pars,
                 args=(mod, 1),
             )
             uplt.plot_fit_overlay_1d(
@@ -3433,7 +3433,7 @@ class File:
             const=self.model_base.const,
             args=self.model_base.args,
             par_names=self.model_base.parameter_names,
-            par=self.model_base.lmfit_pars,
+            par=self.model_base._lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
             noise=noise_view,
@@ -3441,11 +3441,11 @@ class File:
         )
         self.model_base.result = fit_out
 
-        # Write optimized values back to model.lmfit_pars.  fit_wrapper
-        # optimizes a deepcopy, so model.lmfit_pars may be stale when
-        # the GIR path was used (it never calls model.update_value).
+        # Write optimized values back to model._lmfit_pars.  fit_wrapper
+        # optimizes a deepcopy, so model._lmfit_pars may be stale when
+        # the GIR path was used (it never calls model._update_value).
         if stages >= 1:
-            self.model_base.update_value(
+            self.model_base._update_value(
                 new_par_values=ulmfit.par_extract(fit_out.par_fin, return_type="list")
             )
             self._baseline_slot = self._append_baseline_slot(
@@ -3665,7 +3665,7 @@ class File:
             const=self.model_spec.const,
             args=self.model_spec.args,
             par_names=self.model_spec.parameter_names,
-            par=self.model_spec.lmfit_pars,
+            par=self.model_spec._lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
             noise=noise_view,
@@ -3673,9 +3673,9 @@ class File:
         )
         self.model_spec.result = fit_out
 
-        # Write optimized values back to model.lmfit_pars (see fit_baseline).
+        # Write optimized values back to model._lmfit_pars (see fit_baseline).
         if stages >= 1:
-            self.model_spec.update_value(
+            self.model_spec._update_value(
                 new_par_values=ulmfit.par_extract(fit_out.par_fin, return_type="list")
             )
             self._append_spectrum_slot(
@@ -3842,7 +3842,7 @@ class File:
             Shared parameter template used to seed every slice before any
             per-slice adaptation is applied.
 
-            - ``'model'``: use the current ``model_sbs.lmfit_pars`` values;
+            - ``'model'``: use the model's current parameter values;
               with ``seed_adapt=None`` the fit needs no baseline at all
             - ``'baseline'``: every parameter that shares its name with a
               parameter of the completed ``fit_baseline()`` result starts
@@ -3912,10 +3912,10 @@ class File:
                 seed_values,
                 self.model_sbs.parameter_names,
             )
-            self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
+            self.model_sbs._update_value(new_par_values=seed_template, par_select="all")
         else:
             seed_template = ulmfit.par_extract(
-                self.model_sbs.lmfit_pars, return_type="list"
+                self.model_sbs._lmfit_pars, return_type="list"
             )
 
         # find all parameters with names ending in "x0"
@@ -3927,7 +3927,7 @@ class File:
         data_base_argmax_energy: float | None
         if seed_adapt == "argmax_shift":
             e_pos_vals = pd.Series(
-                data=[self.model_sbs.lmfit_pars[name].value for name in e_pos_pars],
+                data=[self.model_sbs._lmfit_pars[name].value for name in e_pos_pars],
                 index=e_pos_pars,
                 dtype=float,
             )
@@ -3991,7 +3991,7 @@ class File:
                     const=const,
                     args=args,
                     par_names=self.model_sbs.parameter_names,
-                    par=self.model_sbs.lmfit_pars,
+                    par=self.model_sbs._lmfit_pars,
                     stages=stages,
                     show_output=0,
                     noise=noise_views[s_i],
@@ -4092,7 +4092,7 @@ class File:
                 # just appended): varied-parameter evolution + fit maps.
                 self.plot_param_evolution(model=model_name)
                 self.plot_fit(model=model_name, fit_type="sbs")
-        self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
+        self.model_sbs._update_value(new_par_values=seed_template, par_select="all")
         self.model_sbs.args = _args_sbs
         if stages >= 1 and self.p.show_output >= 1:
             fitlib.time_display(
@@ -4911,7 +4911,7 @@ class File:
                         # Add dynamics to the profile model
                         par.p_model.add_dynamics(cast("mcp.Dynamics", t_mod), frequency)
                         # Sync dynamics params into the energy model's parameter list
-                        par.lmfit_par_list.extend(t_mod.lmfit_par_list)
+                        par._lmfit_par_list.extend(t_mod._lmfit_par_list)
                         model.update()
                         model.dim = 2
                         return
@@ -5027,7 +5027,7 @@ class File:
                 "run fit_baseline() first or use seed_source='model'."
             )
         base_values = dict(zip(slot.params["name"], slot.params["value"], strict=True))
-        missing = [name for name in base_values if name not in model.lmfit_pars]
+        missing = [name for name in base_values if name not in model._lmfit_pars]
         if missing:
             raise ValueError(
                 f'Baseline seed requested but model "{model.name}" has no '
@@ -5037,7 +5037,7 @@ class File:
                 "under the same name; use seed_source='model' to start from "
                 "the model's own values."
             )
-        model.update_value(
+        model._update_value(
             new_par_values=[float(v) for v in base_values.values()],
             par_select=list(base_values),
         )
@@ -5168,22 +5168,22 @@ class File:
             const=self.model_2d.const,
             args=self.model_2d.args,
             par_names=self.model_2d.parameter_names,
-            par=self.model_2d.lmfit_pars,
+            par=self.model_2d._lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
             noise=noise_view,
             **fit_wrapper_kwargs,
         )
         self.model_2d.result = fit_out
-        # Write optimized values back to model.lmfit_pars.  fit_wrapper
-        # optimizes a deepcopy, so model.lmfit_pars may be stale — especially
-        # on the GIR path where fit_model_gir never calls model.update_value.
+        # Write optimized values back to model._lmfit_pars.  fit_wrapper
+        # optimizes a deepcopy, so model._lmfit_pars may be stale — especially
+        # on the GIR path where fit_model_gir never calls model._update_value.
         slot_2d: fit_io.SavedFitSlot | None = None
         if stages >= 1:
             final_params = fit_out.par_fin.params
             for name in self.model_2d.parameter_names:
                 if name in final_params:
-                    self.model_2d.lmfit_pars[name].value = final_params[name].value
+                    self.model_2d._lmfit_pars[name].value = final_params[name].value
             slot_2d = self._append_2d_slot(
                 model_name=model_name,
                 fit_fun_str=_fun_str,

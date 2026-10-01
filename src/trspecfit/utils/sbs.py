@@ -119,7 +119,7 @@ def prepare_sbs_model_for_slice(
 ) -> list[float]:
     """Reset the shared SbS model to the seed template for one slice."""
 
-    model.update_value(new_par_values=seed_template, par_select="all")
+    model._update_value(new_par_values=seed_template, par_select="all")
 
     if seed_adapt == "argmax_shift":
         if e_pos_vals is None or data_base_argmax_energy is None:
@@ -128,9 +128,9 @@ def prepare_sbs_model_for_slice(
             )
         delta_max = energy[np.argmax(s)] - data_base_argmax_energy
         new_e_vals = list(e_pos_vals.add(delta_max))
-        model.update_value(new_par_values=new_e_vals, par_select=e_pos_pars)
+        model._update_value(new_par_values=new_e_vals, par_select=e_pos_pars)
 
-    initial_guess = ulmfit.par_extract(model.lmfit_pars, return_type="list")
+    initial_guess = ulmfit.par_extract(model._lmfit_pars, return_type="list")
     model.const = (energy, s, fit_fun_str, 0, e_lim, [])
     model.args = dispatch_args
     return initial_guess
@@ -219,7 +219,7 @@ def sbs_fit_one_slice(
         const=const,
         args=args,
         par_names=model.parameter_names,
-        par=model.lmfit_pars,
+        par=model._lmfit_pars,
         stages=stages,
         show_output=0,
         **fit_wrapper_kwargs,

@@ -28,7 +28,7 @@ class TestMCPModel:
 
         assert model.name == "test_model"
         assert model.components == []
-        assert model.lmfit_pars is not None
+        assert model._lmfit_pars is not None
         assert model.dim is None
         assert model.energy is None
         assert model.time is None
@@ -250,12 +250,12 @@ class TestMCPParameter:
         par = Par("test_param", [87.6, True, 84, 90])
         par.create()
 
-        assert par.lmfit_par is not None  # type guard
-        assert "test_param" in par.lmfit_par
-        assert par.lmfit_par["test_param"].value == 87.6
-        assert par.lmfit_par["test_param"].vary
-        assert par.lmfit_par["test_param"].min == 84
-        assert par.lmfit_par["test_param"].max == 90
+        assert par._lmfit_par is not None  # type guard
+        assert "test_param" in par._lmfit_par
+        assert par._lmfit_par["test_param"].value == 87.6
+        assert par._lmfit_par["test_param"].vary
+        assert par._lmfit_par["test_param"].min == 84
+        assert par._lmfit_par["test_param"].max == 90
 
 
 #
@@ -468,12 +468,12 @@ class TestMCPIntegration:
         model = file.model_active
 
         # Get initial values
-        initial_values = [model.lmfit_pars[p].value for p in model.lmfit_pars]
+        initial_values = [model._lmfit_pars[p].value for p in model._lmfit_pars]
 
         # Update varying, non-expression parameters within their bounds
         new_values = []
-        for i, p in enumerate(model.lmfit_pars):
-            par = model.lmfit_pars[p]
+        for i, p in enumerate(model._lmfit_pars):
+            par = model._lmfit_pars[p]
             if par.vary and par.expr in (None, ""):
                 # Stay within bounds: use midpoint between current value and max
                 new_val = (par.value + par.max) / 2
@@ -482,7 +482,7 @@ class TestMCPIntegration:
             else:
                 new_values.append(initial_values[i])
 
-        updated_values = [model.lmfit_pars[p].value for p in model.lmfit_pars]
+        updated_values = [model._lmfit_pars[p].value for p in model._lmfit_pars]
         assert updated_values == new_values
 
     #
@@ -509,24 +509,24 @@ class TestMCPIntegration:
         value to the parameter it names (regression: it assigned by position)."""
 
         model = self._make_single_glp_model()
-        F_before = model.lmfit_pars["GLP_01_F"].value
+        F_before = model._lmfit_pars["GLP_01_F"].value
 
-        model.update_value([86.0, 15.0], par_select=["GLP_01_x0", "GLP_01_A"])
+        model._update_value([86.0, 15.0], par_select=["GLP_01_x0", "GLP_01_A"])
 
-        assert model.lmfit_pars["GLP_01_A"].value == 15.0
-        assert model.lmfit_pars["GLP_01_x0"].value == 86.0
-        assert model.lmfit_pars["GLP_01_F"].value == F_before
+        assert model._lmfit_pars["GLP_01_A"].value == 15.0
+        assert model._lmfit_pars["GLP_01_x0"].value == 86.0
+        assert model._lmfit_pars["GLP_01_F"].value == F_before
 
     #
     def test_update_value_unknown_name_raises(self):
         """An unknown name raises, naming it, and writes nothing."""
 
         model = self._make_single_glp_model()
-        A_before = model.lmfit_pars["GLP_01_A"].value
+        A_before = model._lmfit_pars["GLP_01_A"].value
 
         with pytest.raises(ValueError, match="GLP_01_typo"):
-            model.update_value([1.0, 15.0], par_select=["GLP_01_typo", "GLP_01_A"])
-        assert model.lmfit_pars["GLP_01_A"].value == A_before
+            model._update_value([1.0, 15.0], par_select=["GLP_01_typo", "GLP_01_A"])
+        assert model._lmfit_pars["GLP_01_A"].value == A_before
 
     #
     def test_update_value_length_mismatch_raises(self):
@@ -535,9 +535,9 @@ class TestMCPIntegration:
         model = self._make_single_glp_model()
 
         with pytest.raises(ValueError, match="3 values for 2 names"):
-            model.update_value([15.0, 86.0, 1.0], par_select=["GLP_01_A", "GLP_01_x0"])
+            model._update_value([15.0, 86.0, 1.0], par_select=["GLP_01_A", "GLP_01_x0"])
         with pytest.raises(ValueError, match="1 values for 2 names"):
-            model.update_value([15.0], par_select=["GLP_01_A", "GLP_01_x0"])
+            model._update_value([15.0], par_select=["GLP_01_A", "GLP_01_x0"])
 
 
 #
@@ -1097,8 +1097,8 @@ class TestMCPPickling:
 
         # Mutating the clone must not affect the original
         original_par_name = clone.parameter_names[0]
-        clone.lmfit_pars[original_par_name].value = 42.0
-        assert model.lmfit_pars[original_par_name].value != 42.0
+        clone._lmfit_pars[original_par_name].value = 42.0
+        assert model._lmfit_pars[original_par_name].value != 42.0
 
     #
     @pytest.mark.slow

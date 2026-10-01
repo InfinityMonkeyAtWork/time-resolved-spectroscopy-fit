@@ -613,7 +613,7 @@ def _build_joint_project(*, noise_level: float = 0.05):
             dynamics_yaml="models/project_time.yaml",
             dynamics_model=["MonoExpProject"],
         )
-        truth.model_active.lmfit_pars["GLP_01_A"].value = amplitude
+        truth.model_active._lmfit_pars["GLP_01_A"].value = amplitude
         data = simulate_noisy(truth.model_active, noise_level=noise_level, seed=seed)
         file = File(
             parent_project=project,

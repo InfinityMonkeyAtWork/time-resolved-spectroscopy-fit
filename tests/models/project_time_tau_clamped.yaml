@@ -1,0 +1,7 @@
+# MonoExpProject from project_time.yaml with the shared tau seeded at half the
+# truth and clamped by its upper bound: a shared-parameter state change
+MonoExpProject:
+    expFun:
+        A: [5, "file", 0, 15]
+        tau: [2.5, "project", 1, 3.0]
+        t0: [0, "static", 0, 1]

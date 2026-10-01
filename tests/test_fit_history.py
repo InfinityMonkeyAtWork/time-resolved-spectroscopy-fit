@@ -27,7 +27,7 @@ import dataclasses
 import numpy as np
 import pandas as pd
 import pytest
-from _utils import make_project, simulate_clean, simulate_noisy
+from _utils import make_project, reload_model, simulate_clean, simulate_noisy
 
 from trspecfit import File, FitResults
 from trspecfit.config.plot import PlotConfig
@@ -110,7 +110,7 @@ def _fit_file_with_seed():
     """(project, file, model, seed values) ready for a baseline fit.
 
     Fits write their output back into the live model, so an exact re-run
-    needs the captured seed restored via ``model.update_value(seed)``.
+    needs the captured seed restored via ``model._update_value(seed)``.
     """
 
     truth_project = make_project(name="truth")
@@ -120,7 +120,7 @@ def _fit_file_with_seed():
     file = _make_fit_file(project, data, truth.energy, truth.time)
     file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
     model = next(m for m in file.models if m.name == "single_glp")
-    seed = [p.value for p in model.lmfit_pars.values()]
+    seed = [p.value for p in model._lmfit_pars.values()]
     return project, file, model, seed
 
 
@@ -337,7 +337,7 @@ class TestIdentityCapture:
 
         project, file, model, seed = _fit_file_with_seed()
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
-        model.update_value(seed)  # fits write back; restore the exact seed
+        model._update_value(seed)  # fits write back; restore the exact seed
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
         first, second = project._fit_history
         assert first.optimization_hash == second.optimization_hash
@@ -345,10 +345,9 @@ class TestIdentityCapture:
 
     #
     def test_vary_flip_mints_distinct_slot(self):
-        project, file, model, seed = _fit_file_with_seed()
+        project, file, _model, _seed = _fit_file_with_seed()
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
-        model.update_value(seed)
-        model.lmfit_pars["GLP_01_x0"].vary = False
+        reload_model(file, "models/file_energy_x0_fixed.yaml", "single_glp")
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
         first, second = project._fit_history
         assert first.optimization_hash != second.optimization_hash
@@ -356,13 +355,9 @@ class TestIdentityCapture:
 
     #
     def test_bound_change_mints_distinct_slot(self):
-        project, file, model, seed = _fit_file_with_seed()
+        project, file, _model, _seed = _fit_file_with_seed()
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
-        model.update_value(seed)
-        par_A = model.lmfit_pars["GLP_01_A"]
-        new_max = float(par_A.value) * 10.0 + 7.0
-        assert new_max != par_A.max  # the change must actually change it
-        par_A.max = new_max
+        reload_model(file, "models/file_energy_A_max.yaml", "single_glp")  # A max
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
         first, second = project._fit_history
         assert first.optimization_hash != second.optimization_hash
@@ -607,7 +602,7 @@ class TestBaselineSlot:
         )
 
         model = next(m for m in file.models if m.name == "single_glp")
-        true_seed = {name: par.value for name, par in model.lmfit_pars.items()}
+        true_seed = {name: par.value for name, par in model._lmfit_pars.items()}
         file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
 
         slot = project._fit_history[0]
@@ -634,7 +629,7 @@ class TestBaselineSlot:
         )
 
         model = next(m for m in file.models if m.name == "single_glp")
-        true_seed = {name: par.value for name, par in model.lmfit_pars.items()}
+        true_seed = {name: par.value for name, par in model._lmfit_pars.items()}
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
 
         slot = project._fit_history[0]
@@ -665,7 +660,7 @@ class TestBaselineSlot:
         )
 
         model = next(m for m in file.models if m.name == "single_glp")
-        true_seed = {name: par.value for name, par in model.lmfit_pars.items()}
+        true_seed = {name: par.value for name, par in model._lmfit_pars.items()}
         capsys.readouterr()  # drop setup output
         file.fit_baseline(model_name="single_glp", stages=2, try_ci=0)
         printed = capsys.readouterr().out
@@ -817,7 +812,7 @@ class TestSbSSlot:
         file = _make_fit_file(project, data, truth.energy, truth.time)
         model = file.model_active
         seed_values = {
-            name: model.lmfit_pars[name].value for name in model.parameter_names
+            name: model._lmfit_pars[name].value for name in model.parameter_names
         }
         file.fit_slice_by_slice(
             "single_glp",
@@ -839,7 +834,7 @@ class TestSbSSlot:
     @pytest.mark.slow
     def test_sbs_slot_survives_seed_template_restoration(self):
         """
-        SbS ends with model_sbs.update_value(seed_template, par_select='all'),
+        SbS ends with model_sbs._update_value(seed_template, par_select='all'),
         which would blow away live model state. The slot must already hold a
         complete snapshot before that happens.
         """
@@ -3473,11 +3468,11 @@ class TestHistoryAccumulationAndSnapshot:
         project = make_project(name="acc_save")
         file = self._two_model_fit_file(project)
         model = next(m for m in file.models if m.name == "single_glp")
-        seed = [p.value for p in model.lmfit_pars.values()]
+        seed = [p.value for p in model._lmfit_pars.values()]
 
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
         file.fit_baseline(model_name="two_glp_expr_amplitude", stages=1, try_ci=0)
-        model.update_value(seed)  # fits write back; restore the exact seed
+        model._update_value(seed)  # fits write back; restore the exact seed
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
         # _fit_history has 3; the two single_glp slots share a handle.
         assert len(project._fit_history) == 3
@@ -3618,7 +3613,7 @@ class TestCollapseCollisionRule:
 
         project, file, model, seed = _fit_file_with_seed()
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
-        model.update_value(seed)  # exact re-run: same handle
+        model._update_value(seed)  # exact re-run: same handle
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
         # Force divergence under the shared handle — the in-session stand-in
         # for an unseeded stochastic optimizer (deterministic algorithms
