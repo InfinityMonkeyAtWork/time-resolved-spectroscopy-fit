@@ -1,7 +1,7 @@
 """Workflow registry for the roundtrip test matrix.
 
 Each workflow encapsulates the canonical "fit through this API" sequence
-plus the rule for where the fitted ``lmfit_pars`` live afterwards. The
+plus the rule for where the fitted ``_lmfit_pars`` live afterwards. The
 test entry point treats every workflow uniformly: pass a fit file, get a
 ``FitResult`` back.
 """

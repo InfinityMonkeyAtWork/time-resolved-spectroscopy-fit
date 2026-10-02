@@ -48,13 +48,13 @@ def _make_truth_file(
 
     # Override to truth values
     model = file.model_active
-    model.lmfit_pars["GLP_01_A"].value = amplitude
-    model.lmfit_pars["GLP_01_x0"].value = 85.0
-    model.lmfit_pars["GLP_01_F"].value = 1.0
-    model.lmfit_pars["GLP_01_m"].value = 0.3
-    model.lmfit_pars["GLP_01_x0_expFun_01_A"].value = x0_shift
-    model.lmfit_pars["GLP_01_x0_expFun_01_tau"].value = tau
-    model.lmfit_pars["GLP_01_x0_expFun_01_t0"].value = 0.0
+    model._lmfit_pars["GLP_01_A"].value = amplitude
+    model._lmfit_pars["GLP_01_x0"].value = 85.0
+    model._lmfit_pars["GLP_01_F"].value = 1.0
+    model._lmfit_pars["GLP_01_m"].value = 0.3
+    model._lmfit_pars["GLP_01_x0_expFun_01_A"].value = x0_shift
+    model._lmfit_pars["GLP_01_x0_expFun_01_tau"].value = tau
+    model._lmfit_pars["GLP_01_x0_expFun_01_t0"].value = 0.0
 
     return file
 
@@ -164,16 +164,16 @@ class TestProjectFitClean:
                 dynamics_model=["BiExpProject"],
             )
             m = tf.model_active
-            m.lmfit_pars["GLP_01_A"].value = amp
-            m.lmfit_pars["GLP_01_x0"].value = 85.0
-            m.lmfit_pars["GLP_01_F"].value = 1.0
-            m.lmfit_pars["GLP_01_m"].value = 0.3
-            m.lmfit_pars["GLP_01_x0_expFun_01_A"].value = dx0_1
-            m.lmfit_pars["GLP_01_x0_expFun_01_tau"].value = TRUE_TAU1
-            m.lmfit_pars["GLP_01_x0_expFun_01_t0"].value = TRUE_T0
-            m.lmfit_pars["GLP_01_x0_expFun_02_A"].value = dx0_2
-            m.lmfit_pars["GLP_01_x0_expFun_02_tau"].value = TRUE_TAU2
-            m.lmfit_pars["GLP_01_x0_expFun_02_t0"].value = TRUE_T0
+            m._lmfit_pars["GLP_01_A"].value = amp
+            m._lmfit_pars["GLP_01_x0"].value = 85.0
+            m._lmfit_pars["GLP_01_F"].value = 1.0
+            m._lmfit_pars["GLP_01_m"].value = 0.3
+            m._lmfit_pars["GLP_01_x0_expFun_01_A"].value = dx0_1
+            m._lmfit_pars["GLP_01_x0_expFun_01_tau"].value = TRUE_TAU1
+            m._lmfit_pars["GLP_01_x0_expFun_01_t0"].value = TRUE_T0
+            m._lmfit_pars["GLP_01_x0_expFun_02_A"].value = dx0_2
+            m._lmfit_pars["GLP_01_x0_expFun_02_tau"].value = TRUE_TAU2
+            m._lmfit_pars["GLP_01_x0_expFun_02_t0"].value = TRUE_T0
             truth_files.append((tf, seed))
 
         # --- simulate and build fit files ---
@@ -217,8 +217,8 @@ class TestProjectFitClean:
             m = f.select_model("project_glp")
             assert m is not None  # type guard
 
-            t0_01 = m.lmfit_pars["GLP_01_x0_expFun_01_t0"].value
-            t0_02 = m.lmfit_pars["GLP_01_x0_expFun_02_t0"].value
+            t0_01 = m._lmfit_pars["GLP_01_x0_expFun_01_t0"].value
+            t0_02 = m._lmfit_pars["GLP_01_x0_expFun_02_t0"].value
 
             # Expression constraint: t0_02 == t0_01
             assert t0_01 == t0_02, (
@@ -235,8 +235,8 @@ class TestProjectFitClean:
         m1 = project.files[1].select_model("project_glp")
         assert m0 is not None  # type guard
         assert m1 is not None  # type guard
-        t0_f0 = m0.lmfit_pars["GLP_01_x0_expFun_01_t0"].value
-        t0_f1 = m1.lmfit_pars["GLP_01_x0_expFun_01_t0"].value
+        t0_f0 = m0._lmfit_pars["GLP_01_x0_expFun_01_t0"].value
+        t0_f1 = m1._lmfit_pars["GLP_01_x0_expFun_01_t0"].value
         assert t0_f0 == t0_f1, f"t0 should be project-shared: {t0_f0} != {t0_f1}"
 
 
@@ -345,8 +345,8 @@ class TestVaryLevelParsing:
         # Nested dynamics params must appear — not fall through to "static" default
         tau_name = "GLP_01_A_pLinear_01_m_expFun_01_tau"
         A_name = "GLP_01_A_pLinear_01_m_expFun_01_A"
-        assert tau_name in model.lmfit_pars  # confirm they're in the model
-        assert A_name in model.lmfit_pars
+        assert tau_name in model._lmfit_pars  # confirm they're in the model
+        assert A_name in model._lmfit_pars
         assert levels[tau_name] == "project"
         assert levels[A_name] == "file"
 
@@ -368,11 +368,11 @@ class TestVaryLevelParsing:
 
         model = file.model_active
         # "file" and "project" vary levels should map to lmfit vary=True
-        assert model.lmfit_pars["GLP_01_A"].vary is True
-        assert model.lmfit_pars["GLP_01_x0"].vary is True
+        assert model._lmfit_pars["GLP_01_A"].vary is True
+        assert model._lmfit_pars["GLP_01_x0"].vary is True
         # "static" should map to vary=False
-        assert model.lmfit_pars["GLP_01_F"].vary is False
-        assert model.lmfit_pars["GLP_01_m"].vary is False
+        assert model._lmfit_pars["GLP_01_F"].vary is False
+        assert model._lmfit_pars["GLP_01_m"].vary is False
 
 
 #
@@ -397,7 +397,7 @@ class TestProjectFitSeedSource:
             )
             model = f.select_model("project_glp")
             loaded[f.name] = {
-                name: model.lmfit_pars[name].value for name in model.parameter_names
+                name: model._lmfit_pars[name].value for name in model.parameter_names
             }
 
         record = project.fit_2d(
@@ -559,17 +559,17 @@ class TestBuildFitParams:
                 model_yaml="models/project_energy.yaml",
                 model_info="project_glp",
             )
+            # the second file seeds the shared tau differently (a YAML variant)
             f.add_time_dependence(
                 target_model="project_glp",
                 target_parameter="GLP_01_x0",
-                dynamics_yaml="models/project_time.yaml",
+                dynamics_yaml=(
+                    "models/project_time.yaml"
+                    if i == 0
+                    else "models/project_time_tau_seed.yaml"
+                ),
                 dynamics_model=["MonoExpProject"],
             )
-
-        # Manually set different initial tau on file 1
-        model1 = project.files[1].select_model("project_glp")
-        assert model1 is not None  # type guard
-        model1.lmfit_pars["GLP_01_x0_expFun_01_tau"].value = 99.0
 
         with pytest.warns(UserWarning, match="different initial values"):
             project._build_fit_params(model_name="project_glp")
@@ -591,17 +591,17 @@ class TestBuildFitParams:
                 model_yaml="models/project_energy.yaml",
                 model_info="project_glp",
             )
+            # the second file's tau carries different bounds (a YAML variant)
             f.add_time_dependence(
                 target_model="project_glp",
                 target_parameter="GLP_01_x0",
-                dynamics_yaml="models/project_time.yaml",
+                dynamics_yaml=(
+                    "models/project_time.yaml"
+                    if i == 0
+                    else "models/project_time_tau_bounds.yaml"
+                ),
                 dynamics_model=["MonoExpProject"],
             )
-
-        model1 = project.files[1].select_model("project_glp")
-        assert model1 is not None  # type guard
-        model1.lmfit_pars["GLP_01_x0_expFun_01_tau"].min = 0.01
-        model1.lmfit_pars["GLP_01_x0_expFun_01_tau"].max = 999.0
 
         with pytest.raises(ValueError, match="different min bounds"):
             project._build_fit_params(model_name="project_glp")
@@ -1053,7 +1053,7 @@ class TestJointFitResult:
         fitted = record.params.set_index("name").loc[tau, "value"]
         m = project.files[0].select_model("project_glp")
         assert m is not None  # type guard
-        m.lmfit_pars[tau].value = -123.0
+        m._lmfit_pars[tau].value = -123.0
         assert record.params.set_index("name").loc[tau, "value"] == fitted
 
     #
@@ -1168,9 +1168,14 @@ class TestProjectFitJax:
         records = {}
         for spec_fun_str in ("fit_model_gir", "fit_model_jax"):
             project = _make_shared_tau_project(spec_fun_str=spec_fun_str, show_output=1)
-            # exercise per-file fit windows on one file
-            project.files[0].e_lim = [2, 28]
-            project.files[0].t_lim = [1, 23]
+            # exercise per-file fit windows on one file: indices [2, 28) x [1, 23)
+            first = project.files[0]
+            first.set_fit_limits(
+                [float(first.energy[2]), float(first.energy[27])],
+                time_limits=[float(first.time[1]), float(first.time[22])],
+                show_plot=False,
+            )
+            assert (first.e_lim, first.t_lim) == ((2, 28), (1, 23))
             records[spec_fun_str] = project.fit_2d(
                 model_name="project_glp", stages=2, try_ci=0
             )
@@ -1182,7 +1187,7 @@ class TestProjectFitJax:
             for f in project.files:
                 m = f.select_model("project_glp")
                 assert m is not None  # type guard
-                per_file.append({n: m.lmfit_pars[n].value for n in m.parameter_names})
+                per_file.append({n: m._lmfit_pars[n].value for n in m.parameter_names})
             results[spec_fun_str] = per_file
 
         for file_idx, (pars_gir, pars_jax) in enumerate(
@@ -1233,12 +1238,12 @@ class TestProjectFitJax:
         m1 = project.files[1].select_model("project_glp")
         assert m0 is not None  # type guard
         assert m1 is not None  # type guard
-        tau_0 = m0.lmfit_pars["GLP_01_x0_expFun_01_tau"].value
-        tau_1 = m1.lmfit_pars["GLP_01_x0_expFun_01_tau"].value
+        tau_0 = m0._lmfit_pars["GLP_01_x0_expFun_01_tau"].value
+        tau_1 = m1._lmfit_pars["GLP_01_x0_expFun_01_tau"].value
         assert tau_0 == tau_1  # project-shared
         assert np.isclose(tau_0, self.TRUE_TAU, atol=0.05)
-        A_0 = m0.lmfit_pars["GLP_01_A"].value
-        A_1 = m1.lmfit_pars["GLP_01_A"].value
+        A_0 = m0._lmfit_pars["GLP_01_A"].value
+        A_1 = m1._lmfit_pars["GLP_01_A"].value
         assert np.isclose(A_0, 20.0, atol=0.1)
         assert np.isclose(A_1, 14.0, atol=0.1)
 
@@ -1271,7 +1276,7 @@ class TestProjectFitJax:
         # The interpreter path still recovers the shared tau.
         m = project.files[0].select_model("project_glp")
         assert m is not None  # type guard
-        tau_fit = m.lmfit_pars["GLP_01_x0_expFun_01_tau"].value
+        tau_fit = m._lmfit_pars["GLP_01_x0_expFun_01_tau"].value
         assert np.isclose(tau_fit, self.TRUE_TAU, atol=0.05)
 
     #

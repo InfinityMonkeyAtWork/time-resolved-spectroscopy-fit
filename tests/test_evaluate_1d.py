@@ -3,7 +3,7 @@
 For each model we:
 1. Build the OOP model (load YAML, energy-only).
 2. Compile with build_graph / schedule_1d.
-3. Extract theta from model.lmfit_pars in plan.opt_param_names order.
+3. Extract theta from model._lmfit_pars in plan.opt_param_names order.
 4. Compare evaluate_1d(plan, theta) against model.create_value_1d().
 5. Perturb theta and repeat to catch ordering bugs.
 """
@@ -71,10 +71,10 @@ def _make_profile_energy_model(
 
 #
 def _extract_theta(plan, model):
-    """Extract theta vector from model.lmfit_pars in plan order."""
+    """Extract theta vector from model._lmfit_pars in plan order."""
 
     return np.array(
-        [model.lmfit_pars[name].value for name in plan.opt_param_names],
+        [model._lmfit_pars[name].value for name in plan.opt_param_names],
         dtype=np.float64,
     )
 
@@ -99,7 +99,7 @@ def _perturb_theta(plan, model, theta, indices, deltas):
     for idx, delta in zip(indices, deltas, strict=True):
         theta_new[idx] += delta
         name = plan.opt_param_names[idx]
-        model.lmfit_pars[name].value = float(theta_new[idx])
+        model._lmfit_pars[name].value = float(theta_new[idx])
 
     fast = evaluate_1d(plan, theta_new)
     model.create_value_1d()
@@ -251,7 +251,7 @@ class TestExpressionModels:
         A_idx = list(plan.opt_param_names).index("GLP_01_A")
         theta_new = theta.copy()
         theta_new[A_idx] = 22.0
-        model.lmfit_pars["GLP_01_A"].value = 22.0
+        model._lmfit_pars["GLP_01_A"].value = 22.0
 
         fast_new = evaluate_1d(plan, theta_new)
         model.create_value_1d()
@@ -336,7 +336,7 @@ class TestProfileModels:
             model_yaml=_ENERGY_YAML,
             energy=np.linspace(80, 90, 101),
         )
-        model.lmfit_pars["Shirley_pShirley_pLinear_01_m"].value = 1.0e-5
+        model._lmfit_pars["Shirley_pShirley_pLinear_01_m"].value = 1.0e-5
 
         graph = build_graph(model)
         assert can_lower_1d(graph)

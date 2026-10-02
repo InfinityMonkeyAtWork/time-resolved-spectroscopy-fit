@@ -127,7 +127,7 @@ def fit_model_mcp(
     by fitlib.residual_fun. The 'args' tuple contains (model, dim).
 
     **Parameter Update:**
-    This function updates model.lmfit_pars in-place via model.update_value().
+    This function updates model._lmfit_pars in-place via model._update_value().
     The model retains these values after the function returns.
 
     **2D Behavior:**
@@ -148,7 +148,7 @@ def fit_model_mcp(
         par_values = par
     else:
         par_values = list(par)
-    model.update_value(new_par_values=par_values)  # Update lmfit parameters
+    model._update_value(new_par_values=par_values)  # Update lmfit parameters
 
     # Create energy- (and time-)resolved spectrum/data
     if dim == 1:  # 1D
@@ -401,8 +401,8 @@ def fit_project_mcp(
     # Distribute values to each file's model
     for project_name, file_idx, local_name in mapping:
         model = models[file_idx]
-        if local_name in model.lmfit_pars:
-            model.lmfit_pars[local_name].value = par_lookup[project_name]
+        if local_name in model._lmfit_pars:
+            model._lmfit_pars[local_name].value = par_lookup[project_name]
 
     # Evaluate each file and collect sliced results
     slices: list[np.ndarray] = []

@@ -48,12 +48,12 @@ def _build_pf1_truth(*, amplitude: float, x0_shift: float, tau: float):
     )
     model = file.model_active
     assert model is not None
-    model.lmfit_pars["GLP_01_A"].value = amplitude
-    model.lmfit_pars["GLP_01_x0"].value = 85.0
-    model.lmfit_pars["GLP_01_F"].value = 1.0
-    model.lmfit_pars["GLP_01_m"].value = 0.3
-    model.lmfit_pars["GLP_01_x0_expFun_01_A"].value = x0_shift
-    model.lmfit_pars["GLP_01_x0_expFun_01_tau"].value = tau
+    model._lmfit_pars["GLP_01_A"].value = amplitude
+    model._lmfit_pars["GLP_01_x0"].value = 85.0
+    model._lmfit_pars["GLP_01_F"].value = 1.0
+    model._lmfit_pars["GLP_01_m"].value = 0.3
+    model._lmfit_pars["GLP_01_x0_expFun_01_A"].value = x0_shift
+    model._lmfit_pars["GLP_01_x0_expFun_01_tau"].value = tau
     return file
 
 
@@ -101,18 +101,18 @@ def _run_pf1():
     for fit_file, truth_amp, truth_shift in cases:
         model = fit_file.select_model("project_glp")
         assert model is not None
-        assert np.isclose(model.lmfit_pars["GLP_01_A"].value, truth_amp, rtol=1e-3)
+        assert np.isclose(model._lmfit_pars["GLP_01_A"].value, truth_amp, rtol=1e-3)
         assert np.isclose(
-            model.lmfit_pars["GLP_01_x0_expFun_01_A"].value, truth_shift, rtol=1e-3
+            model._lmfit_pars["GLP_01_x0_expFun_01_A"].value, truth_shift, rtol=1e-3
         )
         assert np.isclose(
-            model.lmfit_pars["GLP_01_x0_expFun_01_tau"].value, 5.0, rtol=1e-3
+            model._lmfit_pars["GLP_01_x0_expFun_01_tau"].value, 5.0, rtol=1e-3
         )
         models.append(model)
 
     # Project-vary invariant: tau is shared exactly across files.
-    tau_a = models[0].lmfit_pars["GLP_01_x0_expFun_01_tau"].value
-    tau_b = models[1].lmfit_pars["GLP_01_x0_expFun_01_tau"].value
+    tau_a = models[0]._lmfit_pars["GLP_01_x0_expFun_01_tau"].value
+    tau_b = models[1]._lmfit_pars["GLP_01_x0_expFun_01_tau"].value
     assert tau_a == tau_b, f"tau should be project-shared: {tau_a} != {tau_b}"
 
 
@@ -136,15 +136,15 @@ def _build_pf2_truth(*, amplitude: float, tau: float):
     )
     model = file.model_active
     assert model is not None
-    model.lmfit_pars["GLP_01_A"].value = amplitude
-    model.lmfit_pars["GLP_01_x0"].value = 85.0
-    model.lmfit_pars["GLP_01_F"].value = 1.0
-    model.lmfit_pars["GLP_01_m"].value = 0.3
-    model.lmfit_pars["GLP_02_x0"].value = 86.5
-    model.lmfit_pars["GLP_02_F"].value = 1.0
-    model.lmfit_pars["GLP_02_m"].value = 0.3
-    model.lmfit_pars["GLP_01_x0_expFun_01_A"].value = 3.0
-    model.lmfit_pars["GLP_01_x0_expFun_01_tau"].value = tau
+    model._lmfit_pars["GLP_01_A"].value = amplitude
+    model._lmfit_pars["GLP_01_x0"].value = 85.0
+    model._lmfit_pars["GLP_01_F"].value = 1.0
+    model._lmfit_pars["GLP_01_m"].value = 0.3
+    model._lmfit_pars["GLP_02_x0"].value = 86.5
+    model._lmfit_pars["GLP_02_F"].value = 1.0
+    model._lmfit_pars["GLP_02_m"].value = 0.3
+    model._lmfit_pars["GLP_01_x0_expFun_01_A"].value = 3.0
+    model._lmfit_pars["GLP_01_x0_expFun_01_tau"].value = tau
     return file
 
 
@@ -185,14 +185,14 @@ def _run_pf2():
     for fit_file, truth_amp in ((fit_a, 20.0), (fit_b, 14.0)):
         model = fit_file.select_model("project_glp_expr")
         assert model is not None
-        a1 = model.lmfit_pars["GLP_01_A"].value
-        a2 = model.lmfit_pars["GLP_02_A"].value
+        a1 = model._lmfit_pars["GLP_01_A"].value
+        a2 = model._lmfit_pars["GLP_02_A"].value
         assert np.isclose(a1, truth_amp, rtol=1e-3)
         assert np.isclose(a2, 0.5 * a1, rtol=1e-6), (
             "expression GLP_02_A = GLP_01_A * 0.5 must hold"
         )
         assert np.isclose(
-            model.lmfit_pars["GLP_01_x0_expFun_01_tau"].value, 4.0, rtol=1e-3
+            model._lmfit_pars["GLP_01_x0_expFun_01_tau"].value, 4.0, rtol=1e-3
         )
 
 
@@ -216,15 +216,15 @@ def _build_pf3_truth(*, amplitude: float, t0: float, tau1: float, tau2: float):
     )
     model = file.model_active
     assert model is not None
-    model.lmfit_pars["GLP_01_A"].value = amplitude
-    model.lmfit_pars["GLP_01_x0"].value = 85.0
-    model.lmfit_pars["GLP_01_F"].value = 1.0
-    model.lmfit_pars["GLP_01_m"].value = 0.3
-    model.lmfit_pars["GLP_01_x0_expFun_01_A"].value = 2.0
-    model.lmfit_pars["GLP_01_x0_expFun_01_tau"].value = tau1
-    model.lmfit_pars["GLP_01_x0_expFun_01_t0"].value = t0
-    model.lmfit_pars["GLP_01_x0_expFun_02_A"].value = 1.0
-    model.lmfit_pars["GLP_01_x0_expFun_02_tau"].value = tau2
+    model._lmfit_pars["GLP_01_A"].value = amplitude
+    model._lmfit_pars["GLP_01_x0"].value = 85.0
+    model._lmfit_pars["GLP_01_F"].value = 1.0
+    model._lmfit_pars["GLP_01_m"].value = 0.3
+    model._lmfit_pars["GLP_01_x0_expFun_01_A"].value = 2.0
+    model._lmfit_pars["GLP_01_x0_expFun_01_tau"].value = tau1
+    model._lmfit_pars["GLP_01_x0_expFun_01_t0"].value = t0
+    model._lmfit_pars["GLP_01_x0_expFun_02_A"].value = 1.0
+    model._lmfit_pars["GLP_01_x0_expFun_02_tau"].value = tau2
     return file
 
 
@@ -265,12 +265,12 @@ def _run_pf3():
     for fit_file, truth_amp in ((fit_a, 20.0), (fit_b, 15.0)):
         model = fit_file.select_model("project_glp")
         assert model is not None
-        assert np.isclose(model.lmfit_pars["GLP_01_A"].value, truth_amp, rtol=1e-2)
+        assert np.isclose(model._lmfit_pars["GLP_01_A"].value, truth_amp, rtol=1e-2)
         assert np.isclose(
-            model.lmfit_pars["GLP_01_x0_expFun_01_tau"].value, 2.0, rtol=1e-2
+            model._lmfit_pars["GLP_01_x0_expFun_01_tau"].value, 2.0, rtol=1e-2
         )
         assert np.isclose(
-            model.lmfit_pars["GLP_01_x0_expFun_02_tau"].value, 20.0, rtol=1e-2
+            model._lmfit_pars["GLP_01_x0_expFun_02_tau"].value, 20.0, rtol=1e-2
         )
 
 

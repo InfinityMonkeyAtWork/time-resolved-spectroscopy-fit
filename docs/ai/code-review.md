@@ -113,6 +113,11 @@ Search for:
 
 - Commented-out code blocks (3+ consecutive commented lines that look like code)
 - Unreachable code after `return`/`raise`/`break`/`continue`
+- Rollout narration in comments and docstrings of `src/` and `tests/` (not
+  `docs/`): on a diff, grep the added lines only,
+  `git diff main -U0 -- src tests | grep '^+' | grep -nE '\b(now|no longer|previously|used to|newly|since 0\.|before this|stale|regression:)\b'`.
+  These words also occur in present-tense contract text, so judge each hit
+  and report INFO; a non-obvious reason belongs in a test docstring.
 
 ## 6. Typing / modern Python syntax
 
@@ -330,10 +335,10 @@ Method:
   successful reconstruction probe becomes round-trip coverage when the loader
   lands. The probe script itself is not kept.
 
-Report as FAIL for a confirmed contract break not already listed under
-"Evidence" in the contract document (those are step 4's known scope), WARN
-when a probe needs internal access for lack of a public path, INFO for a
-passing probe.
+Report as FAIL for a confirmed contract break (the Evidence items in the
+contract document were fixed in step 4, so a recurrence is a regression),
+WARN when a probe needs internal access for lack of a public path, INFO for
+a passing probe.
 
 ## Summary
 

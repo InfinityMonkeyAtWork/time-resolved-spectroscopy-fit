@@ -23,7 +23,6 @@ DataFrames) — never live ``Model`` or ``File`` references — so they cannot b
 broken by post-fit cleanup that overwrites live state.
 """
 
-import copy
 import datetime
 import hashlib
 import json
@@ -41,6 +40,7 @@ from trspecfit.config.plot import PlotConfig
 from trspecfit.fitlib import compute_fit_metrics
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import noise as unoise
+from trspecfit.utils import ownership as uown
 from trspecfit.utils.hdf5 import require_dataset, require_group
 from trspecfit.utils.lmfit import MCMCResult
 from trspecfit.utils.plot import plot_fit_res_2d, plot_par_series
@@ -166,7 +166,7 @@ def _view_noise_fields(
         return SIGMA_TYPE_CONSTANT, float(first.sigma), float("nan"), None
     rows = [np.asarray(m.sigma, dtype=float) for m in weighted]
     sigma = rows[0] if len(rows) == 1 else np.stack(rows, axis=0)
-    return SIGMA_TYPE_PER_POINT, float("nan"), float("nan"), _frozen_copy(sigma)
+    return SIGMA_TYPE_PER_POINT, float("nan"), float("nan"), uown.frozen_copy(sigma)
 
 
 #
@@ -251,12 +251,15 @@ class ModelYamlRecord(NamedTuple):
 
 
 #
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class SavedFitSlot:
     """
     One completed fit result for a single file view.
 
-    Immutable after construction. Built once at fit completion by
+    Immutable after construction, and a snapshot: the DataFrame, dict and
+    list fields are detached (copied on set and on every read, arrays
+    inside them read-only), so a read is the caller's own object and
+    editing it never reaches the record. Built once at fit completion by
     ``_slot_from_<fit_type>`` and appended to ``Project._fit_history``.
     Identity is ``handle`` (fit_archive_principles.md, Principle 3);
     equal handles mean the same optimization on the same file.
@@ -454,10 +457,7 @@ class SavedFitSlot:
     file_name: str
     model_name: str
     fit_type: FitType
-    selection: dict[str, Any]
     selection_json: str
-    params: pd.DataFrame
-    metrics: dict[str, Any]
     observed: np.ndarray
     fit: np.ndarray
     fit_alg: str
@@ -467,6 +467,12 @@ class SavedFitSlot:
     sigma_type: str
     sigma_data: float
     sigma_eff: float
+    # container fields are detached: copied on set and on every read, so a
+    # record is a snapshot and editing what a read returned never reaches
+    # it (the type checkers need them after the plain required fields)
+    selection: uown.detached[dict[str, Any]] = uown.detached()
+    params: uown.detached[pd.DataFrame] = uown.detached()
+    metrics: uown.detached[dict[str, Any]] = uown.detached()
     noise_scale: float = float("nan")
     sigma: np.ndarray | None = None
     dark: np.ndarray | None = None
@@ -474,16 +480,16 @@ class SavedFitSlot:
     model_yaml: tuple[ModelYamlRecord, ...] | None = None
     label: str | None = None
     joint_ref: str | None = None
-    conf_ci: pd.DataFrame | None = None
-    correl: pd.DataFrame | None = None
-    mcmc: dict[str, Any] | None = None
-    params_meta: pd.DataFrame | None = None
-    params_stderr: pd.DataFrame | None = None
-    fit_settings: dict[str, Any] | None = None
+    conf_ci: uown.detached[pd.DataFrame | None] = uown.detached(default=None)
+    correl: uown.detached[pd.DataFrame | None] = uown.detached(default=None)
+    mcmc: uown.detached[dict[str, Any] | None] = uown.detached(default=None)
+    params_meta: uown.detached[pd.DataFrame | None] = uown.detached(default=None)
+    params_stderr: uown.detached[pd.DataFrame | None] = uown.detached(default=None)
+    fit_settings: uown.detached[dict[str, Any] | None] = uown.detached(default=None)
     components: np.ndarray | None = None
-    component_names: list[str] | None = None
+    component_names: uown.detached[list[str] | None] = uown.detached(default=None)
     fit_ini: np.ndarray | None = None
-    params_init: pd.DataFrame | None = None
+    params_init: uown.detached[pd.DataFrame | None] = uown.detached(default=None)
 
 
 #
@@ -593,10 +599,11 @@ class SavedProject:
 
 
 #
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class JointFitProjection:
     """
-    One file's view of a project-level joint fit.
+    One file's view of a project-level joint fit. ``parameter_map`` is
+    detached: every read is a copy.
 
     Attributes
     ----------
@@ -615,12 +622,12 @@ class JointFitProjection:
         joint uncertainty lives on the ``JointFitResult`` only.
     """
 
-    parameter_map: Mapping[str, str]
     slot: SavedFitSlot
+    parameter_map: uown.detached[Mapping[str, str]] = uown.detached()
 
 
 #
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class JointFitResult:
     """
     In-memory record of one successful ``Project.fit_2d`` optimization.
@@ -631,7 +638,9 @@ class JointFitResult:
     project-scoped path). The record owns everything belonging to the
     optimization as a whole; the projections own the per-file payloads.
     Returned by ``Project.fit_2d`` and queryable via
-    ``FitResults.find_joint`` / ``get_joint``.
+    ``FitResults.find_joint`` / ``get_joint``. The DataFrame and mapping
+    fields are detached (copied on set and on every read), so editing what
+    a read returned never reaches the record.
 
     Attributes
     ----------
@@ -690,13 +699,14 @@ class JointFitResult:
     input_files: str
     model_structure: str
     projections: tuple[JointFitProjection, ...]
-    params: pd.DataFrame
-    metrics: Mapping[str, float]
     fit_alg: str
-    fit_settings: Mapping[str, Any]
     timestamp: str
-    conf_ci: pd.DataFrame | None = None
-    correl: pd.DataFrame | None = None
+    # container fields are detached (see SavedFitSlot)
+    params: uown.detached[pd.DataFrame] = uown.detached()
+    metrics: uown.detached[Mapping[str, float]] = uown.detached()
+    fit_settings: uown.detached[Mapping[str, Any]] = uown.detached()
+    conf_ci: uown.detached[pd.DataFrame | None] = uown.detached(default=None)
+    correl: uown.detached[pd.DataFrame | None] = uown.detached(default=None)
     mcmc: MCMCResult | None = None
     label: str | None = None
 
@@ -1101,15 +1111,6 @@ def compute_fit_view_sha256(
 
 
 #
-def _frozen_copy(arr: np.ndarray) -> np.ndarray:
-    """Copy with the write flag cleared — the snapshot ownership boundary."""
-
-    out = np.array(arr, copy=True)
-    out.flags.writeable = False
-    return out
-
-
-#
 def capture_saved_file(
     *,
     name: str,
@@ -1136,11 +1137,11 @@ def capture_saved_file(
         dim=int(dim),
         shape=tuple(data_raw.shape),
         file_content_hash=file_content_hash,
-        data_raw=_frozen_copy(data_raw),
-        energy=_frozen_copy(energy),
-        time=_frozen_copy(time if time is not None else np.empty(0)),
+        data_raw=uown.frozen_copy(data_raw),
+        energy=uown.frozen_copy(energy),
+        time=uown.frozen_copy(time if time is not None else np.empty(0)),
         slots=(),
-        aux_axis=_frozen_copy(aux_axis) if aux_axis is not None else None,
+        aux_axis=uown.frozen_copy(aux_axis) if aux_axis is not None else None,
     )
 
 
@@ -1217,15 +1218,13 @@ def _mcmc_payload(
 
     if emcee_fin is None:
         return None
+    # the slot's detached mcmc field copies the payload on set
     flatchain = getattr(emcee_fin, "flatchain", None)
-    if isinstance(flatchain, pd.DataFrame):
-        flatchain_out: pd.DataFrame | None = flatchain.copy()
-    else:
-        flatchain_out = None
+    flatchain_out = flatchain if isinstance(flatchain, pd.DataFrame) else None
     params = getattr(emcee_fin, "params", None)
     lnsigma_par = params.get("__lnsigma") if params is not None else None
     lnsigma = float(lnsigma_par.value) if lnsigma_par is not None else None
-    ci_out = emcee_ci.copy() if not emcee_ci.empty else None
+    ci_out = emcee_ci if not emcee_ci.empty else None
     acceptance = getattr(emcee_fin, "acceptance_fraction", None)
     acceptance_out = (
         np.array(acceptance, dtype=np.float64) if acceptance is not None else None
@@ -1254,12 +1253,11 @@ def mcmc_result_from_payload(payload: dict[str, Any]) -> MCMCResult:
     ci = payload.get("ci")
     acceptance = payload.get("acceptance_fraction")
     lnsigma = payload.get("lnsigma")
+    # the record's detached fields copy on set, so nothing is copied here
     return MCMCResult(
-        table=ci.copy() if ci is not None else pd.DataFrame(),
-        flatchain=flatchain.copy() if flatchain is not None else pd.DataFrame(),
-        acceptance_fraction=(
-            np.asarray(acceptance).copy() if acceptance is not None else None
-        ),
+        table=ci if ci is not None else pd.DataFrame(),
+        flatchain=flatchain if flatchain is not None else pd.DataFrame(),
+        acceptance_fraction=np.asarray(acceptance) if acceptance is not None else None,
         lnsigma=float(lnsigma) if lnsigma is not None else None,
     )
 
@@ -1356,7 +1354,7 @@ def _slot_from_baseline(
     observed: np.ndarray,
     fit: np.ndarray,
     base_t_ind: list[int],
-    e_lim: list[int] | None,
+    e_lim: Sequence[int] | None,
     n_free_pars: int | None,
     version_stamp: str,
     model_structure: str,
@@ -1441,7 +1439,7 @@ def _slot_from_spectrum(
     time_point: float | None,
     time_range: list[float] | None,
     time_type: str,
-    e_lim: list[int] | None,
+    e_lim: Sequence[int] | None,
     n_free_pars: int | None,
     version_stamp: str,
     model_structure: str,
@@ -1521,8 +1519,8 @@ def _slot_from_sbs(
     params_df: pd.DataFrame,
     observed: np.ndarray,
     fit: np.ndarray,
-    e_lim: list[int] | None,
-    t_lim: list[int] | None,
+    e_lim: Sequence[int] | None,
+    t_lim: Sequence[int] | None,
     n_free_pars: int | None,
     version_stamp: str,
     model_structure: str,
@@ -1599,8 +1597,8 @@ def _slot_from_sbs(
         selection_json=selection_json,
         params=params_df,
         metrics=metrics,
-        observed=_frozen_copy(np.asarray(observed)),
-        fit=_frozen_copy(np.asarray(fit)),
+        observed=uown.frozen_copy(np.asarray(observed)),
+        fit=uown.frozen_copy(np.asarray(fit)),
         fit_alg=fit_alg,
         timestamp=_now_iso(),
         noise_type=noise_declared.kind,
@@ -1610,8 +1608,8 @@ def _slot_from_sbs(
         sigma_eff=sigma_eff,
         noise_scale=noise_scale,
         sigma=sigma,
-        dark=_frozen_copy(dark) if dark is not None else None,
-        calibration=_frozen_copy(calibration) if calibration is not None else None,
+        dark=uown.frozen_copy(dark) if dark is not None else None,
+        calibration=uown.frozen_copy(calibration) if calibration is not None else None,
         model_yaml=model_yaml or None,
         joint_ref=joint_ref,
         conf_ci=conf_ci,
@@ -1620,9 +1618,9 @@ def _slot_from_sbs(
         params_meta=params_meta,
         params_stderr=params_stderr,
         fit_settings=fit_settings,
-        components=_frozen_copy(components) if components is not None else None,
+        components=uown.frozen_copy(components) if components is not None else None,
         component_names=component_names,
-        fit_ini=_frozen_copy(fit_ini) if fit_ini is not None else None,
+        fit_ini=uown.frozen_copy(fit_ini) if fit_ini is not None else None,
         params_init=params_init,
     )
 
@@ -1636,8 +1634,8 @@ def _slot_from_2d(
     params_df: pd.DataFrame,
     observed: np.ndarray,
     fit: np.ndarray,
-    e_lim: list[int] | None,
-    t_lim: list[int] | None,
+    e_lim: Sequence[int] | None,
+    t_lim: Sequence[int] | None,
     n_free_pars: int | None,
     model_structure: str,
     fit_settings: dict[str, Any],
@@ -1801,7 +1799,7 @@ def _joint_result_from_project_fit(
         params=params_df,
         metrics=metrics,
         fit_alg=str(getattr(par_fin, "method", "unknown")),
-        fit_settings=copy.deepcopy(fit_settings) if fit_settings else {},
+        fit_settings=fit_settings if fit_settings else {},  # detached on set
         timestamp=_now_iso(),
         conf_ci=conf_ci.copy() if not conf_ci.empty else None,
         correl=ulmfit.correl_from_result(par_fin),
@@ -1942,8 +1940,8 @@ def _build_slot(
         selection_json=selection_json,
         params=params,
         metrics=metrics,
-        observed=_frozen_copy(np.asarray(observed)),
-        fit=_frozen_copy(np.asarray(fit)),
+        observed=uown.frozen_copy(np.asarray(observed)),
+        fit=uown.frozen_copy(np.asarray(fit)),
         fit_alg=fit_alg,
         timestamp=_now_iso(),
         noise_type=noise_declared.kind,
@@ -1953,17 +1951,17 @@ def _build_slot(
         sigma_eff=sigma_eff,
         noise_scale=noise_scale,
         sigma=sigma,
-        dark=_frozen_copy(dark) if dark is not None else None,
-        calibration=_frozen_copy(calibration) if calibration is not None else None,
+        dark=uown.frozen_copy(dark) if dark is not None else None,
+        calibration=uown.frozen_copy(calibration) if calibration is not None else None,
         model_yaml=model_yaml or None,
         joint_ref=joint_ref,
         conf_ci=conf_ci,
         correl=correl,
         mcmc=mcmc,
         fit_settings=fit_settings,
-        components=_frozen_copy(components) if components is not None else None,
+        components=uown.frozen_copy(components) if components is not None else None,
         component_names=component_names,
-        fit_ini=_frozen_copy(fit_ini) if fit_ini is not None else None,
+        fit_ini=uown.frozen_copy(fit_ini) if fit_ini is not None else None,
     )
 
 
@@ -2010,7 +2008,7 @@ def _per_slice_metrics(
         )
         for k in out:
             out[k].append(m[k])
-    return {k: _frozen_copy(np.array(v)) for k, v in out.items()}
+    return {k: uown.frozen_copy(np.array(v)) for k, v in out.items()}
 
 
 #
@@ -4035,7 +4033,7 @@ def _read_metrics_per_slice(ds: h5py.Dataset) -> dict[str, np.ndarray]:
 
     arr = ds[...]
     return {
-        k: _frozen_copy(np.asarray(arr[k], dtype=np.float64)) for k in _METRICS_KEYS
+        k: uown.frozen_copy(np.asarray(arr[k], dtype=np.float64)) for k in _METRICS_KEYS
     }
 
 

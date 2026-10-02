@@ -92,7 +92,7 @@ def _set_truth(model):
 
     for name, value in _TRUTH.items():
         if name in model.parameter_names:
-            model.lmfit_pars[name].value = value
+            model._lmfit_pars[name].value = value
     return model
 
 
@@ -167,7 +167,7 @@ def _photon_counting_data(model, *, counts_per_delay, seed):
         seed=seed,
     )
     clean, noisy, _noise = sim.simulate_2d()
-    # what _sample_photons_2d applied: the mean row carries counts_per_delay
+    # what the counting draw applied: the mean row carries counts_per_delay
     scale = counts_per_delay / float(np.mean(np.sum(np.abs(clean), axis=1)))
     return noisy, scale
 
@@ -341,7 +341,7 @@ class TestSeedScatterControl:
         truth.create_value_2d()
         clean = np.asarray(truth.value_2d, dtype=float)
 
-        names = [name for name in truth.lmfit_pars if truth.lmfit_pars[name].vary]
+        names = [name for name in truth._lmfit_pars if truth._lmfit_pars[name].vary]
 
         n_seeds = 256
         values = {"unknown": [], "poisson": []}

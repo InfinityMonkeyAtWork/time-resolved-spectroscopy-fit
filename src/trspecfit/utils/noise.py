@@ -35,6 +35,8 @@ import numpy as np
 from numpy.typing import ArrayLike
 from scipy.special import kl_div
 
+from trspecfit.utils import ownership as uown
+
 NoiseKind = Literal["unknown", "gaussian", "poisson"]
 
 NOISE_TYPE_UNKNOWN = "unknown"
@@ -461,9 +463,7 @@ def _freeze_sigma(sigma: float | np.ndarray) -> float | np.ndarray:
         raise ValueError(f"sigma must be finite and positive everywhere; got {shown}")
     if arr.ndim == 0:
         return float(arr)
-    frozen = np.array(arr, dtype=float, copy=True)
-    frozen.flags.writeable = False
-    return frozen
+    return uown.frozen_copy(arr)
 
 
 #

@@ -928,7 +928,7 @@ def plot_fit_overlay_1d(
     init: ArrayLike | None = None,
     legend: Sequence[str] | None = None,
     title: str = "",
-    fit_lim: list[int] | None = None,
+    fit_lim: Sequence[int] | None = None,
     config: PlotConfig | None = None,
     **kwargs: Any,
 ) -> None:
@@ -960,7 +960,7 @@ def plot_fit_overlay_1d(
         Component labels; auto-numbered when omitted.
     title : str, default=''
         Plot title (left-aligned).
-    fit_lim : list of int, optional
+    fit_lim : sequence of int, optional
         Fit-limit indices ``[start, stop)`` drawn as dashed vlines.
     config : PlotConfig, optional
         Plot configuration object. If None, uses defaults.
@@ -1414,27 +1414,22 @@ def plot_mcmc_diagnostics(
 
     if config is None:
         config = PlotConfig()
-    if mcmc.acceptance_fraction is not None:
+    acceptance, flatchain, table = mcmc.acceptance_fraction, mcmc.flatchain, mcmc.table
+    if acceptance is not None:
         fig_walker, ax = plt.subplots(1, 1, dpi=config.dpi_plot)
-        ax.plot(mcmc.acceptance_fraction, "o")
+        ax.plot(acceptance, "o")
         ax.set_xlabel("Walker number")
         ax.set_ylabel("Acceptance fraction")
         _finalize_plot(fig_walker, 0 if show_plot else -2)
-    if not mcmc.flatchain.empty:
-        var_names = list(mcmc.flatchain.columns)
+    if not flatchain.empty:
+        var_names = list(flatchain.columns)
         truths = None
-        if not mcmc.table.empty:
-            best = dict(
-                zip(
-                    mcmc.table.iloc[:, 0],
-                    mcmc.table["best fit"],
-                    strict=True,
-                )
-            )
+        if not table.empty:
+            best = dict(zip(table.iloc[:, 0], table["best fit"], strict=True))
             truths = [best.get(name) for name in var_names]
         fig_corner = plt.figure(figsize=(10, 10), dpi=config.dpi_plot)
         corner.corner(
-            mcmc.flatchain,
+            flatchain,
             labels=var_names,
             truths=truths,
             fig=fig_corner,

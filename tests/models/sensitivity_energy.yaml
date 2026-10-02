@@ -33,3 +33,18 @@ gauss_doublet:
       A: ["3/4*Gauss_01_A"]
       x0: ["Gauss_01_x0 + 3.67"]
       SD: ["Gauss_01_SD"]
+
+# gauss_free with the width held known: the fixed parameter has no bound and
+# tightens the others
+gauss_SD_fixed:
+    Gauss:
+      A: [1.0, True, 0.1, 10.0]
+      x0: [85.0, True, 82.0, 88.0]
+      SD: [0.34, False, 0.1, 2.0]
+
+# gauss_free with every parameter fixed: nothing to bound
+gauss_all_fixed:
+    Gauss:
+      A: [1.0, False, 0.1, 10.0]
+      x0: [85.0, False, 82.0, 88.0]
+      SD: [0.34, False, 0.1, 2.0]

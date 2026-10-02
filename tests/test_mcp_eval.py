@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from _utils import make_project
 
-from trspecfit import File
+from trspecfit import File, Simulator
 from trspecfit.functions.energy import GLP
 from trspecfit.functions.profile import pLinear
 
@@ -204,6 +204,24 @@ class TestEvaluation:
         x03 = self._par(model, "GLP_03_x0").value(t_ind=0)
         assert np.isclose(x02, x01 + 2.0)
         assert np.isclose(x03, x01 + 4.0)
+
+    #
+    def test_first_evaluation_of_a_chain_is_settled(self):
+        """An expression parameter enters lmfit's container with a placeholder
+        and lmfit resolves it lazily on read, so without settling the first
+        read of a chained expression saw the placeholder. The model settles
+        its container at load and before every evaluation, as lmfit's
+        minimizer does, so the first result equals every later one."""
+
+        file, model = self._make_file_with_model(["expression_chain"])
+        # a direct read right after load is already the settled value
+        assert model._lmfit_pars["GLP_03_A"].value == pytest.approx(20.0 * 0.25)
+        first = np.array(model.create_value_1d(return_1d=1))
+        second = np.array(model.create_value_1d(return_1d=1))
+        np.testing.assert_array_equal(first, second)
+        # the simulator's first clean array is that settled evaluation
+        sim = Simulator(model=model, detection="analog", noise_type="none")
+        np.testing.assert_array_equal(sim.generate_clean_data(dim=1), second)
 
     #
     def test_eval_expression_chain(self):

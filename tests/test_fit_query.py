@@ -25,7 +25,7 @@ import h5py
 import numpy as np
 import pandas as pd
 import pytest
-from _utils import make_project, simulate_noisy
+from _utils import make_project, reload_model, simulate_noisy
 
 from trspecfit import File, FitResults
 from trspecfit.utils.fit_io import set_fit_label
@@ -55,10 +55,10 @@ def _two_variant_baseline():
     """(project, file, handle_A, handle_B): two baseline variants of one
     model in one (file, model, fit_type) group.
 
-    Run A fits freely; run B restores the seed, then shifts ``GLP_01_x0``
-    and fixes it (``vary=False``) — a distinct configuration under schema
-    7 and a deterministically *worse* fit, so ``select="best"`` has an
-    unambiguous winner.
+    Run A fits freely; run B loads the YAML variant that shifts
+    ``GLP_01_x0`` by +0.5 and fixes it — a distinct configuration under
+    schema 7 and a deterministically *worse* fit, so ``select="best"`` has
+    an unambiguous winner.
     """
 
     truth_project = make_project(name="truth")
@@ -78,17 +78,12 @@ def _two_variant_baseline():
         model_info="single_glp",
     )
     file.define_baseline(time_start=0, time_stop=3, time_type="ind", show_plot=False)
-    model = next(m for m in file.models if m.name == "single_glp")
-    seed = [p.value for p in model.lmfit_pars.values()]
-
     file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
     handle_a = project.results.find(
         file="fit", model="single_glp", fit_type="baseline"
     )[-1].handle
 
-    model.update_value(seed)  # fits write back; restore the exact seed
-    model.lmfit_pars["GLP_01_x0"].value += 0.5
-    model.lmfit_pars["GLP_01_x0"].vary = False
+    reload_model(file, "models/file_energy_x0_shifted.yaml", "single_glp")
     file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
     handle_b = project.results.find(
         file="fit", model="single_glp", fit_type="baseline"
@@ -120,7 +115,7 @@ def _build_joint_project(*, noise_level: float = 0.05):
             dynamics_yaml="models/project_time.yaml",
             dynamics_model=["MonoExpProject"],
         )
-        truth.model_active.lmfit_pars["GLP_01_A"].value = amplitude
+        truth.model_active._lmfit_pars["GLP_01_A"].value = amplitude
         data = simulate_noisy(truth.model_active, noise_level=noise_level, seed=seed)
         file = File(
             parent_project=project,
@@ -490,15 +485,16 @@ class TestLabelFlow:
         relabel reaches every entry of the handle."""
 
         project, file, handle_a, _ = _two_variant_baseline()
-        model = next(m for m in file.models if m.name == "single_glp")
-        model.lmfit_pars["GLP_01_x0"].vary = True
-        seed = [p.value for p in model.lmfit_pars.values()]
+        model = reload_model(
+            file, "models/file_energy_x0_shifted_free.yaml", "single_glp"
+        )
+        seed = [p.value for p in model._lmfit_pars.values()]
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
         # project.results is a snapshot: take a fresh view after each fit.
         handle_c = project.results.find(file="fit", model="single_glp")[-1].handle
         project.results.set_label(handle_c[:8], "keeper")
 
-        model.update_value(seed)  # fits write back; restore the exact seed
+        model._update_value(seed)  # fits write back; restore the exact seed
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
         rerun = project.results.find(file="fit", model="single_glp")[-1]
         assert rerun.handle == handle_c
@@ -520,21 +516,22 @@ class TestLabelFlow:
         and a relabel through it must reach every exact re-run."""
 
         project, file, handle_a, _ = _two_variant_baseline()
-        model = next(m for m in file.models if m.name == "single_glp")
-        model.lmfit_pars["GLP_01_x0"].vary = True
-        seed = [p.value for p in model.lmfit_pars.values()]
+        model = reload_model(
+            file, "models/file_energy_x0_shifted_free.yaml", "single_glp"
+        )
+        seed = [p.value for p in model._lmfit_pars.values()]
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)  # run 1
         handle_c = project.results.find(file="fit", model="single_glp")[-1].handle
         old_view = project.results
 
-        model.update_value(seed)
+        model._update_value(seed)
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)  # run 2
         project.results.set_label(handle_c[:8], "keeper")
         with pytest.raises(ValueError, match=f"already held by slot {handle_c[:8]}"):
             old_view.set_label(handle_a[:8], "keeper")  # newer holder is seen
 
         old_view.set_label(handle_c[:8], "final")  # relabel via the old view
-        model.update_value(seed)
+        model._update_value(seed)
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)  # run 3
         entries = [s for s in project._fit_history if s.handle == handle_c]
         assert [s.label for s in entries] == ["final", "final", "final"]
@@ -559,8 +556,7 @@ class TestLabelFlow:
                     if meta.attrs["handle"] == handle_b:
                         meta.attrs["label"] = "keeper"  # legacy duplicate
 
-        model = next(m for m in file.models if m.name == "single_glp")
-        model.lmfit_pars["GLP_01_x0"].vary = True
+        reload_model(file, "models/file_energy_x0_shifted_free.yaml", "single_glp")
         file.fit_baseline(model_name="single_glp", stages=1, try_ci=0)
         handle_c = project.results.find(file="fit", model="single_glp")[-1].handle
         assert handle_c not in (handle_a, handle_b)
@@ -834,16 +830,15 @@ class TestJointBundleQueries:
             for n in record_1.params["name"]
             if "tau" in str(n) and not str(n).startswith("file0")
         )
-        tau_fitted = float(
-            record_1.params.loc[record_1.params["name"] == tau_combined, "value"].iloc[
-                0
-            ]
-        )
         for file in project.files:
-            model = next(m for m in file.models if m.name == "project_glp")
-            key = next(k for k in model.lmfit_pars if "tau" in k)
-            model.lmfit_pars[key].value = tau_fitted * 0.5
-            model.lmfit_pars[key].max = tau_fitted * 0.6
+            # reload the base energy model so the clamped dynamics attach cleanly
+            reload_model(file, "models/project_energy.yaml", "project_glp")
+            file.add_time_dependence(
+                target_model="project_glp",
+                target_parameter="GLP_01_x0",
+                dynamics_yaml="models/project_time_tau_clamped.yaml",
+                dynamics_model=["MonoExpProject"],
+            )
         record_2 = project.fit_2d(model_name="project_glp", stages=2, try_ci=0)
         hash_2 = record_2.optimization_hash
         assert hash_2 != hash_1

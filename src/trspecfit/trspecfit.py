@@ -94,6 +94,7 @@ from trspecfit.utils import arrays as uarrays
 from trspecfit.utils import fit_io
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import noise as unoise
+from trspecfit.utils import ownership as uown
 from trspecfit.utils import parsing as uparsing
 from trspecfit.utils import plot as uplt
 from trspecfit.utils import sbs as usbs
@@ -1508,7 +1509,7 @@ class Project:
             vary_levels = model.get_vary_levels()
             name_remap: dict[str, str] = {}
 
-            for local_name, lmf_par in model.lmfit_pars.items():
+            for local_name, lmf_par in model._lmfit_pars.items():
                 level = vary_levels.get(local_name, "static")
 
                 if level == "project":
@@ -1865,7 +1866,7 @@ class Project:
         final_pars = joint_par_fin.params
         for proj_name, file_idx, local_name in mapping:
             if proj_name in final_pars:
-                models[file_idx].lmfit_pars[local_name].value = final_pars[
+                models[file_idx]._lmfit_pars[local_name].value = final_pars[
                     proj_name
                 ].value
 
@@ -1890,7 +1891,7 @@ class Project:
                 par_fin=cast(
                     "ulmfit.TypedMinimizerResult",
                     MinimizerResult(
-                        params=model.lmfit_pars,
+                        params=model._lmfit_pars,
                         method=joint_method,
                     ),
                 ),
@@ -2039,7 +2040,10 @@ class File:
         File identifier
     data : ndarray
         Spectroscopy data (1D or 2D), with dark subtraction and sensitivity
-        calibration applied (if any)
+        calibration applied (if any). The data, axes, corrections, baseline,
+        fit limits and noise below are owned by the File: read them freely,
+        change them only through the methods named, never by assignment or
+        in place (the arrays are read-only, the windows are tuples).
     data_raw : ndarray
         Original unmodified spectroscopy data as passed to the constructor
     dim : int
@@ -2058,13 +2062,13 @@ class File:
         All models loaded for this file
     model_active : Model or None
         Currently active model (default for operations)
-    e_lim_abs, e_lim : list
+    e_lim_abs, e_lim : tuple
         Energy fitting limits (absolute values and indices)
-    t_lim_abs, t_lim : list
+    t_lim_abs, t_lim : tuple
         Time fitting limits (absolute values and indices)
     data_base : ndarray or None
         Baseline spectrum (averaged from specified time range)
-    base_t_abs, base_t_ind : list
+    base_t_abs, base_t_ind : tuple
         Time range for baseline extraction (absolute and indices)
     model_base : Model or None
         Model used for baseline fitting
@@ -2103,6 +2107,32 @@ class File:
     time-dependent data.
     """
 
+    # Owned state (docs/design/api_ownership_contract.md): read through the
+    # attribute, written by File through the private name; assignment raises
+    # and names the route. The stored objects are immutable (frozen arrays,
+    # tuples, a frozen NoiseModel), so a read cannot be edited in place.
+    data = uown.owned[np.ndarray | None](
+        "data is recomputed from data_raw by the correction methods; for "
+        "different data construct a new File"
+    )
+    data_raw = uown.owned[np.ndarray | None]("construct a new File with the data")
+    dim = uown.owned[int]("construct a new File with the data")
+    energy = uown.owned[np.ndarray | None]("construct a new File with the axes")
+    time = uown.owned[np.ndarray | None]("construct a new File with the axes")
+    aux_axis = uown.owned[np.ndarray | None]("construct a new File with the axes")
+    dark = uown.owned[np.ndarray | None]("call subtract_dark() or reset_dark()")
+    calibration = uown.owned[np.ndarray | None](
+        "call calibrate_data() or reset_calibration()"
+    )
+    data_base = uown.owned[np.ndarray | None]("call define_baseline()")
+    base_t_ind = uown.owned[tuple[int, ...]]("call define_baseline()")
+    base_t_abs = uown.owned[tuple[float, ...]]("call define_baseline()")
+    e_lim = uown.owned[tuple[int, ...]]("call set_fit_limits()")
+    e_lim_abs = uown.owned[tuple[float, ...]]("call set_fit_limits()")
+    t_lim = uown.owned[tuple[int, ...]]("call set_fit_limits()")
+    t_lim_abs = uown.owned[tuple[float, ...]]("call set_fit_limits()")
+    noise = uown.owned[unoise.NoiseModel]("call set_noise() or set_sigma()")
+
     #
     def __init__(
         self,
@@ -2137,20 +2167,26 @@ class File:
                 "1D data is a single spectrum and takes no time axis; "
                 "pass 2D data (time x energy) with time=, or drop time=."
             )
-        self.data = data  # (time-[optional] and) energy-dependent data to fit
-        self.data_raw: np.ndarray | None = data.copy() if data is not None else None
-        self.dim = 0 if data is None else data.ndim  # 1/2 D for energy/+time
+        # the inputs are copied and frozen; data aliases data_raw until a
+        # correction rebuilds it (time-[optional] and energy-dependent data)
+        self._data_raw: np.ndarray | None = (
+            uown.frozen_copy(data) if data is not None else None
+        )
+        self._data: np.ndarray | None = self._data_raw
+        self._dim = 0 if data is None else data.ndim  # 1/2 D for energy/+time
         # take energy and time input or create a generic axis if None is passed
+        self._energy: np.ndarray | None
+        self._time: np.ndarray | None
         if energy is not None or data is None:
-            self.energy = energy
-        elif self.dim == 1:
-            self.energy = np.arange(data.shape[0])
+            self._energy = uown.frozen_copy(energy) if energy is not None else None
+        elif self._dim == 1:
+            self._energy = uown.freeze(np.arange(data.shape[0]))
         else:
-            self.energy = np.arange(data.shape[1])
-        if time is not None or self.dim <= 1 or data is None:
-            self.time = time
+            self._energy = uown.freeze(np.arange(data.shape[1]))
+        if time is not None or self._dim <= 1 or data is None:
+            self._time = uown.frozen_copy(time) if time is not None else None
         else:
-            self.time = np.arange(data.shape[0])
+            self._time = uown.freeze(np.arange(data.shape[0]))
         # an axis is a non-empty 1D array
         for axis_name, axis in (
             ("energy", self.energy),
@@ -2184,29 +2220,31 @@ class File:
                     f"time axis has {n_t} points but data has "
                     f"{data.shape[0]} time points (data shape {data.shape})."
                 )
-        self.aux_axis: np.ndarray | None = (
-            aux_axis  # auxiliary physical axis (e.g. depth)
+        # auxiliary physical axis (e.g. depth)
+        self._aux_axis: np.ndarray | None = (
+            uown.frozen_copy(aux_axis) if aux_axis is not None else None
         )
         # data correction arrays (dark subtraction, sensitivity calibration)
         n_energy = self.energy.shape[0] if self.energy is not None else 0
-        self.dark: np.ndarray | None = np.zeros(n_energy) if data is not None else None
-        self.calibration: np.ndarray | None = (
-            np.ones(n_energy) if data is not None else None
+        self._dark: np.ndarray | None = (
+            uown.freeze(np.zeros(n_energy)) if data is not None else None
+        )
+        self._calibration: np.ndarray | None = (
+            uown.freeze(np.ones(n_energy)) if data is not None else None
         )
         # keep track of models that are used to fit this file/data
         self.models: list[mcp.Model] = []
         self.model_active: mcp.Model | None = None  # default model to work with
-        # Energy and time limits for fitting methods
-        self.e_lim_abs: list[float] = []  # energy limits (low, high) user-defined
-        self.e_lim: list[int] = []  # index [start, stop) for energy[start:stop]
-        self.t_lim_abs: list[float] = []  # time limits (low, high) user-defined
-        self.t_lim: list[int] = []  # index [start, stop) for time[start:stop]
-        #
-        self.base_t_abs: list[
-            float
-        ] = []  # start and stop time of the baseline spectrum
-        self.base_t_ind: list[int] = []  # index of the above start and stop time
-        self.data_base: np.ndarray | None = None  # average spectrum between indices
+        # Energy and time limits for fitting methods (set_fit_limits)
+        self._e_lim_abs: tuple[float, ...] = ()  # energy limits (low, high)
+        self._e_lim: tuple[int, ...] = ()  # index [start, stop) for energy[start:stop]
+        self._t_lim_abs: tuple[float, ...] = ()  # time limits (low, high)
+        self._t_lim: tuple[int, ...] = ()  # index [start, stop) for time[start:stop]
+        # baseline spectrum (define_baseline): start and stop time, their
+        # indices, and the average spectrum between them
+        self._base_t_abs: tuple[float, ...] = ()
+        self._base_t_ind: tuple[int, ...] = ()
+        self._data_base: np.ndarray | None = None
         self.model_base: mcp.Model | None = None
         # record of the last completed baseline fit; the 'baseline' seed reads it
         self._baseline_slot: fit_io.SavedFitSlot | None = None
@@ -2226,7 +2264,7 @@ class File:
         self.sigma_source: str = getattr(
             self.p, "sigma_source", fit_io.SIGMA_SOURCE_USER
         )
-        self.noise: unoise.NoiseModel = self.p._default_noise()
+        self._noise: unoise.NoiseModel = self.p._default_noise()
         if self.data is not None:
             self.noise.validate_data(self.data)
         # default fit limits to entire dataset (energy is None only for bare File())
@@ -2354,16 +2392,7 @@ class File:
         if self.data is None:
             warnings.warn("No data loaded; nothing to describe.", stacklevel=2)
             return
-        if self.energy is None:
-            raise ValueError(
-                "Energy axis missing; cannot describe data. "
-                "Pass energy= when constructing File."
-            )
-        if self.dim == 2 and self.time is None:
-            raise ValueError(
-                "Time axis missing; cannot describe 2D data. "
-                "Pass time= when constructing File."
-            )
+        assert self.energy is not None  # type guard — data always has its axes
 
         config = self.p.plot_config
 
@@ -2379,7 +2408,7 @@ class File:
             )
 
         elif self.dim == 2:
-            assert self.time is not None  # type guard — ensured above
+            assert self.time is not None  # type guard — a 2D file has a time axis
             _WATERFALL_MAX_SPECTRA = 12
             use_waterfall = (
                 waterfall is None and len(self.time) <= _WATERFALL_MAX_SPECTRA
@@ -2587,18 +2616,6 @@ class File:
                 'Profile models (model_type="profile") require a single model name'
                 " in model_info."
             )
-        if model_type == "energy":
-            existing = self.select_model(model_info)
-            if existing is not None:
-                warnings.warn(
-                    f'Model "{self.model_list_to_name(model_info)}" already '
-                    f"exists on file '{self.name}' — overwriting the live "
-                    f"model object. Completed fits are unaffected (they are "
-                    f"kept in the fit history).",
-                    stacklevel=2,
-                )
-                self.models.remove(existing)
-
         # Load and process YAML file with appropriate numbering strategy
         model_yaml_path = self.p.path / pathlib.Path(model_yaml)
         model_info_dict = uparsing.load_and_number_yaml_components(
@@ -2686,8 +2703,19 @@ class File:
         # Add all components (and their parameters) to model
         loaded_model.add_components(all_comps)
 
-        # Add model to file
+        # Publish: the candidate is complete, so only now does a same-named
+        # model leave the file (a failure above leaves it in place and usable)
         if model_type == "energy":
+            existing = self.select_model(model_info)
+            if existing is not None:
+                warnings.warn(
+                    f'Model "{self.model_list_to_name(model_info)}" already '
+                    f"exists on file '{self.name}' — replacing the live "
+                    f"model object. Completed fits are unaffected (they are "
+                    f"kept in the fit history).",
+                    stacklevel=2,
+                )
+                self._remove_model(existing)
             self.models.append(loaded_model)
             self.set_active_model(model_info)  # set as current active model
         return loaded_model
@@ -2748,7 +2776,7 @@ class File:
             total, comps = fitlib.eval_model_curves_1d(
                 self.energy,
                 self.p.spec_fun_str,
-                mod.lmfit_pars,
+                mod._lmfit_pars,
                 args=(mod, 1),
             )
             uplt.plot_fit_overlay_1d(
@@ -2795,15 +2823,15 @@ class File:
 
         Notes
         -----
-        After deletion, model_active may be invalid. Set a new active model
-        if needed using set_active_model().
+        Deleting the active model leaves no active model; set one with
+        set_active_model() or name the model in the fit call.
         """
 
         if model_to_delete is None:
             if self.model_active is None:
                 warnings.warn("No active model to delete.", stacklevel=2)
                 return
-            self.models.remove(self.model_active)
+            self._remove_model(self.model_active)
             return
 
         mod = self.select_model(model_to_delete)
@@ -2813,7 +2841,15 @@ class File:
                 stacklevel=2,
             )
             return
-        self.models.remove(mod)
+        self._remove_model(mod)
+
+    #
+    def _remove_model(self, model: mcp.Model) -> None:
+        """Drop *model* from the file; an active reference to it goes with it."""
+
+        self.models.remove(model)
+        if self.model_active is model:
+            self.model_active = None
 
     #
     def reset_models(self) -> None:
@@ -2825,6 +2861,7 @@ class File:
         """
 
         self.models = []
+        self.model_active = None
 
     #
     def _reject_correction_under_noise(self, action: str) -> None:
@@ -2847,8 +2884,10 @@ class File:
         assert self.data_raw is not None  # type guard
         assert self.dark is not None  # type guard
         assert self.calibration is not None  # type guard
-        self.data = uarrays.apply_corrections(
-            self.data_raw, dark=self.dark, calibration=self.calibration
+        self._data = uown.freeze(
+            uarrays.apply_corrections(
+                self.data_raw, dark=self.dark, calibration=self.calibration
+            )
         )
         # recompute baseline if it was previously defined
         if self.base_t_abs:
@@ -2887,7 +2926,7 @@ class File:
             raise ValueError(
                 f"dark must be 1D with length {n_energy}, got shape {dark.shape}."
             )
-        self.dark = dark
+        self._dark = uown.frozen_copy(dark)
         self._apply_corrections()
 
     #
@@ -2925,7 +2964,7 @@ class File:
             raise ValueError(
                 "calibration contains zeros; division by zero is not allowed."
             )
-        self.calibration = calibration
+        self._calibration = uown.frozen_copy(calibration)
         self._apply_corrections()
 
     #
@@ -2935,7 +2974,7 @@ class File:
         if self.data_raw is None or self.energy is None:
             raise ValueError("No data loaded; cannot reset dark.")
         self._reject_correction_under_noise("reset_dark")
-        self.dark = np.zeros(self.energy.shape[0])
+        self._dark = uown.freeze(np.zeros(self.energy.shape[0]))
         self._apply_corrections()
 
     #
@@ -2945,7 +2984,7 @@ class File:
         if self.data_raw is None or self.energy is None:
             raise ValueError("No data loaded; cannot reset calibration.")
         self._reject_correction_under_noise("reset_calibration")
-        self.calibration = np.ones(self.energy.shape[0])
+        self._calibration = uown.freeze(np.ones(self.energy.shape[0]))
         self._apply_corrections()
 
     #
@@ -2983,8 +3022,8 @@ class File:
         ------
         ValueError
             If the file is 1D (a single spectrum has no baseline window;
-            use :meth:`fit_spectrum`), no data is loaded, the time axis is
-            missing, or *time_type* is invalid.
+            use :meth:`fit_spectrum`), no data is loaded, or *time_type* is
+            invalid.
         """
 
         if self.dim == 1:
@@ -2994,42 +3033,23 @@ class File:
             )
         if self.data is None:
             raise ValueError("No data loaded; cannot define baseline.")
-        if self.time is None:
-            raise ValueError(
-                "Time axis missing; cannot define baseline. "
-                "Pass time= when constructing File."
-            )
-        if self.energy is None:
-            raise ValueError(
-                "Energy axis missing; cannot define baseline. "
-                "Pass energy= when constructing File."
-            )
-        self.base_t_ind = self._resolve_time_selection(
+        assert self.time is not None  # type guard — a 2D file has its axes
+        assert self.energy is not None  # type guard
+        i_start, i_stop = self._resolve_time_selection(
             time_start, time_stop, time_type=time_type
         )
-        self.base_t_abs = [
-            float(self.time[self.base_t_ind[0]]),
-            float(self.time[self.base_t_ind[1] - 1]),
-        ]
+        self._base_t_ind = (i_start, i_stop)
+        self._base_t_abs = (float(self.time[i_start]), float(self.time[i_stop - 1]))
 
         # cut and average
-        self.data_base = np.mean(
-            self.data[self.base_t_ind[0] : self.base_t_ind[1], :], axis=0
-        )
+        data_base = uown.freeze(np.mean(self.data[i_start:i_stop, :], axis=0))
+        self._data_base = data_base
 
         # plot
         if show_plot and self.p.show_output >= 1:
-            if self.data_base is None:
-                warnings.warn(
-                    "Baseline data is unavailable; skipping baseline plot.",
-                    stacklevel=2,
-                )
-                return
             t_lo, t_hi = self.base_t_abs
             uplt.plot_1d(
-                data=[
-                    self.data_base,
-                ],
+                data=[data_base],
                 x=self.energy,
                 config=self.p.plot_config,
                 y_label=self.p.plot_config.z_label,  # intensity, not the t_label
@@ -3070,10 +3090,24 @@ class File:
                 "Energy axis missing; cannot set fit limits. "
                 "Pass energy= when constructing File."
             )
+        if time_limits is None and self.time is not None:
+            time_limits = [float(np.min(self.time)), float(np.max(self.time))]
+        t_lim: tuple[int, ...] | None = None
+        if time_limits is not None:
+            if self.time is None:
+                raise ValueError(
+                    "Time axis missing; cannot apply time limits. "
+                    "Pass time= when constructing File."
+                )
+            t_lim = tuple(
+                self._resolve_time_selection(
+                    float(np.min(time_limits)), float(np.max(time_limits))
+                )
+            )
         energy = self.energy
         if energy_limits is None:
             energy_limits = [float(np.min(energy)), float(np.max(energy))]
-        self.e_lim_abs = [np.min(energy_limits), np.max(energy_limits)]
+        self._e_lim_abs = (float(np.min(energy_limits)), float(np.max(energy_limits)))
 
         # convert energy limits to [start, stop) slice indices
         # searchsorted with side='left' for lower bound, side='right' for upper bound
@@ -3085,24 +3119,15 @@ class File:
             stop = len(energy) - int(
                 np.searchsorted(rev, np.min(energy_limits), side="left")
             )
-            self.e_lim = [start, stop]
+            self._e_lim = (start, stop)
         else:  # ascending energy
             start = int(np.searchsorted(energy, np.min(energy_limits), side="left"))
             stop = int(np.searchsorted(energy, np.max(energy_limits), side="right"))
-            self.e_lim = [start, stop]
+            self._e_lim = (start, stop)
 
-        if time_limits is None and self.time is not None:
-            time_limits = [float(np.min(self.time)), float(np.max(self.time))]
-        if time_limits is not None:
-            if self.time is None:
-                raise ValueError(
-                    "Time axis missing; cannot apply time limits. "
-                    "Pass time= when constructing File."
-                )
-            self.t_lim_abs = list(time_limits)
-            self.t_lim = self._resolve_time_selection(
-                float(np.min(time_limits)), float(np.max(time_limits))
-            )
+        if time_limits is not None and t_lim is not None:
+            self._t_lim_abs = tuple(float(t) for t in time_limits)
+            self._t_lim = t_lim
 
         if show_plot and self.p.show_output >= 1:  # show data with limits
             if self.dim == 1:
@@ -3213,7 +3238,7 @@ class File:
                     "the data first, then declare the noise."
                 )
             noise.validate_data(self.data)
-        self.noise = noise
+        self._noise = noise
 
     #
     def set_sigma(
@@ -3402,27 +3427,16 @@ class File:
         _args = self._build_1d_dispatch_args(self.model_base, _fun_str)
         self.model_base.args = _args
         # noise of the baseline view: the mean over the base_t_ind slices,
-        # cropped to the same e_lim window the residual applies. A data_base
-        # assigned by hand has no known slice count, so its noise is undefined.
-        if self.noise.is_weighted and len(self.base_t_ind) != 2:
-            raise ValueError(
-                f"noise_type='{self.noise.kind}' needs the baseline from "
-                "define_baseline() to know how many slices it averages, but "
-                "data_base was set by hand. Run define_baseline() or "
-                "set_noise('unknown')."
-            )
+        # cropped to the same e_lim window the residual applies
         (_e_slice,) = fitlib._fit_window_slices(1, self.e_lim, [])
-        if len(self.base_t_ind) == 2:
-            _rows, _n_avg = self._mean_rows_view(self.base_t_ind)
-        else:
-            _rows, _n_avg = None, None
+        _rows, _n_avg = self._mean_rows_view(self.base_t_ind)
         noise_view = self._noise_view(rows=_rows, average=_n_avg, e_window=_e_slice)
         # fit (optionally) with confidence intervals
         fit_out = fitlib.fit_wrapper(
             const=self.model_base.const,
             args=self.model_base.args,
             par_names=self.model_base.parameter_names,
-            par=self.model_base.lmfit_pars,
+            par=self.model_base._lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
             noise=noise_view,
@@ -3430,11 +3444,11 @@ class File:
         )
         self.model_base.result = fit_out
 
-        # Write optimized values back to model.lmfit_pars.  fit_wrapper
-        # optimizes a deepcopy, so model.lmfit_pars may be stale when
-        # the GIR path was used (it never calls model.update_value).
+        # Write optimized values back to model._lmfit_pars.  fit_wrapper
+        # optimizes a deepcopy, so model._lmfit_pars may be stale when
+        # the GIR path was used (it never calls model._update_value).
         if stages >= 1:
-            self.model_base.update_value(
+            self.model_base._update_value(
                 new_par_values=ulmfit.par_extract(fit_out.par_fin, return_type="list")
             )
             self._baseline_slot = self._append_baseline_slot(
@@ -3654,7 +3668,7 @@ class File:
             const=self.model_spec.const,
             args=self.model_spec.args,
             par_names=self.model_spec.parameter_names,
-            par=self.model_spec.lmfit_pars,
+            par=self.model_spec._lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
             noise=noise_view,
@@ -3662,9 +3676,9 @@ class File:
         )
         self.model_spec.result = fit_out
 
-        # Write optimized values back to model.lmfit_pars (see fit_baseline).
+        # Write optimized values back to model._lmfit_pars (see fit_baseline).
         if stages >= 1:
-            self.model_spec.update_value(
+            self.model_spec._update_value(
                 new_par_values=ulmfit.par_extract(fit_out.par_fin, return_type="list")
             )
             self._append_spectrum_slot(
@@ -3831,7 +3845,7 @@ class File:
             Shared parameter template used to seed every slice before any
             per-slice adaptation is applied.
 
-            - ``'model'``: use the current ``model_sbs.lmfit_pars`` values;
+            - ``'model'``: use the model's current parameter values;
               with ``seed_adapt=None`` the fit needs no baseline at all
             - ``'baseline'``: every parameter that shares its name with a
               parameter of the completed ``fit_baseline()`` result starts
@@ -3901,10 +3915,10 @@ class File:
                 seed_values,
                 self.model_sbs.parameter_names,
             )
-            self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
+            self.model_sbs._update_value(new_par_values=seed_template, par_select="all")
         else:
             seed_template = ulmfit.par_extract(
-                self.model_sbs.lmfit_pars, return_type="list"
+                self.model_sbs._lmfit_pars, return_type="list"
             )
 
         # find all parameters with names ending in "x0"
@@ -3916,7 +3930,7 @@ class File:
         data_base_argmax_energy: float | None
         if seed_adapt == "argmax_shift":
             e_pos_vals = pd.Series(
-                data=[self.model_sbs.lmfit_pars[name].value for name in e_pos_pars],
+                data=[self.model_sbs._lmfit_pars[name].value for name in e_pos_pars],
                 index=e_pos_pars,
                 dtype=float,
             )
@@ -3980,7 +3994,7 @@ class File:
                     const=const,
                     args=args,
                     par_names=self.model_sbs.parameter_names,
-                    par=self.model_sbs.lmfit_pars,
+                    par=self.model_sbs._lmfit_pars,
                     stages=stages,
                     show_output=0,
                     noise=noise_views[s_i],
@@ -4081,7 +4095,7 @@ class File:
                 # just appended): varied-parameter evolution + fit maps.
                 self.plot_param_evolution(model=model_name)
                 self.plot_fit(model=model_name, fit_type="sbs")
-        self.model_sbs.update_value(new_par_values=seed_template, par_select="all")
+        self.model_sbs._update_value(new_par_values=seed_template, par_select="all")
         self.model_sbs.args = _args_sbs
         if stages >= 1 and self.p.show_output >= 1:
             fitlib.time_display(
@@ -4900,7 +4914,7 @@ class File:
                         # Add dynamics to the profile model
                         par.p_model.add_dynamics(cast("mcp.Dynamics", t_mod), frequency)
                         # Sync dynamics params into the energy model's parameter list
-                        par.lmfit_par_list.extend(t_mod.lmfit_par_list)
+                        par._lmfit_par_list.extend(t_mod._lmfit_par_list)
                         model.update()
                         model.dim = 2
                         return
@@ -4968,15 +4982,6 @@ class File:
                 f"Parameter '{target_parameter}' not found in model '{model.name}'.\n"
                 f"Available parameters: {model.parameter_names}"
             )
-        target_par = model.components[ci].pars[pi]
-        if target_par.t_vary:
-            raise ValueError(
-                f"Cannot add profile to parameter '{target_parameter}' because "
-                "it already has time dependence (t_vary=True). This is currently "
-                "disabled to avoid strongly correlated fits. Add profile first "
-                "and dynamics to a profile parameter instead, or remove/fix "
-                "time dependence first."
-            )
         model.add_profile(cast("mcp.Profile", p_mod))
         # auto-promote to 2D if any parameter inside the profile is time-dependent
         if any(p.t_vary for comp in p_mod.components for p in comp.pars):
@@ -5016,7 +5021,7 @@ class File:
                 "run fit_baseline() first or use seed_source='model'."
             )
         base_values = dict(zip(slot.params["name"], slot.params["value"], strict=True))
-        missing = [name for name in base_values if name not in model.lmfit_pars]
+        missing = [name for name in base_values if name not in model._lmfit_pars]
         if missing:
             raise ValueError(
                 f'Baseline seed requested but model "{model.name}" has no '
@@ -5026,7 +5031,7 @@ class File:
                 "under the same name; use seed_source='model' to start from "
                 "the model's own values."
             )
-        model.update_value(
+        model._update_value(
             new_par_values=[float(v) for v in base_values.values()],
             par_select=list(base_values),
         )
@@ -5157,22 +5162,22 @@ class File:
             const=self.model_2d.const,
             args=self.model_2d.args,
             par_names=self.model_2d.parameter_names,
-            par=self.model_2d.lmfit_pars,
+            par=self.model_2d._lmfit_pars,
             stages=stages,
             show_output=1 if self.p.show_output >= 1 else 0,
             noise=noise_view,
             **fit_wrapper_kwargs,
         )
         self.model_2d.result = fit_out
-        # Write optimized values back to model.lmfit_pars.  fit_wrapper
-        # optimizes a deepcopy, so model.lmfit_pars may be stale — especially
-        # on the GIR path where fit_model_gir never calls model.update_value.
+        # Write optimized values back to model._lmfit_pars.  fit_wrapper
+        # optimizes a deepcopy, so model._lmfit_pars may be stale — especially
+        # on the GIR path where fit_model_gir never calls model._update_value.
         slot_2d: fit_io.SavedFitSlot | None = None
         if stages >= 1:
             final_params = fit_out.par_fin.params
             for name in self.model_2d.parameter_names:
                 if name in final_params:
-                    self.model_2d.lmfit_pars[name].value = final_params[name].value
+                    self.model_2d._lmfit_pars[name].value = final_params[name].value
             slot_2d = self._append_2d_slot(
                 model_name=model_name,
                 fit_fun_str=_fun_str,

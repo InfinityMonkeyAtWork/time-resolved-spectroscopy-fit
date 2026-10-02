@@ -96,7 +96,7 @@ def _free_parameter_names(model: mcp.Model, fixed: Sequence[str] = ()) -> list[s
     free = [
         name
         for name in model.parameter_names
-        if model.lmfit_pars[name].expr is None and model.lmfit_pars[name].vary
+        if model._lmfit_pars[name].expr is None and model._lmfit_pars[name].vary
     ]
     if isinstance(fixed, str):
         raise TypeError("fixed takes a sequence of parameter names, not one string.")
@@ -285,7 +285,7 @@ def fisher_matrix(
 
     jacobian = np.empty((len(names), lam.size), dtype=float)
     for row, name in enumerate(names):
-        par = model.lmfit_pars[name]
+        par = model._lmfit_pars[name]
         value = float(par.value)
         step = max(abs(value), 1.0) * rel_step
         try:
@@ -585,7 +585,7 @@ def sensitivity_report(
 
     rows = []
     for index, name in enumerate(names):
-        value = float(model.lmfit_pars[name].value)
+        value = float(model._lmfit_pars[name].value)
         sigma = _sigma(marginal_var[index])
         sigma_free = _sigma(independent_var[index])
         rows.append(

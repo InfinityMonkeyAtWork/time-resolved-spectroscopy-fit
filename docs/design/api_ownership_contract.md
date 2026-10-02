@@ -4,10 +4,11 @@ orphan: true
 
 # API and ownership contract
 
-Status: **settled** (2026-09-24). Branch `api-ownership-contract`, step 1 of
-the plan recorded in `TODO.md`. The four forks at the end record what was
-decided and why. Enforcement is step 4; the per-name tier inventory and the
-renames are step 5.
+Status: **settled** (2026-09-24) and **enforced** (2026-10-01, branch
+`enforce-ownership`, v0.20.0). The four forks at the end record what was
+decided and why; the Mechanisms section records how each rule is enforced
+and at which level. The per-name tier inventory and the renames are step 5
+of the plan recorded in `TODO.md`.
 
 This document answers three questions that the ownership work, the
 reconstruction loader, and the v1.0 stability promise all depend on:
@@ -40,9 +41,9 @@ user-tier list are in [../stability.md](../stability.md).
 `file.sigma_data`, `project.results` (a `FitResults`), the `SavedFitSlot`
 fields `params`, `observed`, `fit`, `metrics`, `handle`, `model_name`,
 `JointFitResult.params`, and `Simulator.data_clean` / `data_noisy` / `noise`.
-All of that is inside the contract. Editing `model.lmfit_pars[name]` in
+All of that is inside the contract. Editing the lmfit parameter objects in
 place, which two notebooks used to teach, is the one use this contract
-retires (rule 4).
+retires (rule 4); since 0.20.0 those objects are package-internal.
 
 Three tiers, classified coarsely here and inventoried name by name in step 5:
 
@@ -61,7 +62,7 @@ Three tiers, classified coarsely here and inventoried name by name in step 5:
 | Baseline (`data_base`, `base_t_ind`, `base_t_abs`) | `File`, derived | `define_baseline`; recomputed when corrections change | assigning `data_base` |
 | Fit window and noise (`e_lim`, `t_lim`, `noise`) | `File`, configuration | `set_fit_limits`, `set_noise`, `set_sigma` | assigning the attributes |
 | Model definition (YAML records, attachment targets, order, frequency) | `Model`, declarative; constructed only by `File.load_model` | edit the YAML and reload; `add_time_dependence`, `add_par_profile` | building a model in Python; adding or removing components after load; editing records |
-| Model parameter state (`lmfit_pars`: values, bounds, `vary`, `expr`) | `Model`; the latest execution state (authored at load, then seeded and fitted values) | edit the YAML and reload; seeding, fitting, sweeps and predictions through the package | editing `lmfit_pars` in memory; anything that rewrites the definition or a completed result |
+| Model parameter state (the lmfit objects, package-internal since 0.20.0: values, bounds, `vary`, `expr`) | `Model`; the latest execution state (authored at load, then seeded and fitted values) | edit the YAML and reload; seeding, fitting, sweeps and predictions through the package | editing the lmfit objects in memory; anything that rewrites the definition or a completed result |
 | Completed results (`SavedFitSlot`, `SavedFile`, `JointFitResult`) | the record | `label`, through `set_label` | every other field; reads hand out protected views or detached copies |
 | Identity (`Project.name`, `File.name`, `Model.name`) | construction | none | assignment (setters already raise) |
 | Presentation (`PlotConfig`) | `Project` | field edits, `config=` per call | recording presentation in a result |
@@ -69,9 +70,10 @@ Three tiers, classified coarsely here and inventoried name by name in step 5:
 | Project registry (`Project.files`) | `Project` | `File` construction registers | external append, removal, reordering |
 | Simulator draw record (`sigma_data`, `noise_model`) | `Simulator`, snapshot per draw | a new draw | later `set_noise_*` calls changing what a past draw reports |
 
-The rest of this document states the rule behind each row, what follows from
-it, and how far the code is from it today. Line references are as of
-2026-09-24 and will drift; the function names will not.
+The rest of this document states the rule behind each row and what follows
+from it; the Mechanisms section says how each rule is enforced. Line
+references in the history notes are as of 2026-09-24 and will drift; the
+function names will not.
 
 ## 1. Inputs are owned at construction
 
@@ -87,13 +89,14 @@ second guard for everything derived from the inputs before any fit exists:
 fit limits, the baseline window, and the axes the loaded models hold by
 reference. One rule with no window is simpler than two guards with one.
 
-**Why copy and expose read-only.** Today `data`, `energy`, `time`, and
-`aux_axis` are stored by reference; only `data_raw` is copied
-(`File.__init__`). A caller who edits the array they passed changes
-`file.data` without changing `data_raw`, so the version stamp still matches
-and a refit mints the same handle for different numbers. `Model.energy` /
-`time` / `aux_axis` are references to the `File` arrays; read-only copies
-make that sharing safe.
+**Why copy and expose read-only.** Before 0.20.0 `data`, `energy`, `time`,
+and `aux_axis` were stored by reference; only `data_raw` was copied. A
+caller who edited the array they passed changed `file.data` without
+changing `data_raw`, so the version stamp still matched and a refit minted
+the same handle for different numbers. The inputs are now frozen copies
+(`data` aliases `data_raw` until a correction rebuilds it), and
+`Model.energy` / `time` / `aux_axis`, which reference the `File` arrays,
+share them safely.
 
 **Primary axis.** Step 13 promotes slice-by-slice traces into a `File` whose
 primary axis is time. Nothing in the enforcement work may hard-code energy
@@ -107,7 +110,7 @@ not match the data, and it names the transpose when the two lengths are
 merely swapped. Two states are therefore unreachable through the
 constructor: data without axes (index axes are synthesized) and a 2D file
 without fit limits (full-range limits are set at construction). The tests
-that build those states by assignment test dead branches and leave with
+that built those states by assignment tested dead branches and left with
 those branches in step 4.
 
 **What follows.** Constructing a bare `File()` and assigning axes afterwards
@@ -116,9 +119,10 @@ files, 42 of them also hand-setting `dim`; the constructor already accepts
 `data`, `energy`, `time`, and `aux_axis`. Deleting the `dim` lines showed
 that no method needs `dim` on a data-less grid file: every failure was a
 builder that had assigned data after construction (commit `e588459`). The
-remaining assignment sites migrate to constructor arguments through shared
-builders. The capture-hash guard stays as the backstop; it stops being the
-only line.
+remaining assignment sites migrated to constructor arguments through shared
+builders, and since 0.20.0 the owned attributes refuse assignment
+(Mechanisms). The capture-hash guard stays as the backstop; it stopped
+being the only line.
 
 ## 2. Corrections are operations on owned arrays
 
@@ -127,11 +131,12 @@ only line.
 > given. The corrected `data` and the baseline are derived and recomputed;
 > they are exposed read-only and never assigned.
 
-Recomputation already exists: `_apply_corrections` rebinds `data` from
-`data_raw` and re-runs `define_baseline` when a window is set. The gap is
-ownership: `subtract_dark` and `calibrate_data` store the caller's array by
-reference, so editing it afterwards changes the correction the next fit
-records without the `File` knowing.
+Recomputation already existed: `_apply_corrections` rebinds `data` from
+`data_raw` and re-runs `define_baseline` when a window is set. Ownership
+landed in 0.20.0: `subtract_dark` and `calibrate_data` keep a frozen copy
+of the array they are given. Before, they stored the caller's array by
+reference, so editing it afterwards changed the correction the next fit
+recorded without the `File` knowing.
 
 **Noise restriction preserved.** The four correction methods refuse to run
 under a declared weighted noise model because σ describes the uncorrected
@@ -149,11 +154,9 @@ guard.
 (0.18.0). Before, a 1D file had no public fit path at all, and the library
 tests hand-assigned `data_base` to get one; they now build a grid `File`,
 evaluate the model, and construct the data `File`, the pattern of the
-example generators. Three 2D sites still hand-assign `data_base`: a rescaled
-refit, a missing-baseline error, and the test of the hand-set guard itself.
-The first two rewrite through `calibrate_data` and plain construction in
-step 4. The guard that refuses a declared weighted noise model on a hand-set
-baseline leaves with its test; it exists only because the assignment is
+example generators. Assigning `data_base` raises since 0.20.0, and
+the guard that refused a declared weighted noise model on a hand-set
+baseline left with its test; it existed only because the assignment was
 possible.
 
 ## 4. A model has a definition and a parameter state
@@ -162,7 +165,7 @@ possible.
 > the YAML records plus the declared attachments (target parameter, sequence
 > order, frequency). It changes only by editing the YAML and reloading, or
 > through `add_time_dependence` and `add_par_profile`, which are declarative
-> and captured as records. Its parameter state in `lmfit_pars` (values,
+> and captured as records. Its parameter state, the lmfit objects (values,
 > bounds, `vary`, `expr`) starts as the authored state and afterwards holds
 > the latest **execution state**: the values a fit wrote back, the values
 > the baseline injection seeded. The archive, not the live model, is
@@ -230,8 +233,11 @@ is tested as such and is not a public authoring route. Decided 2026-09-24.
 > reload or a rejected attachment leaves the previous model usable and
 > unchanged.
 
-Three current violations, all reproduced by the September 2026 review and
-confirmed in code:
+Three violations, reproduced by the September 2026 review and confirmed in
+code, closed in 0.20.0 (`load_model` publishes a complete candidate;
+`add_dynamics` / `add_profile` check everything before any write and run
+the attachment as one transaction that restores both models on failure;
+`Par.update` evaluates before it flags). Before:
 
 - `File.load_model` removes the existing model of that name before the
   replacement YAML is parsed; a parse, component, or submodel error leaves
@@ -259,15 +265,18 @@ the fit methods, not a record; completed-fit consumers read slots (Principle
 Where this stands: the numpy fields are frozen copies at capture (schema 7,
 Principle 4). `FitResults.get_parameters`, `get_correlations`,
 `get_confidence_intervals`, and `get_mcmc` return copies, and `variants`,
-`compare_models`, and `diff` build new frames. The gap is the nested
+`compare_models`, and `diff` build new frames. The gap was the nested
 containers: `params`, `conf_ci`, `correl`, `params_meta`, `params_stderr`,
 `params_init` (DataFrames), `metrics`, `selection`, `fit_settings`, `mcmc`
-(dicts), and `component_names` (list) are shared objects inside the frozen
-dataclass, and `find`, `get`, iteration, `find_joint`, and `get_joint` hand
-out the stored records. A caller who edits `slot.params` edits the history,
-and the next `save_fits` writes it. Whether step 4 closes that with copies at
-capture plus copy-on-read, or with read-only proxies, is a mechanism choice;
-the contract only requires that neither path reaches the record.
+(dicts), and `component_names` (list) were shared objects inside the frozen
+dataclass, while `find`, `get`, iteration, `find_joint`, and `get_joint` hand
+out the stored records; a caller who edited `slot.params` edited the
+history, and the next `save_fits` wrote it. Closed in 0.20.0 with detached
+copies: every container field of the records is a `detached` descriptor
+field (Mechanisms), copied on set and on every read, with arrays inside a
+container handed out as frozen copies. Read-only proxies were rejected:
+pandas has no read-only DataFrame, and a read-only mapping is shallow and
+cannot be copied, pickled or JSON-dumped.
 
 `FitResults` itself is a snapshot of the slot list; `Project.results` builds
 a fresh one on each access, so two results objects taken around a fit differ
@@ -294,10 +303,16 @@ completed-fit path acquires a live-state shortcut.
 
 `save_data` and the sweep already persist `model_name`, the
 `model_parameters` JSON, and per-configuration values; the full definition
-record and the noise declaration are step 8. One check for step 4: the draw
-snapshot holds `clean_data` by reference and relies on the simulation
-methods rebinding rather than mutating `data_clean`. That convention is
-inside the package, so it is acceptable, but it belongs in the probe set.
+record and the noise declaration are step 8. Since 0.20.0 the simulator
+draws from the `NoiseModel` it declares, built once from the settings and
+the clean array, and its record holds that model with the settings in
+force, so nothing references the clean array and `save_data` writes the
+settings of the draw. The stored simulation is one unit, arrays and record
+together: `add_noise` is a helper that records nothing, and a new clean
+array starts a new simulation. A Poisson draw needs a non-negative signal
+and a gaussian draw a positive sigma; both are refused before any draw
+(signed Poisson sampling was removed). Owning the output arrays and
+recording the generation-time parameter specification are step 8.
 
 ## 8. Identity is construction-only
 
@@ -307,6 +322,33 @@ redirect to the project-owned object. That is the precedent for how the
 rules above are enforced: refuse at the point of misuse with a message that
 names the supported route. Validating the names as path segments is a step 5
 item and does not change this rule.
+
+## Mechanisms (step 4, v0.20.0)
+
+One idiom: an ownership rule is declared on the attribute it governs, by a
+descriptor, where the attribute is defined, instead of being spread over
+setters and accessor methods. `src/trspecfit/utils/ownership.py` holds the
+three mechanisms:
+
+- `frozen_copy` / `freeze`: every array a `File` or a result record hands
+  out is read-only (the simulator's output arrays are step 8). The flag is
+  advisory and reversible; the copy is the boundary, and the capture-hash
+  guard stays as the backstop.
+- `owned(route)`: a `File` attribute read through the attribute and written
+  by `File` through the private name. Assignment raises and names the
+  route. The stored objects are immutable (frozen arrays, tuples for the
+  windows, the frozen `NoiseModel`), so a read cannot be edited in place
+  either.
+- `detached()`: a dataclass field of the result records copied on set and
+  on every read, mappings, lists and tuples rebuilt member by member and
+  arrays inside them frozen. The record objects themselves are still handed
+  out by `find`, `get` and iteration.
+
+Levels: rules 1 to 3 and 5 are runtime refusals or copies; rule 4's
+replacement and attachment are validation before any write plus one
+transaction that restores both models on failure (`_AttachmentRollback`);
+rule 4's parameter state is API privacy, the underscore, not a guard. The
+registries row (`Project.files`, `File.models`) is unenforced by decision.
 
 ## Parameter vocabulary
 
@@ -323,7 +365,7 @@ Decided 2026-09-24, implemented in step 5: one root per tier.
   `plot_param_evolution(params=...)` and `add_par_profile`, become
   `plot_parameter_evolution(parameters=...)` and `add_parameter_profile`,
   matching the `target_parameter` keyword they already carry.
-- `par` / `pars` in the mcp layer (`Par`, `pars`, `lmfit_pars`, `add_pars`,
+- `par` / `pars` in the mcp layer (`Par`, `pars`, `add_pars`,
   `find_par_by_name`). Today's exceptions, `parameter_names` and
   `get_all_parameters`, become `par_names` and `get_all_pars`.
 - lmfit's `Parameters` / `params` stay where the object is lmfit's; the
@@ -368,12 +410,16 @@ everywhere renames `get_parameters` a second time in two minor releases;
    limits, baseline, and model axes.
 3. **Direct `lmfit_pars` edits.** Settled 2026-09-24: none, at any tier;
    the YAML is the source of truth and a variant is another named entry
-   (rule 4). Whether `lmfit_pars` becomes a read-only view or stays an
-   unguarded attribute is a step 4 mechanism question. Usage today: 122
-   sites in tests (55 set a value, 9 a `vary` flag, 3 a bound, none an
-   expression), none left in the notebooks, 15 in src outside mcp, of which
-   the writers are the fit write-back, the baseline injection, and the
-   sweep.
+   (rule 4). Mechanism settled 2026-09-30: the lmfit objects
+   (`_lmfit_pars`, `_lmfit_par_list`, `_lmfit_par`) and `_update_value` are
+   package-internal since 0.20.0, a naming boundary rather than a runtime
+   guard. Nothing outside the package needs them; inspection goes through
+   `describe`, `describe_model`, `get_vary_levels` and the results tables.
+   A read-only view was rejected as partial (the same `Parameter` objects
+   are reachable through three handles); a stamp-and-check at fit
+   preparation remains the mechanism if runtime enforcement is ever wanted
+   (the fit-preparation object of step 14). Tests load YAML variants
+   (`tests/_utils.reload_model`); truth fixtures may use the internal route.
 4. **A `Model` without a `File`.** Settled 2026-09-24: a model is
    constructed only by its file (rule 4), because axes with two owners can
    drift and contradict the data's provenance. The alternative, a standalone
@@ -392,8 +438,9 @@ everywhere renames `get_parameters` a second time in two minor releases;
   neither needs a parent-baseline reference. Landed in v0.19.0.
 - **Step 3** turns each row of the contract table into a behavioural probe
   in `docs/ai/code-review.md`. Landed 2026-09-30 as check 21.
-- **Step 4** enforces rules 1 to 5; the violations listed above are its
-  scope, the probes its acceptance tests.
+- **Step 4** landed 2026-10-01 (v0.20.0): rules 1 to 5 enforced at the
+  levels the Mechanisms section records; the probes of check 21 are
+  regression tests in `tests/test_ownership.py`.
 - **Step 5** inventories the tiers name by name and applies the vocabulary.
 - **Step 7** relies on the definition / parameter-state split of rule 4.
 - **Step 13** introduces time as a primary axis against rule 1.
@@ -406,8 +453,9 @@ everywhere renames `get_parameters` a second time in two minor releases;
   recomputation; mutable DataFrames and dicts reachable through frozen result
   records; `load_model` removing the old model before validating the new
   one; a rejected attachment leaving parameter state changed; simulator
-  metadata describing a different noise level than the saved data (fixed in
-  v0.17.0 by the draw snapshot).
+  metadata describing a different noise level than the saved data (the
+  `sigma_data` snapshot fixed in v0.17.0; the detection metadata itself read
+  the live settings until v0.20.0).
 - Confirmed against `main` at v0.17.0 on 2026-09-24 by code inspection:
   storage by reference in `File.__init__`, `subtract_dark`,
   `calibrate_data`; the `_frozen_copy` calls in the slot builders and

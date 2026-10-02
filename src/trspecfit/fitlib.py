@@ -203,7 +203,7 @@ def compute_fit_metrics(
 
 #
 def _fit_window_slices(
-    ndim: int, e_lim: list[int] | None, t_lim: list[int] | None
+    ndim: int, e_lim: Sequence[int] | None, t_lim: Sequence[int] | None
 ) -> tuple[slice, ...]:
     """Build array slices selecting the user-defined fit window.
 
@@ -227,8 +227,8 @@ def residual_fun(
     data: np.ndarray,
     fit_fun_str: str,
     unpack: int = 0,
-    e_lim: list[int] | None = None,
-    t_lim: list[int] | None = None,
+    e_lim: Sequence[int] | None = None,
+    t_lim: Sequence[int] | None = None,
     res_type: str = "lmfit",
     args: Sequence[Any] | None = None,
     *,
@@ -265,11 +265,11 @@ def residual_fun(
         - 0: Pass parameters as list: ``fit_fun(x, par, ...)``
         - 1: Unpack parameters: ``fit_fun(x, *par, ...)``
 
-    e_lim : list of int, default=[]
+    e_lim : sequence of int, default=()
         Energy axis limits [start, stop) for residual calculation.
         Uses slice notation: data[e_lim[0]:e_lim[1]]
         Empty list uses full energy range.
-    t_lim : list of int, default=[]
+    t_lim : sequence of int, default=()
         Time axis limits [start, stop) for residual calculation.
         Uses slice notation: data[t_lim[0]:t_lim[1]]
         Empty list uses full time range.
@@ -360,8 +360,8 @@ def _jacobian_noise_weight(
     data: np.ndarray,
     fit_fun_str: str,
     unpack: int,
-    e_lim: list[int] | None,
-    t_lim: list[int] | None,
+    e_lim: Sequence[int] | None,
+    t_lim: Sequence[int] | None,
     args: Sequence[Any] | None,
     window: tuple[slice, ...],
 ) -> np.ndarray:
@@ -388,8 +388,8 @@ def jacobian_fun(
     data: np.ndarray,
     fit_fun_str: str,
     unpack: int = 0,
-    e_lim: list[int] | None = None,
-    t_lim: list[int] | None = None,
+    e_lim: Sequence[int] | None = None,
+    t_lim: Sequence[int] | None = None,
     res_type: str = "lmfit",
     args: Sequence[Any] | None = None,
     *,
@@ -479,8 +479,8 @@ def jacobian_fun_project(
     data: np.ndarray,
     fit_fun_str: str,
     unpack: int = 0,
-    e_lim: list[int] | None = None,
-    t_lim: list[int] | None = None,
+    e_lim: Sequence[int] | None = None,
+    t_lim: Sequence[int] | None = None,
     res_type: str = "lmfit",
     args: Sequence[Any] | None = None,
     *,
@@ -860,7 +860,7 @@ def fit_wrapper(
     ...     const=const,
     ...     args=args,
     ...     par_names=model.parameter_names,
-    ...     par=model.lmfit_pars,
+    ...     par=model._lmfit_pars,
     ...     stages=1,
     ...     show_output=1
     ... )
@@ -871,7 +871,7 @@ def fit_wrapper(
     ...     const=const,
     ...     args=args,
     ...     par_names=model.parameter_names,
-    ...     par=model.lmfit_pars,
+    ...     par=model._lmfit_pars,
     ...     stages=2,
     ...     try_ci=1,
     ...     ci_sigmas=[1, 2, 3],
@@ -884,7 +884,7 @@ def fit_wrapper(
     ...     const=const,
     ...     args=args,
     ...     par_names=model.parameter_names,
-    ...     par=model.lmfit_pars,
+    ...     par=model._lmfit_pars,
     ...     stages=2,
     ...     try_ci=1,
     ...     mc_settings=mc,
@@ -1323,8 +1323,8 @@ def results_to_fit_2d(
                     np.asarray(data_const),
                     fit_fun_const,
                     unpack=cast("int", unpack_const),
-                    e_lim=cast("list[int]", e_lim_const),
-                    t_lim=cast("list[int]", t_lim_const),
+                    e_lim=cast("Sequence[int]", e_lim_const),
+                    t_lim=cast("Sequence[int]", t_lim_const),
                     res_type="fit",
                     args=args,
                 )
@@ -1338,8 +1338,8 @@ def results_to_fit_2d(
                     np.asarray(data_const),
                     fit_fun_const,
                     unpack=cast("int", unpack_const),
-                    e_lim=cast("list[int]", e_lim_const),
-                    t_lim=cast("list[int]", t_lim_const),
+                    e_lim=cast("Sequence[int]", e_lim_const),
+                    t_lim=cast("Sequence[int]", t_lim_const),
                     res_type="fit",
                     args=args,
                 )

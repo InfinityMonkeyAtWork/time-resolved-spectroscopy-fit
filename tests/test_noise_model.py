@@ -390,12 +390,12 @@ def test_residual_jacobian_poisson_matches_finite_differences():
     file, model, args = _make_2d_jax_args()
     e_lim, t_lim = [8, 14], [1, 6]
     scale = 20.0
-    clean = _evaluate(model.lmfit_pars, file, np.zeros((7, 21)), "fit_model_jax", args)
+    clean = _evaluate(model._lmfit_pars, file, np.zeros((7, 21)), "fit_model_jax", args)
     data = np.random.default_rng(7).poisson(np.maximum(clean, 0.0) * scale) / scale
     noise = NoiseModel(kind="poisson", scale=scale)
 
     jac = fitlib.jacobian_fun(
-        model.lmfit_pars,
+        model._lmfit_pars,
         file.energy,
         data,
         "fit_model_jax",
@@ -407,7 +407,7 @@ def test_residual_jacobian_poisson_matches_finite_differences():
         noise=noise,
     )
     fd = _residual_jacobian_fd(
-        model.lmfit_pars,
+        model._lmfit_pars,
         file=file,
         data=data,
         fit_fun_str="fit_model_jax",
@@ -426,7 +426,7 @@ def test_residual_jacobian_gaussian_matches_finite_differences():
 
     file, model, args = _make_2d_jax_args()
     e_lim, t_lim = [8, 14], [1, 6]
-    clean = _evaluate(model.lmfit_pars, file, np.zeros((7, 21)), "fit_model_jax", args)
+    clean = _evaluate(model._lmfit_pars, file, np.zeros((7, 21)), "fit_model_jax", args)
     rng = np.random.default_rng(11)
     sigma_full = 0.05 + 0.1 * rng.random((7, 21))
     data = clean + sigma_full * rng.standard_normal((7, 21))
@@ -435,7 +435,7 @@ def test_residual_jacobian_gaussian_matches_finite_differences():
     )
 
     jac = fitlib.jacobian_fun(
-        model.lmfit_pars,
+        model._lmfit_pars,
         file.energy,
         data,
         "fit_model_jax",
@@ -447,7 +447,7 @@ def test_residual_jacobian_gaussian_matches_finite_differences():
         noise=noise,
     )
     fd = _residual_jacobian_fd(
-        model.lmfit_pars,
+        model._lmfit_pars,
         file=file,
         data=data,
         fit_fun_str="fit_model_jax",
@@ -460,7 +460,7 @@ def test_residual_jacobian_gaussian_matches_finite_differences():
 
     # weighting is exactly a per-row division of the unweighted Jacobian
     jac_raw = fitlib.jacobian_fun(
-        model.lmfit_pars,
+        model._lmfit_pars,
         file.energy,
         data,
         "fit_model_jax",
@@ -481,10 +481,10 @@ def test_residual_fun_unknown_noise_is_the_unweighted_residual():
     file, model, args = _make_2d_jax_args()
     data = np.ones((7, 21))
     plain = fitlib.residual_fun(
-        model.lmfit_pars, file.energy, data, "fit_model_jax", 0, [], [], "lmfit", args
+        model._lmfit_pars, file.energy, data, "fit_model_jax", 0, [], [], "lmfit", args
     )
     declared = fitlib.residual_fun(
-        model.lmfit_pars,
+        model._lmfit_pars,
         file.energy,
         data,
         "fit_model_jax",
@@ -579,12 +579,12 @@ def test_fit_wrapper_poisson_recovers_truth():
     file = _make_1d_glp_file()
     model = file.model_active
     args = (model, 1)
-    truth = {name: model.lmfit_pars[name].value for name in model.parameter_names}
-    clean = _evaluate(model.lmfit_pars, file, np.zeros(101), "fit_model_mcp", args)
+    truth = {name: model._lmfit_pars[name].value for name in model.parameter_names}
+    clean = _evaluate(model._lmfit_pars, file, np.zeros(101), "fit_model_mcp", args)
     scale = 50.0
     data = np.random.default_rng(3).poisson(np.maximum(clean, 0.0) * scale) / scale
 
-    par_ini = copy.deepcopy(model.lmfit_pars)
+    par_ini = copy.deepcopy(model._lmfit_pars)
     par_ini["GLP_01_A"].value = 16.0
     par_ini["GLP_01_x0"].value = 84.6
     out = fitlib.fit_wrapper(
@@ -617,12 +617,12 @@ def test_fit_wrapper_weighted_covariance_is_not_redchi_scaled():
     file = _make_1d_glp_file()
     model = file.model_active
     args = (model, 1)
-    clean = _evaluate(model.lmfit_pars, file, np.zeros(101), "fit_model_mcp", args)
+    clean = _evaluate(model._lmfit_pars, file, np.zeros(101), "fit_model_mcp", args)
     rng = np.random.default_rng(5)
     sigma = 0.35
     data = clean + sigma * rng.standard_normal(101)
 
-    par_ini = copy.deepcopy(model.lmfit_pars)
+    par_ini = copy.deepcopy(model._lmfit_pars)
     par_ini["GLP_01_A"].value = 16.0
     const = (file.energy, data, "fit_model_mcp", 0, [], [])
     common = {

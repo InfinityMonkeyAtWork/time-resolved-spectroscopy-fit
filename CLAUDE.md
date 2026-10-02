@@ -39,6 +39,7 @@
 - **Naming:** Use `snake_case` by default. **Exception:** Function registry names (`GLP`, `pExpDecay`, etc.) and their parameters (`A`, `x0`, etc.) in `src/trspecfit/functions/` use CamelCase/PascalCase because `_` is the component ID delimiter (`{model}_{component}_{param}`).
 - **Signatures:** Prefer keyword arguments for all parameters except the primary data object. Use `*` to enforce keyword-only arguments for any parameter that isn't the primary data "subject."
 - **Signature Exception:** Registry functions in `src/trspecfit/functions/` keep positional signatures because parsing/introspection depends on ordered parameter lists.
+- **Comments:** Describe the code as it is; no fix or rollout narration ("avoids the stale value", "no longer", "since 0.x"). When a reason is non-obvious enough that a future session could reverse the change, record it in a regression test's docstring; prose in the code only if no test can carry it. `docs/` keeps its history.
 
 
 # Testing
@@ -46,6 +47,7 @@
 - **Pattern:** Use plain pytest. Avoid `unittest.TestCase` and fixtures; prefer explicit helper builders named by intent.
 - **API Usage:** Use the public API (`Project`, `File.load_model`, etc.) in tests to avoid masking bugs by skipping validation or setup. Use internals only for pure-math unit tests or explicit invariant checks.
 - **Execution:** Run `pytest -q`. Keep YAML test assets in `tests/models/`.
+- **Model variants:** The YAML is the source of truth, so a test that needs a model with a fixed parameter, a moved bound or a shifted seed loads a YAML variant (`tests/_utils.reload_model`) instead of editing the model in memory. A variant that need not share the model name is another entry in the base file; one that must share it (archive grouping, per-file bound mismatch) is a second file `<base>_<par>_<variant>.yaml` defining only the differing model, opening with a comment naming the base model and what differs. Fixture inputs a test does not exercise (truth values for simulated data) may use the internal `_update_value` / `_lmfit_pars` route.
 - **Plots:** Always suppress plot display in tests: pass `show_plot=False` where available, or `save_img=-2`. Exception: figure-inspection tests that assert on the live axes cannot pass `save_img=-2` (it closes the figure); they rely on the module-level Agg backend and must call `plt.close("all")` after the assertions.
 - **Type Guards:** When `assert x is not None` narrows an `X | None` type, add a `# type guard` comment.
 - **Variable Naming:** For variables derived from registry parameters or components, keep original casing (e.g., `SD = 2.0`, `c_Shirley = Component("Shirley")`). Name derived variables as `{par}_{qualifier}` (e.g., `A_early`, `mean_A`).

@@ -57,7 +57,7 @@ class TestEnergyParsing:
         assert model.components[1].comp_name == "Shirley"
         assert model.components[1].par_dict["pShirley"] == [4.0e-4, False]
         # Check that lmfit parameter was created with unbounded min/max
-        shirley_par = model.lmfit_pars["Shirley_pShirley"]
+        shirley_par = model._lmfit_pars["Shirley_pShirley"]
         assert shirley_par.value == 4.0e-4
         assert not shirley_par.vary
         assert shirley_par.min == -np.inf
@@ -79,7 +79,7 @@ class TestEnergyParsing:
         assert model.components[3].par_dict["A"] == [17, True, 5, 25]
         assert model.components[3].par_dict["x0"] == [88.1, True]
         # Check that lmfit parameter was created with unbounded min/max
-        x0_par = model.lmfit_pars["GLP_02_x0"]
+        x0_par = model._lmfit_pars["GLP_02_x0"]
         assert x0_par.value == 88.1
         assert x0_par.vary
         assert x0_par.min == -np.inf
@@ -273,18 +273,18 @@ class TestTimeParsing:
         assert model.components[2].par_dict["t0"] == [0, False, 0, 1]
 
         # Check lmfit parameters exist with prefixed names
-        assert "parTEST_expFun_01_A" in model.lmfit_pars
-        assert "parTEST_expFun_01_tau" in model.lmfit_pars
-        assert "parTEST_expFun_02_A" in model.lmfit_pars
-        assert "parTEST_expFun_02_tau" in model.lmfit_pars
+        assert "parTEST_expFun_01_A" in model._lmfit_pars
+        assert "parTEST_expFun_01_tau" in model._lmfit_pars
+        assert "parTEST_expFun_02_A" in model._lmfit_pars
+        assert "parTEST_expFun_02_tau" in model._lmfit_pars
 
         # Expressions should be auto-prefixed with par_name:
         # "-expFun_01_A" → "-parTEST_expFun_01_A"
-        expr_A = model.lmfit_pars["parTEST_expFun_02_A"].expr
+        expr_A = model._lmfit_pars["parTEST_expFun_02_A"].expr
         assert expr_A == "-parTEST_expFun_01_A"
 
         # "expFun_01_tau" → "parTEST_expFun_01_tau"
-        expr_tau = model.lmfit_pars["parTEST_expFun_02_tau"].expr
+        expr_tau = model._lmfit_pars["parTEST_expFun_02_tau"].expr
         assert expr_tau == "parTEST_expFun_01_tau"
 
 
@@ -493,8 +493,8 @@ class TestProfileParsing:
         assert p_mod.components[0].par_dict["tau"] == [2.0, True, 0.5, 10.0]
 
         # profile lmfit par names follow convention: {par_name}_{comp}_{par}
-        assert "GLP_01_A_pExpDecay_01_A" in model.lmfit_pars
-        assert "GLP_01_A_pExpDecay_01_tau" in model.lmfit_pars
+        assert "GLP_01_A_pExpDecay_01_A" in model._lmfit_pars
+        assert "GLP_01_A_pExpDecay_01_tau" in model._lmfit_pars
 
     #
     def test_pLinear_profile(self):
@@ -519,8 +519,8 @@ class TestProfileParsing:
         assert p_mod.components[0].par_dict["b"] == [0.0, False, -1.0, 1.0]
 
         # lmfit par names
-        assert "GLP_01_x0_pLinear_01_m" in model.lmfit_pars
-        assert "GLP_01_x0_pLinear_01_b" in model.lmfit_pars
+        assert "GLP_01_x0_pLinear_01_m" in model._lmfit_pars
+        assert "GLP_01_x0_pLinear_01_b" in model._lmfit_pars
 
     #
     def test_profile_aux_axis_propagated(self):
@@ -611,6 +611,42 @@ class TestYAMLValidationErrors:
                 model_yaml="models/file_energy.yaml",
                 model_info="wrong_parameter_name",
             )
+
+    #
+    def test_unknown_name_in_expression_is_reported_at_load(self):
+        """The container settles its expressions when it is built, so an
+        expression naming a parameter the model does not define fails at
+        load, not at the first evaluation."""
+
+        project = make_project()
+        file = File(
+            parent_project=project,
+            energy=np.linspace(80, 90, 50),
+            time=np.linspace(0, 10, 6),
+            aux_axis=np.linspace(0, 5, 4),
+        )
+        with pytest.raises(ValueError, match="references an unknown parameter"):
+            file.load_model(
+                "models/file_profile.yaml",
+                "profile_pLinear_unknown_name",
+                "GLP_01_x0",
+                model_type="profile",
+            )
+
+    #
+    @pytest.mark.parametrize("entry", ["expression_circular", "expression_cycle"])
+    def test_circular_expression_is_refused_at_load(self, entry):
+        """lmfit recurses on a circular expression when the container settles;
+        the load reports the cycle and keeps the previous model."""
+
+        project = make_project()
+        file = File(parent_project=project)
+        file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+        previous = file.model_active
+        with pytest.raises(ValueError, match="circular expression"):
+            file.load_model(model_yaml="models/file_energy.yaml", model_info=entry)
+        assert file.models == [previous]
+        assert file.model_active is previous
 
     #
     def test_nonexistent_model_raises(self):

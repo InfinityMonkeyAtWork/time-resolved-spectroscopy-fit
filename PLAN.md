@@ -2,10 +2,12 @@
 
 No active multi-step feature.
 
-Cleared 2026-09-29 after the baseline-independent initialization work
-(`seed_source` on `File.fit_2d` / `Project.fit_2d`, by-name seeding at every
-entry point through one `File` helper, sweep validation before the output
-file opens; v0.19.0). The behaviour changes are in `CHANGELOG.md`; the
-provenance amendments in `docs/design/fit_archive_principles.md` and
-`docs/design/fit_archive_schema.md`; the deferred coerced-value warning and
-the fit-preparation follow-up in `TODO.md` (item 14).
+Cleared 2026-10-01 after the ownership enforcement (TODO step 4, branch
+`enforce-ownership`, v0.20.0): owned `File` inputs, corrections, baseline,
+windows and noise; atomic model replacement and attachment; detached result
+records; the lmfit objects and `update_value` package-internal; the simulator
+drawing from the `NoiseModel` it declares; static expression chains settled
+the way lmfit does. The behaviour changes are in `CHANGELOG.md`; the decisions,
+mechanisms and rejected alternatives in `docs/design/api_ownership_contract.md`
+(Mechanisms section, fork 3); the simulator output ownership and the
+generation-time parameter specification in `TODO.md` (item 8).

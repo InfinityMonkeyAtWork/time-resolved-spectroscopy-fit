@@ -71,7 +71,6 @@ from IPython.display import display
 from trspecfit.config.functions import (
     background_functions,
     convolution_functions,
-    energy_functions,
     time_functions,
 )
 
@@ -86,6 +85,107 @@ from trspecfit.utils import arrays as uarr
 from trspecfit.utils import lmfit as ulmfit
 from trspecfit.utils import parsing as uparsing
 from trspecfit.utils import plot as uplt
+
+_MISSING = object()
+
+
+#
+#
+class _AttachmentRollback:
+    """
+    Restore both models when an attachment fails after it started writing.
+
+    ``Model.add_dynamics`` and ``Model.add_profile`` validate everything
+    before they write. What can still fail afterwards — a transitive
+    expression chain through the newly dynamic parameter, found by the
+    analysis — surfaces only once the candidate is attached, so the
+    attachment runs inside this context manager. It snapshots what
+    the attachment writes: the target parameter's attachment fields, every
+    parameter's expression flags, and the candidate's parent pointer, axis,
+    timing and evaluation state. On any exception it puts that back,
+    rebuilds the model's parameter containers from the restored
+    parameters, and lets the exception propagate.
+    """
+
+    # The three tuples name what the transaction writes: set_frequency
+    # (frequency, time_norm, n_sub, n_counter, the components' time_n_sub and
+    # time_norm), Par.update / add_profile (t_vary, t_model, p_vary, p_model,
+    # the target's _lmfit_par_list, the candidate's value_1d and aux_axis),
+    # update() (the containers, rebuilt on restore) and the expression
+    # analysis (expr_string, expr_refs, expr_refs_time_dep,
+    # expr_refs_profile_dep). A new write in those paths belongs here too.
+    _PAR_FIELDS = (
+        "t_vary",
+        "t_model",
+        "p_vary",
+        "p_model",
+        "expr_string",
+        "expr_refs",
+        "expr_refs_time_dep",
+        "expr_refs_profile_dep",
+    )
+    _CANDIDATE_FIELDS = (
+        "parent_model",
+        "aux_axis",
+        "frequency",
+        "time_norm",
+        "n_sub",
+        "n_counter",
+        "value_1d",
+    )
+    _COMPONENT_FIELDS = ("aux_axis", "time_n_sub", "time_norm", "value_1d")
+
+    def __init__(self, model: "Model", target_par: "Par", candidate: "Model") -> None:
+        self._model = model
+        self._target_par = target_par
+        self._target_list = list(target_par._lmfit_par_list)
+        self._pars = [
+            (par, self._snapshot(par, self._PAR_FIELDS))
+            for par in model.get_all_parameters()
+        ]
+        self._candidate = candidate
+        self._candidate_state = self._snapshot(candidate, self._CANDIDATE_FIELDS)
+        self._components = [
+            (comp, self._snapshot(comp, self._COMPONENT_FIELDS))
+            for comp in candidate.components
+        ]
+
+    #
+    @staticmethod
+    def _snapshot(obj: object, fields: tuple[str, ...]) -> dict[str, Any]:
+        state = {}
+        for field in fields:
+            value = getattr(obj, field, _MISSING)
+            if value is not _MISSING:
+                state[field] = list(value) if isinstance(value, list) else value
+        return state
+
+    #
+    @staticmethod
+    def _restore(obj: object, state: dict[str, Any]) -> None:
+        for field, value in state.items():
+            setattr(obj, field, value)
+
+    #
+    def __enter__(self) -> "_AttachmentRollback":
+        return self
+
+    #
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        if exc_type is not None:
+            self.restore()
+
+    #
+    def restore(self) -> None:
+        """Put back every snapshotted field and rebuild the model's containers."""
+
+        for par, state in self._pars:
+            self._restore(par, state)
+        self._target_par._lmfit_par_list = self._target_list
+        self._restore(self._candidate, self._candidate_state)
+        for comp, state in self._components:
+            self._restore(comp, state)
+        self._model.update()
 
 
 #
@@ -111,10 +211,10 @@ class Model:
         Function objects for all components (extracted from Component.fct)
     components : list of Component
         Component objects that define this model's behavior
-    lmfit_par_list : list of lmfit.Parameter
+    _lmfit_par_list : list of lmfit.Parameter
         Flattened list of all individual parameters (spectral + temporal + profile)
-    lmfit_pars : lmfit.Parameters
-        Complete parameter object for fitting (from lmfit_par_list)
+    _lmfit_pars : lmfit.Parameters
+        Complete parameter object for fitting (from _lmfit_par_list)
     parameter_names : list of str
         Names of all parameters in the model
     component_spectra : list of ndarray
@@ -208,9 +308,9 @@ class Model:
         # list of objects of type defined in Component class
         self.components: list[Component] = []
         # flattened lmfit parameters list (1D with time- and energy-components)
-        self.lmfit_par_list: list[lmfit.Parameter] = []  # (individual objects)
-        # lmfit.Parameters object corresponding to lmfit_par_list attribute
-        self.lmfit_pars: lmfit.Parameters = lmfit.Parameters()
+        self._lmfit_par_list: list[lmfit.Parameter] = []  # (individual objects)
+        # lmfit.Parameters object corresponding to _lmfit_par_list attribute
+        self._lmfit_pars: lmfit.Parameters = lmfit.Parameters()
         # list of all parameter names
         self.parameter_names: list[str] = []
         # list of component spectra (from last evaluation/ current parameters)
@@ -386,8 +486,8 @@ class Model:
         else:
             print("no elements in this model")
         print("all lmfit.Parameters() [flattened and sorted alphabetically]:")
-        if self.lmfit_pars:
-            self.lmfit_pars.pretty_print()
+        if self._lmfit_pars:
+            self._lmfit_pars.pretty_print()
         else:
             print("lmfit.Parameters() object is empty")
         print()
@@ -522,7 +622,7 @@ class Model:
         - kernel-matrix convolution operator (for convolution components)
 
         **Model Updates:**
-        After adding components, the model's lmfit_pars and parameter_names
+        After adding components, the model's _lmfit_pars and parameter_names
         are automatically updated via self.update().
         """
 
@@ -581,7 +681,7 @@ class Model:
             # populate pars attribute in the component
             comp.create_pars(prefix=prefix)
 
-        # update model lmfit_par_list (+parameter_names) and components
+        # update model _lmfit_par_list (+parameter_names) and components
         self.update()
 
     #
@@ -619,8 +719,7 @@ class Model:
         Print information on all parameters individually.
 
         Debugging utility to inspect parameter structure and values.
-        For routine parameter inspection, use model.describe() or
-        model.lmfit_pars.pretty_print().
+        For routine parameter inspection, use model.describe().
 
         Parameters
         ----------
@@ -644,24 +743,47 @@ class Model:
         """
 
         # re-initialize
-        self.lmfit_par_list = []
-        self.lmfit_pars = lmfit.Parameters()
+        self._lmfit_par_list = []
+        self._lmfit_pars = lmfit.Parameters()
         self.parameter_names = []
 
         for comp in self.components:
             # create a flattened lmfit.Parameter list for the component
             comp.update_lmfit_par_list()
             # add lmfit.Parameter list of this component to corresponding model list
-            self.lmfit_par_list.extend(comp.lmfit_par_list)
+            self._lmfit_par_list.extend(comp._lmfit_par_list)
 
-        # create lmfit.Parameters object from the lmfit_par_list
-        self.lmfit_pars.add_many(*self.lmfit_par_list)
+        # create lmfit.Parameters object from the _lmfit_par_list
+        self._lmfit_pars.add_many(*self._lmfit_par_list)
 
         # update list of all parameter names
-        self.parameter_names = [par.name for par in self.lmfit_par_list]
+        self.parameter_names = [par.name for par in self._lmfit_par_list]
+
+        # settle every expression in dependency order, as lmfit's minimizer
+        # does before a fit: an expression parameter enters the container
+        # with a placeholder, and a chained expression read before its
+        # dependency would otherwise see that placeholder
+        try:
+            self._lmfit_pars.update_constraints()
+        except NameError as e:
+            raise ValueError(
+                f'{type(self).__name__} "{self.name}" has an expression that '
+                f"references an unknown parameter ({e}). Expressions can only "
+                "reference parameters of the same model."
+            ) from e
+        except RecursionError:
+            circular = [
+                name for name, par in self._lmfit_pars.items() if par.expr is not None
+            ]
+            raise ValueError(
+                f'{type(self).__name__} "{self.name}" has a circular expression: '
+                f"one of {circular} depends on itself, directly or through other "
+                "expressions. An expression must resolve to parameters that "
+                "carry values."
+            ) from None
 
     #
-    def update_value(
+    def _update_value(
         self,
         new_par_values: list[float] | np.ndarray,
         par_select: str | list[str] = "all",
@@ -669,7 +791,7 @@ class Model:
         """
         Update model from top down: model → components → parameters.
 
-        Updates parameter values in the model's lmfit_pars based on new
+        Updates parameter values in the model's _lmfit_pars based on new
         values (e.g., from optimizer). Used during fitting to apply
         proposed parameter values before model evaluation.
 
@@ -703,23 +825,23 @@ class Model:
         """
 
         if par_select == "all":
-            for i, p in enumerate(self.lmfit_pars):
-                self.lmfit_pars[p].value = new_par_values[i]
+            for i, p in enumerate(self._lmfit_pars):
+                self._lmfit_pars[p].value = new_par_values[i]
             return
 
         if len(par_select) != len(new_par_values):
             raise ValueError(
-                f"update_value got {len(new_par_values)} values for "
+                f"_update_value got {len(new_par_values)} values for "
                 f"{len(par_select)} names in par_select; pass one value per name."
             )
-        unknown = [name for name in par_select if name not in self.lmfit_pars]
+        unknown = [name for name in par_select if name not in self._lmfit_pars]
         if unknown:
             raise ValueError(
                 f'Model "{self.name}" has no parameter(s) {unknown}; '
                 f"available parameters: {self.parameter_names}."
             )
         for name, value in zip(par_select, new_par_values, strict=True):
-            self.lmfit_pars[name].value = value
+            self._lmfit_pars[name].value = value
 
     #
     def add_dynamics(self, dynamics_model: "Dynamics", frequency: float = -1) -> None:
@@ -741,13 +863,7 @@ class Model:
             - >0: Dynamics repeat at this frequency
         """
 
-        # set the model instance calling this method as parent model for Dynamics
-        dynamics_model.parent_model = self
-
-        if frequency != -1:  # set a repetition frequency
-            dynamics_model.set_frequency(frequency)
-
-        # find component and parameter index from Dynamics model name
+        # --- every check before any write, on either model ---
         ci, pi = self.find_par_by_name(dynamics_model.name)
         if ci is None or pi is None:
             raise ValueError(
@@ -756,9 +872,7 @@ class Model:
                 f"Available parameters: {self.parameter_names}"
             )
         target_par = self.components[ci].pars[pi]
-
-        # Disallow adding dynamics to expression-linked parameters.
-        # Their value is already constrained by the expression.
+        # an expression-linked parameter is already constrained by its expression
         if len(target_par.info) == 1 and isinstance(target_par.info[0], str):
             raise ValueError(
                 f"Cannot add time dependence to expression parameter "
@@ -766,23 +880,32 @@ class Model:
                 f"(expression: {target_par.info[0]}). "
                 "Add dynamics to the referenced base parameter instead."
             )
-
-        # add Dynamics model and update corresponding parameter
-        try:
-            target_par.update(dynamics_model)
-        except NameError as e:
-            # lmfit evaluates dynamics expressions in the dynamics model's
-            # own parameter namespace; unknown names surface as NameError
+        if target_par.t_vary:
             raise ValueError(
-                f'Dynamics model for "{dynamics_model.name}" references an '
-                f"unknown parameter ({e}). Expressions in a dynamics model "
-                "can only reference parameters of that same dynamics model."
-            ) from e
-        # update model lmfit_par_list, parameter_names and components
-        self.update()
+                f"Parameter '{dynamics_model.name}' already has time dependence "
+                "(t_vary=True); a parameter takes one dynamics model. Edit the "
+                "YAML and reload the model to change it."
+            )
+        if target_par.p_vary:
+            raise ValueError(
+                f"Cannot add time dependence to parameter "
+                f"'{dynamics_model.name}' because it already has a profile "
+                "(p_vary=True). This is currently disabled to avoid strongly "
+                "correlated fits. Add dynamics to a profile parameter "
+                "instead, or remove/fix the profile first."
+            )
+        dynamics_model.validate_frequency(frequency)
 
-        # Re-analyze all expressions since time-dependence status may have changed
-        self._analyze_expression_dependencies()
+        # --- one transaction: a failure below restores both models ---
+        with _AttachmentRollback(self, target_par, dynamics_model):
+            if frequency != -1:
+                dynamics_model.set_frequency(frequency)
+            target_par.update(dynamics_model)
+            dynamics_model.parent_model = self
+            # update model _lmfit_par_list, parameter_names and components
+            self.update()
+            # re-analyze all expressions: time-dependence status changed
+            self._analyze_expression_dependencies()
 
     #
     def add_profile(self, profile_model: "Profile") -> None:
@@ -810,10 +933,7 @@ class Model:
             ``aux_axis`` has not been set on this model.
         """
 
-        # set this model as parent for the Profile
-        profile_model.parent_model = self
-
-        # find component and parameter index from Profile model name
+        # --- every check before any write, on either model ---
         ci, pi = self.find_par_by_name(profile_model.name)
         if ci is None or pi is None:
             raise ValueError(
@@ -822,8 +942,7 @@ class Model:
                 f"Available parameters: {self.parameter_names}"
             )
         target_par = self.components[ci].pars[pi]
-
-        # Disallow adding profile to expression-linked parameters
+        # an expression-linked parameter is already constrained by its expression
         if len(target_par.info) == 1 and isinstance(target_par.info[0], str):
             raise ValueError(
                 f"Cannot add profile to expression parameter "
@@ -831,33 +950,43 @@ class Model:
                 f"(expression: {target_par.info[0]}). "
                 "Add profile to the referenced base parameter instead."
             )
-
-        # aux_axis must be set before adding a profile
+        if target_par.p_vary:
+            raise ValueError(
+                f"Parameter '{profile_model.name}' already has a profile "
+                "(p_vary=True); a parameter takes one profile model. Edit the "
+                "YAML and reload the model to change it."
+            )
+        if target_par.t_vary:
+            raise ValueError(
+                f"Cannot add profile to parameter '{profile_model.name}' because "
+                "it already has time dependence (t_vary=True). This is currently "
+                "disabled to avoid strongly correlated fits. Add profile first "
+                "and dynamics to a profile parameter instead, or remove/fix "
+                "time dependence first."
+            )
         if self.aux_axis is None:
             raise ValueError(
                 f"Cannot add profile to model '{self.name}': aux_axis is not set. "
-                "Set File.aux_axis and reload the model, "
-                "or set model.aux_axis directly."
+                "Pass aux_axis= when constructing the File and reload the model."
             )
 
-        # propagate aux_axis to profile model and its components
-        profile_model.aux_axis = self.aux_axis
-        for comp in profile_model.components:
-            comp.aux_axis = self.aux_axis
-
-        # update target parameter
-        target_par.p_vary = True
-        target_par.p_model = profile_model
-        # evaluate profile to initialize value_1d
-        profile_model.create_value_1d()
-        # include profile parameters in this model's lmfit parameter list
-        target_par.lmfit_par_list.extend(profile_model.lmfit_par_list)
-
-        # update model lmfit_par_list, parameter_names and components
-        self.update()
-
-        # Re-analyze all expressions since profile status may have changed
-        self._analyze_expression_dependencies()
+        # --- one transaction: a failure below restores both models ---
+        with _AttachmentRollback(self, target_par, profile_model):
+            # the profile evaluates on this model's auxiliary axis
+            profile_model.aux_axis = self.aux_axis
+            for comp in profile_model.components:
+                comp.aux_axis = self.aux_axis
+            # evaluate first: a failing evaluation leaves the Par untouched
+            profile_model.create_value_1d()
+            target_par.p_vary = True
+            target_par.p_model = profile_model
+            # include profile parameters in this model's lmfit parameter list
+            target_par._lmfit_par_list.extend(profile_model._lmfit_par_list)
+            profile_model.parent_model = self
+            # update model _lmfit_par_list, parameter_names and components
+            self.update()
+            # re-analyze all expressions: profile status changed
+            self._analyze_expression_dependencies()
 
     #
     def _analyze_expression_dependencies(self) -> None:
@@ -867,8 +996,9 @@ class Model:
         Single pass: sets ``expr_refs_time_dep`` / ``expr_refs_profile_dep``
         for expressions that *directly* reference a t_vary / p_vary parameter.
         Then checks for transitive chains (expression → expression → dynamic
-        parameter) and raises if any are found.  Pure expression chains
-        (no dynamics/profiles) are fine — lmfit resolves those natively.
+        parameter) and raises if any are found. Pure expression chains (no
+        dynamics or profiles) are fine: ``update()`` settles them with lmfit's
+        ``update_constraints``.
 
         Called automatically after add_dynamics() and add_profile().
         """
@@ -924,7 +1054,7 @@ class Model:
         have dynamics sub-models).
         """
 
-        for lmf_par in par.lmfit_par.values():
+        for lmf_par in par._lmfit_par.values():
             levels[lmf_par.name] = par.vary_level
         if par.t_vary and par.t_model is not None:
             for sub_par in par.t_model.get_all_parameters():
@@ -1050,6 +1180,16 @@ class Model:
         with convolution/background interactions.
         """
 
+        # settle expressions as lmfit's minimizer does before a residual
+        self._lmfit_pars.update_constraints()
+        return self._evaluate_1d(t_ind, store_1d=store_1d, return_1d=return_1d)
+
+    #
+    def _evaluate_1d(
+        self, t_ind: int = 0, *, store_1d: int = 0, return_1d: int = 0
+    ) -> np.ndarray | None:
+        """``create_value_1d`` on an already settled container."""
+
         # re-initialize list containing individual component spectra
         if store_1d == 1:
             self.component_spectra = []
@@ -1117,12 +1257,15 @@ class Model:
         if self.time is None or self.energy is None:
             raise ValueError("Model time and energy axes required for 2D evaluation")
 
+        # settle expressions once; nothing in lmfit's container changes
+        # between the time points of one evaluation
+        self._lmfit_pars.update_constraints()
         t_start = 0 if t_ind is None else t_ind[0]
         time_slice = self.time if t_ind is None else self.time[t_ind[0] : t_ind[1]]
         self.value_2d = np.empty((len(time_slice), len(self.energy)))
         for ti, _t in enumerate(time_slice):
-            # create_value_1d expects an absolute index into self.time
-            val = self.create_value_1d(t_ind=t_start + ti, return_1d=1)
+            # the evaluator expects an absolute index into self.time
+            val = self._evaluate_1d(t_ind=t_start + ti, return_1d=1)
             if val is None:
                 raise RuntimeError("create_value_1d returned None during 2D eval")
             self.value_2d[ti, :] = val
@@ -1332,10 +1475,10 @@ class Component:
         Normalized time axis (resets to 0 at each subcycle start)
     pars : list of Par
         Parameter objects for this component
-    lmfit_par_list : list of lmfit.Parameter
+    _lmfit_par_list : list of lmfit.Parameter
         Flattened list of lmfit parameters
-    lmfit_pars : lmfit.Parameters
-        lmfit.Parameters object built from lmfit_par_list
+    _lmfit_pars : lmfit.Parameters
+        lmfit.Parameters object built from _lmfit_par_list
     time : ndarray or None
         Time axis (inherited from model, or kernel axis for convolutions)
     energy : ndarray or None
@@ -1400,8 +1543,8 @@ class Component:
         # list of Par objects needed to construct component
         self.pars: list[Par] = []  # used to create component value during fit
         # flattened list of all lmfit parameters defining this component
-        self.lmfit_par_list: list[lmfit.Parameter] = []
-        self.lmfit_pars: lmfit.Parameters = lmfit.Parameters()  # for describe() method
+        self._lmfit_par_list: list[lmfit.Parameter] = []
+        self._lmfit_pars: lmfit.Parameters = lmfit.Parameters()  # for describe() method
         # time, energy, and aux axes are inherited from model
         self.time: np.ndarray | None = None
         self.energy: np.ndarray | None = None
@@ -1542,8 +1685,9 @@ class Component:
         Add prefix to time function parameter references in Dynamics models.
 
         For Dynamics models, parameters of time functions need the Dynamics model
-        name as a prefix, while energy function parameters reference the parent
-        energy model directly without prefix.
+        name as a prefix. A dynamics expression references parameters of its
+        own model only; any other name is left as it is, and the load reports
+        it as unknown when the container settles.
 
         Parameters
         ----------
@@ -1562,13 +1706,11 @@ class Component:
         --------
         For Dynamics model "GLP_01_x0":
         - "expFun_01_tau" -> "GLP_01_x0_expFun_01_tau" (time function)
-        - "GLP_01_A" -> "GLP_01_A" (energy function, unchanged)
-        - "expFun_01_tau * 0.5 + GLP_01_A" -> "GLP_01_x0_expFun_01_tau * 0.5 + GLP_01_A"
+        - "-expFun_01_A" -> "-GLP_01_x0_expFun_01_A" (another subcycle's parameter)
         """
 
         # Get function names from both libraries
         time_funcs = time_functions()
-        energy_funcs = energy_functions()
         conv_funcs = convolution_functions()
 
         # Pattern to match parameter references: function_name_NN_param_name
@@ -1587,10 +1729,6 @@ class Component:
             # Time functions need prefix (they're in this Dynamics model)
             if func_name in time_funcs or func_name in conv_funcs:
                 return f"{prefix}{func_name}{rest}"
-
-            # Energy functions don't need prefix (they reference parent energy model)
-            if func_name in energy_funcs:
-                return full_match
 
             # Unknown function - leave unchanged and let lmfit error naturally
             return full_match
@@ -1680,7 +1818,7 @@ class Component:
             # Set the expression on the lmfit parameter
             par_name = temp.name
             try:
-                temp.lmfit_par[par_name].set(expr=expr)
+                temp._lmfit_par[par_name].set(expr=expr)
             except Exception as e:  # noqa: BLE001
                 raise ValueError(
                     f"Failed to set expression '{expr}' for parameter '{par_name}': {e}"
@@ -1705,14 +1843,14 @@ class Component:
         """
 
         # re-initialize the list and lmfit.Parameters object
-        self.lmfit_par_list = []
-        self.lmfit_pars = lmfit.Parameters()
+        self._lmfit_par_list = []
+        self._lmfit_pars = lmfit.Parameters()
         # go through all pars of this component ...
         for p in self.pars:
             # ... and add their list of all lmfit.Parameter objects
-            self.lmfit_par_list.extend(p.lmfit_par_list)
-        # update lmfit.Parameters object from the lmfit_par_list
-        self.lmfit_pars.add_many(*self.lmfit_par_list)
+            self._lmfit_par_list.extend(p._lmfit_par_list)
+        # update lmfit.Parameters object from the _lmfit_par_list
+        self._lmfit_pars.add_many(*self._lmfit_par_list)
 
     #
     def describe(self, detail: int = 1) -> None:
@@ -1749,8 +1887,8 @@ class Component:
             print(f"function will be {comp_type_str} [{subcycle_str}]\n")
 
             print("all lmfit.Parameters() [flattened and sorted alphabetically]:")
-            if self.lmfit_pars:
-                self.lmfit_pars.pretty_print()
+            if self._lmfit_pars:
+                self._lmfit_pars.pretty_print()
             else:
                 print("lmfit.Parameters() object is empty")
             print()
@@ -1974,7 +2112,7 @@ class Component:
                         p.p_model.create_value_1d(t_ind=t_ind)
                     if p.p_model.value_1d is None:
                         raise ValueError(f"Profile value_1d is None for par '{p.name}'")
-                    base = cast("list[Any]", ulmfit.par_extract(p.lmfit_par))
+                    base = cast("list[Any]", ulmfit.par_extract(p._lmfit_par))
                     pars_i.append(base[0] + p.p_model.value_1d[i])
                 else:
                     pars_i.append(
@@ -2145,7 +2283,7 @@ class Par:
         Parameter name
     info : list
         Parameter specification from initialization
-    lmfit_par : lmfit.Parameters
+    _lmfit_par : lmfit.Parameters
         lmfit Parameters object (contains 1+ parameters)
     t_vary : bool
         Whether parameter has time-dependence (via Dynamics)
@@ -2155,7 +2293,7 @@ class Par:
         Whether parameter varies over the auxiliary axis (via Profile)
     p_model : Profile or None
         Profile model describing variation over aux_axis (if p_vary=True)
-    lmfit_par_list : list
+    _lmfit_par_list : list
         Flattened list of all lmfit parameters (spectral + temporal + profile)
     expr_refs_time_dep : bool
         Whether expression references time-dependent parameters
@@ -2193,7 +2331,7 @@ class Par:
 
     **Parameter Flattening:**
 
-    lmfit_par_list contains all parameters defining this Par:
+    _lmfit_par_list contains all parameters defining this Par:
 
     - Without time/profile-dependence: 1 parameter (the spectral one)
     - With time-dependence: N parameters (spectral + all from Dynamics model)
@@ -2206,12 +2344,12 @@ class Par:
         self.name = name
         self.info: list[Any] = [] if info is None else list(info)
         self.vary_level: str = "static"  # "project", "file", or "static"
-        self.lmfit_par: lmfit.Parameters = lmfit.Parameters()
+        self._lmfit_par: lmfit.Parameters = lmfit.Parameters()
         self.t_vary: bool = False
         self.t_model: Dynamics | None = None  # set by add_dynamics()
         self.p_vary: bool = False
         self.p_model: Profile | None = None  # set by add_profile()
-        self.lmfit_par_list: list[lmfit.Parameter] = []
+        self._lmfit_par_list: list[lmfit.Parameter] = []
         # Expression analysis attributes
         self.expr_refs_time_dep: bool = False  # flag for time-dependent references
         self.expr_refs_profile_dep: bool = False  # flag for profile-dependent refs
@@ -2258,13 +2396,13 @@ class Par:
 
         print(
             f"par name: {self.name} [value: {self.value()}]"
-            " and its lmfit_par attribute:"
+            " and its _lmfit_par attribute:"
         )
-        if isinstance(self.lmfit_par, lmfit.Parameters):
-            self.lmfit_par.pretty_print()
+        if isinstance(self._lmfit_par, lmfit.Parameters):
+            self._lmfit_par.pretty_print()
         else:
             print("[this is not an lmfit.Parameter instance]")
-            display(self.lmfit_par)
+            display(self._lmfit_par)
         #
         if not self.t_vary:
             print("parameter has no time dependence")
@@ -2323,10 +2461,10 @@ class Par:
             )
         else:
             lmfit_par = ulmfit.par_create(self.name, self.info, prefix, suffix)
-        # add to lmfit_par attribute
-        self.lmfit_par.add_many(lmfit_par)
+        # add to the _lmfit_par container
+        self._lmfit_par.add_many(lmfit_par)
         # and list of individual lmfit paramters
-        self.lmfit_par_list.extend([lmfit_par])
+        self._lmfit_par_list.extend([lmfit_par])
 
     #
     def update(self, t_model: "Dynamics") -> None:
@@ -2342,14 +2480,12 @@ class Par:
             Dynamics model describing time evolution
         """
 
-        # update t_vary (default = False)
+        # evaluate t_model first: a failing evaluation leaves this Par untouched
+        t_model.create_value_1d()
         self.t_vary = True
-        # update t_model attribute
         self.t_model = t_model
-        # evaluate t_model to update/create model.value_1d
-        self.t_model.create_value_1d()
         # add t_model pars to list of individual lmfit parameters
-        self.lmfit_par_list.extend(self.t_model.lmfit_par_list)
+        self._lmfit_par_list.extend(t_model._lmfit_par_list)
 
     #
     def value(
@@ -2400,20 +2536,20 @@ class Par:
                 # Ensure profile is fresh for this t_ind (no-op if already
                 # evaluated via the owning component, cheap cache check).
                 self.p_model.create_value_1d(t_ind=t_ind)
-                base = cast("list[float]", ulmfit.par_extract(self.lmfit_par))
+                base = cast("list[float]", ulmfit.par_extract(self._lmfit_par))
                 if self.p_model.value_1d is None:
                     raise RuntimeError(
                         f'Profile model "{self.p_model.name}" has no value_1d'
                     )
                 return float(base[0] + self.p_model.value_1d[aux_ind])
             # Standard lmfit evaluation
-            value = cast("list[float]", ulmfit.par_extract(self.lmfit_par))[0]
+            value = cast("list[float]", ulmfit.par_extract(self._lmfit_par))[0]
 
         elif self.t_vary and self.t_model is not None:
             if update_t_model:
                 # update t_model, specifically self.t_model.value_1d
                 self.t_model.create_value_1d()
-            base = cast("list[float]", ulmfit.par_extract(self.lmfit_par))
+            base = cast("list[float]", ulmfit.par_extract(self._lmfit_par))
             if self.t_model.value_1d is None:
                 raise RuntimeError(
                     f'Dynamics model "{self.t_model.name}" has no value_1d'
@@ -2651,6 +2787,48 @@ class Dynamics(Model):
         self.parent_model: Model | None = None
 
     #
+    def validate_frequency(self, frequency: float) -> None:
+        """
+        Reject a repetition frequency this Dynamics model cannot take.
+
+        Writes nothing: ``add_dynamics`` runs it before any state changes,
+        and ``set_frequency`` / ``normalize_time`` run it before they write.
+
+        Parameters
+        ----------
+        frequency : float
+            Repetition frequency in reciprocal time-axis units, or ``-1``
+            for a single cycle over the time axis.
+
+        Raises
+        ------
+        ValueError
+            If the time axis is missing, *frequency* is negative and not
+            ``-1``, positive on a single dynamics model (``subcycles=0``),
+            or ``-1`` with more than one subcycle.
+        """
+
+        if self.time is None:
+            raise ValueError("Dynamics.time axis must be defined")
+        if frequency < 0 and frequency != -1:
+            raise ValueError(
+                f'Frequency (f) must be >0 (or "-1" for no repetition). '
+                f"Got: {frequency}"
+            )
+        if frequency > 0 and self.subcycles == 0:
+            raise ValueError(
+                "Cannot set frequency on a single dynamics model (subcycles=0). "
+                "Multi-cycle requires at least 2 entries in model_info: the "
+                "first is the global component (e.g. IRF or 'none'), the rest "
+                "are repeating subcycles."
+            )
+        if frequency == -1 and self.subcycles > 1:
+            raise ValueError(
+                "Cannot use subcycles (N > 1) without a positive frequency. "
+                f"Got subcycles={self.subcycles} with frequency=-1"
+            )
+
+    #
     def set_frequency(self, frequency: float) -> None:
         """
         Set repetition frequency and update time normalization.
@@ -2700,13 +2878,7 @@ class Dynamics(Model):
         - Normalized time axis inherited (if subcycle != 0)
         """
 
-        if frequency > 0 and self.subcycles == 0:
-            raise ValueError(
-                "Cannot set frequency on a single dynamics model (subcycles=0). "
-                "Multi-cycle requires at least 2 entries in model_info: the "
-                "first is the global component (e.g. IRF or 'none'), the rest "
-                "are repeating subcycles."
-            )
+        self.validate_frequency(frequency)
         self.frequency = frequency
         self.normalize_time()  # update the normalization of the time axis
         if self.n_sub is None:
@@ -2806,21 +2978,11 @@ class Dynamics(Model):
         Note: subcycles=1 is rejected at model load time (File.load_model).
         """
 
-        if self.time is None:
-            raise ValueError("Dynamics.time axis must be defined")
-        if self.frequency < 0 and self.frequency != -1:
-            raise ValueError(
-                f'Frequency (f) must be >0 (or "-1" for no repetition). '
-                f"Got: {self.frequency}"
-            )
+        self.validate_frequency(self.frequency)
+        assert self.time is not None  # type guard — validated above
 
         # No repetition within data/time window
         if self.frequency == -1:
-            if self.subcycles > 1:
-                raise ValueError(
-                    "Cannot use subcycles (N > 1) without a positive frequency. "
-                    f"Got subcycles={self.subcycles} with frequency=-1"
-                )
             self.time_norm = np.asarray(self.time)
             self.n_sub = np.zeros(len(self.time))
             self.n_counter = np.zeros(len(self.time))

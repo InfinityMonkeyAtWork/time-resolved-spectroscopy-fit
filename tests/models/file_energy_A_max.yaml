@@ -1,0 +1,8 @@
+# single_glp from file_energy.yaml with a different upper bound on the amplitude
+# (value * 10 + 7): a bound change alone is a distinct configuration
+single_glp:
+    GLP:
+      A: [20, True, 5, 207]
+      x0: [85.0, True, 82, 88]
+      F: [1.0, True, 0.75, 2.5]
+      m: [0.3, True, 0, 1]

@@ -1,13 +1,13 @@
-"""``parameter_names`` / ``lmfit_pars`` ordering invariants across topology.
+"""``parameter_names`` / ``_lmfit_pars`` ordering invariants across topology.
 
-``parameter_names`` is the positional contract that ``update_value``,
+``parameter_names`` is the positional contract that ``_update_value``,
 ``ulmfit.par_extract``, SbS seed templates, and the GIR ``theta_indices``
 all rely on. Topology matters because the flattening crosses
 Components × ``t_model`` × ``p_model`` and the order is non-obvious for
 F8 (profile-internal dynamics) and F12 (mixed expressions). These tests
 pin two invariants single-static-model coverage can't:
 
-- ``list(model.lmfit_pars)`` iterates in ``model.parameter_names`` order.
+- ``list(model._lmfit_pars)`` iterates in ``model.parameter_names`` order.
 - Rebuilding the same family produces an identical ``parameter_names``
   list (deterministic flattening).
 """
@@ -41,9 +41,9 @@ def _build_truth_model(family_id: str, suffix: str):
 #
 @pytest.mark.parametrize("family_id", _FAMILIES)
 def test_lmfit_pars_iter_matches_parameter_names(family_id):
-    """``list(model.lmfit_pars)`` must equal ``model.parameter_names``.
+    """``list(model._lmfit_pars)`` must equal ``model.parameter_names``.
 
-    ``update_value(par_select='all')`` enumerates ``lmfit_pars`` and
+    ``_update_value(par_select='all')`` enumerates ``_lmfit_pars`` and
     indexes positionally into the input list; if the iteration order
     drifts from ``parameter_names``, every consumer that built its
     input via ``parameter_names`` (par_extract, GIR theta_indices, SbS
@@ -51,7 +51,7 @@ def test_lmfit_pars_iter_matches_parameter_names(family_id):
     """
 
     model = _build_truth_model(family_id, "single")
-    assert list(model.lmfit_pars) == list(model.parameter_names)
+    assert list(model._lmfit_pars) == list(model.parameter_names)
 
 
 #

@@ -1,0 +1,7 @@
+# MonoExpProject from project_time.yaml with different tau bounds: a project-vary
+# parameter whose bounds disagree between files is a conflict
+MonoExpProject:
+    expFun:
+        A: [5, "file", 0, 15]
+        tau: [5, "project", 0.01, 999]
+        t0: [0, "static", 0, 1]

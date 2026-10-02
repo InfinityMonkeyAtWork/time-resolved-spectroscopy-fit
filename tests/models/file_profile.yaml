@@ -12,6 +12,13 @@ profile_pLinear:
         m: [-0.5, True, -2, 2]
         b: [0.0, False, -1.0, 1.0]
 
+# profile_pLinear with an expression naming a parameter the profile does not
+# define: refused at load
+profile_pLinear_unknown_name:
+    pLinear:
+        m: ["pGauss_01_A * 0.1"]
+        b: [0.0, False, -1.0, 1.0]
+
 # pGauss profile for an amplitude parameter (centered on the test aux axis)
 profile_pGauss:
     pGauss:

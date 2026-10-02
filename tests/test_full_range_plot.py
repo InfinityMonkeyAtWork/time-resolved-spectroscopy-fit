@@ -154,10 +154,10 @@ def test_live_full_range_uses_slot_correction_state() -> None:
 
 #
 def test_completed_fit_rendering_insulated_from_live_mutation() -> None:
-    """In-place mutation of the live file after a fit never reaches
-    completed-fit rendering: the provider is the captured SavedFile,
-    which holds its own frozen copy of the fit-time arrays. (Parity with
-    a loaded archive is covered by the roundtrip tests.)"""
+    """Completed-fit rendering never reads the live file: the live array is
+    read-only, and the provider is the captured SavedFile, which holds its
+    own frozen copy of the fit-time arrays. (Parity with a loaded archive is
+    covered by the roundtrip tests.)"""
 
     _, fit_file, family = _build_fit_file("F1")
     fit_file.set_fit_limits(_narrow_energy_limits(fit_file), show_plot=False)
@@ -165,12 +165,14 @@ def test_completed_fit_rendering_insulated_from_live_mutation() -> None:
     assert fit_file.data_raw is not None  # type guard
     raw = fit_file.data_raw.copy()
 
-    fit_file.data_raw[:] = fit_file.data_raw + 5.0  # unsupported, but must not leak
+    with pytest.raises(ValueError, match="read-only"):
+        fit_file.data_raw[:] = fit_file.data_raw + 5.0
 
-    results = fit_file.p.results  # fresh snapshot, taken after the mutation
+    results = fit_file.p.results
     slot = next(iter(results))
     provider = results._provider_for(slot)
     assert isinstance(provider, SavedFile)
+    assert provider.data_raw is not fit_file.data_raw
     np.testing.assert_array_equal(np.asarray(provider.data_raw), raw)
 
     b0, b1 = slot.selection["base_t_ind"]

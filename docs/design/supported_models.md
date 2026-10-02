@@ -56,7 +56,13 @@ The sections above describe model semantics. The graph intermediate representati
 
 ## Notes
 
-Static energy-only expression chains are handled by lmfit, so they may continue to work in interpreter-backed workflows. They are not the model shape we use as
-the backend-portability contract, because the same chain pattern becomes invalid
-or ambiguous once dynamics or profiles enter the dependency path. The recommended
-pattern is direct fan-out from base parameters instead of multi-step chains.
+Static expression chains (an expression that references another expression
+among static parameters) are supported on both evaluation paths. The compiled
+path orders them topologically; the interpreter settles them with lmfit's
+`update_constraints()` when a model's parameter container is built and before
+every evaluation, as lmfit's own minimizer does before a residual. A chain that
+passes through a time-varying or profile-varying parameter stays refused: lmfit's
+symbol table holds scalars, and the direct-reference substitution for such a
+parameter does not propagate through a second expression. Direct fan-out from
+base parameters is therefore the pattern that survives attaching dynamics or
+profiles later.

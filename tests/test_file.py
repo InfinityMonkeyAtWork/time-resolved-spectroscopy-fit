@@ -133,7 +133,7 @@ class TestModelManagement:
             model_yaml="models/file_energy.yaml",
             model_info="simple_energy",
         )
-        with pytest.warns(UserWarning, match="overwriting"):
+        with pytest.warns(UserWarning, match="replacing"):
             second = file.load_model(
                 model_yaml="models/file_energy.yaml",
                 model_info="simple_energy",
@@ -506,7 +506,7 @@ class TestFitLimitsAndBaseline:
 
         file = self._make_file_with_data()
         file.set_fit_limits([82, 88], show_plot=False)
-        assert file.e_lim_abs == [82, 88]
+        assert file.e_lim_abs == (82, 88)
         assert file.e_lim is not None  # type guard
         assert file.energy is not None  # type guard
         # Slicing with e_lim should give a smaller array
@@ -521,8 +521,8 @@ class TestFitLimitsAndBaseline:
 
         file = self._make_file_with_data()
         file.set_fit_limits([82, 88], time_limits=[0, 50], show_plot=False)
-        assert file.e_lim_abs == [82, 88]
-        assert file.t_lim_abs == [0, 50]
+        assert file.e_lim_abs == (82, 88)
+        assert file.t_lim_abs == (0, 50)
         assert file.t_lim is not None  # type guard
         assert file.time is not None  # type guard
         t_cut = file.time[file.t_lim[0] : file.t_lim[1]]
@@ -549,7 +549,7 @@ class TestFitLimitsAndBaseline:
         data = np.random.default_rng(42).normal(size=(len(time), len(energy)))
         file = File(parent_project=project, data=data, energy=energy, time=time)
         file.set_fit_limits([82, 88], show_plot=False)
-        assert file.e_lim_abs == [82, 88]
+        assert file.e_lim_abs == (82, 88)
         assert file.e_lim is not None  # type guard
         assert file.energy is not None  # type guard
         # Slicing with e_lim should give a smaller array within bounds
@@ -658,50 +658,10 @@ class TestFitLimitsAndBaseline:
             file.define_baseline(-10, 0, time_type="bogus", show_plot=False)
 
     #
-    def _make_axisless_file_with_data(self, *, show_output: int = 0):
-        """Data present but axes missing — only reachable by bypassing __init__.
+    def test_set_fit_limits_without_axes_raises_without_mutating(self):
+        """A bare File has no energy axis; set_fit_limits says so, fabricates none."""
 
-        File(data=...) always fabricates index axes, so this corrupted
-        state indicates direct attribute assignment.
-        """
-
-        project = make_project(show_output=show_output)
-        file = File(parent_project=project)
-        file.data = np.zeros((5, 7))
-        file.dim = 2  # deliberate: the corrupted state under test
-        return file
-
-    #
-    def test_describe_missing_axes_raises_without_mutating(self):
-        """describe raises on missing axes instead of fabricating them.
-
-        Regression: describe assigned index axes to self.energy/self.time
-        as a side effect of an inspection call.
-        """
-
-        file = self._make_axisless_file_with_data(show_output=1)
-        with pytest.raises(ValueError, match="Energy axis missing"):
-            file.describe()
-        assert file.energy is None
-        file.energy = np.arange(7.0)
-        with pytest.raises(ValueError, match="Time axis missing"):
-            file.describe()
-        assert file.time is None
-
-    #
-    def test_define_baseline_missing_time_axis_raises_without_mutating(self):
-        """define_baseline raises on a missing time axis instead of fabricating it."""
-
-        file = self._make_axisless_file_with_data()
-        with pytest.raises(ValueError, match="Time axis missing"):
-            file.define_baseline(0, 2, time_type="ind", show_plot=False)
-        assert file.time is None
-
-    #
-    def test_set_fit_limits_missing_energy_axis_raises_without_mutating(self):
-        """set_fit_limits raises on a missing energy axis instead of fabricating it."""
-
-        file = self._make_axisless_file_with_data()
+        file = File(parent_project=make_project())
         with pytest.raises(ValueError, match="Energy axis missing"):
             file.set_fit_limits([1, 3], show_plot=False)
         assert file.energy is None
@@ -926,7 +886,7 @@ class TestFitLimitsSlicing:
         )
         args = (model, dim)
         residual = fitlib.residual_fun(
-            model.lmfit_pars,
+            model._lmfit_pars,
             *const,
             res_type=res_type,
             args=args,
@@ -1146,15 +1106,6 @@ class TestFitPreconditions:
     # -- fit_baseline --
 
     #
-    def test_fit_baseline_no_energy_raises(self):
-        """fit_baseline raises ValueError when energy axis is missing."""
-
-        file = self._make_file_with_model()
-        file.energy = None  # deliberate: the corrupted state under test
-        with pytest.raises(ValueError, match="energy axis missing"):
-            file.fit_baseline("simple_energy")
-
-    #
     def test_fit_baseline_no_data_base_raises(self):
         """fit_baseline raises ValueError when baseline data is missing."""
 
@@ -1241,11 +1192,23 @@ class TestFitPreconditions:
             )
 
     #
-    def test_fit_sbs_no_time_raises(self):
-        """fit_slice_by_slice raises ValueError when time axis is missing."""
+    def _make_1d_file_with_model(self):
+        """A single spectrum has no time axis to fit along."""
 
-        file = self._make_file_with_model()
-        file.time = None  # deliberate: the corrupted state under test
+        project = make_project()
+        energy = np.linspace(80, 90, 201)
+        data = np.random.default_rng(42).normal(size=len(energy))
+        file = File(parent_project=project, data=data, energy=energy)
+        file.load_model(
+            model_yaml="models/file_energy.yaml", model_info="simple_energy"
+        )
+        return file
+
+    #
+    def test_fit_sbs_no_time_raises(self):
+        """fit_slice_by_slice raises ValueError on a 1D file (no time axis)."""
+
+        file = self._make_1d_file_with_model()
         with pytest.raises(ValueError, match="missing"):
             file.fit_slice_by_slice(
                 "simple_energy", seed_source="model", seed_adapt=None
@@ -1272,10 +1235,9 @@ class TestFitPreconditions:
 
     #
     def test_fit_2d_no_time_raises(self):
-        """fit_2d raises ValueError when time axis is missing."""
+        """fit_2d raises ValueError on a 1D file (no time axis)."""
 
-        file = self._make_file_with_model()
-        file.time = None  # deliberate: the corrupted state under test
+        file = self._make_1d_file_with_model()
         with pytest.raises(ValueError, match="missing"):
             file.fit_2d("simple_energy")
 
@@ -1343,7 +1305,7 @@ def _make_seed_order_file(project):
     truth.load_model(model_yaml=_SEED_YAML, model_info="seed_base")
     assert truth.model_active is not None  # type guard
     for name, value in _SEED_TRUTH.items():
-        truth.model_active.lmfit_pars[name].value = value
+        truth.model_active._lmfit_pars[name].value = value
     data = simulate_noisy(truth.model_active, noise_level=0.01)
 
     file = File(parent_project=project, data=data, energy=energy, time=time)
@@ -1421,7 +1383,7 @@ class TestSeedSource:
         project = make_project(name="seed")
         file = _make_seed_order_file(project)
         model = _load_2d_model(file, "seed_2d_reversed")
-        loaded = {name: model.lmfit_pars[name].value for name in model.parameter_names}
+        loaded = {name: model._lmfit_pars[name].value for name in model.parameter_names}
 
         file.fit_2d("seed_2d_reversed", stages=1, try_ci=0, seed_source="model")
 
@@ -1455,7 +1417,7 @@ class TestSeedSource:
         file = _make_fitted_seed_order_file(project)
         assert not np.isclose(_baseline_values(file)["GLP_01_m"], 0.5)
         model = _load_2d_model(file, "seed_2d_reversed")
-        loaded = {name: model.lmfit_pars[name].value for name in model.parameter_names}
+        loaded = {name: model._lmfit_pars[name].value for name in model.parameter_names}
 
         file.fit_2d("seed_2d_reversed", stages=1, try_ci=0, seed_source="model")
 
@@ -1722,7 +1684,7 @@ class TestFileNameAndProjectAccess:
         project = make_project(name="guard")
         file = File(parent_project=project, energy=np.linspace(80, 90, 10))
         file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
-        with pytest.warns(UserWarning, match="overwriting"):
+        with pytest.warns(UserWarning, match="replacing"):
             file.load_model(
                 model_yaml="models/file_energy.yaml", model_info="single_glp"
             )
@@ -1735,13 +1697,15 @@ class TestDescribeWaterfall:
     """Test File.describe() waterfall auto-selection and override."""
 
     #
-    def _make_file(self, *, n_time):
-        """Create a 2D File with *n_time* spectra."""
+    def _make_file(self, *, n_time, nan_at=()):
+        """Create a 2D File with *n_time* spectra; *nan_at* indexes NaN cells."""
 
         project = make_project(show_output=1)
         energy = np.linspace(80, 90, 50)
         time = np.linspace(0, 10, n_time)
         data = np.random.default_rng(42).normal(size=(n_time, len(energy)))
+        for index in nan_at:
+            data[index] = np.nan
         return File(parent_project=project, data=data, energy=energy, time=time)
 
     #
@@ -1835,9 +1799,7 @@ class TestDescribeWaterfall:
     def test_auto_waterfall_offset_with_nans(self):
         """Auto waterfall offset should ignore NaNs in data."""
 
-        file = self._make_file(n_time=5)
-        file.data[0, 10] = np.nan
-        file.data[2, 20:25] = np.nan
+        file = self._make_file(n_time=5, nan_at=[(0, 10), (2, slice(20, 25))])
         ptp = np.nanmax(file.data, axis=1) - np.nanmin(file.data, axis=1)
         expected_offset = float(np.nanmax(ptp))
         with unittest.mock.patch("trspecfit.utils.plot.plot_1d") as mock_1d:

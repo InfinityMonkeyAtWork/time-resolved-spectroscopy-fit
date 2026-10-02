@@ -478,19 +478,6 @@ class TestViewReductions:
         assert expected.ndim == 2
         np.testing.assert_allclose(calls[0]["noise"].sigma, expected)
 
-    #
-    def test_baseline_set_by_hand_refuses_weighted_noise(self):
-        data, _, _ = _peak_data()
-        file = _plain_file(data=data)
-        file.load_model(model_yaml=_ENERGY_YAML, model_info=_MODEL)
-        file.data_base = data.mean(axis=0)
-        file.set_fit_limits([84.0, 86.0], show_plot=False)
-        file.set_sigma(0.4)
-        with pytest.raises(ValueError, match="define_baseline"):
-            file.fit_baseline(model_name=_MODEL, stages=1, try_ci=0)
-        file.set_noise("unknown")
-        file.fit_baseline(model_name=_MODEL, stages=1, try_ci=0)
-
 
 #
 #

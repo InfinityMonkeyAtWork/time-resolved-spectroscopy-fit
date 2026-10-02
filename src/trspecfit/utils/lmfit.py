@@ -21,6 +21,8 @@ import numpy as np
 import pandas as pd
 from lmfit.minimizer import MinimizerResult
 
+from trspecfit.utils import ownership as uown
+
 if TYPE_CHECKING:
     #
     #
@@ -990,12 +992,14 @@ class MC:
 
 #
 #
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class MCMCResult:
     """MCMC outputs for a single optimization (counterpart to ``MC`` settings).
 
-    A read-only bundle built by ``fit_io.mcmc_result_from_payload`` from the
-    persisted mcmc payload — one type shared by the per-file slot path
+    A snapshot built by ``fit_io.mcmc_result_from_payload`` from the
+    persisted mcmc payload; its frames and the acceptance array are
+    detached (copied on set and on every read, the array read-only). One
+    type shared by the per-file slot path
     (``FitResults.get_mcmc`` / the ``File.get_mcmc`` sugar) and the
     project-level joint path (``JointFitResult.mcmc``).
 
@@ -1017,9 +1021,10 @@ class MCMCResult:
         sampling was weighted (no nuisance parameter).
     """
 
-    table: pd.DataFrame
-    flatchain: pd.DataFrame
-    acceptance_fraction: np.ndarray | None
+    # detached: copied on set and on every read; the array comes back frozen
+    table: uown.detached[pd.DataFrame] = uown.detached()
+    flatchain: uown.detached[pd.DataFrame] = uown.detached()
+    acceptance_fraction: uown.detached[np.ndarray | None] = uown.detached()
     lnsigma: float | None = None
 
 

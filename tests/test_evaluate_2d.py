@@ -3,7 +3,7 @@
 For each model we:
 1. Build the OOP model (load YAML + optionally add dynamics).
 2. Compile with build_graph / schedule_2d.
-3. Extract theta from model.lmfit_pars in plan.opt_param_names order.
+3. Extract theta from model._lmfit_pars in plan.opt_param_names order.
 4. Compare evaluate_2d(plan, theta) against model.create_value_2d().
 5. Perturb theta and repeat to catch ordering bugs.
 """
@@ -74,10 +74,10 @@ def _make_2d_model(model_info, dynamics_params, *, frequency=None, time=None):
 
 #
 def _extract_theta(plan, model):
-    """Extract theta vector from model.lmfit_pars in plan order."""
+    """Extract theta vector from model._lmfit_pars in plan order."""
 
     return np.array(
-        [model.lmfit_pars[name].value for name in plan.opt_param_names],
+        [model._lmfit_pars[name].value for name in plan.opt_param_names],
         dtype=np.float64,
     )
 
@@ -137,9 +137,9 @@ def _perturb_theta(plan, model, theta, indices, deltas):
     theta_new = theta.copy()
     for idx, delta in zip(indices, deltas, strict=True):
         theta_new[idx] += delta
-        # Also update model.lmfit_pars for interpreter comparison
+        # Also update model._lmfit_pars for interpreter comparison
         name = plan.opt_param_names[idx]
-        model.lmfit_pars[name].value = float(theta_new[idx])
+        model._lmfit_pars[name].value = float(theta_new[idx])
 
     fast = evaluate_2d(plan, theta_new)
     model.create_value_2d()
@@ -451,10 +451,7 @@ class TestThetaContract:
     def test_empty_theta_if_no_free_params(self):
         """If all params are fixed, theta should be empty."""
 
-        _file, model = _make_2d_model(["gauss_only"], [])
-        # Fix all parameters
-        for par in model.lmfit_pars.values():
-            par.vary = False
+        _file, model = _make_2d_model(["gauss_only_fixed"], [])
 
         graph = build_graph(model)
         plan = schedule_2d(graph)
@@ -682,7 +679,7 @@ class TestProfileModels:
             model_yaml=_ENERGY_YAML,
             energy=np.linspace(80, 90, 101),
         )
-        model.lmfit_pars["Shirley_pShirley_pLinear_01_m"].value = 1.0e-5
+        model._lmfit_pars["Shirley_pShirley_pLinear_01_m"].value = 1.0e-5
 
         graph = build_graph(model)
         assert can_lower_2d(graph)
