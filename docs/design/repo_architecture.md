@@ -349,6 +349,18 @@ scientific notation), `oom` (order-of-magnitude), running averages,
 sign-change detection, angular normalization. Use these rather than
 rolling your own `scipy.signal.convolve` wrapper.
 
+### `utils/ownership.py`
+
+The three ownership mechanisms behind `api_ownership_contract.md`, one
+idiom: a rule is declared on the attribute it governs, by a descriptor.
+`frozen_copy` / `freeze` (every array a `File` or a result record hands
+out is read-only; the simulator's outputs are deferred),
+`owned(route)` (a `File` attribute that refuses assignment and names the
+route; `File` writes the private name), and `detached()` (a result-record
+field copied on set and on every read, arrays inside it frozen). New owned
+state on `File` and new container fields on the records declare themselves
+with these; nothing else copies defensively.
+
 ### `utils/hdf5.py`
 
 Typed HDF5 helpers. `require_group`, `require_dataset`, `json_loads_attr`.
@@ -454,7 +466,7 @@ evaluator. New features are generally prototyped on that slow path first.
 
 - **New energy / time / profile function** → implement it in `functions/{energy,time,profile}.py`; for the full checklist (tests, registration, and GIR follow-up when needed), use [../ai/add-function.md](../ai/add-function.md).
 - **New YAML keyword / syntax** → `utils/parsing.py` + validation.
-- **New user-facing method on a file** → `File` in `trspecfit.py`.
+- **New user-facing method on a file** → `File` in `trspecfit.py`; new owned state on `File` or a new container field on a result record → declare it with `utils/ownership.py` (`owned`, `detached`), never a plain attribute plus a defensive copy.
 - **New model composition rule** → mcp first; update `supported_models.md`; lower into `graph_ir` once stable.
 - **New plot style / axis logic** → `utils/plot.py`, driven by `PlotConfig`.
 - **New fit-result post-processing (CI, MCMC, in-fit plots)** → `fitlib.py`.

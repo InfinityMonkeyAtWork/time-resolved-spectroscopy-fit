@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 This file is maintained using the shared changelog workflow in
 [`docs/ai/changelog.md`](docs/ai/changelog.md).
 
+## [0.20.0] - 2026-10-01
+
+### Changed
+
+- **`File` owns its data, axes, corrections, baseline, fit limits and noise** (`docs/design/api_ownership_contract.md`, enforced): `data`, `data_raw`, `energy`, `time`, `aux_axis`, `dark`, `calibration`, `data_base`, the windows and `noise` are read-only, assignment raises and names the route (`subtract_dark`, `define_baseline`, `set_fit_limits`, `set_noise`, or a new `File`), the arrays are frozen copies and the windows are tuples.
+- **Model replacement and attachment are atomic.** `load_model` builds the replacement before it removes the old model, `add_time_dependence` / `add_par_profile` check everything before any write and leave both models unchanged when they reject, and removing the active model clears `model_active`.
+- **Result records hand out detached copies.** The DataFrame, dict and list fields of `SavedFitSlot`, `JointFitResult`, `JointFitProjection` and `MCMCResult` are copied on every read, with arrays inside them read-only, so editing what a read returned never reaches a record or its archive.
+- **The lmfit objects and `Model.update_value` are package-internal** (`_lmfit_pars`, `_update_value`): the YAML is the source of truth and a variant is another entry; inspect a model with `describe`, `describe_model`, `get_vary_levels` and the results tables.
+- **The simulator draws from the noise model it declares**, `save_data` writes the settings of the draw rather than the current ones, `add_noise` is a helper that records nothing, and a new clean array starts a new simulation.
+
+### Removed
+
+- **Signed Poisson sampling.** A negative signal under `photon_counting` or analog `poisson` raises before any draw (a count cannot be negative); a gaussian draw with zero sigma raises and names `noise_type='none'`.
+
+### Fixed
+
+- **The first evaluation of a model with chained expressions** (an expression referencing another expression) was wrong by the chained term, and the Simulator's first clean array of such a model was that evaluation; models now settle their expressions as lmfit's minimizer does, and an unknown name in an expression fails at load.
+- **Saved simulation metadata could describe other settings than the saved arrays** after `set_noise_level` / `set_noise_type` or a standalone `add_noise`.
+
 ## [0.19.0] - 2026-09-29
 
 ### Added

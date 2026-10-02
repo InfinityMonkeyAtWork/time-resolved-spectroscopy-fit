@@ -3090,6 +3090,11 @@ class File:
                 "Energy axis missing; cannot set fit limits. "
                 "Pass energy= when constructing File."
             )
+        if time_limits is not None and self.time is None:
+            raise ValueError(
+                "Time axis missing; cannot apply time limits. "
+                "Pass time= when constructing File."
+            )
         energy = self.energy
         if energy_limits is None:
             energy_limits = [float(np.min(energy)), float(np.max(energy))]
@@ -3114,11 +3119,7 @@ class File:
         if time_limits is None and self.time is not None:
             time_limits = [float(np.min(self.time)), float(np.max(self.time))]
         if time_limits is not None:
-            if self.time is None:
-                raise ValueError(
-                    "Time axis missing; cannot apply time limits. "
-                    "Pass time= when constructing File."
-                )
+            assert self.time is not None  # type guard — checked above
             self._t_lim_abs = tuple(float(t) for t in time_limits)
             self._t_lim = tuple(
                 self._resolve_time_selection(
@@ -4978,15 +4979,6 @@ class File:
             raise ValueError(
                 f"Parameter '{target_parameter}' not found in model '{model.name}'.\n"
                 f"Available parameters: {model.parameter_names}"
-            )
-        target_par = model.components[ci].pars[pi]
-        if target_par.t_vary:
-            raise ValueError(
-                f"Cannot add profile to parameter '{target_parameter}' because "
-                "it already has time dependence (t_vary=True). This is currently "
-                "disabled to avoid strongly correlated fits. Add profile first "
-                "and dynamics to a profile parameter instead, or remove/fix "
-                "time dependence first."
             )
         model.add_profile(cast("mcp.Profile", p_mod))
         # auto-promote to 2D if any parameter inside the profile is time-dependent

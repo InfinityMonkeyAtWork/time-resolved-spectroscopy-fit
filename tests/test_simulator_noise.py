@@ -457,6 +457,14 @@ class TestSignalsNoModelDescribesAreRefused:
         assert sim.data_noisy is None and sim.noise_model is None  # nothing drawn
 
     #
+    def test_analog_poisson_refuses_a_negative_noise_level(self):
+        model = _truth_model(name="refuse_negative_level")
+        sim = _analog_simulator(model, noise_level=-0.02, noise_type="poisson")
+        with pytest.raises(ValueError, match="negative"):
+            sim.simulate_2d()
+        assert sim.data_noisy is None and sim.noise_model is None  # nothing drawn
+
+    #
     def test_analog_gaussian_refuses_a_zero_sigma(self):
         model = _truth_model(name="refuse_zero_sigma")
         sim = _analog_simulator(model, noise_level=0.0)

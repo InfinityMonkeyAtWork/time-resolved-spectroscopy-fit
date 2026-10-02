@@ -192,6 +192,11 @@ def _noise_model_for(
             ) from exc
     if settings.noise_type == "poisson":
         _require_non_negative(clean_data, "analog poisson noise")
+        if settings.noise_level < 0:
+            raise ValueError(
+                f"noise_level={settings.noise_level} is negative; the analog poisson "
+                "scale is 1 / noise_level, so the level must be non-negative."
+            )
         return unoise.NoiseModel(
             kind="poisson", scale=1.0 / (settings.noise_level + _POISSON_LEVEL_EPS)
         )
@@ -526,6 +531,10 @@ class Simulator:
         """
         Generate clean data from model (no noise).
 
+        Starts a new simulation: the stored noisy arrays and the draw record
+        of the previous one are cleared (``data_noisy`` / ``noise`` are
+        None, ``noise_model`` is None) until the next noise draw.
+
         Parameters
         ----------
         dim : int
@@ -595,7 +604,7 @@ class Simulator:
             raise ValueError(f"dim must be 1 or 2, got {dim}")
         settings = self._settings()
         model = _noise_model_for(settings, clean_data, dim=dim)
-        noisy_data, noise = self._draw(model, clean_data)
+        noisy_data, noise = self._draw(model, clean_data, detection=settings.detection)
         return noisy_data, noise, _NoiseSnapshot(model=model, settings=settings)
 
     #
@@ -640,7 +649,7 @@ class Simulator:
 
     #
     def _draw(
-        self, model: unoise.NoiseModel | None, clean_data: np.ndarray
+        self, model: unoise.NoiseModel | None, clean_data: np.ndarray, *, detection: str
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Sample ``(noisy_data, noise)`` from *model* on *clean_data*.
@@ -664,7 +673,7 @@ class Simulator:
             return clean_data + noise, noise
         assert model.scale is not None  # type guard
         counts = self.rng.poisson(clean_data * model.scale) / model.scale
-        if self.detection == "photon_counting":
+        if detection == "photon_counting":
             noisy_data = cast("np.ndarray", counts)
             return noisy_data, noisy_data - clean_data
         noise = cast("np.ndarray", counts - clean_data)

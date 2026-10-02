@@ -1,0 +1,7 @@
+# MonoExpProject from project_time.yaml with the shared tau seeded at 99: a
+# project-vary parameter whose initial values differ between files
+MonoExpProject:
+    expFun:
+        A: [5, "file", 0, 15]
+        tau: [99, "project", 1, 100]
+        t0: [0, "static", 0, 1]

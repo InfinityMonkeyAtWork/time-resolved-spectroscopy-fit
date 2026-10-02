@@ -559,17 +559,17 @@ class TestBuildFitParams:
                 model_yaml="models/project_energy.yaml",
                 model_info="project_glp",
             )
+            # the second file seeds the shared tau differently (a YAML variant)
             f.add_time_dependence(
                 target_model="project_glp",
                 target_parameter="GLP_01_x0",
-                dynamics_yaml="models/project_time.yaml",
+                dynamics_yaml=(
+                    "models/project_time.yaml"
+                    if i == 0
+                    else "models/project_time_tau_seed.yaml"
+                ),
                 dynamics_model=["MonoExpProject"],
             )
-
-        # Manually set different initial tau on file 1
-        model1 = project.files[1].select_model("project_glp")
-        assert model1 is not None  # type guard
-        model1._lmfit_pars["GLP_01_x0_expFun_01_tau"].value = 99.0
 
         with pytest.warns(UserWarning, match="different initial values"):
             project._build_fit_params(model_name="project_glp")

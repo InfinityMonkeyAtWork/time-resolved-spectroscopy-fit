@@ -11,6 +11,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import copy
+import warnings
 from typing import Any
 
 import numpy as np
@@ -168,8 +169,8 @@ def reload_model(file, model_yaml: str, model_info: str):
     replaces a model; that warning is the point here, not a finding.
     """
 
-    import warnings
-
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
+        warnings.filterwarnings(
+            "ignore", message=".*already exists on file.*", category=UserWarning
+        )
         return file.load_model(model_yaml=model_yaml, model_info=model_info)

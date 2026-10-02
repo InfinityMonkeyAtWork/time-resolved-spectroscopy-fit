@@ -1456,7 +1456,7 @@ class FitResults:
         slot = self._resolve_slot(
             file=file, model=model, fit_type=fit_type, handle=handle
         )
-        return slot.params.copy()
+        return slot.params  # a detached copy
 
     #
     def get_correlations(
@@ -1511,7 +1511,7 @@ class FitResults:
                 "installed); project-level joint fits do not decompose per "
                 "file."
             )
-        return slot.correl.copy()
+        return slot.correl  # a detached copy
 
     #
     def get_confidence_intervals(
@@ -1559,7 +1559,7 @@ class FitResults:
         )
         if slot.conf_ci is None:
             return pd.DataFrame()
-        return slot.conf_ci.copy()
+        return slot.conf_ci  # a detached copy
 
     #
     def get_mcmc(

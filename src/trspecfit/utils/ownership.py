@@ -154,7 +154,13 @@ class detached[T]:
             if self._default is _MISSING:
                 raise AttributeError(f"{self._owner}.{self._name} has no default")
             return self._default
-        return cast("T", detach(instance.__dict__[self._private]))
+        try:
+            stored = instance.__dict__[self._private]
+        except KeyError:
+            raise AttributeError(
+                f"{self._owner}.{self._name} has not been set"
+            ) from None
+        return cast("T", detach(stored))
 
     #
     def __set__(self, instance: object, value: T) -> None:

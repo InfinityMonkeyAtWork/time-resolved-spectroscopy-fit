@@ -1,14 +1,21 @@
 """
-Behavioral probes for the ownership contract, rules 1 to 3
-(docs/design/api_ownership_contract.md; check 21 of docs/ai/code-review.md).
+Behavioral probes for the ownership contract
+(docs/design/api_ownership_contract.md; check 21 of docs/ai/code-review.md):
+owned File inputs, corrections and baseline (rules 1 to 3), atomic model
+replacement and attachment and the package-internal parameter state (rule
+4), detached result records (rule 5), the simulator's draw record (rule 7).
 
-Reading the code shows what a method does; these probes show what the File
-does afterwards: a caller mutates across the ownership boundary, or assigns
-an owned attribute, and the File's state is what the contract says.
+Reading the code shows what a method does; these probes show what the object
+does afterwards: a caller mutates across the ownership boundary, assigns an
+owned attribute, or triggers a rejection, and the state is what the contract
+says.
 """
 
 import dataclasses
+import json
+from collections import UserDict
 
+import h5py
 import numpy as np
 import pandas as pd
 import pytest
@@ -79,6 +86,50 @@ class TestInputsAreOwnedAtConstruction:
         assert model.energy is file.energy
         with pytest.raises(ValueError, match="read-only"):
             model.energy[0] = 0.0
+
+
+#
+#
+class TestOwnedStateOnBareAndOneDimensionalFiles:
+    """Rule 1 edges: a bare File reads as empty, a 1D File has no time window."""
+
+    #
+    def test_a_bare_file_reads_as_empty(self):
+        file = File(parent_project=make_project())
+        for attr in (
+            "data",
+            "data_raw",
+            "energy",
+            "time",
+            "aux_axis",
+            "dark",
+            "calibration",
+            "data_base",
+        ):
+            assert getattr(file, attr) is None, attr
+        for attr in (
+            "base_t_ind",
+            "base_t_abs",
+            "e_lim",
+            "e_lim_abs",
+            "t_lim",
+            "t_lim_abs",
+        ):
+            assert getattr(file, attr) == (), attr
+        assert file.dim == 0
+        assert file.noise.kind == "unknown"
+
+    #
+    def test_a_one_dimensional_file_keeps_empty_time_windows(self):
+        file = File(
+            parent_project=make_project(), data=np.ones(4) + 1.0, energy=np.arange(4.0)
+        )
+        file.set_fit_limits([1.0, 2.0], show_plot=False)
+        assert file.e_lim == (1, 3)
+        assert file.t_lim == () and file.t_lim_abs == ()
+        with pytest.raises(ValueError, match="Time axis missing"):
+            file.set_fit_limits([0.0, 3.0], time_limits=[0.0, 1.0], show_plot=False)
+        assert file.e_lim == (1, 3)  # the rejection wrote nothing
 
 
 #
@@ -166,6 +217,30 @@ class TestCorrectionsAreOperationsOnOwnedArrays:
         np.testing.assert_array_equal(file.data, expected)
 
     #
+    def test_resets_restore_the_identity_corrections_read_only(self):
+        file, arrays = make_2d_file()
+        file.subtract_dark(np.ones(4))
+        file.calibrate_data(np.full(4, 2.0))
+        file.reset_dark()
+        file.reset_calibration()
+        np.testing.assert_array_equal(file.dark, np.zeros(4))
+        np.testing.assert_array_equal(file.calibration, np.ones(4))
+        np.testing.assert_array_equal(file.data, arrays["data"])
+        for attr in ("dark", "calibration"):
+            with pytest.raises(ValueError, match="read-only"):
+                getattr(file, attr)[0] = 5.0
+
+    #
+    def test_the_noise_routes_replace_the_owned_model(self):
+        file, _ = make_2d_file()
+        before = file.noise
+        file.set_sigma(0.4)
+        assert file.noise is not before
+        assert (file.noise.kind, file.sigma_data) == ("gaussian", 0.4)
+        file.set_noise("unknown")
+        assert file.noise.kind == "unknown"
+
+    #
     def test_corrected_data_and_baseline_are_recomputed_read_only(self):
         file, arrays = make_2d_file()
         file.define_baseline(-1.0, 0.0, show_plot=False)
@@ -196,19 +271,13 @@ def make_model_file(*, model: str = "simple_energy", with_aux: bool = False) -> 
 
 #
 def model_state(model) -> tuple:
-    """Everything an attachment writes, plus the model's settled evaluation.
+    """Everything an attachment writes, plus the model's evaluation."""
 
-    The first evaluation of a model with chained expressions is not the
-    settled one (lmfit resolves a chain on the second pass), so evaluate
-    twice and keep the second.
-    """
-
-    for _ in range(2):
-        if model.dim == 2:
-            model.create_value_2d()
-            value = np.array(model.value_2d)
-        else:
-            value = np.array(model.create_value_1d(return_1d=1))
+    if model.dim == 2:
+        model.create_value_2d()
+        value = np.array(model.value_2d)
+    else:
+        value = np.array(model.create_value_1d(return_1d=1))
     flags = [
         (
             par.name,
@@ -685,8 +754,6 @@ class TestResultRecordsAreSnapshots:
         """Direct construction with a Mapping subclass, a tuple holding a
         dict, or a writable array is detached at the record boundary too."""
 
-        from collections import UserDict
-
         _, slot = make_fitted_file()
         mapping = UserDict({"GLP_01_A": "file00_GLP_01_A"})
         projection = fit_io.JointFitProjection(slot=slot, parameter_map=mapping)
@@ -747,10 +814,6 @@ class TestSimulatorRecordsTheDraw:
     ):
         """Simulate, let a fit write new values into the same model, save:
         the saved parameters should be the ones that generated the arrays."""
-
-        import json
-
-        import h5py
 
         file, _ = make_fitted_file()  # a fitted baseline model with data
         model = file.model_base

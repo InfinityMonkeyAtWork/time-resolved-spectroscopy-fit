@@ -14,12 +14,13 @@ violations are closed, and each probe row becomes a regression test. The
 registries row (`Project.files`, `File.models`) stays unenforced by
 decision.
 
-Status 2026-09-30: every design call below is settled; implementation has
-not started (paused at the user's request after the plan review; a third
-review round added the window tuples, the sixth lmfit handle, the full
-rollback, the extra probes, the simulator drawing from a `NoiseModel` with
-the detection-metadata fix falling out of it, and the removal of signed
-Poisson sampling). One idiom
+Status 2026-10-01: all six steps landed on branch `enforce-ownership`
+(seven commits, v0.20.0), reviewed and green; only the archive decision
+is open. The design calls below were settled 2026-09-30 after three
+review rounds (window tuples, the sixth lmfit handle, the full rollback,
+the extra probes, the simulator drawing from a `NoiseModel` with the
+detection-metadata fix falling out of it, the removal of signed Poisson
+sampling). One idiom
 is adopted for the whole branch: an ownership rule is declared on the
 attribute where it is defined, by a descriptor, instead of being spread over
 setters and accessor methods. The three mechanisms (`frozen_copy`, `owned`,
@@ -573,7 +574,7 @@ Pushed to TODO item 8, the simulator output rework (recorded there 2026-09-30):
   notebook 12 executes (re-running 01) with its count assertion. The
   acceptance probe is in `tests/test_ownership.py`. 1514 default tests
   pass, 1 xfail.
-- [ ] 6. Docs and release: `api_ownership_contract.md` "where this stands"
+- [x] 6. Docs and release: `api_ownership_contract.md` "where this stands"
   paragraphs and Evidence closed with the mechanisms recorded (fork 3
   outcome, rule 5 mechanism, stamp-and-check as the deferral) and a short
   "Mechanisms" paragraph stating the idiom (an ownership rule is declared on
@@ -585,6 +586,34 @@ Pushed to TODO item 8, the simulator output rework (recorded there 2026-09-30):
   versus the branch (expected: within run-to-run noise, since no
   per-evaluation code changes; the measured post-fit costs are the
   `compare_models` and MCMC timings of step 3).
+  Landed 2026-10-01. Contract: status "enforced", every "where this
+  stands" paragraph closed in the past tense, fork 3 records the private
+  route, a Mechanisms section states the idiom and the level of each
+  rule, the Evidence entry on simulator metadata corrected. Architecture
+  map: `utils/ownership.py` entry and a routing line. Changelog 0.20.0
+  (Changed / Removed / Fixed), version 0.20.0. Slow suite: 193 passed.
+  Fit benchmark (example 2, three reps, `main` in a worktree vs branch):
+  GIR 6.3 vs 6.4 s, interpreter 29.9 vs 29.3 s, JAX 2.9 vs 3.6 s on the
+  first run and 3.3 vs 3.2 s with the order swapped, the machine loaded by
+  the review agents; within noise on every path. Diff review (three
+  subagents, grep checks, probes with `main` controls): no FAIL; seven
+  WARN and eleven INFO items; all but W7 fixed in the same commit:
+  `add_dynamics` validates the frequency unconditionally; the four
+  records are `eq=False`; a GIR-vs-interpreter parity test on
+  `expression_chain`; the probe helper evaluates once; `reload_model`
+  filters by message; the shifted-seed project-fit test loads
+  `project_time_tau_seed.yaml`; the dead energy-reference branch of
+  `_add_prefix_to_expression` and the duplicate `add_par_profile`
+  pre-check removed; stale names and docstrings; `_draw` takes the
+  detection it was given; a negative analog-poisson level and
+  `simulate_n(n=0)` get clear errors; `set_fit_limits` validates the
+  time axis before writing; `detached` raises `AttributeError` like
+  `owned`; redundant copies on detached reads dropped; probes for a bare
+  `File`, 1D windows, the resets and the `set_sigma` route. W7 (no public
+  read of the live parameter state as data) is a missing API, not a
+  defect, and is the user's call. The review report was deleted after
+  triage: nothing in it was ever released. 1519 default tests pass, 1
+  xfail.
 
 ## Out of scope (stays where it is)
 

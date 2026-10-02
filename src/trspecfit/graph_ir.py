@@ -623,7 +623,7 @@ def _package_short_name(comp: Component) -> str:
 
 #
 def _par_initial_value(par: Par) -> float:
-    """Extract the current scalar value from a Par's lmfit_par."""
+    """Extract the current scalar value from a Par's _lmfit_par."""
 
     vals = list(par._lmfit_par.valuesdict().values())
     return float(vals[0]) if vals else 0.0
@@ -631,7 +631,7 @@ def _par_initial_value(par: Par) -> float:
 
 #
 def _par_bounds(par: Par) -> tuple[float, float] | None:
-    """Extract bounds from a Par's lmfit_par, or None."""
+    """Extract bounds from a Par's _lmfit_par, or None."""
 
     for p in par._lmfit_par.values():
         mn = p.min if p.min is not None else -np.inf

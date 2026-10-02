@@ -992,12 +992,14 @@ class MC:
 
 #
 #
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class MCMCResult:
     """MCMC outputs for a single optimization (counterpart to ``MC`` settings).
 
-    A read-only bundle built by ``fit_io.mcmc_result_from_payload`` from the
-    persisted mcmc payload — one type shared by the per-file slot path
+    A snapshot built by ``fit_io.mcmc_result_from_payload`` from the
+    persisted mcmc payload; its frames and the acceptance array are
+    detached (copied on set and on every read, the array read-only). One
+    type shared by the per-file slot path
     (``FitResults.get_mcmc`` / the ``File.get_mcmc`` sugar) and the
     project-level joint path (``JointFitResult.mcmc``).
 

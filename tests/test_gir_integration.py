@@ -421,6 +421,55 @@ class TestGIRvsInterpreter:
         assert result.shape == (len(file.time), len(file.energy))
 
     #
+    def test_expression_chain_parity(self):
+        """A static expression chain evaluates identically on both paths.
+
+        The compiled path orders the chain topologically; the interpreter
+        settles it with lmfit's update_constraints before evaluating.
+        """
+
+        file = File(
+            parent_project=_make_project(),
+            energy=np.linspace(80, 90, 101),
+            time=np.linspace(-10, 100, 51),
+        )
+        file.load_model(
+            model_yaml="models/file_energy.yaml", model_info="expression_chain"
+        )
+        file.add_time_dependence(
+            target_model="expression_chain",
+            target_parameter="Offset_y0",
+            dynamics_yaml=_TIME_YAML,
+            dynamics_model=["MonoExpPos"],
+        )
+        model = file.model_active
+        assert model is not None  # type guard
+        graph = build_graph(model)
+        assert can_lower_2d(graph)
+        plan = schedule_2d(graph)
+        name_to_idx = {n: i for i, n in enumerate(model.parameter_names)}
+        theta_indices = np.array(
+            [name_to_idx[n] for n in plan.opt_param_names], dtype=np.intp
+        )
+        data = simulate_clean(model)
+        par = model._lmfit_pars
+        res_gir = fitlib.residual_fun(
+            par=par,
+            x=file.energy,
+            data=data,
+            fit_fun_str="fit_model_gir",
+            args=(plan, theta_indices, model, 2),
+        )
+        res_mcp = fitlib.residual_fun(
+            par=par,
+            x=file.energy,
+            data=data,
+            fit_fun_str="fit_model_mcp",
+            args=(model, 2),
+        )
+        np.testing.assert_allclose(res_gir, res_mcp, rtol=1e-10, atol=1e-10)
+
+    #
     def test_residual_with_slicing(self):
         """GIR residual with e_lim/t_lim matches MCP residual."""
 

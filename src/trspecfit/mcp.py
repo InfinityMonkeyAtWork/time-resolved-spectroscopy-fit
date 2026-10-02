@@ -71,7 +71,6 @@ from IPython.display import display
 from trspecfit.config.functions import (
     background_functions,
     convolution_functions,
-    energy_functions,
     time_functions,
 )
 
@@ -108,6 +107,13 @@ class _AttachmentRollback:
     parameters, and lets the exception propagate.
     """
 
+    # The three tuples name what the transaction writes: set_frequency
+    # (frequency, time_norm, n_sub, n_counter, the components' time_n_sub and
+    # time_norm), Par.update / add_profile (t_vary, t_model, p_vary, p_model,
+    # the target's _lmfit_par_list, the candidate's value_1d and aux_axis),
+    # update() (the containers, rebuilt on restore) and the expression
+    # analysis (expr_string, expr_refs, expr_refs_time_dep,
+    # expr_refs_profile_dep). A new write in those paths belongs here too.
     _PAR_FIELDS = (
         "t_vary",
         "t_model",
@@ -759,9 +765,9 @@ class Model:
             self._lmfit_pars.update_constraints()
         except NameError as e:
             raise ValueError(
-                f'Model "{self.name}" has an expression that references an '
-                f"unknown parameter ({e}). Expressions can only reference "
-                "parameters of the same model."
+                f'{type(self).__name__} "{self.name}" has an expression that '
+                f"references an unknown parameter ({e}). Expressions can only "
+                "reference parameters of the same model."
             ) from e
 
     #
@@ -876,8 +882,7 @@ class Model:
                 "correlated fits. Add dynamics to a profile parameter "
                 "instead, or remove/fix the profile first."
             )
-        if frequency != -1:
-            dynamics_model.validate_frequency(frequency)
+        dynamics_model.validate_frequency(frequency)
 
         # --- one transaction: a failure below restores both models ---
         with _AttachmentRollback(self, target_par, dynamics_model):
@@ -1667,8 +1672,9 @@ class Component:
         Add prefix to time function parameter references in Dynamics models.
 
         For Dynamics models, parameters of time functions need the Dynamics model
-        name as a prefix, while energy function parameters reference the parent
-        energy model directly without prefix.
+        name as a prefix. A dynamics expression references parameters of its
+        own model only; any other name is left as it is, and the load reports
+        it as unknown when the container settles.
 
         Parameters
         ----------
@@ -1687,13 +1693,11 @@ class Component:
         --------
         For Dynamics model "GLP_01_x0":
         - "expFun_01_tau" -> "GLP_01_x0_expFun_01_tau" (time function)
-        - "GLP_01_A" -> "GLP_01_A" (energy function, unchanged)
-        - "expFun_01_tau * 0.5 + GLP_01_A" -> "GLP_01_x0_expFun_01_tau * 0.5 + GLP_01_A"
+        - "-expFun_01_A" -> "-GLP_01_x0_expFun_01_A" (another subcycle's parameter)
         """
 
         # Get function names from both libraries
         time_funcs = time_functions()
-        energy_funcs = energy_functions()
         conv_funcs = convolution_functions()
 
         # Pattern to match parameter references: function_name_NN_param_name
@@ -1712,10 +1716,6 @@ class Component:
             # Time functions need prefix (they're in this Dynamics model)
             if func_name in time_funcs or func_name in conv_funcs:
                 return f"{prefix}{func_name}{rest}"
-
-            # Energy functions don't need prefix (they reference parent energy model)
-            if func_name in energy_funcs:
-                return full_match
 
             # Unknown function - leave unchanged and let lmfit error naturally
             return full_match
@@ -2448,7 +2448,7 @@ class Par:
             )
         else:
             lmfit_par = ulmfit.par_create(self.name, self.info, prefix, suffix)
-        # add to lmfit_par attribute
+        # add to the _lmfit_par container
         self._lmfit_par.add_many(lmfit_par)
         # and list of individual lmfit paramters
         self._lmfit_par_list.extend([lmfit_par])
@@ -2780,6 +2780,12 @@ class Dynamics(Model):
 
         Writes nothing: ``add_dynamics`` runs it before any state changes,
         and ``set_frequency`` / ``normalize_time`` run it before they write.
+
+        Parameters
+        ----------
+        frequency : float
+            Repetition frequency in reciprocal time-axis units, or ``-1``
+            for a single cycle over the time axis.
 
         Raises
         ------

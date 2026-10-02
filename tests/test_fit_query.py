@@ -831,6 +831,7 @@ class TestJointBundleQueries:
             if "tau" in str(n) and not str(n).startswith("file0")
         )
         for file in project.files:
+            # reload the base energy model so the clamped dynamics attach cleanly
             reload_model(file, "models/project_energy.yaml", "project_glp")
             file.add_time_dependence(
                 target_model="project_glp",

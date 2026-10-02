@@ -23,7 +23,6 @@ DataFrames) — never live ``Model`` or ``File`` references — so they cannot b
 broken by post-fit cleanup that overwrites live state.
 """
 
-import copy
 import datetime
 import hashlib
 import json
@@ -252,12 +251,15 @@ class ModelYamlRecord(NamedTuple):
 
 
 #
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class SavedFitSlot:
     """
     One completed fit result for a single file view.
 
-    Immutable after construction. Built once at fit completion by
+    Immutable after construction, and a snapshot: the DataFrame, dict and
+    list fields are detached (copied on set and on every read, arrays
+    inside them read-only), so a read is the caller's own object and
+    editing it never reaches the record. Built once at fit completion by
     ``_slot_from_<fit_type>`` and appended to ``Project._fit_history``.
     Identity is ``handle`` (fit_archive_principles.md, Principle 3);
     equal handles mean the same optimization on the same file.
@@ -597,10 +599,11 @@ class SavedProject:
 
 
 #
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class JointFitProjection:
     """
-    One file's view of a project-level joint fit.
+    One file's view of a project-level joint fit. ``parameter_map`` is
+    detached: every read is a copy.
 
     Attributes
     ----------
@@ -624,7 +627,7 @@ class JointFitProjection:
 
 
 #
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class JointFitResult:
     """
     In-memory record of one successful ``Project.fit_2d`` optimization.
@@ -635,7 +638,9 @@ class JointFitResult:
     project-scoped path). The record owns everything belonging to the
     optimization as a whole; the projections own the per-file payloads.
     Returned by ``Project.fit_2d`` and queryable via
-    ``FitResults.find_joint`` / ``get_joint``.
+    ``FitResults.find_joint`` / ``get_joint``. The DataFrame and mapping
+    fields are detached (copied on set and on every read), so editing what
+    a read returned never reaches the record.
 
     Attributes
     ----------
@@ -1794,7 +1799,7 @@ def _joint_result_from_project_fit(
         params=params_df,
         metrics=metrics,
         fit_alg=str(getattr(par_fin, "method", "unknown")),
-        fit_settings=copy.deepcopy(fit_settings) if fit_settings else {},
+        fit_settings=fit_settings if fit_settings else {},  # detached on set
         timestamp=_now_iso(),
         conf_ci=conf_ci.copy() if not conf_ci.empty else None,
         correl=ulmfit.correl_from_result(par_fin),
