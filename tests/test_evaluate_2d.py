@@ -451,10 +451,7 @@ class TestThetaContract:
     def test_empty_theta_if_no_free_params(self):
         """If all params are fixed, theta should be empty."""
 
-        _file, model = _make_2d_model(["gauss_only"], [])
-        # Fix all parameters
-        for par in model._lmfit_pars.values():
-            par.vary = False
+        _file, model = _make_2d_model(["gauss_only_fixed"], [])
 
         graph = build_graph(model)
         plan = schedule_2d(graph)

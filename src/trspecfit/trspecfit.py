@@ -3090,10 +3090,19 @@ class File:
                 "Energy axis missing; cannot set fit limits. "
                 "Pass energy= when constructing File."
             )
-        if time_limits is not None and self.time is None:
-            raise ValueError(
-                "Time axis missing; cannot apply time limits. "
-                "Pass time= when constructing File."
+        if time_limits is None and self.time is not None:
+            time_limits = [float(np.min(self.time)), float(np.max(self.time))]
+        t_lim: tuple[int, ...] | None = None
+        if time_limits is not None:
+            if self.time is None:
+                raise ValueError(
+                    "Time axis missing; cannot apply time limits. "
+                    "Pass time= when constructing File."
+                )
+            t_lim = tuple(
+                self._resolve_time_selection(
+                    float(np.min(time_limits)), float(np.max(time_limits))
+                )
             )
         energy = self.energy
         if energy_limits is None:
@@ -3116,16 +3125,9 @@ class File:
             stop = int(np.searchsorted(energy, np.max(energy_limits), side="right"))
             self._e_lim = (start, stop)
 
-        if time_limits is None and self.time is not None:
-            time_limits = [float(np.min(self.time)), float(np.max(self.time))]
-        if time_limits is not None:
-            assert self.time is not None  # type guard — checked above
+        if time_limits is not None and t_lim is not None:
             self._t_lim_abs = tuple(float(t) for t in time_limits)
-            self._t_lim = tuple(
-                self._resolve_time_selection(
-                    float(np.min(time_limits)), float(np.max(time_limits))
-                )
-            )
+            self._t_lim = t_lim
 
         if show_plot and self.p.show_output >= 1:  # show data with limits
             if self.dim == 1:

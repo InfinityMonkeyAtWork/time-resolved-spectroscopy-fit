@@ -131,6 +131,17 @@ class TestOwnedStateOnBareAndOneDimensionalFiles:
             file.set_fit_limits([0.0, 3.0], time_limits=[0.0, 1.0], show_plot=False)
         assert file.e_lim == (1, 3)  # the rejection wrote nothing
 
+    #
+    def test_out_of_range_time_limits_leave_every_window_unchanged(self):
+        file, _ = make_2d_file()
+        file.set_fit_limits([81.0, 82.0], time_limits=[0.0, 1.0], show_plot=False)
+        before = (file.e_lim, file.e_lim_abs, file.t_lim, file.t_lim_abs)
+        with pytest.raises(ValueError):
+            file.set_fit_limits(
+                [80.0, 83.0], time_limits=[1000.0, 2000.0], show_plot=False
+            )
+        assert (file.e_lim, file.e_lim_abs, file.t_lim, file.t_lim_abs) == before
+
 
 #
 #

@@ -634,6 +634,21 @@ class TestYAMLValidationErrors:
             )
 
     #
+    @pytest.mark.parametrize("entry", ["expression_circular", "expression_cycle"])
+    def test_circular_expression_is_refused_at_load(self, entry):
+        """lmfit recurses on a circular expression when the container settles;
+        the load reports the cycle and keeps the previous model."""
+
+        project = make_project()
+        file = File(parent_project=project)
+        file.load_model(model_yaml="models/file_energy.yaml", model_info="single_glp")
+        previous = file.model_active
+        with pytest.raises(ValueError, match="circular expression"):
+            file.load_model(model_yaml="models/file_energy.yaml", model_info=entry)
+        assert file.models == [previous]
+        assert file.model_active is previous
+
+    #
     def test_nonexistent_model_raises(self):
         """Loading a model name that doesn't exist in the YAML should fail."""
 

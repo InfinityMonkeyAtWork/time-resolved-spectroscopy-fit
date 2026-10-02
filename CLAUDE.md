@@ -39,6 +39,7 @@
 - **Naming:** Use `snake_case` by default. **Exception:** Function registry names (`GLP`, `pExpDecay`, etc.) and their parameters (`A`, `x0`, etc.) in `src/trspecfit/functions/` use CamelCase/PascalCase because `_` is the component ID delimiter (`{model}_{component}_{param}`).
 - **Signatures:** Prefer keyword arguments for all parameters except the primary data object. Use `*` to enforce keyword-only arguments for any parameter that isn't the primary data "subject."
 - **Signature Exception:** Registry functions in `src/trspecfit/functions/` keep positional signatures because parsing/introspection depends on ordered parameter lists.
+- **Comments:** Describe the code as it is; no fix or rollout narration ("avoids the stale value", "no longer", "since 0.x"). When a reason is non-obvious enough that a future session could reverse the change, record it in a regression test's docstring; prose in the code only if no test can carry it. `docs/` keeps its history.
 
 
 # Testing

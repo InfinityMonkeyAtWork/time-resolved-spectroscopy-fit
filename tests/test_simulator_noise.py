@@ -371,7 +371,14 @@ class TestSnapshotBelongsToTheSimulatedData:
 class TestTheDrawIsTheDeclaredModel:
     """The simulator draws from the NoiseModel it declares, as lmfit fits
     weight with it; replaying the draw from the declaration reproduces the
-    noisy array exactly, for the same seed."""
+    noisy array exactly, for the same seed.
+
+    The replays also pin the order of operations of each Poisson pathway:
+    counting forms the noisy array and derives the noise, analog poisson
+    forms the noise and derives the noisy array. The two orders differ in
+    the last bit, and the committed example datasets were drawn with them,
+    so unifying them would change every seeded draw.
+    """
 
     #
     def test_counting_draw_is_poisson_on_clean_times_scale(self):

@@ -70,9 +70,10 @@ Three tiers, classified coarsely here and inventoried name by name in step 5:
 | Project registry (`Project.files`) | `Project` | `File` construction registers | external append, removal, reordering |
 | Simulator draw record (`sigma_data`, `noise_model`) | `Simulator`, snapshot per draw | a new draw | later `set_noise_*` calls changing what a past draw reports |
 
-The rest of this document states the rule behind each row, what follows from
-it, and how far the code is from it today. Line references are as of
-2026-09-24 and will drift; the function names will not.
+The rest of this document states the rule behind each row and what follows
+from it; the Mechanisms section says how each rule is enforced. Line
+references in the history notes are as of 2026-09-24 and will drift; the
+function names will not.
 
 ## 1. Inputs are owned at construction
 
@@ -109,7 +110,7 @@ not match the data, and it names the transpose when the two lengths are
 merely swapped. Two states are therefore unreachable through the
 constructor: data without axes (index axes are synthesized) and a 2D file
 without fit limits (full-range limits are set at construction). The tests
-that build those states by assignment test dead branches and leave with
+that built those states by assignment tested dead branches and left with
 those branches in step 4.
 
 **What follows.** Constructing a bare `File()` and assigning axes afterwards
@@ -164,7 +165,7 @@ possible.
 > the YAML records plus the declared attachments (target parameter, sequence
 > order, frequency). It changes only by editing the YAML and reloading, or
 > through `add_time_dependence` and `add_par_profile`, which are declarative
-> and captured as records. Its parameter state in `lmfit_pars` (values,
+> and captured as records. Its parameter state, the lmfit objects (values,
 > bounds, `vary`, `expr`) starts as the authored state and afterwards holds
 > the latest **execution state**: the values a fit wrote back, the values
 > the baseline injection seeded. The archive, not the live model, is
@@ -264,7 +265,7 @@ the fit methods, not a record; completed-fit consumers read slots (Principle
 Where this stands: the numpy fields are frozen copies at capture (schema 7,
 Principle 4). `FitResults.get_parameters`, `get_correlations`,
 `get_confidence_intervals`, and `get_mcmc` return copies, and `variants`,
-`compare_models`, and `diff` build new frames. The gap is the nested
+`compare_models`, and `diff` build new frames. The gap was the nested
 containers: `params`, `conf_ci`, `correl`, `params_meta`, `params_stderr`,
 `params_init` (DataFrames), `metrics`, `selection`, `fit_settings`, `mcmc`
 (dicts), and `component_names` (list) were shared objects inside the frozen
@@ -364,7 +365,7 @@ Decided 2026-09-24, implemented in step 5: one root per tier.
   `plot_param_evolution(params=...)` and `add_par_profile`, become
   `plot_parameter_evolution(parameters=...)` and `add_parameter_profile`,
   matching the `target_parameter` keyword they already carry.
-- `par` / `pars` in the mcp layer (`Par`, `pars`, `lmfit_pars`, `add_pars`,
+- `par` / `pars` in the mcp layer (`Par`, `pars`, `add_pars`,
   `find_par_by_name`). Today's exceptions, `parameter_names` and
   `get_all_parameters`, become `par_names` and `get_all_pars`.
 - lmfit's `Parameters` / `params` stay where the object is lmfit's; the

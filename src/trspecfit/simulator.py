@@ -442,7 +442,7 @@ class Simulator:
         self.data_noisy: np.ndarray | None = None  # With noise
         self.noise: np.ndarray | None = None  # Just the noise component
 
-        # What the most recent add_noise call applied (None: nothing yet)
+        # Record of the draw behind the stored arrays (None: nothing drawn)
         self._noise_applied: _NoiseSnapshot | None = None
 
     #
@@ -655,10 +655,9 @@ class Simulator:
         Sample ``(noisy_data, noise)`` from *model* on *clean_data*.
 
         Gaussian: ``clean + normal(0, sigma)``. Poisson: counts drawn at
-        ``clean * scale`` and divided back. The two Poisson pathways keep
-        their historical compositions (counting forms the noisy array and
-        derives the noise; analog forms the noise and derives the noisy
-        array), which differ in the last bit, so seeded draws reproduce.
+        ``clean * scale`` and divided back; counting forms the noisy array
+        and derives the noise, analog forms the noise and derives the noisy
+        array (the replay tests pin both).
         """
 
         if model is None:

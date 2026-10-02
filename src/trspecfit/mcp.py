@@ -177,6 +177,8 @@ class _AttachmentRollback:
 
     #
     def restore(self) -> None:
+        """Put back every snapshotted field and rebuild the model's containers."""
+
         for par, state in self._pars:
             self._restore(par, state)
         self._target_par._lmfit_par_list = self._target_list
@@ -769,6 +771,16 @@ class Model:
                 f"references an unknown parameter ({e}). Expressions can only "
                 "reference parameters of the same model."
             ) from e
+        except RecursionError:
+            circular = [
+                name for name, par in self._lmfit_pars.items() if par.expr is not None
+            ]
+            raise ValueError(
+                f'{type(self).__name__} "{self.name}" has a circular expression: '
+                f"one of {circular} depends on itself, directly or through other "
+                "expressions. An expression must resolve to parameters that "
+                "carry values."
+            ) from None
 
     #
     def _update_value(
@@ -984,8 +996,9 @@ class Model:
         Single pass: sets ``expr_refs_time_dep`` / ``expr_refs_profile_dep``
         for expressions that *directly* reference a t_vary / p_vary parameter.
         Then checks for transitive chains (expression → expression → dynamic
-        parameter) and raises if any are found.  Pure expression chains
-        (no dynamics/profiles) are fine — lmfit resolves those natively.
+        parameter) and raises if any are found. Pure expression chains (no
+        dynamics or profiles) are fine: ``update()`` settles them with lmfit's
+        ``update_constraints``.
 
         Called automatically after add_dynamics() and add_profile().
         """
